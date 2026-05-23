@@ -5,7 +5,7 @@ import sys
 
 
 CSI_RE = re.compile(rb"\x1b\[[0-9;=?]*[A-Za-z]")
-INTERESTING_RE = re.compile(rb"(\[kernel\][^\r\n]*|hello, world)")
+INTERESTING_RE = re.compile(rb"(\[spore\][^\r\n]*|\[cell [0-9]+\][^\r\n]*|\[kernel\] lower sync fault[^\r\n]*)")
 
 
 def main() -> int:
@@ -28,4 +28,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

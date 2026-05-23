@@ -1,5 +1,6 @@
 #include "kprintf.h"
 #include "arch/aarch64/exceptions.h"
+#include "cell.h"
 #include "elf/loader.h"
 #include "exec/stack.h"
 #include "mem.h"
@@ -183,9 +184,16 @@ static void map_pl011_page(void) {
 
     uint64_t mair;
     __asm__ volatile("mrs %0, mair_el1" : "=r"(mair));
+    mair &= ~0xffull;
+    mair |= 0xffull;
     mair &= ~(0xffull << 16);
     mair |= 0x00ull << 16;
-    __asm__ volatile("msr mair_el1, %0" : : "r"(mair));
+    __asm__ volatile(
+        "msr mair_el1, %0\n"
+        "isb\n"
+        :
+        : "r"(mair)
+        : "memory");
 
     const uint64_t va = hhdm_request.response->offset + PL011_PHYS;
     uint64_t ttbr1;
@@ -232,9 +240,15 @@ static void map_pl011_page(void) {
 }
 
 void finish_enter_el0(struct user_address_space *as, uint64_t entry, uint64_t user_sp) {
-    syscall_set_address_space(as);
+    if (!cell_create_init(as, entry, user_sp)) {
+        kprintf("[kernel] failed to create init cell\n");
+        for (;;) {
+            __asm__ volatile("wfe");
+        }
+    }
+    syscall_set_address_space(cell_current_as());
     vmm_enable_ttbr0();
-    vmm_install_user(as);
+    vmm_install_user(cell_current_as());
     kprintf("[kernel] entering EL0\n");
     enter_el0(entry, user_sp);
 }
@@ -255,6 +269,7 @@ void kernel_main(void) {
 
     pmm_init(hhdm_request.response->offset, memmap_request.response);
     exceptions_init();
+    cell_system_init(hhdm_request.response->offset);
 
     struct ramfs fs;
     struct ramfs_file init;

@@ -21,6 +21,7 @@ kernel_sources = files(
   'src/arch/aarch64/exceptions.c',
   'src/arch/aarch64/syscall.c',
   'src/arch/aarch64/vectors.S',
+  'src/cell.c',
   'src/main.c',
   'src/drivers/pl011.c',
   'src/elf/loader.c',
@@ -32,7 +33,7 @@ kernel_sources = files(
 )
 
 init_bin = custom_target('init',
-  input: files('../userland/hello.c'),
+  input: files('../userland/spore_v1_demo.c'),
   output: 'init',
   command: [
     'zig', 'cc',

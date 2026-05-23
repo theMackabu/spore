@@ -19,6 +19,14 @@ void *kmemcpy(void *dst, const void *src, size_t len) {
     return dst;
 }
 
+void *memcpy(void *dst, const void *src, size_t len) {
+    return kmemcpy(dst, src, len);
+}
+
+void *memset(void *dst, int value, size_t len) {
+    return kmemset(dst, value, len);
+}
+
 int kmemcmp(const void *a, const void *b, size_t len) {
     const uint8_t *aa = a;
     const uint8_t *bb = b;
@@ -37,4 +45,3 @@ size_t kstrlen(const char *s) {
     }
     return len;
 }
-
