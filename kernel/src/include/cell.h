@@ -11,18 +11,27 @@
 #include <stdint.h>
 
 enum {
-    MAX_CELLS = 16,
+    MAX_DOMAINS = 16,
+    MAX_THREADS = 16,
+    MAX_CELLS = MAX_THREADS,
     MAX_SNAPSHOTS = 8,
     MAX_FDS = 32,
     MAX_OPEN_FILES = 64,
     CELL_SWITCHED = -0x40000000,
 };
 
+enum thread_state {
+    THREAD_UNUSED,
+    THREAD_RUNNABLE,
+    THREAD_BLOCKED,
+    THREAD_ZOMBIE,
+};
+
 enum cell_state {
-    CELL_UNUSED,
-    CELL_RUNNABLE,
-    CELL_BLOCKED,
-    CELL_ZOMBIE,
+    CELL_UNUSED = THREAD_UNUSED,
+    CELL_RUNNABLE = THREAD_RUNNABLE,
+    CELL_BLOCKED = THREAD_BLOCKED,
+    CELL_ZOMBIE = THREAD_ZOMBIE,
 };
 
 enum open_file_type {
@@ -41,17 +50,40 @@ struct open_file {
     struct ramfs_node node;
 };
 
-struct cell {
-    int pid;
-    int parent_pid;
-    enum cell_state state;
+struct capability_set {
+    uint64_t syscall_allow[8];
+    uint64_t fs_rights;
+    uint64_t flags;
+};
+
+struct cpu_budget {
+    uint64_t remaining_ticks;
+    uint64_t max_ticks;
+};
+
+struct domain {
+    int id;
+    int parent_id;
+    uint16_t refcount;
+    bool used;
+    bool zombie;
+    int exit_status;
     struct user_address_space as;
     struct vma_list vmas;
+    struct open_file *fds[MAX_FDS];
+    char cwd[128];
+    char fs_root[128];
+    struct capability_set caps;
+    struct cpu_budget budget;
+};
+
+struct thread {
+    int tid;
+    struct domain *domain;
+    enum thread_state state;
     struct trap_frame tf;
     uint64_t tpidr_el0;
-    int exit_status;
     int wait_target;
-    struct open_file *fds[MAX_FDS];
 };
 
 struct snapshot {
@@ -65,6 +97,7 @@ void cell_system_init(uint64_t hhdm_offset);
 bool cell_create_init(struct user_address_space *as, uint64_t entry, uint64_t sp);
 struct user_address_space *cell_current_as(void);
 int cell_current_pid(void);
+int cell_current_tid(void);
 int cell_current_ppid(void);
 void cell_save_current(const struct trap_frame *frame);
 void cell_restore_current(struct trap_frame *frame);

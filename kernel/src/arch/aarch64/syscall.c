@@ -50,6 +50,7 @@ enum {
     SYS_GETEUID = 175,
     SYS_GETGID = 176,
     SYS_GETEGID = 177,
+    SYS_GETTID = 178,
     SYS_SYSINFO = 179,
     SYS_BRK = 214,
     SYS_MUNMAP = 215,
@@ -540,6 +541,8 @@ static int64_t dispatch(struct trap_frame *f) {
         return cell_current_pid();
     case SYS_GETPPID:
         return cell_current_ppid();
+    case SYS_GETTID:
+        return cell_current_tid();
     case SYS_GETUID:
     case SYS_GETEUID:
     case SYS_GETGID:
