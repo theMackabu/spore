@@ -76,6 +76,24 @@ coreutils_bin = custom_target('coreutils',
   ],
   build_by_default: true)
 
+echo_bin = custom_target('echo',
+  input: [
+    files('../userland/bin/echo/main.c'),
+    files('../userland/lib/spore/util.c'),
+  ],
+  output: 'echo',
+  command: [
+    'zig', 'cc',
+    '-target', 'aarch64-linux-musl',
+    '-static',
+    '-std=c23',
+    '-D_GNU_SOURCE',
+    '-I' + meson.project_source_root() / 'userland/lib/spore',
+    '@INPUT@',
+    '-o', '@OUTPUT@',
+  ],
+  build_by_default: true)
+
 policy_tools_bin = custom_target('policy_tools',
   input: files('../userland/policy_tools.c'),
   output: 'policy_tools',
@@ -124,7 +142,7 @@ make_limine = custom_target('limine-host-tool',
   build_by_default: true)
 
 image = custom_target('image.iso',
-  input: [kernel_elf, files('boot/limine.conf'), make_limine, init_bin, exec_child_bin, spore_demo_bin, coreutils_bin, policy_tools_bin],
+  input: [kernel_elf, files('boot/limine.conf'), make_limine, init_bin, exec_child_bin, spore_demo_bin, coreutils_bin, policy_tools_bin, echo_bin],
   output: 'image.iso',
   command: [
     'sh', '-c',
@@ -138,7 +156,8 @@ image = custom_target('image.iso',
     'cp "$5" "$1/boot/init"; ' +
     'cp "$6" "$1/boot/exec_child"; ' +
     'cp "$7" "$1/boot/bin/spore_demo"; ' +
-    'for name in ls cat echo mkdir rm touch pwd hello true false; do cp "$8" "$1/boot/bin/$name"; done; ' +
+    'for name in ls cat mkdir rm touch pwd hello true false; do cp "$8" "$1/boot/bin/$name"; done; ' +
+    'cp "${10}" "$1/boot/bin/echo"; ' +
     'cp "$8" "$1/boot/hello"; ' +
     'for name in spinner peeker writer memhog escalate; do cp "$9" "$1/boot/bin/$name"; done; ' +
     'efi_img="$1/efi.img"; ' +
@@ -153,14 +172,15 @@ image = custom_target('image.iso',
     'mcopy -i "$efi_img" "$5" ::/boot/init; ' +
     'mcopy -i "$efi_img" "$6" ::/boot/exec_child; ' +
     'mcopy -i "$efi_img" "$7" ::/boot/bin/spore_demo; ' +
-    'for name in ls cat echo mkdir rm touch pwd hello true false; do mcopy -i "$efi_img" "$8" ::/boot/bin/$name; done; ' +
+    'for name in ls cat mkdir rm touch pwd hello true false; do mcopy -i "$efi_img" "$8" ::/boot/bin/$name; done; ' +
+    'mcopy -i "$efi_img" "${10}" ::/boot/bin/echo; ' +
     'mcopy -i "$efi_img" "$8" ::/boot/hello; ' +
     'for name in spinner peeker writer memhog escalate; do mcopy -i "$efi_img" "$9" ::/boot/bin/$name; done; ' +
     'xorriso -as mkisofs ' +
     '-R -r -J -hfsplus -apm-block-size 2048 ' +
     '--efi-boot efi.img -no-emul-boot -efi-boot-part --efi-boot-image ' +
-    '--protective-msdos-label "$1" -o "${10}" >/dev/null 2>&1; ' +
-    'cp "${10}" "${11}"',
+    '--protective-msdos-label "$1" -o "${11}" >/dev/null 2>&1; ' +
+    'cp "${11}" "${12}"',
     'sh',
     iso_root,
     kernel_elf,
@@ -171,6 +191,7 @@ image = custom_target('image.iso',
     spore_demo_bin,
     coreutils_bin,
     policy_tools_bin,
+    echo_bin,
     image_iso,
     '@OUTPUT@',
   ],
