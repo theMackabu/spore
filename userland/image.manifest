@@ -13,8 +13,8 @@ userland/bin/true /bin/true
 userland/bin/false /bin/false
 userland/spore_v2b_demo.c /bin/spore_demo
 userland/exec_child.c /bin/exec_child
-userland/policy_tools.c /bin/spinner
-userland/policy_tools.c /bin/peeker
-userland/policy_tools.c /bin/writer
-userland/policy_tools.c /bin/memhog
-userland/policy_tools.c /bin/escalate
+userland/demos/spinner /demos/spinner
+userland/demos/peeker /demos/peeker
+userland/demos/writer /demos/writer
+userland/demos/memhog /demos/memhog
+userland/demos/escalate /demos/escalate

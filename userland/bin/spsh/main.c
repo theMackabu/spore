@@ -120,7 +120,8 @@ static int run_confined(const char *manifest, char **argv) {
         execve(path, argv, environ);
         _exit(127);
     }
-    int cpu_demo = spore_streq(manifest, "compute-only") && spore_streq(argv[0], "spinner");
+    int cpu_demo = spore_streq(manifest, "compute-only") &&
+                   spore_streq(spore_basename(argv[0]), "spinner");
     if (cpu_demo) {
         printf("spore: '%s' confined: syscall-class=compute, cpu=200ms\n", argv[0]);
     }
