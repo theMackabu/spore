@@ -10,10 +10,11 @@ enum {
     PTE_SH_INNER = 3ull << 8,
     PTE_AP_USER_RW = 1ull << 6,
     PTE_AP_USER_RO = 3ull << 6,
-    PTE_PXN = 1ull << 53,
-    PTE_UXN = 1ull << 54,
-    PTE_ADDR_MASK = 0x0000fffffffff000ull,
 };
+
+#define PTE_PXN (1ull << 53)
+#define PTE_UXN (1ull << 54)
+#define PTE_ADDR_MASK 0x0000fffffffff000ull
 
 static uint64_t *pt_virt(const struct user_address_space *as, uint64_t pa) {
     return (uint64_t *)(uintptr_t)(as->hhdm_offset + pa);
@@ -21,6 +22,11 @@ static uint64_t *pt_virt(const struct user_address_space *as, uint64_t pa) {
 
 static size_t pt_index(uint64_t va, unsigned shift) {
     return (size_t)((va >> shift) & 0x1ff);
+}
+
+static bool checked_add(uint64_t a, uint64_t b, uint64_t *out) {
+    *out = a + b;
+    return *out >= a;
 }
 
 bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
@@ -77,7 +83,21 @@ bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags) 
     return pa != 0 && vmm_map_page(as, va, pa, flags);
 }
 
-uint64_t vmm_user_to_phys(const struct user_address_space *as, uint64_t va) {
+static bool user_entry_allows(uint64_t entry, enum vmm_access access) {
+    switch (access) {
+    case VMM_ACCESS_READ:
+        return true;
+    case VMM_ACCESS_WRITE:
+        return (entry & PTE_AP_USER_RO) != PTE_AP_USER_RO;
+    case VMM_ACCESS_EXEC:
+        return (entry & PTE_UXN) == 0;
+    }
+    return false;
+}
+
+static uint64_t user_to_phys_checked(const struct user_address_space *as,
+                                     uint64_t va,
+                                     enum vmm_access access) {
     const uint64_t *l0 = pt_virt(as, as->root_pa);
     uint64_t entry = l0[pt_index(va, 39)];
     if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) {
@@ -98,28 +118,60 @@ uint64_t vmm_user_to_phys(const struct user_address_space *as, uint64_t va) {
     if ((entry & PTE_VALID) == 0) {
         return 0;
     }
+    if (!user_entry_allows(entry, access)) {
+        return 0;
+    }
     return (entry & PTE_ADDR_MASK) | (va & 0xfff);
 }
 
-bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len) {
-    const uint8_t *s = src;
-    for (size_t i = 0; i < len; ++i) {
-        uint64_t pa = vmm_user_to_phys(as, dst + i);
-        if (pa == 0) {
+uint64_t vmm_user_to_phys(const struct user_address_space *as, uint64_t va) {
+    return user_to_phys_checked(as, va, VMM_ACCESS_READ);
+}
+
+bool vmm_user_range_accessible(const struct user_address_space *as,
+                               uint64_t va,
+                               size_t len,
+                               enum vmm_access access) {
+    if (len == 0) {
+        return true;
+    }
+    uint64_t end;
+    if (!checked_add(va, len - 1, &end)) {
+        return false;
+    }
+
+    uint64_t page = va & ~(uint64_t)(PAGE_SIZE - 1);
+    uint64_t last = end & ~(uint64_t)(PAGE_SIZE - 1);
+    for (;;) {
+        if (user_to_phys_checked(as, page, access) == 0) {
             return false;
         }
+        if (page == last) {
+            return true;
+        }
+        page += PAGE_SIZE;
+    }
+}
+
+bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len) {
+    if (!vmm_user_range_accessible(as, dst, len, VMM_ACCESS_WRITE)) {
+        return false;
+    }
+    const uint8_t *s = src;
+    for (size_t i = 0; i < len; ++i) {
+        uint64_t pa = user_to_phys_checked(as, dst + i, VMM_ACCESS_WRITE);
         *(uint8_t *)(uintptr_t)(as->hhdm_offset + pa) = s[i];
     }
     return true;
 }
 
 bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t src, size_t len) {
+    if (!vmm_user_range_accessible(as, src, len, VMM_ACCESS_READ)) {
+        return false;
+    }
     uint8_t *d = dst;
     for (size_t i = 0; i < len; ++i) {
-        uint64_t pa = vmm_user_to_phys(as, src + i);
-        if (pa == 0) {
-            return false;
-        }
+        uint64_t pa = user_to_phys_checked(as, src + i, VMM_ACCESS_READ);
         d[i] = *(uint8_t *)(uintptr_t)(as->hhdm_offset + pa);
     }
     return true;
@@ -151,4 +203,3 @@ void vmm_install_user(const struct user_address_space *as) {
         : "r"(as->root_pa)
         : "memory");
 }
-

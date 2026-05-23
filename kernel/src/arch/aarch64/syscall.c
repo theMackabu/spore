@@ -33,6 +33,7 @@ enum {
     EFAULT = 14,
     EINVAL = 22,
     ENOSYS = 38,
+    MAX_IOVCNT = 1024,
 };
 
 struct iovec64 {
@@ -56,6 +57,24 @@ static uint64_t align_up(uint64_t value, uint64_t align) {
     return (value + align - 1) & ~(align - 1);
 }
 
+static bool checked_add(uint64_t a, uint64_t b, uint64_t *out) {
+    *out = a + b;
+    return *out >= a;
+}
+
+static void poweroff(void) {
+    __asm__ volatile(
+        "mov x0, #0x0008\n"
+        "movk x0, #0x8400, lsl #16\n"
+        "hvc #0\n"
+        :
+        :
+        : "x0", "memory");
+    for (;;) {
+        __asm__ volatile("wfe");
+    }
+}
+
 void syscall_set_address_space(struct user_address_space *as) {
     current_as = as;
 }
@@ -63,6 +82,9 @@ void syscall_set_address_space(struct user_address_space *as) {
 static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len) {
     if (fd != 1 && fd != 2) {
         return -(int64_t)EINVAL;
+    }
+    if (!vmm_user_range_accessible(current_as, buf, len, VMM_ACCESS_READ)) {
+        return -(int64_t)EFAULT;
     }
     for (uint64_t i = 0; i < len; ++i) {
         char c;
@@ -75,6 +97,16 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len) {
 }
 
 static int64_t sys_writev(uint64_t fd, uint64_t iov, uint64_t iovcnt) {
+    if (iovcnt > MAX_IOVCNT) {
+        return -(int64_t)EINVAL;
+    }
+    uint64_t iov_bytes;
+    if (!checked_add(0, iovcnt * sizeof(struct iovec64), &iov_bytes) ||
+        (iovcnt != 0 && iov_bytes / sizeof(struct iovec64) != iovcnt) ||
+        !vmm_user_range_accessible(current_as, iov, iov_bytes, VMM_ACCESS_READ)) {
+        return -(int64_t)EFAULT;
+    }
+
     int64_t total = 0;
     for (uint64_t i = 0; i < iovcnt; ++i) {
         struct iovec64 v;
@@ -99,6 +131,9 @@ static int64_t sys_brk(uint64_t requested) {
     }
     uint64_t old_end = align_up(current_as->brk_current, PAGE_SIZE);
     uint64_t new_end = align_up(requested, PAGE_SIZE);
+    if (new_end < requested) {
+        return (int64_t)current_as->brk_current;
+    }
     for (uint64_t va = old_end; va < new_end; va += PAGE_SIZE) {
         if (!vmm_alloc_page(current_as, va, VMM_USER_READ | VMM_USER_WRITE)) {
             return (int64_t)current_as->brk_current;
@@ -113,7 +148,14 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t fla
         return -(int64_t)EINVAL;
     }
     uint64_t base = addr != 0 ? align_down(addr, PAGE_SIZE) : current_as->mmap_base;
-    uint64_t end = align_up(base + len, PAGE_SIZE);
+    uint64_t raw_end;
+    if (!checked_add(base, len, &raw_end)) {
+        return -(int64_t)EINVAL;
+    }
+    uint64_t end = align_up(raw_end, PAGE_SIZE);
+    if (end < raw_end) {
+        return -(int64_t)EINVAL;
+    }
     uint32_t vflags = VMM_USER_READ;
     if ((prot & PROT_WRITE) != 0) {
         vflags |= VMM_USER_WRITE;
@@ -133,6 +175,9 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t fla
 }
 
 static int64_t sys_getrandom(uint64_t buf, uint64_t len) {
+    if (!vmm_user_range_accessible(current_as, buf, len, VMM_ACCESS_WRITE)) {
+        return -(int64_t)EFAULT;
+    }
     for (uint64_t i = 0; i < len; ++i) {
         rng_state = rng_state * 6364136223846793005ull + 1;
         uint8_t byte = (uint8_t)(rng_state >> 32);
@@ -176,16 +221,7 @@ static int64_t dispatch(struct trap_frame *f) {
         return 0;
     case SYS_EXIT_GROUP:
         kprintf("[kernel] exit_group(%d)\n", (int)a0);
-        __asm__ volatile(
-            "mov x0, #0x0008\n"
-            "movk x0, #0x8400, lsl #16\n"
-            "hvc #0\n"
-            :
-            :
-            : "x0", "memory");
-        for (;;) {
-            __asm__ volatile("wfe");
-        }
+        poweroff();
     case SYS_BRK:
         return sys_brk(a0);
     case SYS_MMAP:
@@ -211,13 +247,14 @@ static int64_t dispatch(struct trap_frame *f) {
 void handle_lower_sync(struct trap_frame *frame) {
     uint64_t ec = (frame->esr_el1 >> 26) & 0x3f;
     if (ec != EC_SVC_A64) {
-        kprintf("[kernel] lower sync ec=%x esr=%x elr=%p\n",
+        uint64_t far;
+        __asm__ volatile("mrs %0, far_el1" : "=r"(far));
+        kprintf("[kernel] lower sync fault ec=%x esr=%x elr=%p far=%p\n",
                 (unsigned)ec,
                 (unsigned)frame->esr_el1,
-                (void *)(uintptr_t)frame->elr_el1);
-        for (;;) {
-            __asm__ volatile("wfe");
-        }
+                (void *)(uintptr_t)frame->elr_el1,
+                (void *)(uintptr_t)far);
+        poweroff();
     }
     frame->x[0] = (uint64_t)dispatch(frame);
 }

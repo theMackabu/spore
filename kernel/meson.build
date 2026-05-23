@@ -28,6 +28,7 @@ kernel_sources = files(
   'src/lib/mem.c',
   'src/mm/pmm.c',
   'src/mm/vmm.c',
+  'src/ramfs.c',
 )
 
 init_bin = custom_target('init',
@@ -112,13 +113,38 @@ qemu_code = run_command('sh', '-c',
   'exit 1',
   check: true).stdout().strip()
 
+qemu_args = [
+  'qemu-system-aarch64',
+  '-M', 'virt',
+  '-accel', 'hvf',
+  '-cpu', 'host',
+  '-m', '512M',
+  '-boot', 'order=d,menu=off,strict=on',
+  '-drive', 'if=pflash,format=raw,readonly=on,file=' + qemu_code,
+  '-cdrom', image_iso,
+  '-serial', 'stdio',
+  '-display', 'none',
+]
+
 run_target('run',
   command: [
+    files('../tools/run_qemu.py'),
+  ] + qemu_args,
+  depends: image)
+
+run_target('run-raw',
+  command: qemu_args,
+  depends: image)
+
+run_target('run-tcg',
+  command: [
+    files('../tools/run_qemu.py'),
     'qemu-system-aarch64',
     '-M', 'virt',
-    '-accel', 'hvf',
-    '-cpu', 'host',
+    '-accel', 'tcg',
+    '-cpu', 'max',
     '-m', '512M',
+    '-boot', 'order=d,menu=off,strict=on',
     '-drive', 'if=pflash,format=raw,readonly=on,file=' + qemu_code,
     '-cdrom', image_iso,
     '-serial', 'stdio',

@@ -18,9 +18,10 @@ enum {
     AT_CLKTCK = 17,
     AT_SECURE = 23,
     AT_RANDOM = 25,
-    STACK_TOP = 0x0000fffffff00000ull,
-    STACK_SIZE = 8 * PAGE_SIZE,
 };
+
+#define STACK_TOP 0x0000fffffff00000ull
+#define STACK_SIZE (8 * PAGE_SIZE)
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
     return value & ~(align - 1);
@@ -102,4 +103,3 @@ bool build_initial_stack(struct user_address_space *as,
     *stack_pointer = sp;
     return true;
 }
-

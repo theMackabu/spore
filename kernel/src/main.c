@@ -6,6 +6,7 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "pl011.h"
+#include "ramfs.h"
 
 #include <limine.h>
 #include <stdarg.h>
@@ -230,26 +231,6 @@ static void map_pl011_page(void) {
         : "memory");
 }
 
-static const struct limine_file *find_init_module(void) {
-    if (module_request.response == NULL) {
-        return NULL;
-    }
-    for (uint64_t i = 0; i < module_request.response->module_count; ++i) {
-        const struct limine_file *file = module_request.response->modules[i];
-        if (file->string != NULL && kmemcmp(file->string, "/init", 6) == 0) {
-            return file;
-        }
-        if (file->path != NULL) {
-            const char *path = file->path;
-            size_t len = kstrlen(path);
-            if (len >= 5 && kmemcmp(path + len - 5, "/init", 6) == 0) {
-                return file;
-            }
-        }
-    }
-    return NULL;
-}
-
 void finish_enter_el0(struct user_address_space *as, uint64_t entry, uint64_t user_sp) {
     syscall_set_address_space(as);
     vmm_enable_ttbr0();
@@ -275,8 +256,10 @@ void kernel_main(void) {
     pmm_init(hhdm_request.response->offset, memmap_request.response);
     exceptions_init();
 
-    const struct limine_file *init = find_init_module();
-    if (init == NULL) {
+    struct ramfs fs;
+    struct ramfs_file init;
+    ramfs_init(&fs, module_request.response);
+    if (!ramfs_lookup(&fs, "/init", &init)) {
         kprintf("[kernel] missing /init\n");
         for (;;) {
             __asm__ volatile("wfe");
@@ -288,7 +271,7 @@ void kernel_main(void) {
     struct loaded_elf elf;
     uint64_t user_sp;
     if (!vmm_user_init(&as, hhdm_request.response->offset) ||
-        !elf_load_static_aarch64(&as, init->address, init->size, &elf) ||
+        !elf_load_static_aarch64(&as, init.data, init.size, &elf) ||
         !build_initial_stack(&as, &elf, &user_sp)) {
         kprintf("[kernel] failed to prepare /init\n");
         for (;;) {
