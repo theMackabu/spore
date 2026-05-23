@@ -1,5 +1,7 @@
 build/
+
 /.cache
+/.nova
 
 *.o
 *.iso

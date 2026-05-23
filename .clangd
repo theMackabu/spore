@@ -1,0 +1,34 @@
+CompileFlags:
+  CompilationDatabase: build
+
+---
+If:
+  PathMatch: userland/.*
+CompileFlags:
+  Remove:
+    - --target=*
+    - -ffreestanding
+    - -fno-stack-protector
+    - -fno-stack-check
+    - -fno-PIC
+    - -fno-PIE
+    - -fno-lto
+    - -fno-omit-frame-pointer
+    - -fno-asynchronous-unwind-tables
+    - -mgeneral-regs-only
+    - -march=*
+    - -mcmodel=*
+  Add:
+    - --target=aarch64-linux-musl
+    - -std=c23
+    - -D_GNU_SOURCE
+    - -isystem
+    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/include
+    - -isystem
+    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/aarch64-linux-musl
+    - -isystem
+    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/generic-musl
+    - -isystem
+    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/aarch64-linux-any
+    - -isystem
+    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/any-linux-any
