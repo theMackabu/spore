@@ -1,6 +1,6 @@
 #include <spore.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 
 static const char *type_name(mode_t mode) {

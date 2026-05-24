@@ -21,6 +21,5 @@ CompileFlags:
   Add:
     - -std=c23
     - -D_GNU_SOURCE
-    - -DSPORE_ROOT_TAG="spore/ext2-dynamic-musl/RELEASE_ARM64"
     - -I../userland/lib/spore
     - -Wno-deprecated-declarations

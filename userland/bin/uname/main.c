@@ -1,6 +1,6 @@
 #include <spore.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/utsname.h>
 
@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
       return EXIT_SUCCESS;
     }
     if (streq(argv[i], "--version")) {
-      printf("uname (Spore) %s\n", SPORE_ROOT_TAG);
+      puts("uname (Spore)");
       return EXIT_SUCCESS;
     }
     if (argv[i][0] != '-' || argv[i][1] == '\0') {
@@ -126,18 +126,15 @@ int main(int argc, char **argv) {
   }
 
   int printed = 0;
-  char version[160];
-  snprintf(version, sizeof(version), "%s root:%s", u.version, SPORE_ROOT_TAG);
-  
   if (fields & FIELD_SYSNAME) { print_field(&printed, u.sysname); }
   if (fields & FIELD_NODENAME) { print_field(&printed, u.nodename); }
   if (fields & FIELD_RELEASE) { print_field(&printed, u.release); }
-  if (fields & FIELD_VERSION) { print_field(&printed, version); }
+  if (fields & FIELD_VERSION) { print_field(&printed, u.version); }
   if (fields & FIELD_MACHINE) { print_field(&printed, u.machine); }
   if (fields & FIELD_PROCESSOR) { print_field(&printed, u.machine); }
   if (fields & FIELD_PLATFORM) { print_field(&printed, u.machine); }
   if (fields & FIELD_OS) { print_field(&printed, u.domainname); }
-  
+
   putchar('\n');
   return EXIT_SUCCESS;
 }

@@ -1,12 +1,10 @@
 userland_musl_cc = find_program('aarch64-unknown-linux-musl-gcc')
 userland_include_arg = '-I' + meson.current_source_dir() / 'lib/spore'
-userland_root_tag_arg = '-DSPORE_ROOT_TAG="' + spore_root_tag + '"'
 
 userland_cc = [
   userland_musl_cc,
   '-std=c23',
   '-D_GNU_SOURCE',
-  userland_root_tag_arg,
   '-s',
   '-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1',
   '-Wl,-rpath,/lib',
@@ -17,7 +15,6 @@ userland_static_cc = [
   '-static',
   '-std=c23',
   '-D_GNU_SOURCE',
-  userland_root_tag_arg,
   '-s',
   userland_include_arg,
 ]
