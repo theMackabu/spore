@@ -31,6 +31,7 @@ enum wait_reason {
     WAIT_NONE,
     WAIT_CHILD,
     WAIT_STDIN,
+    WAIT_THREAD,
 };
 
 enum cell_state {
@@ -95,6 +96,8 @@ struct thread {
     int wait_target;
     uint64_t stdin_buf;
     uint64_t stdin_len;
+    uint64_t clear_child_tid;
+    uint64_t robust_list;
 };
 
 struct snapshot {
@@ -119,8 +122,17 @@ bool cell_mmap_allowed(uint64_t pages);
 void cell_save_current(const struct trap_frame *frame);
 void cell_restore_current(struct trap_frame *frame);
 void cell_schedule(struct trap_frame *frame);
-void cell_exit_current(int status, struct trap_frame *frame);
+void cell_exit_thread_current(int status, struct trap_frame *frame);
+void cell_exit_group_current(int status, struct trap_frame *frame);
 int cell_fork_current(struct trap_frame *frame);
+int cell_clone_thread_current(struct trap_frame *frame,
+                              uint64_t flags,
+                              uint64_t newsp,
+                              uint64_t parent_tid,
+                              uint64_t tls,
+                              uint64_t child_tid);
+int cell_set_tid_address_current(uint64_t clear_child_tid);
+int cell_set_robust_list_current(uint64_t robust_list);
 int cell_wait4(int pid, uint64_t status_addr, struct trap_frame *frame);
 int cell_kill(int pid, int signal);
 bool cell_exec_replace(struct user_address_space *as,

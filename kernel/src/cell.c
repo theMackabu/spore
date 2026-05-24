@@ -59,7 +59,7 @@ static struct domain *alloc_domain(void) {
         if (!domains[i].used) {
             kmemset(&domains[i], 0, sizeof(domains[i]));
             domains[i].used = true;
-            domains[i].refcount = 1;
+            domains[i].refcount = 0;
             domains[i].id = next_domain_id++;
             domains[i].cwd[0] = '/';
             domains[i].cwd[1] = '\0';
@@ -79,6 +79,7 @@ static struct thread *alloc_thread(struct domain *domain) {
             threads[i].domain = domain;
             threads[i].wait_reason = WAIT_NONE;
             threads[i].wait_target = -1;
+            ++domain->refcount;
             return &threads[i];
         }
     }
@@ -184,10 +185,43 @@ static struct thread *thread_for_domain(struct domain *domain) {
 }
 
 static void destroy_domain(struct domain *domain) {
+    for (size_t i = 0; i < MAX_THREADS; ++i) {
+        if (threads[i].domain == domain) {
+            threads[i].state = THREAD_UNUSED;
+            threads[i].domain = NULL;
+        }
+    }
     close_all_fds(domain);
     vmm_destroy(&domain->as);
     domain->used = false;
     domain->zombie = false;
+    domain->refcount = 0;
+}
+
+static size_t runnable_or_blocked_threads_in_domain(const struct domain *domain) {
+    size_t count = 0;
+    for (size_t i = 0; i < MAX_THREADS; ++i) {
+        if (threads[i].domain == domain &&
+            (threads[i].state == THREAD_RUNNABLE || threads[i].state == THREAD_BLOCKED)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static void release_thread(struct thread *thread) {
+    if (thread == NULL || thread->domain == NULL) {
+        return;
+    }
+    struct domain *domain = thread->domain;
+    if (domain->refcount > 0) {
+        --domain->refcount;
+    }
+    thread->state = THREAD_UNUSED;
+    thread->domain = NULL;
+    if (current_thread == thread) {
+        current_thread = NULL;
+    }
 }
 
 static void wake_parent_of(struct domain *child) {
@@ -449,13 +483,44 @@ void cell_schedule(struct trap_frame *frame) {
     }
 }
 
-void cell_exit_current(int status, struct trap_frame *frame) {
+void cell_exit_thread_current(int status, struct trap_frame *frame) {
+    if (current_thread == NULL) {
+        return;
+    }
+    struct domain *domain = current_thread->domain;
+    if (current_thread->clear_child_tid != 0) {
+        uint32_t zero = 0;
+        (void)vmm_copy_to_user(&domain->as, current_thread->clear_child_tid, &zero, sizeof(zero));
+    }
+    if (runnable_or_blocked_threads_in_domain(domain) <= 1) {
+        domain->exit_status = status;
+        domain->zombie = true;
+        current_thread->state = THREAD_ZOMBIE;
+        wake_parent_of(domain);
+        cell_schedule(frame);
+        return;
+    }
+    kprintf("[kernel] exit(%d) tid=%d\n", status, current_thread->tid);
+    release_thread(current_thread);
+    cell_schedule(frame);
+}
+
+void cell_exit_group_current(int status, struct trap_frame *frame) {
     if (current_thread == NULL) {
         return;
     }
     struct domain *domain = current_thread->domain;
     domain->exit_status = status;
     domain->zombie = true;
+    for (size_t i = 0; i < MAX_THREADS; ++i) {
+        if (&threads[i] != current_thread && threads[i].domain == domain) {
+            threads[i].state = THREAD_UNUSED;
+            threads[i].domain = NULL;
+            if (domain->refcount > 0) {
+                --domain->refcount;
+            }
+        }
+    }
     current_thread->state = THREAD_ZOMBIE;
     wake_parent_of(domain);
     cell_schedule(frame);
@@ -488,6 +553,55 @@ int cell_fork_current(struct trap_frame *frame) {
     child_thread->tpidr_el0 = current_thread->tpidr_el0;
     current_thread->tf.x[0] = (uint64_t)child_domain->id;
     return child_domain->id;
+}
+
+int cell_clone_thread_current(struct trap_frame *frame,
+                              uint64_t flags,
+                              uint64_t newsp,
+                              uint64_t parent_tid,
+                              uint64_t tls,
+                              uint64_t child_tid) {
+    struct domain *domain = current_domain();
+    if (domain == NULL || current_thread == NULL || newsp == 0) {
+        return -22;
+    }
+    struct thread *thread = alloc_thread(domain);
+    if (thread == NULL) {
+        return -12;
+    }
+    cell_save_current(frame);
+    thread->state = THREAD_RUNNABLE;
+    thread->tf = current_thread->tf;
+    thread->tf.x[0] = 0;
+    thread->tf.sp_el0 = newsp;
+    thread->tpidr_el0 = ((flags & 0x00080000ull) != 0) ? tls : current_thread->tpidr_el0;
+    thread->clear_child_tid = ((flags & 0x00200000ull) != 0) ? child_tid : 0;
+    if ((flags & 0x00100000ull) != 0 && parent_tid != 0) {
+        uint32_t tid = (uint32_t)thread->tid;
+        (void)vmm_copy_to_user(&domain->as, parent_tid, &tid, sizeof(tid));
+    }
+    if ((flags & 0x01000000ull) != 0 && child_tid != 0) {
+        uint32_t tid = (uint32_t)thread->tid;
+        (void)vmm_copy_to_user(&domain->as, child_tid, &tid, sizeof(tid));
+    }
+    current_thread->tf.x[0] = (uint64_t)thread->tid;
+    return thread->tid;
+}
+
+int cell_set_tid_address_current(uint64_t clear_child_tid) {
+    if (current_thread == NULL) {
+        return 0;
+    }
+    current_thread->clear_child_tid = clear_child_tid;
+    return current_thread->tid;
+}
+
+int cell_set_robust_list_current(uint64_t robust_list) {
+    if (current_thread == NULL) {
+        return -22;
+    }
+    current_thread->robust_list = robust_list;
+    return 0;
 }
 
 static struct domain *find_waitable_child(int parent_id, int pid) {
@@ -547,9 +661,10 @@ int cell_kill(int pid, int signal) {
     }
     domain->exit_status = 128 + signal;
     domain->zombie = true;
-    struct thread *thread = thread_for_domain(domain);
-    if (thread != NULL) {
-        thread->state = THREAD_ZOMBIE;
+    for (size_t i = 0; i < MAX_THREADS; ++i) {
+        if (threads[i].domain == domain) {
+            threads[i].state = THREAD_ZOMBIE;
+        }
     }
     wake_parent_of(domain);
     return 0;
@@ -566,6 +681,15 @@ bool cell_exec_replace(struct user_address_space *as,
     }
 
     struct user_address_space old_as = domain->as;
+    for (size_t i = 0; i < MAX_THREADS; ++i) {
+        if (&threads[i] != current_thread && threads[i].domain == domain) {
+            threads[i].state = THREAD_UNUSED;
+            threads[i].domain = NULL;
+            if (domain->refcount > 0) {
+                --domain->refcount;
+            }
+        }
+    }
     domain->as = *as;
     domain->vmas = *vmas;
     vmm_install_user(&domain->as);
@@ -606,7 +730,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
         if (domain->budget.remaining_ticks == 0) {
             kprintf("[spore] domain %d exceeded CPU budget -> killed\n", domain->id);
             if (from_lower_el) {
-                cell_exit_current(137, frame);
+                cell_exit_group_current(137, frame);
             } else {
                 domain->zombie = true;
                 domain->exit_status = 137;

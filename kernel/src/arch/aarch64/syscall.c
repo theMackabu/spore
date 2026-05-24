@@ -85,6 +85,16 @@ enum {
     MAP_ANONYMOUS = 0x20,
     MREMAP_MAYMOVE = 1,
     CLONE_VM = 0x00000100,
+    CLONE_FS = 0x00000200,
+    CLONE_FILES = 0x00000400,
+    CLONE_SIGHAND = 0x00000800,
+    CLONE_THREAD = 0x00010000,
+    CLONE_SYSVSEM = 0x00040000,
+    CLONE_SETTLS = 0x00080000,
+    CLONE_PARENT_SETTID = 0x00100000,
+    CLONE_CHILD_CLEARTID = 0x00200000,
+    CLONE_DETACHED = 0x00400000,
+    CLONE_CHILD_SETTID = 0x01000000,
     PROT_READ = 0x1,
     PROT_WRITE = 0x2,
     PROT_EXEC = 0x4,
@@ -549,11 +559,28 @@ static int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp) {
                : -(int64_t)EFAULT;
 }
 
-static int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp) {
-    if ((flags & CLONE_VM) != 0 || newsp != 0) {
+static int64_t sys_clone(struct trap_frame *f,
+                         uint64_t flags,
+                         uint64_t newsp,
+                         uint64_t parent_tid,
+                         uint64_t tls,
+                         uint64_t child_tid) {
+    if ((flags & CLONE_VM) == 0) {
+        if (newsp != 0) {
+            return -(int64_t)ENOSYS;
+        }
+        return cell_fork_current(f);
+    }
+
+    const uint64_t allowed_thread_flags =
+        CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |
+        CLONE_SYSVSEM | CLONE_SETTLS | CLONE_PARENT_SETTID |
+        CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID | CLONE_DETACHED;
+    const uint64_t signal_mask = 0xff;
+    if ((flags & ~(allowed_thread_flags | signal_mask)) != 0 || newsp == 0) {
         return -(int64_t)ENOSYS;
     }
-    return cell_fork_current(f);
+    return cell_clone_thread_current(f, flags, newsp, parent_tid, tls, child_tid);
 }
 
 static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
@@ -794,7 +821,6 @@ static int64_t dispatch(struct trap_frame *f) {
     uint64_t a2 = f->x[2];
     uint64_t a3 = f->x[3];
     uint64_t a4 = f->x[4];
-    (void)a4;
 
     if (!cell_syscall_allowed(nr)) {
         kprintf("[spore] syscall denied nr=%d\n", (int)nr);
@@ -814,9 +840,12 @@ static int64_t dispatch(struct trap_frame *f) {
     case SYS_WRITEV:
         return sys_writev(a0, a1, a2);
     case SYS_EXIT:
+        kprintf("[kernel] exit(%d)\n", (int)a0);
+        cell_exit_thread_current((int)a0, f);
+        return SYSCALL_SWITCHED;
     case SYS_EXIT_GROUP:
         kprintf("[kernel] exit_group(%d)\n", (int)a0);
-        cell_exit_current((int)a0, f);
+        cell_exit_group_current((int)a0, f);
         return SYSCALL_SWITCHED;
     case SYS_GETPID:
         return cell_current_pid();
@@ -830,7 +859,7 @@ static int64_t dispatch(struct trap_frame *f) {
     case SYS_GETEGID:
         return 0;
     case SYS_CLONE:
-        return sys_clone(f, a0, a1);
+        return sys_clone(f, a0, a1, a2, a3, a4);
     case SYS_EXECVE:
         return sys_execve(f, a0, a1, a2);
     case SYS_CLONE3:
@@ -908,6 +937,7 @@ static int64_t dispatch(struct trap_frame *f) {
     case SYS_UNAME:
         return zero_user(a0 == 0 ? a2 : a0, 128);
     case SYS_SET_ROBUST_LIST:
+        return cell_set_robust_list_current(a0);
     case SYS_RT_SIGACTION:
     case SYS_RT_SIGPROCMASK:
     case SYS_NANOSLEEP:
@@ -916,7 +946,7 @@ static int64_t dispatch(struct trap_frame *f) {
     case SYS_SCHED_GETAFFINITY:
         return sys_sched_getaffinity(a2, a1);
     case SYS_SET_TID_ADDRESS:
-        return 1;
+        return cell_set_tid_address_current(a0);
     case SYS_IOCTL:
         return 0;
     case SYS_MKDIRAT:
@@ -966,7 +996,7 @@ void handle_lower_sync(struct trap_frame *frame) {
                 (unsigned)frame->esr_el1,
                 (void *)(uintptr_t)frame->elr_el1,
                 (void *)(uintptr_t)far);
-        cell_exit_current(128, frame);
+        cell_exit_group_current(128, frame);
         return;
     }
     int64_t ret = dispatch(frame);

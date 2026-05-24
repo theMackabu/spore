@@ -1,6 +1,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,16 @@
 #define SYS_SPORE_REAP 0x4002
 #define SYS_SPORE_RESIDENT 0x4003
 #define SYS_SPORE_SET_BUDGET 0x4004
+#define SYS_EXIT 93
 #define SYS_EXIT_GROUP 94
+#define SYS_GETTID 178
+
+#define CLONE_VM 0x00000100
+#define CLONE_FS 0x00000200
+#define CLONE_FILES 0x00000400
+#define CLONE_SIGHAND 0x00000800
+#define CLONE_THREAD 0x00010000
+#define CLONE_SYSVSEM 0x00040000
 
 struct linux_dirent64 {
     uint64_t d_ino;
@@ -37,6 +47,29 @@ static long raw_syscall3(long nr, long a0, long a1, long a2) {
     __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
     return x0;
 }
+
+long spore_clone_start(long flags,
+                       void *stack_top,
+                       int *parent_tid,
+                       void *tls,
+                       int *child_tid,
+                       void (*fn)(void *),
+                       void *arg);
+
+__asm__(
+    ".text\n"
+    ".global spore_clone_start\n"
+    "spore_clone_start:\n"
+    "    mov x8, #220\n"
+    "    svc #0\n"
+    "    cbnz x0, 1f\n"
+    "    mov x0, x6\n"
+    "    blr x5\n"
+    "    mov x8, #93\n"
+    "    mov x0, #0\n"
+    "    svc #0\n"
+    "0:  b 0b\n"
+    "1:  ret\n");
 
 static void exit_group(int code) {
     raw_syscall3(SYS_EXIT_GROUP, code, 0, 0);
@@ -169,6 +202,60 @@ static int phase_c_stdin_demo(void) {
     return ok;
 }
 
+static volatile int thread_slots[2];
+static int thread_demo_pid;
+static int thread_demo_tid;
+
+static unsigned char thread_stack_a[16384] __attribute__((aligned(16)));
+static unsigned char thread_stack_b[16384] __attribute__((aligned(16)));
+
+static void phase_a_thread_entry(void *arg) {
+    long slot = (long)arg;
+    int pid = getpid();
+    int tid = (int)syscall(SYS_GETTID);
+    if (slot >= 0 && slot < 2 && pid == thread_demo_pid && tid != thread_demo_tid) {
+        thread_slots[slot] = tid;
+    }
+    printf("[spore] v3a thread %ld: domain=%d tid=%d\n", slot, pid, tid);
+    raw_syscall3(SYS_EXIT, 0, 0, 0);
+    for (;;) {
+    }
+}
+
+static int phase_a_thread_demo(void) {
+    thread_slots[0] = 0;
+    thread_slots[1] = 0;
+    thread_demo_pid = getpid();
+    thread_demo_tid = (int)syscall(SYS_GETTID);
+    long flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
+                 CLONE_THREAD | CLONE_SYSVSEM;
+    long a = spore_clone_start(flags,
+                               thread_stack_a + sizeof(thread_stack_a),
+                               NULL,
+                               NULL,
+                               NULL,
+                               phase_a_thread_entry,
+                               (void *)0);
+    long b = spore_clone_start(flags,
+                               thread_stack_b + sizeof(thread_stack_b),
+                               NULL,
+                               NULL,
+                               NULL,
+                               phase_a_thread_entry,
+                               (void *)1);
+    if (a < 0 || b < 0) {
+        printf("[spore] v3a raw clone threads: FAIL clone=%ld/%ld\n", a, b);
+        return 0;
+    }
+    for (int i = 0; i < 100000 && (thread_slots[0] == 0 || thread_slots[1] == 0); ++i) {
+        sched_yield();
+    }
+    int ok = thread_slots[0] != 0 && thread_slots[1] != 0 &&
+             thread_slots[0] != thread_slots[1];
+    printf("[spore] v3a raw clone threads: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 static int phase_d_fs_demo(void) {
     int ok = 1;
     if (mkdir("/tmp/spore-demo-d", 0777) != 0) {
@@ -287,6 +374,9 @@ int main(void) {
     close(dfd);
 
     int ok_all = 1;
+    int ok_v3a = phase_a_thread_demo();
+    ok_all = ok_all && ok_v3a;
+
     if (after_touch <= before || after_free >= after_touch) {
         ok_all = 0;
     }

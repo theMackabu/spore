@@ -73,3 +73,10 @@ test_abi = executable('test_abi',
   native: true)
 
 test('abi', test_abi)
+
+test_thread_model = executable('test_thread_model',
+  files('test_thread_model.c'),
+  include_directories: test_include,
+  native: true)
+
+test('thread-model', test_thread_model)
