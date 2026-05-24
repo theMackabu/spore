@@ -1,5 +1,5 @@
 #include "util.h"
 
 int main(void) {
-    return SPORE_ERROR;
+  return SPORE_ERROR;
 }

@@ -14,139 +14,115 @@ static uint64_t total_page_count;
 static uint64_t free_page_count;
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
-    return value & ~(align - 1);
+  return value & ~(align - 1);
 }
 
 static uint64_t align_up(uint64_t value, uint64_t align) {
-    return (value + align - 1) & ~(align - 1);
+  return (value + align - 1) & ~(align - 1);
 }
 
 static void set_used(uint64_t page) {
-    uint64_t mask = 1ull << (page % BITS_PER_WORD);
-    uint64_t *word = &bitmap[page / BITS_PER_WORD];
-    if ((*word & mask) == 0) {
-        *word |= mask;
-        if (free_page_count > 0) {
-            --free_page_count;
-        }
-    }
-    if (refcounts[page] == 0) {
-        refcounts[page] = 1;
-    }
+  uint64_t mask = 1ull << (page % BITS_PER_WORD);
+  uint64_t *word = &bitmap[page / BITS_PER_WORD];
+  if ((*word & mask) == 0) {
+    *word |= mask;
+    if (free_page_count > 0) { --free_page_count; }
+  }
+  if (refcounts[page] == 0) { refcounts[page] = 1; }
 }
 
 static void set_free(uint64_t page) {
-    uint64_t mask = 1ull << (page % BITS_PER_WORD);
-    uint64_t *word = &bitmap[page / BITS_PER_WORD];
-    if ((*word & mask) != 0) {
-        *word &= ~mask;
-        ++free_page_count;
-    }
-    refcounts[page] = 0;
+  uint64_t mask = 1ull << (page % BITS_PER_WORD);
+  uint64_t *word = &bitmap[page / BITS_PER_WORD];
+  if ((*word & mask) != 0) {
+    *word &= ~mask;
+    ++free_page_count;
+  }
+  refcounts[page] = 0;
 }
 
 static bool is_free(uint64_t page) {
-    return (bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD))) == 0;
+  return (bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD))) == 0;
 }
 
-void pmm_init(uint64_t hhdm_offset,
-              const struct spore_memmap_entry *memmap,
-              uint32_t memmap_count) {
-    hhdm_base = (uint64_t *)(uintptr_t)hhdm_offset;
-    for (size_t i = 0; i < PMM_BITMAP_WORDS; ++i) {
-        bitmap[i] = UINT64_MAX;
-    }
-    for (size_t i = 0; i < PMM_MAX_PAGES; ++i) {
-        refcounts[i] = 0;
-    }
-    total_page_count = PMM_MAX_PAGES;
-    free_page_count = 0;
+void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uint32_t memmap_count) {
+  hhdm_base = (uint64_t *)(uintptr_t)hhdm_offset;
+  for (size_t i = 0; i < PMM_BITMAP_WORDS; ++i) {
+    bitmap[i] = UINT64_MAX;
+  }
+  for (size_t i = 0; i < PMM_MAX_PAGES; ++i) {
+    refcounts[i] = 0;
+  }
+  total_page_count = PMM_MAX_PAGES;
+  free_page_count = 0;
 
-    for (uint32_t i = 0; i < memmap_count; ++i) {
-        const struct spore_memmap_entry *entry = &memmap[i];
-        if (entry->type != SPORE_MEMMAP_USABLE) {
-            continue;
-        }
+  for (uint32_t i = 0; i < memmap_count; ++i) {
+    const struct spore_memmap_entry *entry = &memmap[i];
+    if (entry->type != SPORE_MEMMAP_USABLE) { continue; }
 
-        uint64_t start = align_up(entry->base, PAGE_SIZE);
-        uint64_t end = align_down(entry->base + entry->length, PAGE_SIZE);
-        if (end > PMM_MAX_PHYS) {
-            end = PMM_MAX_PHYS;
-        }
-        for (uint64_t pa = start; pa < end; pa += PAGE_SIZE) {
-            set_free(pa / PAGE_SIZE);
-        }
+    uint64_t start = align_up(entry->base, PAGE_SIZE);
+    uint64_t end = align_down(entry->base + entry->length, PAGE_SIZE);
+    if (end > PMM_MAX_PHYS) { end = PMM_MAX_PHYS; }
+    for (uint64_t pa = start; pa < end; pa += PAGE_SIZE) {
+      set_free(pa / PAGE_SIZE);
     }
+  }
 
-    for (uint64_t pa = 0; pa < 0x100000; pa += PAGE_SIZE) {
-        set_used(pa / PAGE_SIZE);
-    }
+  for (uint64_t pa = 0; pa < 0x100000; pa += PAGE_SIZE) {
+    set_used(pa / PAGE_SIZE);
+  }
 }
 
 uint64_t pmm_alloc_page(void) {
-    for (uint64_t page = 0x100000 / PAGE_SIZE; page < PMM_MAX_PAGES; ++page) {
-        if (is_free(page)) {
-            set_used(page);
-            return page * PAGE_SIZE;
-        }
+  for (uint64_t page = 0x100000 / PAGE_SIZE; page < PMM_MAX_PAGES; ++page) {
+    if (is_free(page)) {
+      set_used(page);
+      return page * PAGE_SIZE;
     }
-    return 0;
+  }
+  return 0;
 }
 
 uint64_t pmm_alloc_zero_page(void) {
-    uint64_t pa = pmm_alloc_page();
-    if (pa != 0) {
-        kmemset((void *)((uintptr_t)hhdm_base + pa), 0, PAGE_SIZE);
-    }
-    return pa;
+  uint64_t pa = pmm_alloc_page();
+  if (pa != 0) { kmemset((void *)((uintptr_t)hhdm_base + pa), 0, PAGE_SIZE); }
+  return pa;
 }
 
 void pmm_free_page(uint64_t pa) {
-    if ((pa % PAGE_SIZE) != 0 || pa >= PMM_MAX_PHYS) {
-        return;
-    }
+  if ((pa % PAGE_SIZE) != 0 || pa >= PMM_MAX_PHYS) { return; }
 
-    // v1 is cooperative and uniprocessor; refcounts are intentionally unlocked.
-    // Preemptive/SMP v2 must revisit this.
-    uint64_t page = pa / PAGE_SIZE;
-    if (refcounts[page] == 0) {
-        return;
-    }
-    --refcounts[page];
-    if (refcounts[page] == 0) {
-        set_free(page);
-    }
+  // v1 is cooperative and uniprocessor; refcounts are intentionally unlocked.
+  // Preemptive/SMP v2 must revisit this.
+  uint64_t page = pa / PAGE_SIZE;
+  if (refcounts[page] == 0) { return; }
+  --refcounts[page];
+  if (refcounts[page] == 0) { set_free(page); }
 }
 
 bool pmm_share_page(uint64_t pa) {
-    if ((pa % PAGE_SIZE) != 0 || pa >= PMM_MAX_PHYS) {
-        return false;
-    }
+  if ((pa % PAGE_SIZE) != 0 || pa >= PMM_MAX_PHYS) { return false; }
 
-    // v1 is cooperative and uniprocessor; refcounts are intentionally unlocked.
-    uint64_t page = pa / PAGE_SIZE;
-    if (refcounts[page] == 0 || refcounts[page] == UINT16_MAX) {
-        return false;
-    }
-    ++refcounts[page];
-    return true;
+  // v1 is cooperative and uniprocessor; refcounts are intentionally unlocked.
+  uint64_t page = pa / PAGE_SIZE;
+  if (refcounts[page] == 0 || refcounts[page] == UINT16_MAX) { return false; }
+  ++refcounts[page];
+  return true;
 }
 
 bool pmm_is_last_ref(uint64_t pa) {
-    return pmm_refcount(pa) == 1;
+  return pmm_refcount(pa) == 1;
 }
 
 uint16_t pmm_refcount(uint64_t pa) {
-    if ((pa % PAGE_SIZE) != 0 || pa >= PMM_MAX_PHYS) {
-        return 0;
-    }
-    return refcounts[pa / PAGE_SIZE];
+  if ((pa % PAGE_SIZE) != 0 || pa >= PMM_MAX_PHYS) { return 0; }
+  return refcounts[pa / PAGE_SIZE];
 }
 
 uint64_t pmm_total_pages(void) {
-    return total_page_count;
+  return total_page_count;
 }
 
 uint64_t pmm_free_pages(void) {
-    return free_page_count;
+  return free_page_count;
 }

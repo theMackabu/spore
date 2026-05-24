@@ -3,6 +3,6 @@
 #include <stdio.h>
 
 int main(void) {
-    puts("escalate: should not run");
-    return SPORE_ERROR;
+  puts("escalate: should not run");
+  return SPORE_ERROR;
 }

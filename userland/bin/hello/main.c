@@ -3,6 +3,6 @@
 #include <stdio.h>
 
 int main(void) {
-    puts("hello, world");
-    return SPORE_OK;
+  puts("hello, world");
+  return SPORE_OK;
 }

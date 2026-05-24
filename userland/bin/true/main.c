@@ -1,5 +1,5 @@
 #include "util.h"
 
 int main(void) {
-    return SPORE_OK;
+  return SPORE_OK;
 }

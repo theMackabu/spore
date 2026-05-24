@@ -7,5 +7,3 @@ build/
 *.o
 *.iso
 *.img
-
-third_party/limine/limine

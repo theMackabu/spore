@@ -16,6 +16,19 @@ kernel_c_args = [
   '-Wno-unused-function',
 ]
 
+kernel_target_args = []
+kernel_link_args = []
+if not meson.is_cross_build()
+  kernel_target_args = ['--target=aarch64-none-elf']
+  kernel_link_args = kernel_target_args + [
+    '-fuse-ld=lld',
+    '-nostdlib',
+    '-static',
+    '-Wl,-z,max-page-size=0x1000',
+    '-T', meson.current_source_dir() / 'linker.ld',
+  ]
+endif
+
 kernel_sources = files(
   'src/arch/aarch64/boot.S',
   'src/arch/aarch64/exceptions.c',
@@ -40,7 +53,8 @@ kernel_elf = executable('kernel.elf',
   include_directories: [
     include_directories('src/include'),
   ],
-  c_args: kernel_c_args,
+  c_args: kernel_target_args + kernel_c_args,
+  link_args: kernel_link_args,
   link_depends: files('linker.ld'),
   install: false)
 
@@ -86,7 +100,10 @@ image = custom_target('image.iso',
     boot_efi,
     image_iso,
     '@OUTPUT@',
+    files('../userland/image.manifest'),
+    meson.project_build_root(),
   ],
+  depends: userland_image_targets,
   build_always_stale: true,
   build_by_default: true)
 
@@ -107,7 +124,9 @@ test_image = custom_target('test_image.iso',
     test_image_iso,
     '@OUTPUT@',
     files('../userland/tests/integration/image.manifest'),
+    meson.project_build_root(),
   ],
+  depends: userland_test_targets,
   build_always_stale: true)
 
 qemu_code = run_command('sh', '-c',
@@ -148,11 +167,15 @@ test_qemu_args = qemu_base_args + [
 ]
 
 run_target('run',
-  command: qemu_args,
+  command: [
+    files('../tools/run_qemu.py'),
+    '--mode', 'plain',
+  ] + qemu_args,
   depends: image)
 
 run_target('run-tests',
   command: [
     files('../tools/run_qemu.py'),
+    '--mode', 'filter',
   ] + test_qemu_args,
   depends: test_image)

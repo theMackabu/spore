@@ -3,9 +3,9 @@
 #include <stddef.h>
 
 enum spore_exit {
-    SPORE_OK = 0,
-    SPORE_USAGE = 64,
-    SPORE_ERROR = 1,
+  SPORE_OK = 0,
+  SPORE_USAGE = 64,
+  SPORE_ERROR = 1,
 };
 
 int spore_eprintf(const char *fmt, ...);
