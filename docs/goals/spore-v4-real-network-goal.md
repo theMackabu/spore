@@ -9,9 +9,10 @@ v4 makes networking honest: virtio-net RX/TX queues, Ethernet, ARP, IPv4, ICMP,
 UDP to a real host endpoint, then egress policy enforced immediately before a
 packet enters the TX queue.
 
-This goal is networking hardening, not a new userland or process model goal.
-Threads, futex, filesystem, bootloader, shell, and existing policy semantics
-must keep passing unchanged.
+This goal is networking hardening, not a broad userland or process model goal.
+The one userland addition is a tiny `/bin/ping` utility to exercise ICMP from
+EL0. Threads, futex, filesystem, bootloader, shell, and existing policy
+semantics must keep passing unchanged.
 
 ## End state
 
@@ -21,6 +22,8 @@ must keep passing unchanged.
 - ARP resolution works for the configured gateway/host peer.
 - IPv4 parses and emits valid headers/checksums.
 - ICMP echo requests receive echo replies.
+- A static musl `/bin/ping` sends ICMP echo requests and reports replies through
+  the normal socket/syscall path.
 - UDP sockets send packets to, and receive packets from, a real host UDP echo
   endpoint.
 - `recvfrom` blocks the calling thread and wakes on packet arrival.
@@ -113,6 +116,8 @@ Implement enough IPv4 to prove bidirectional packet correctness.
 - Drop malformed or unsupported packets with counters.
 - Emit valid IPv4 headers/checksums.
 - Reply to ICMP echo requests.
+- Add `/bin/ping` as a normal static musl userland tool; it should use the
+  kernel's ICMP/socket path rather than a private test hook.
 
 Gate tag: `v4c-ipv4-icmp`
 
@@ -120,6 +125,9 @@ Validation:
 
 - Host can ping the guest if the chosen harness supports it, or an injected ICMP
   echo request receives a valid echo reply.
+- Guest `/bin/ping 10.0.2.2` reports at least one successful reply from the
+  QEMU gateway/host peer, or the harness documents why guest-originated ICMP is
+  not available and runs an equivalent packet-level ICMP echo test.
 - Malformed checksum/length unit tests reject bad packets.
 
 ## Phase D: real UDP sockets
@@ -186,6 +194,8 @@ sendto: Operation not permitted
 sent 2 bytes
 / $ confine net:udp:10.0.2.0/24:5555 udp-send 10.0.3.2 5555 hi
 sendto: Operation not permitted
+/ $ ping 10.0.2.2
+64 bytes from 10.0.2.2: icmp_seq=1
 / $ echo shell alive
 shell alive
 ```
@@ -201,6 +211,7 @@ Required regression set:
 - v3 egress pressure suite
 - real host UDP echo path
 - ICMP/ARP packet smoke
+- `/bin/ping` guest-originated ICMP demo
 
 ## Fork-latency side quest
 
@@ -234,4 +245,3 @@ flush, or logging noise.
 - Real hardware networking.
 - Replacing QEMU user networking with a host-specific mandatory tap setup.
 - New filesystem or shell features.
-
