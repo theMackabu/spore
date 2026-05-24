@@ -45,6 +45,7 @@ enum {
   SYS_WRITE = 64,
   SYS_READV = 65,
   SYS_WRITEV = 66,
+  SYS_PPOLL = 73,
   SYS_READLINKAT = 78,
   SYS_NEWFSTATAT = 79,
   SYS_FSTAT = 80,
@@ -143,6 +144,11 @@ enum {
   TCSETSF = 0x5404,
   TIOCGWINSZ = 0x5413,
   TIOCSWINSZ = 0x5414,
+  POLLIN = 0x0001,
+  POLLOUT = 0x0004,
+  POLLERR = 0x0008,
+  POLLHUP = 0x0010,
+  POLLNVAL = 0x0020,
   NCCS = 32,
   ICANON = 0000002,
   ECHO = 0000010,
@@ -172,6 +178,7 @@ enum {
   EAFNOSUPPORT = 97,
   EPROTONOSUPPORT = 93,
   MAX_IOVCNT = 1024,
+  MAX_POLL_FDS = 64,
   MAX_EXEC_ARGS = 8,
   MAX_EXEC_ENVS = 8,
   MAX_EXEC_STRING = 128,
@@ -204,6 +211,12 @@ struct iovec64 {
 struct timespec64 {
   int64_t tv_sec;
   int64_t tv_nsec;
+};
+
+struct pollfd64 {
+  int32_t fd;
+  int16_t events;
+  int16_t revents;
 };
 
 struct utsname64 {
@@ -640,6 +653,74 @@ static int64_t sys_readv(uint64_t fd, uint64_t iov, uint64_t iovcnt) {
     if ((uint64_t)got != v.len) { break; }
   }
   return total;
+}
+
+static uint64_t read_cntvct(void) {
+  uint64_t cnt;
+  __asm__ volatile("mrs %0, cntvct_el0" : "=r"(cnt));
+  return cnt;
+}
+
+static uint64_t read_cntfrq(void) {
+  uint64_t freq;
+  __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+  return freq;
+}
+
+static int64_t poll_once(uint64_t fds, uint64_t nfds) {
+  int64_t ready = 0;
+  for (uint64_t i = 0; i < nfds; ++i) {
+    struct pollfd64 pfd;
+    uint64_t addr = fds + i * sizeof(pfd);
+    if (!vmm_copy_from_user(active_as(), &pfd, addr, sizeof(pfd))) { return -(int64_t)EFAULT; }
+
+    int revents = 0;
+    if (pfd.fd < 0) {
+      revents = 0;
+    } else {
+      revents = cell_fd_poll_events(pfd.fd, pfd.events);
+    }
+    pfd.revents = (int16_t)revents;
+    if (!vmm_copy_to_user(active_as(), addr, &pfd, sizeof(pfd))) { return -(int64_t)EFAULT; }
+    if (revents != 0) { ++ready; }
+  }
+  return ready;
+}
+
+static int64_t sys_ppoll(uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask, uint64_t sigsetsize) {
+  (void)sigmask;
+  (void)sigsetsize;
+  if (nfds > MAX_POLL_FDS) { return -(int64_t)EINVAL; }
+  uint64_t fds_bytes = nfds * sizeof(struct pollfd64);
+  if ((nfds != 0 && fds_bytes / sizeof(struct pollfd64) != nfds) || !user_readable(fds, fds_bytes) ||
+      !user_writable(fds, fds_bytes)) {
+    return -(int64_t)EFAULT;
+  }
+
+  struct timespec64 timeout = {.tv_sec = 0, .tv_nsec = 0};
+  bool has_timeout = timeout_addr != 0;
+  if (has_timeout) {
+    if (!user_readable(timeout_addr, sizeof(timeout)) ||
+        !vmm_copy_from_user(active_as(), &timeout, timeout_addr, sizeof(timeout))) {
+      return -(int64_t)EFAULT;
+    }
+    if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 || timeout.tv_nsec >= 1000000000) { return -(int64_t)EINVAL; }
+  }
+
+  int64_t ready = poll_once(fds, nfds);
+  if (ready != 0 || !has_timeout || (timeout.tv_sec == 0 && timeout.tv_nsec == 0)) { return ready; }
+
+  uint64_t freq = read_cntfrq();
+  if (freq == 0) { return ready; }
+  uint64_t wait_ticks = (uint64_t)timeout.tv_sec * freq + ((uint64_t)timeout.tv_nsec * freq) / 1000000000ull;
+  if (wait_ticks == 0) { wait_ticks = 1; }
+  uint64_t start = read_cntvct();
+  while (read_cntvct() - start < wait_ticks) {
+    ready = poll_once(fds, nfds);
+    if (ready != 0) { return ready; }
+    __asm__ volatile("yield");
+  }
+  return 0;
 }
 
 static int64_t sys_brk(uint64_t requested) {
@@ -1418,6 +1499,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_WRITE] = &&l_write,
     [SYS_READV] = &&l_readv,
     [SYS_WRITEV] = &&l_writev,
+    [SYS_PPOLL] = &&l_ppoll,
     [SYS_READLINKAT] = &&l_readlinkat,
     [SYS_NEWFSTATAT] = &&l_newfstatat,
     [SYS_FSTAT] = &&l_fstat,
@@ -1516,6 +1598,8 @@ l_readv:
   return sys_readv(a0, a1, a2);
 l_writev:
   return sys_writev(a0, a1, a2);
+l_ppoll:
+  return sys_ppoll(a0, a1, a2, a3, a4);
 l_exit:
   kprintf("[kernel] exit(%d)\n", (int)a0);
   cell_exit_thread_current((int)a0, f);

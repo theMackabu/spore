@@ -1949,13 +1949,17 @@ static void tty_history_down(void) {
 
 static bool tty_try_escape(void) {
   char bracket;
-  char code;
   if (!pl011_getc(&bracket)) { return true; }
   if (bracket != '[') { return true; }
-  if (!pl011_getc(&code)) { return true; }
-  if (code == 'A') {
+
+  char final = '\0';
+  while (pl011_getc(&final)) {
+    if (final >= '@' && final <= '~') { break; }
+  }
+
+  if (final == 'A') {
     tty_history_up();
-  } else if (code == 'B') {
+  } else if (final == 'B') {
     tty_history_down();
   }
   return true;
@@ -2051,6 +2055,33 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     done += got;
   }
   return (int64_t)done;
+}
+
+int cell_fd_poll_events(int fd, int events) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return CELL_POLLNVAL; }
+
+  struct open_file *file = domain->fds[fd];
+  int revents = 0;
+  if ((events & CELL_POLLIN) != 0) {
+    if (file->type == OPEN_STDIN ||
+        (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE))) {
+      if (tty_ready_len != 0 || pl011_poll_rx()) { revents |= CELL_POLLIN; }
+    } else if (file->type == OPEN_SOCKET) {
+      net_poll();
+      if (file->udp_rx_len != 0) { revents |= CELL_POLLIN; }
+    } else if (file->type == OPEN_RAMFS) {
+      revents |= CELL_POLLIN;
+    }
+  }
+
+  if ((events & CELL_POLLOUT) != 0) {
+    if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_RAMFS ||
+        file->type == OPEN_SOCKET) {
+      revents |= CELL_POLLOUT;
+    }
+  }
+  return revents;
 }
 
 int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len) {

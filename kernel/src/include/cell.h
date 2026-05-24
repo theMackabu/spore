@@ -21,6 +21,14 @@ enum {
   CELL_SWITCHED = -0x40000000,
 };
 
+enum cell_poll_events {
+  CELL_POLLIN = 0x0001,
+  CELL_POLLOUT = 0x0004,
+  CELL_POLLERR = 0x0008,
+  CELL_POLLHUP = 0x0010,
+  CELL_POLLNVAL = 0x0020,
+};
+
 enum thread_state {
   THREAD_UNUSED,
   THREAD_RUNNABLE,
@@ -189,6 +197,7 @@ bool cell_proc_exists(int pid);
 int cell_proc_pid_at(size_t index);
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len);
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
+int cell_fd_poll_events(int fd, int events);
 int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags);

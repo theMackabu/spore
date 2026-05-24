@@ -153,6 +153,14 @@ bool pl011_getc(char *out) {
   return true;
 }
 
+bool pl011_poll_rx(void) {
+  if (uart_base == NULL) { return rx_tail != rx_head; }
+  while ((mmio_read32(PL011_FR) & PL011_FR_RXFE) == 0) {
+    tty_control_char((char)(mmio_read32(PL011_DR) & 0xffu));
+  }
+  return rx_tail != rx_head;
+}
+
 void pl011_get_winsize(uint16_t *rows, uint16_t *cols) {
   *rows = tty_rows;
   *cols = tty_cols;
@@ -169,9 +177,7 @@ bool pl011_handle_irq(void) {
   if (uart_base == NULL) { return false; }
   uint32_t mis = mmio_read32(PL011_MIS);
   if ((mis & (PL011_INT_RX | PL011_INT_RT)) == 0) { return false; }
-  while ((mmio_read32(PL011_FR) & PL011_FR_RXFE) == 0) {
-    tty_control_char((char)(mmio_read32(PL011_DR) & 0xffu));
-  }
+  (void)pl011_poll_rx();
   mmio_write32(PL011_ICR, PL011_INT_RX | PL011_INT_RT);
   return true;
 }
