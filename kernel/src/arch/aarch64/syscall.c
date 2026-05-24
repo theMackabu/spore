@@ -28,6 +28,8 @@ enum {
   SYS_LINKAT = 37,
   SYS_UNLINKAT = 35,
   SYS_RENAMEAT = 38,
+  SYS_STATFS = 43,
+  SYS_FSTATFS = 44,
   SYS_FCHMOD = 52,
   SYS_FCHMODAT = 53,
   SYS_FTRUNCATE = 46,
@@ -90,6 +92,7 @@ enum {
   SYS_PRLIMIT64 = 261,
   SYS_RENAMEAT2 = 276,
   SYS_GETRANDOM = 278,
+  SYS_STATX = 291,
   SYS_CLONE3 = 435,
   SYS_SPORE_SNAPSHOT = 0x4000,
   SYS_SPORE_SPAWN = 0x4001,
@@ -122,6 +125,7 @@ enum {
   MADV_DONTNEED = 4,
   MADV_FREE = 8,
   AT_FDCWD = -100,
+  AT_EMPTY_PATH = 0x1000,
   O_ACCMODE = 3,
   O_WRONLY = 1,
   O_RDWR = 2,
@@ -168,6 +172,22 @@ enum {
   MAX_EXEC_ARGS = 8,
   MAX_EXEC_ENVS = 8,
   MAX_EXEC_STRING = 128,
+  EXT2_SUPER_MAGIC = 0xef53,
+  TMPFS_MAGIC = 0x01021994,
+  PROC_SUPER_MAGIC = 0x9fa0,
+  DEVFS_SUPER_MAGIC = 0x1373,
+  STATX_TYPE = 0x00000001,
+  STATX_MODE = 0x00000002,
+  STATX_NLINK = 0x00000004,
+  STATX_UID = 0x00000008,
+  STATX_GID = 0x00000010,
+  STATX_ATIME = 0x00000020,
+  STATX_MTIME = 0x00000040,
+  STATX_CTIME = 0x00000080,
+  STATX_INO = 0x00000100,
+  STATX_SIZE = 0x00000200,
+  STATX_BLOCKS = 0x00000400,
+  STATX_BASIC_STATS = 0x000007ff,
 };
 
 #define SYSCALL_SWITCHED ((int64_t)CELL_SWITCHED)
@@ -212,6 +232,54 @@ struct stat64_aarch64 {
   int64_t st_ctime_sec;
   int64_t st_ctime_nsec;
   uint32_t __unused[2];
+};
+
+struct statfs64_aarch64 {
+  uint64_t f_type;
+  uint64_t f_bsize;
+  uint64_t f_blocks;
+  uint64_t f_bfree;
+  uint64_t f_bavail;
+  uint64_t f_files;
+  uint64_t f_ffree;
+  int32_t f_fsid[2];
+  uint64_t f_namelen;
+  uint64_t f_frsize;
+  uint64_t f_flags;
+  uint64_t f_spare[4];
+};
+
+struct statx_timestamp64 {
+  int64_t tv_sec;
+  uint32_t tv_nsec;
+  int32_t __reserved;
+};
+
+struct statx64 {
+  uint32_t stx_mask;
+  uint32_t stx_blksize;
+  uint64_t stx_attributes;
+  uint32_t stx_nlink;
+  uint32_t stx_uid;
+  uint32_t stx_gid;
+  uint16_t stx_mode;
+  uint16_t __spare0;
+  uint64_t stx_ino;
+  uint64_t stx_size;
+  uint64_t stx_blocks;
+  uint64_t stx_attributes_mask;
+  struct statx_timestamp64 stx_atime;
+  struct statx_timestamp64 stx_btime;
+  struct statx_timestamp64 stx_ctime;
+  struct statx_timestamp64 stx_mtime;
+  uint32_t stx_rdev_major;
+  uint32_t stx_rdev_minor;
+  uint32_t stx_dev_major;
+  uint32_t stx_dev_minor;
+  uint64_t stx_mnt_id;
+  uint64_t stx_dio_mem_align;
+  uint64_t stx_dio_offset_align;
+  uint64_t __spare3[12];
 };
 
 struct linux_dirent64_header {
@@ -810,12 +878,129 @@ static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   st->st_blocks = (int64_t)((node->size + 511) / 512);
 }
 
+static uint32_t dev_major(uint64_t dev) {
+  return (uint32_t)(dev >> 8);
+}
+
+static uint32_t dev_minor(uint64_t dev) {
+  return (uint32_t)(dev & 0xffu);
+}
+
+static uint64_t statfs_magic_for_path(const char *path) {
+  if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' && path[3] == 'o' && path[4] == 'c' &&
+      (path[5] == '\0' || path[5] == '/')) {
+    return PROC_SUPER_MAGIC;
+  }
+  if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' && (path[4] == '\0' || path[4] == '/')) {
+    return DEVFS_SUPER_MAGIC;
+  }
+  if (path[0] == '/' && path[1] == 't' && path[2] == 'm' && path[3] == 'p' && (path[4] == '\0' || path[4] == '/')) {
+    return TMPFS_MAGIC;
+  }
+  return EXT2_SUPER_MAGIC;
+}
+
+static void fill_statfs(struct statfs64_aarch64 *st, const char *path) {
+  struct vfs_fs_info info;
+  kmemset(st, 0, sizeof(*st));
+  if (!vfs_fs_info(&info)) {
+    info.block_size = PAGE_SIZE;
+    info.block_count = 0;
+    info.free_blocks = 0;
+    info.inode_count = 0;
+    info.free_inodes = 0;
+  }
+  st->f_type = statfs_magic_for_path(path);
+  st->f_bsize = info.block_size == 0 ? PAGE_SIZE : info.block_size;
+  st->f_blocks = info.block_count;
+  st->f_bfree = info.free_blocks;
+  st->f_bavail = info.free_blocks;
+  st->f_files = info.inode_count;
+  st->f_ffree = info.free_inodes;
+  st->f_namelen = 255;
+  st->f_frsize = st->f_bsize;
+}
+
+static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
+  kmemset(st, 0, sizeof(*st));
+  st->stx_mask = STATX_BASIC_STATS;
+  st->stx_blksize = PAGE_SIZE;
+  st->stx_nlink = node->links_count == 0 ? 1 : node->links_count;
+  st->stx_mode = node->mode;
+  st->stx_ino = node->ino;
+  st->stx_size = node->size;
+  st->stx_blocks = (node->size + 511) / 512;
+  st->stx_rdev_major = dev_major(node->rdev);
+  st->stx_rdev_minor = dev_minor(node->rdev);
+  st->stx_dev_major = dev_major(node->dev_id);
+  st->stx_dev_minor = dev_minor(node->dev_id);
+}
+
 static int64_t sys_fstat(uint64_t fd, uint64_t stat_addr) {
   struct vfs_node node;
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
   struct stat64_aarch64 st;
   fill_stat(&st, &node);
   return user_writable(stat_addr, sizeof(st)) && vmm_copy_to_user(active_as(), stat_addr, &st, sizeof(st))
+           ? 0
+           : -(int64_t)EFAULT;
+}
+
+static int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr) {
+  char path[128];
+  if (!copy_resolved_path(path_addr, path, sizeof(path))) {
+    return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
+  }
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
+  struct statfs64_aarch64 st;
+  fill_statfs(&st, path);
+  return user_writable(statfs_addr, sizeof(st)) && vmm_copy_to_user(active_as(), statfs_addr, &st, sizeof(st))
+           ? 0
+           : -(int64_t)EFAULT;
+}
+
+static int64_t sys_fstatfs(uint64_t fd, uint64_t statfs_addr) {
+  struct vfs_node node;
+  if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
+  struct statfs64_aarch64 st;
+  fill_statfs(&st, node.backend == VFS_RAMFS ? "/tmp" : "/");
+  return user_writable(statfs_addr, sizeof(st)) && vmm_copy_to_user(active_as(), statfs_addr, &st, sizeof(st))
+           ? 0
+           : -(int64_t)EFAULT;
+}
+
+static int64_t sys_statx(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mask, uint64_t statx_addr) {
+  (void)mask;
+  struct vfs_node node;
+  if ((flags & AT_EMPTY_PATH) != 0 && path_addr != 0) {
+    char empty[1];
+    if (!vmm_copy_from_user(active_as(), empty, path_addr, 1)) { return -(int64_t)EFAULT; }
+    if (empty[0] == '\0') {
+      if ((int64_t)dirfd == AT_FDCWD) {
+        char cwd[128];
+        if (!normalize_path("/", cell_current_cwd(), cwd, sizeof(cwd)) || !vfs_lookup(cwd, &node)) {
+          return -(int64_t)ENOENT;
+        }
+      } else if (!cell_fd_stat((int)dirfd, &node)) {
+        return -(int64_t)EBADF;
+      }
+      struct statx64 st;
+      fill_statx(&st, &node);
+      return user_writable(statx_addr, sizeof(st)) && vmm_copy_to_user(active_as(), statx_addr, &st, sizeof(st))
+               ? 0
+               : -(int64_t)EFAULT;
+    }
+  }
+  if ((int64_t)dirfd != AT_FDCWD) { return -(int64_t)EINVAL; }
+  char path[128];
+  if (!copy_resolved_path(path_addr, path, sizeof(path))) {
+    return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
+  }
+  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
+  struct statx64 st;
+  fill_statx(&st, &node);
+  return user_writable(statx_addr, sizeof(st)) && vmm_copy_to_user(active_as(), statx_addr, &st, sizeof(st))
            ? 0
            : -(int64_t)EFAULT;
 }
@@ -1106,6 +1291,8 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_LINKAT] = &&l_linkat,
     [SYS_UNLINKAT] = &&l_unlinkat,
     [SYS_RENAMEAT] = &&l_renameat,
+    [SYS_STATFS] = &&l_statfs,
+    [SYS_FSTATFS] = &&l_fstatfs,
     [SYS_FTRUNCATE] = &&l_ftruncate,
     [SYS_CHDIR] = &&l_chdir,
     [SYS_FCHDIR] = &&l_fchdir,
@@ -1168,6 +1355,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_PRLIMIT64] = &&l_prlimit64,
     [SYS_RENAMEAT2] = &&l_renameat2,
     [SYS_GETRANDOM] = &&l_getrandom,
+    [SYS_STATX] = &&l_statx,
     [SYS_CLONE3] = &&l_enosys,
   };
   static const void *spore_dispatch[] = {
@@ -1396,6 +1584,12 @@ l_renameat:
   return sys_renameat(a0, a1, a2, a3);
 l_renameat2:
   return a4 == 0 ? sys_renameat(a0, a1, a2, a3) : -(int64_t)EINVAL;
+l_statfs:
+  return sys_statfs(a0, a1);
+l_fstatfs:
+  return sys_fstatfs(a0, a1);
+l_statx:
+  return sys_statx(a0, a1, a2, a3, a4);
 l_fchmod:
   return sys_fchmod(a0, a1);
 l_fchmodat:

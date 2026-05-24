@@ -94,6 +94,7 @@ subdir('bin/ping')
 subdir('bin/udp-echo')
 subdir('bin/udp-send')
 subdir('bin/udp-recv')
+subdir('bin/fastfetch')
 
 subdir('demos/spinner')
 subdir('demos/peeker')

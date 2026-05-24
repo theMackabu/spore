@@ -301,6 +301,25 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   path_join(motd, sizeof(motd), etc_dir, "motd");
   if (!exists(motd)) { write_text_file(motd, "welcome to spore\n"); }
 
+  char passwd[MAX_PATH];
+  path_join(passwd, sizeof(passwd), etc_dir, "passwd");
+  if (!exists(passwd)) { write_text_file(passwd, "root:x:0:0:root:/root:/bin/sh\n"); }
+
+  char group[MAX_PATH];
+  path_join(group, sizeof(group), etc_dir, "group");
+  if (!exists(group)) { write_text_file(group, "root:x:0:\n"); }
+
+  char os_release[MAX_PATH];
+  path_join(os_release, sizeof(os_release), etc_dir, "os-release");
+  if (!exists(os_release)) {
+    write_text_file(os_release,
+                    "NAME=Spore\n"
+                    "PRETTY_NAME=\"Spore 0.4.0\"\n"
+                    "ID=spore\n"
+                    "VERSION_ID=0.4.0\n"
+                    "HOME_URL=\"https://spore.local\"\n");
+  }
+
   char *const mkfs_argv[] = {
     "mke2fs", "-q", "-t", "ext2", "-b", "4096", "-d", (char *)rootfs_dir, (char *)output_root, "131072", NULL,
   };

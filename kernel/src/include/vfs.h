@@ -71,3 +71,4 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);
+uint64_t vfs_exec_cache_pages(void);

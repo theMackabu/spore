@@ -293,6 +293,14 @@ static struct exec_cache_entry *next_exec_entry(uint64_t need) {
   return allocate_exec_entry(entry, need) ? entry : NULL;
 }
 
+uint64_t vfs_exec_cache_pages(void) {
+  uint64_t pages = 0;
+  for (size_t i = 0; i < EXEC_CACHE_ENTRIES; ++i) {
+    if (exec_cache[i].data != NULL) { pages += exec_cache[i].cap / PAGE_SIZE; }
+  }
+  return pages;
+}
+
 static bool lookup_ramfs(const char *path, struct vfs_node *out) {
   struct ramfs_node node;
   if (root_ramfs == NULL || !ramfs_lookup_node(root_ramfs, path, &node)) { return false; }

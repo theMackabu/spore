@@ -76,3 +76,5 @@ userland/demos/writer /demos/writer
 userland/demos/memhog /demos/memhog
 userland/demos/escalate /demos/escalate
 userland/demos/signal-crash /demos/signal-crash
+
+userland/bin/fastfetch /bin/fastfetch

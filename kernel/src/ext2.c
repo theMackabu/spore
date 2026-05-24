@@ -99,6 +99,14 @@ static void cache_reset(struct ext2_fs *fs) {
   }
 }
 
+uint64_t ext2_cache_used_pages(void) {
+  uint64_t pages = 0;
+  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
+    if (block_cache[i].valid) { ++pages; }
+  }
+  return pages;
+}
+
 static struct block_cache_entry *cache_find(struct ext2_fs *fs, uint32_t block) {
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     if (block_cache[i].valid && block_cache[i].fs == fs && block_cache[i].block == block) { return &block_cache[i]; }
