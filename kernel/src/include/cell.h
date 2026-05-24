@@ -71,6 +71,9 @@ struct capability_set {
     uint64_t flags;
     uint64_t memory_page_cap;
     uint64_t max_domains;
+    uint32_t egress_ip;
+    uint16_t egress_port;
+    uint8_t egress_proto;
 };
 
 struct cpu_budget {
@@ -126,6 +129,7 @@ const char *cell_current_cwd(void);
 bool cell_set_cwd(const char *path);
 const char *cell_current_fs_root(void);
 bool cell_syscall_allowed(uint64_t nr);
+bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port);
 int cell_apply_policy(const char *manifest);
 bool cell_mmap_allowed(uint64_t pages);
 void cell_save_current(const struct trap_frame *frame);

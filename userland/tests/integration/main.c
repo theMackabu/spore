@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -23,6 +24,7 @@
 #define SYS_SPORE_REAP 0x4002
 #define SYS_SPORE_RESIDENT 0x4003
 #define SYS_SPORE_SET_BUDGET 0x4004
+#define SYS_SPORE_APPLY_POLICY 0x4005
 #define SYS_EXIT 93
 #define SYS_EXIT_GROUP 94
 #define SYS_FUTEX 98
@@ -405,6 +407,55 @@ static int phase_e_udp_demo(void) {
     return ok;
 }
 
+static int udp_send_once(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) {
+        return -1;
+    }
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = be16(5555);
+    sa.sin_addr.s_addr = be32((10u << 24) | (0u << 16) | (2u << 8) | 2u);
+    const char msg[] = "egress";
+    int rc = (int)sendto(fd, msg, sizeof(msg) - 1, 0, (struct sockaddr *)&sa, sizeof(sa));
+    close(fd);
+    return rc;
+}
+
+static void egress_child(const char *manifest, int expect_success) {
+    if (syscall(SYS_SPORE_APPLY_POLICY, manifest) != 0) {
+        exit_group(20);
+    }
+    errno = 0;
+    int rc = udp_send_once();
+    if (expect_success) {
+        exit_group(rc == 6 ? 0 : 21);
+    }
+    exit_group(rc < 0 && errno == EPERM ? 0 : 22);
+}
+
+static int phase_f_egress_demo(void) {
+    pid_t deny = fork();
+    if (deny == 0) {
+        egress_child("net:none", 0);
+    }
+    int status_deny = 0;
+    waitpid(deny, &status_deny, 0);
+
+    pid_t allow = fork();
+    if (allow == 0) {
+        egress_child("net:udp:10.0.2.2:5555", 1);
+    }
+    int status_allow = 0;
+    waitpid(allow, &status_allow, 0);
+
+    int ok = WIFEXITED(status_deny) && WEXITSTATUS(status_deny) == 0 &&
+             WIFEXITED(status_allow) && WEXITSTATUS(status_allow) == 0;
+    printf("[spore] v3f egress allow/deny: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 static int phase_d_fs_demo(void) {
     int ok = 1;
     if (mkdir("/tmp/spore-demo-d", 0777) != 0) {
@@ -531,6 +582,8 @@ int main(void) {
     ok_all = ok_all && ok_v3c;
     int ok_v3e = phase_e_udp_demo();
     ok_all = ok_all && ok_v3e;
+    int ok_v3f = phase_f_egress_demo();
+    ok_all = ok_all && ok_v3f;
 
     if (after_touch <= before || after_free >= after_touch) {
         ok_all = 0;

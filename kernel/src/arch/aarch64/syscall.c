@@ -904,6 +904,9 @@ static int64_t sys_sendto(uint64_t fd,
         ip = sa.sin_addr;
         port = bswap16(sa.sin_port);
     }
+    if (!cell_egress_allowed(IPPROTO_UDP, ip, port)) {
+        return -(int64_t)EPERM;
+    }
     return cell_fd_udp_send((int)fd, ip, port, buf, len);
 }
 

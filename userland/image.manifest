@@ -11,6 +11,10 @@ userland/bin/pwd /bin/pwd
 userland/bin/hello /bin/hello
 userland/bin/true /bin/true
 userland/bin/false /bin/false
+userland/bin/pthread-demo /bin/pthread-demo
+userland/bin/udp-echo /bin/udp-echo
+userland/bin/udp-send /bin/udp-send
+userland/bin/udp-recv /bin/udp-recv
 userland/demos/spinner /demos/spinner
 userland/demos/peeker /demos/peeker
 userland/demos/writer /demos/writer

@@ -20,6 +20,8 @@ enum {
     CELL_O_RDWR = 2,
     CELL_O_APPEND = 02000,
     CAP_ENFORCE = 1u << 0,
+    CAP_EGRESS_ENFORCE = 1u << 1,
+    IPPROTO_UDP = 17,
     EMSGSIZE = 90,
     EAGAIN = 11,
     EFAULT = 14,
@@ -41,6 +43,51 @@ static bool str_eq(const char *a, const char *b) {
         }
     }
     return *a == '\0' && *b == '\0';
+}
+
+static bool starts_with(const char *s, const char *prefix) {
+    while (*prefix != '\0') {
+        if (*s++ != *prefix++) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool parse_dec(const char **cursor, uint32_t max, uint32_t *out) {
+    uint32_t value = 0;
+    const char *p = *cursor;
+    if (*p < '0' || *p > '9') {
+        return false;
+    }
+    while (*p >= '0' && *p <= '9') {
+        value = value * 10u + (uint32_t)(*p - '0');
+        if (value > max) {
+            return false;
+        }
+        ++p;
+    }
+    *cursor = p;
+    *out = value;
+    return true;
+}
+
+static bool parse_ipv4_port(const char *s, uint32_t *ip, uint16_t *port) {
+    uint32_t a;
+    uint32_t b;
+    uint32_t c;
+    uint32_t d;
+    uint32_t p;
+    if (!parse_dec(&s, 255, &a) || *s++ != '.' ||
+        !parse_dec(&s, 255, &b) || *s++ != '.' ||
+        !parse_dec(&s, 255, &c) || *s++ != '.' ||
+        !parse_dec(&s, 255, &d) || *s++ != ':' ||
+        !parse_dec(&s, 65535, &p) || *s != '\0') {
+        return false;
+    }
+    *ip = a | (b << 8) | (c << 16) | (d << 24);
+    *port = (uint16_t)p;
+    return true;
 }
 
 static void poweroff(void) {
@@ -438,6 +485,24 @@ bool cell_syscall_allowed(uint64_t nr) {
     return (domain->caps.syscall_allow[nr / 64] & (1ull << (nr % 64))) != 0;
 }
 
+bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
+    struct domain *domain = current_domain();
+    if (domain == NULL || (domain->caps.flags & CAP_EGRESS_ENFORCE) == 0) {
+        return true;
+    }
+    bool allowed = domain->caps.egress_proto == proto &&
+                   domain->caps.egress_ip == ip &&
+                   domain->caps.egress_port == port;
+    if (!allowed) {
+        kprintf("[spore] egress denied domain=%d proto=%u dst=%x:%u\n",
+                domain->id,
+                (unsigned)proto,
+                (unsigned)ip,
+                (unsigned)port);
+    }
+    return allowed;
+}
+
 bool cell_mmap_allowed(uint64_t pages) {
     struct domain *domain = current_domain();
     return domain == NULL || domain->caps.memory_page_cap == 0 ||
@@ -471,6 +536,18 @@ int cell_apply_policy(const char *manifest) {
         domain->fs_root[4] = '\0';
     } else if (str_eq(manifest, "mem:1")) {
         caps.memory_page_cap = 1;
+    } else if (str_eq(manifest, "net:none")) {
+        caps.flags |= CAP_EGRESS_ENFORCE;
+    } else if (starts_with(manifest, "net:udp:")) {
+        uint32_t ip = 0;
+        uint16_t port = 0;
+        if (!parse_ipv4_port(manifest + 8, &ip, &port)) {
+            return -2;
+        }
+        caps.flags |= CAP_EGRESS_ENFORCE;
+        caps.egress_proto = IPPROTO_UDP;
+        caps.egress_ip = ip;
+        caps.egress_port = port;
     } else {
         return -2;
     }
