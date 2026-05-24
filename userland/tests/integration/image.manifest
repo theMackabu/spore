@@ -1,6 +1,4 @@
 userland/tests/integration /init
 userland/tests/integration/exec_child.c /bin/exec_child
 userland/etc/motd /etc/motd
-userland/etc/passwd /etc/passwd
-userland/etc/group /etc/group
 userland/etc/os-release /etc/os-release

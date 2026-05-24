@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 static struct token parse_tokens[TOKEN_CAP];
+static bool xtrace;
 
 enum { JOB_CAP = 16 };
 
@@ -226,9 +227,58 @@ static int run_confined(const char *manifest, char **argv, const struct redirs *
   return status;
 }
 
+static bool is_name_char(char c, bool first) {
+  return c == '_' || (!first && c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static bool assignment_word(char *word) {
+  char *eq = strchr(word, '=');
+  if (eq == NULL || eq == word) { return false; }
+  for (char *p = word; p < eq; ++p) {
+    if (!is_name_char(*p, p == word)) { return false; }
+  }
+  *eq = '\0';
+  int rc = setenv(word, eq + 1, 1);
+  *eq = '=';
+  return rc == 0;
+}
+
+static bool all_assignments(struct command *cmd) {
+  if (cmd->argc == 0) { return false; }
+  for (int i = 0; i < cmd->argc; ++i) {
+    char *eq = strchr(cmd->argv[i], '=');
+    if (eq == NULL || eq == cmd->argv[i]) { return false; }
+    for (char *p = cmd->argv[i]; p < eq; ++p) {
+      if (!is_name_char(*p, p == cmd->argv[i])) { return false; }
+    }
+  }
+  return true;
+}
+
+static void trace_command(const struct command *cmd) {
+  if (!xtrace || cmd->argc == 0) { return; }
+  const char *ps4 = getenv("PS4");
+  fputs(ps4 == NULL ? "+ " : ps4, stderr);
+  for (int i = 0; i < cmd->argc; ++i) {
+    if (i > 0) { fputc(' ', stderr); }
+    fputs(cmd->argv[i], stderr);
+  }
+  fputc('\n', stderr);
+}
+
 static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   *handled = true;
   if (cmd->argc == 0) { return 0; }
+
+  if (all_assignments(cmd)) {
+    for (int i = 0; i < cmd->argc; ++i) {
+      if (!assignment_word(cmd->argv[i])) {
+        perror("setenv");
+        return 1;
+      }
+    }
+    return 0;
+  }
 
   if (streq(cmd->argv[0], "cd")) {
     const char *path = cmd->argc > 1 ? cmd->argv[1] : getenv("HOME");
@@ -237,6 +287,8 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
       perror("cd");
       return 1;
     }
+    char cwd[128];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) { setenv("PWD", cwd, 1); }
     return 0;
   }
   if (streq(cmd->argv[0], "pwd")) {
@@ -246,9 +298,14 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   }
   if (streq(cmd->argv[0], "exit")) { exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : 0); }
   if (streq(cmd->argv[0], "help")) {
-    puts("builtins: cd pwd exit help export jobs wait fg kill confine runc");
-    puts("syntax: words quotes $VAR $? ; && || & < > >>");
+    puts("builtins: . source cd pwd exit help export unset set select jobs wait fg kill confine runc");
+    puts("syntax: NAME=value words quotes $VAR $? ; && || & < > >>");
+    puts("prompts: PS1 primary, PS2 continuation, PS3 select, PS4 trace");
     return 0;
+  }
+  if (streq(cmd->argv[0], ".") || streq(cmd->argv[0], "source")) {
+    if (cmd->argc < 2) { return usage(cmd->argv[0], "FILE"); }
+    return sh_source_file(cmd->argv[1], last_status, true);
   }
   if (streq(cmd->argv[0], "jobs")) {
     sh_reap_jobs(false);
@@ -337,12 +394,73 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
     }
     return 0;
   }
+  if (streq(cmd->argv[0], "unset")) {
+    for (int i = 1; i < cmd->argc; ++i) {
+      if (unsetenv(cmd->argv[i]) != 0) {
+        perror("unset");
+        return 1;
+      }
+    }
+    return 0;
+  }
+  if (streq(cmd->argv[0], "set")) {
+    for (int i = 1; i < cmd->argc; ++i) {
+      if (streq(cmd->argv[i], "-x")) {
+        xtrace = true;
+      } else if (streq(cmd->argv[i], "+x")) {
+        xtrace = false;
+      } else {
+        return usage("set", "[-x|+x]");
+      }
+    }
+    return 0;
+  }
+  if (streq(cmd->argv[0], "select")) {
+    if (cmd->argc < 3) { return usage("select", "NAME WORD..."); }
+    for (int i = 2; i < cmd->argc; ++i) {
+      printf("%d) %s\n", i - 1, cmd->argv[i]);
+    }
+    const char *ps3 = getenv("PS3");
+    fputs(ps3 == NULL ? "#? " : ps3, stdout);
+    fflush(stdout);
+    char reply[32];
+    if (fgets(reply, sizeof(reply), stdin) == NULL) { return 1; }
+    size_t reply_len = strlen(reply);
+    while (reply_len > 0 && (reply[reply_len - 1] == '\n' || reply[reply_len - 1] == '\r')) {
+      reply[--reply_len] = '\0';
+    }
+    char *end = NULL;
+    long n = strtol(reply, &end, 10);
+    setenv("REPLY", reply, 1);
+    if (n < 1 || n > cmd->argc - 2) {
+      setenv(cmd->argv[1], "", 1);
+      return 1;
+    }
+    setenv(cmd->argv[1], cmd->argv[n + 1], 1);
+    return 0;
+  }
   if ((streq(cmd->argv[0], "confine") || streq(cmd->argv[0], "runc")) && cmd->argc >= 3) {
     return run_confined(cmd->argv[1], &cmd->argv[2], &cmd->redir);
   }
 
   *handled = false;
   return 0;
+}
+
+int sh_source_file(const char *path, int last_status, bool complain) {
+  FILE *file = fopen(path, "r");
+  if (file == NULL) {
+    if (complain) { perror(path); }
+    return complain ? 1 : last_status;
+  }
+
+  char line[LINE_CAP];
+  int status = last_status;
+  while (fgets(line, sizeof(line), file) != NULL) {
+    status = sh_execute_line(line, status);
+  }
+  fclose(file);
+  return status;
 }
 
 int sh_execute_line(char *line, int last_status) {
@@ -363,6 +481,7 @@ int sh_execute_line(char *line, int last_status) {
     bool should_run =
       previous == TOK_SEMI || (previous == TOK_AND && status == 0) || (previous == TOK_OR && status != 0);
     if (cmd.argc > 0 && should_run) {
+      trace_command(&cmd);
       bool handled = false;
       int builtin_status = run_builtin(&cmd, status, &handled);
       status = handled ? builtin_status : run_external(&cmd);

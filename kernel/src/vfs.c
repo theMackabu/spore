@@ -12,6 +12,8 @@ static uint64_t root_hhdm;
 
 bool cell_proc_exists(int pid);
 int cell_proc_pid_at(size_t index);
+uint32_t cell_proc_uid(int pid);
+uint32_t cell_proc_gid(int pid);
 
 enum {
   EXEC_CACHE_ENTRIES = 1,
@@ -125,6 +127,8 @@ static void from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
     .device = node->device,
     .mode = mode,
     .links_count = 1,
+    .uid = node->uid,
+    .gid = node->gid,
     .dev_id = ramfs_mount_dev_id(node->mount),
     .rdev = ramfs_device_rdev(node->device),
     .size = node->size,
@@ -141,6 +145,8 @@ static void from_ext2(const struct ext2_node *node, struct vfs_node *out) {
     .device = RAMFS_DEV_NONE,
     .mode = node->mode,
     .links_count = node->links_count,
+    .uid = node->uid,
+    .gid = node->gid,
     .dev_id = VFS_DEV_EXT2_ROOT,
     .rdev = 0,
     .size = node->size,
@@ -206,6 +212,8 @@ static bool proc_pid_file_node(int pid, enum ramfs_device device, struct vfs_nod
     .device = device,
     .mode = 0100444u,
     .links_count = 1,
+    .uid = cell_proc_uid(pid),
+    .gid = cell_proc_gid(pid),
     .dev_id = VFS_DEV_PROC,
     .proc_pid = pid,
   };
@@ -244,6 +252,8 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
       .device = RAMFS_DEV_NONE,
       .mode = 0040555u,
       .links_count = 1,
+      .uid = cell_proc_uid(pid),
+      .gid = cell_proc_gid(pid),
       .dev_id = VFS_DEV_PROC,
       .proc_pid = pid,
     };
@@ -260,6 +270,8 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
       .device = RAMFS_DEV_NONE,
       .mode = 0040555u,
       .links_count = 1,
+      .uid = cell_proc_uid(pid),
+      .gid = cell_proc_gid(pid),
       .dev_id = VFS_DEV_PROC,
       .proc_pid = -pid,
     };
@@ -278,6 +290,8 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
         .device = RAMFS_DEV_NONE,
         .mode = 0040555u,
         .links_count = 1,
+        .uid = cell_proc_uid(pid),
+        .gid = cell_proc_gid(pid),
         .dev_id = VFS_DEV_PROC,
         .proc_pid = pid,
       };
@@ -494,6 +508,18 @@ bool vfs_chmod(const char *path, uint32_t mode) {
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode) {
   if (node->backend == VFS_EXT2) { return ext2_chmod_node(root_ext2, &node->ext2, mode); }
   return node->backend == VFS_RAMFS && ramfs_chmod_node(node->ramfs.fs, node->ramfs.index, (uint16_t)mode);
+}
+
+bool vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
+  if (root_ext2 != NULL && !ramfs_route(path)) { return ext2_chown(root_ext2, path, uid, gid); }
+  struct ramfs_node node;
+  return root_ramfs != NULL && ramfs_route(path) && ramfs_lookup_node(root_ramfs, path, &node) &&
+         ramfs_chown_node(root_ramfs, node.index, uid, gid);
+}
+
+bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
+  if (node->backend == VFS_EXT2) { return ext2_chown_node(root_ext2, &node->ext2, uid, gid); }
+  return node->backend == VFS_RAMFS && ramfs_chown_node(node->ramfs.fs, node->ramfs.index, uid, gid);
 }
 
 bool vfs_rename(const char *old_path, const char *new_path) {

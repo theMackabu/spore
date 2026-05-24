@@ -7,8 +7,7 @@ userland_os_release = configure_file(
 
 userland_image_data += files(
   'motd',
-  'passwd',
-  'group',
+  'profile',
   'htoprc',
   'fastfetch/config.jsonc',
   'fastfetch/spore.logo',

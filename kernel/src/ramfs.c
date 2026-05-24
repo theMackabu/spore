@@ -200,6 +200,8 @@ static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir,
   fs->nodes[index].writable = writable;
   fs->nodes[index].mount = fs->nodes[parent].mount;
   fs->nodes[index].mode = is_dir ? 0777u : 0666u;
+  fs->nodes[index].uid = 0;
+  fs->nodes[index].gid = 0;
   copy_name(fs->nodes[index].name, name);
   return index;
 }
@@ -215,8 +217,8 @@ static bool device_is_readonly_text(enum ramfs_device device) {
          device == RAMFS_DEV_STAT || device == RAMFS_DEV_FILESYSTEMS || device == RAMFS_DEV_PARTITIONS ||
          device == RAMFS_DEV_DEVICES || device == RAMFS_DEV_PROC_PID_STAT || device == RAMFS_DEV_PROC_PID_STATUS ||
          device == RAMFS_DEV_PROC_PID_CMDLINE || device == RAMFS_DEV_PROC_PID_STATM ||
-         device == RAMFS_DEV_PROC_PID_COMM || device == RAMFS_DEV_PROC_PID_MOUNTS ||
-         device == RAMFS_DEV_PROC_PID_CWD || device == RAMFS_DEV_PROC_PID_EXE;
+         device == RAMFS_DEV_PROC_PID_COMM || device == RAMFS_DEV_PROC_PID_MOUNTS || device == RAMFS_DEV_PROC_PID_CWD ||
+         device == RAMFS_DEV_PROC_PID_EXE;
 }
 
 static void set_mount(struct ramfs *fs, int index, enum ramfs_mount mount) {
@@ -331,6 +333,8 @@ bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
     .mount = node->mount,
     .device = node->device,
     .mode = node->mode,
+    .uid = node->uid,
+    .gid = node->gid,
   };
   return true;
 }
@@ -420,6 +424,13 @@ bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
   fs->nodes[index].mode = mode & 07777u;
+  return true;
+}
+
+bool ramfs_chown_node(struct ramfs *fs, int index, uint32_t uid, uint32_t gid) {
+  if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
+  fs->nodes[index].uid = uid;
+  fs->nodes[index].gid = gid;
   return true;
 }
 

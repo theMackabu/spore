@@ -22,6 +22,8 @@ struct vfs_node {
   enum ramfs_device device;
   uint16_t mode;
   uint16_t links_count;
+  uint32_t uid;
+  uint32_t gid;
   uint64_t dev_id;
   uint64_t rdev;
   int proc_pid;
@@ -66,6 +68,8 @@ bool vfs_symlink(const char *target, const char *link_path);
 bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out);
 bool vfs_chmod(const char *path, uint32_t mode);
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode);
+bool vfs_chown(const char *path, uint32_t uid, uint32_t gid);
+bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid);
 bool vfs_unlink(const char *path);
 bool vfs_rename(const char *old_path, const char *new_path);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);

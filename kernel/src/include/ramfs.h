@@ -63,6 +63,8 @@ struct ramfs_mem_node {
   enum ramfs_mount mount;
   enum ramfs_device device;
   uint16_t mode;
+  uint32_t uid;
+  uint32_t gid;
   int first_page;
   int parent;
   char name[RAMFS_NAME_MAX + 1];
@@ -94,6 +96,8 @@ struct ramfs_node {
   enum ramfs_mount mount;
   enum ramfs_device device;
   uint16_t mode;
+  uint32_t uid;
+  uint32_t gid;
 };
 
 struct ramfs_dirent {
@@ -112,6 +116,7 @@ bool ramfs_mkdir(struct ramfs *fs, const char *path);
 bool ramfs_create(struct ramfs *fs, const char *path, struct ramfs_node *out);
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size);
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode);
+bool ramfs_chown_node(struct ramfs *fs, int index, uint32_t uid, uint32_t gid);
 bool ramfs_unlink(struct ramfs *fs, const char *path);
 bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path);
 bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path);

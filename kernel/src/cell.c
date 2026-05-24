@@ -233,6 +233,10 @@ static struct domain *alloc_domain(void) {
       domains[i].used = true;
       domains[i].refcount = 0;
       domains[i].id = next_domain_id++;
+      domains[i].uid = 0;
+      domains[i].euid = 0;
+      domains[i].gid = 0;
+      domains[i].egid = 0;
       domains[i].start_ticks = scheduler_ticks;
       copy_cstr(domains[i].name, sizeof(domains[i].name), "?");
       copy_cstr(domains[i].exec_path, sizeof(domains[i].exec_path), "");
@@ -330,6 +334,10 @@ static void copy_domain_metadata(struct domain *dst, const struct domain *src) {
   kmemcpy(dst->cmdline, src->cmdline, sizeof(dst->cmdline));
   dst->caps = src->caps;
   dst->budget = src->budget;
+  dst->uid = src->uid;
+  dst->euid = src->euid;
+  dst->gid = src->gid;
+  dst->egid = src->egid;
   dst->start_ticks = scheduler_ticks;
   dst->cpu_ticks = 0;
 }
@@ -527,6 +535,51 @@ int cell_current_ppid(void) {
   return domain == NULL ? 0 : domain->parent_id;
 }
 
+uint32_t cell_current_uid(void) {
+  struct domain *domain = current_domain();
+  return domain == NULL ? 0 : domain->uid;
+}
+
+uint32_t cell_current_euid(void) {
+  struct domain *domain = current_domain();
+  return domain == NULL ? 0 : domain->euid;
+}
+
+uint32_t cell_current_gid(void) {
+  struct domain *domain = current_domain();
+  return domain == NULL ? 0 : domain->gid;
+}
+
+uint32_t cell_current_egid(void) {
+  struct domain *domain = current_domain();
+  return domain == NULL ? 0 : domain->egid;
+}
+
+int cell_setuid_current(uint32_t uid) {
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return -1; }
+  if (domain->euid != 0 && uid != domain->uid) { return -1; }
+  domain->uid = uid;
+  domain->euid = uid;
+  return 0;
+}
+
+int cell_setgid_current(uint32_t gid) {
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return -1; }
+  if (domain->euid != 0 && gid != domain->gid) { return -1; }
+  domain->gid = gid;
+  domain->egid = gid;
+  return 0;
+}
+
+void cell_apply_exec_creds(uint32_t mode, uint32_t uid, uint32_t gid) {
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return; }
+  if ((mode & 04000u) != 0) { domain->euid = uid; }
+  if ((mode & 02000u) != 0) { domain->egid = gid; }
+}
+
 const char *cell_current_cwd(void) {
   struct domain *domain = current_domain();
   return domain == NULL ? "/" : domain->cwd;
@@ -566,9 +619,9 @@ static void cap_allow(struct capability_set *caps, uint64_t nr) {
 
 static void cap_allow_common(struct capability_set *caps) {
   static const uint16_t common[] = {
-    17,  23,  24,  25,  29,  57,  63,  64,  65,  66,  80,  93,  94,  96,  98,  99,  101,
-    48,  113, 115, 123, 124, 134, 135, 160, 172, 173, 174, 175, 176, 177, 178, 179, 198, 200,
-    203, 204, 206, 207, 208, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261, 278, 439,
+    17,  23,  24,  25,  29,  57,  63,  64,  65,  66,  80,  93,  94,  96,  98,  99,  101, 48,
+    113, 115, 123, 124, 134, 135, 144, 146, 160, 172, 173, 174, 175, 176, 177, 178, 179, 198,
+    200, 203, 204, 206, 207, 208, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261, 278, 439,
   };
   for (size_t i = 0; i < sizeof(common) / sizeof(common[0]); ++i) {
     cap_allow(caps, common[i]);
@@ -576,7 +629,7 @@ static void cap_allow_common(struct capability_set *caps) {
 }
 
 static void cap_allow_files(struct capability_set *caps) {
-  static const uint16_t files[] = {34, 35, 38, 46, 49, 50, 56, 61, 62, 78, 79, 82, 276};
+  static const uint16_t files[] = {34, 35, 38, 46, 49, 50, 52, 53, 54, 55, 56, 61, 62, 78, 79, 82, 276};
   for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
     cap_allow(caps, files[i]);
   }
@@ -1557,6 +1610,22 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
   proc_append_str(dst, cap, &len, "\nPPid:\t");
   proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
+  proc_append_str(dst, cap, &len, "\nUid:\t");
+  proc_append_u64(dst, cap, &len, domain->uid);
+  proc_append_char(dst, cap, &len, '\t');
+  proc_append_u64(dst, cap, &len, domain->euid);
+  proc_append_char(dst, cap, &len, '\t');
+  proc_append_u64(dst, cap, &len, domain->uid);
+  proc_append_char(dst, cap, &len, '\t');
+  proc_append_u64(dst, cap, &len, domain->euid);
+  proc_append_str(dst, cap, &len, "\nGid:\t");
+  proc_append_u64(dst, cap, &len, domain->gid);
+  proc_append_char(dst, cap, &len, '\t');
+  proc_append_u64(dst, cap, &len, domain->egid);
+  proc_append_char(dst, cap, &len, '\t');
+  proc_append_u64(dst, cap, &len, domain->gid);
+  proc_append_char(dst, cap, &len, '\t');
+  proc_append_u64(dst, cap, &len, domain->egid);
   proc_append_str(dst, cap, &len, "\nVmRSSPages:\t");
   proc_append_u64(dst, cap, &len, domain_resident_pages(domain));
   proc_append_str(dst, cap, &len, "\nCpuTicks:\t");
@@ -2289,8 +2358,8 @@ int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t t
   return CELL_SWITCHED;
 }
 
-int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds,
-                          bool has_timeout, uint64_t timeout_ticks, struct trap_frame *frame) {
+int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds, bool has_timeout,
+                          uint64_t timeout_ticks, struct trap_frame *frame) {
   if (current_thread == NULL || current_domain() == NULL || nfds > 64) { return -EINVAL; }
   cell_save_current(frame);
   current_thread->poll_kind = 2;
@@ -2726,6 +2795,16 @@ size_t cell_proc_info(struct proc_info *out, size_t max) {
 
 bool cell_proc_exists(int pid) {
   return find_domain(pid) != NULL;
+}
+
+uint32_t cell_proc_uid(int pid) {
+  struct domain *domain = find_domain(pid);
+  return domain == NULL ? 0 : domain->uid;
+}
+
+uint32_t cell_proc_gid(int pid) {
+  struct domain *domain = find_domain(pid);
+  return domain == NULL ? 0 : domain->gid;
 }
 
 int cell_proc_pid_at(size_t index) {

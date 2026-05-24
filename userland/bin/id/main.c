@@ -23,7 +23,21 @@ int main(int argc, char **argv) {
     }
   }
   if (name) {
-    puts(user ? "root" : "root");
+    if (user) {
+      struct user_entry u;
+      if (user_by_uid((unsigned)getuid(), &u)) {
+        puts(u.name);
+      } else {
+        printf("%u\n", (unsigned)getuid());
+      }
+    } else {
+      struct group_entry g;
+      if (group_by_gid((unsigned)getgid(), &g)) {
+        puts(g.name);
+      } else {
+        printf("%u\n", (unsigned)getgid());
+      }
+    }
   } else if (user) {
     printf("%u\n", (unsigned)getuid());
   } else if (group) {
@@ -31,7 +45,12 @@ int main(int argc, char **argv) {
   } else if (groups) {
     printf("%u\n", (unsigned)getgid());
   } else {
-    printf("uid=%u(root) gid=%u(root) groups=%u(root)\n", (unsigned)getuid(), (unsigned)getgid(), (unsigned)getgid());
+    struct user_entry u;
+    struct group_entry g;
+    const char *uname = user_by_uid((unsigned)getuid(), &u) ? u.name : "?";
+    const char *gname = group_by_gid((unsigned)getgid(), &g) ? g.name : "?";
+    printf("uid=%u(%s) gid=%u(%s) groups=%u(%s)\n", (unsigned)getuid(), uname, (unsigned)getgid(), gname,
+           (unsigned)getgid(), gname);
   }
   return EXIT_SUCCESS;
 }

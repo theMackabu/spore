@@ -31,13 +31,15 @@ enum {
   SYS_RENAMEAT = 38,
   SYS_STATFS = 43,
   SYS_FSTATFS = 44,
-  SYS_FCHMOD = 52,
-  SYS_FCHMODAT = 53,
   SYS_FTRUNCATE = 46,
   SYS_FACCESSAT = 48,
   SYS_CHDIR = 49,
   SYS_FCHDIR = 50,
   SYS_CHROOT = 51,
+  SYS_FCHMOD = 52,
+  SYS_FCHMODAT = 53,
+  SYS_FCHOWNAT = 54,
+  SYS_FCHOWN = 55,
   SYS_OPENAT = 56,
   SYS_CLOSE = 57,
   SYS_GETDENTS64 = 61,
@@ -66,6 +68,8 @@ enum {
   SYS_TGKILL = 131,
   SYS_RT_SIGACTION = 134,
   SYS_RT_SIGPROCMASK = 135,
+  SYS_SETGID = 144,
+  SYS_SETUID = 146,
   SYS_UNAME = 160,
   SYS_UMASK = 166,
   SYS_GETPID = 172,
@@ -178,6 +182,7 @@ enum {
   ENOENT = 2,
   EPERM = 1,
   EBADF = 9,
+  EACCES = 13,
   ENOMEM = 12,
   EFAULT = 14,
   EEXIST = 17,
@@ -585,8 +590,7 @@ static int64_t copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *o
   }
 
   if (raw[0] != '\0') {
-    if (!append_char(combined, sizeof(combined), &pos, '/') ||
-        !append_str(combined, sizeof(combined), &pos, raw)) {
+    if (!append_char(combined, sizeof(combined), &pos, '/') || !append_str(combined, sizeof(combined), &pos, raw)) {
       return -(int64_t)ENAMETOOLONG;
     }
   }
@@ -737,7 +741,8 @@ static int64_t sys_readv(uint64_t fd, uint64_t iov, uint64_t iovcnt) {
 }
 
 static uint64_t timespec_to_scheduler_ticks(const struct timespec64 *timeout) {
-  uint64_t ticks = (uint64_t)timeout->tv_sec * 100ull + ((uint64_t)timeout->tv_nsec * 100ull + 999999999ull) / 1000000000ull;
+  uint64_t ticks =
+    (uint64_t)timeout->tv_sec * 100ull + ((uint64_t)timeout->tv_nsec * 100ull + 999999999ull) / 1000000000ull;
   return ticks == 0 ? 1 : ticks;
 }
 
@@ -969,6 +974,20 @@ static int64_t sys_futex(struct trap_frame *f, uint64_t uaddr, uint64_t op, uint
   }
 }
 
+static bool node_access_allowed(const struct vfs_node *node, uint64_t mask) {
+  if (mask == F_OK || cell_current_euid() == 0) { return true; }
+  uint32_t bits = node->mode & 0777u;
+  if (cell_current_euid() == node->uid) {
+    bits >>= 6;
+  } else if (cell_current_egid() == node->gid) {
+    bits >>= 3;
+  }
+  if ((mask & R_OK) != 0 && (bits & 04u) == 0) { return false; }
+  if ((mask & W_OK) != 0 && (bits & 02u) == 0) { return false; }
+  if ((mask & X_OK) != 0 && (bits & 01u) == 0) { return false; }
+  return true;
+}
+
 static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
   char path[128];
   if (!copy_exec_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
@@ -995,6 +1014,9 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
 
   const void *file_data = NULL;
   uint64_t file_size = 0;
+  struct vfs_node exec_node;
+  if (!vfs_lookup(path, &exec_node)) { return -(int64_t)ENOENT; }
+  if (!node_access_allowed(&exec_node, X_OK)) { return -(int64_t)EACCES; }
   if (!vfs_lookup_exec(path, &file_data, &file_size)) { return -(int64_t)ENOENT; }
   char shebang_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
   char shebang_interp[128];
@@ -1071,7 +1093,9 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
     return -(int64_t)EINVAL;
   }
   kprintf("[spore] execve %s\n", path);
-  return cell_exec_replace(&new_as, &new_vmas, elf.runtime_entry, user_sp, frame, path, argv, argc) ? 0 : -12;
+  if (!cell_exec_replace(&new_as, &new_vmas, elf.runtime_entry, user_sp, frame, path, argv, argc)) { return -12; }
+  cell_apply_exec_creds(exec_node.mode, exec_node.uid, exec_node.gid);
+  return 0;
 }
 
 static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
@@ -1081,7 +1105,19 @@ static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   struct vfs_node node;
   if (!vfs_lookup(path, &node)) {
     if ((flags & O_CREAT) == 0 || !vfs_create(path, &node)) { return -(int64_t)ENOENT; }
+    (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
+    (void)vfs_lookup(path, &node);
   }
+  uint64_t access = 0;
+  if ((flags & O_ACCMODE) == O_WRONLY) {
+    access = W_OK;
+  } else if ((flags & O_ACCMODE) == O_RDWR) {
+    access = R_OK | W_OK;
+  } else {
+    access = R_OK;
+  }
+  if ((flags & O_TRUNC) != 0) { access |= W_OK; }
+  if (!node_access_allowed(&node, access)) { return -(int64_t)EACCES; }
   if ((flags & O_TRUNC) != 0 && !node.is_dir) {
     (void)vfs_truncate(&node, 0);
     (void)vfs_lookup(path, &node);
@@ -1095,6 +1131,8 @@ static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   st->st_ino = node->ino;
   st->st_mode = node->mode;
   st->st_nlink = node->links_count == 0 ? 1 : node->links_count;
+  st->st_uid = node->uid;
+  st->st_gid = node->gid;
   st->st_rdev = node->rdev;
   st->st_size = (int64_t)node->size;
   st->st_blksize = PAGE_SIZE;
@@ -1149,6 +1187,8 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
   st->stx_mask = STATX_BASIC_STATS;
   st->stx_blksize = PAGE_SIZE;
   st->stx_nlink = node->links_count == 0 ? 1 : node->links_count;
+  st->stx_uid = node->uid;
+  st->stx_gid = node->gid;
   st->stx_mode = node->mode;
   st->stx_ino = node->ino;
   st->stx_size = node->size;
@@ -1257,7 +1297,7 @@ static int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, 
       } else if (!cell_fd_stat((int)dirfd, &node)) {
         return -(int64_t)EBADF;
       }
-      return 0;
+      return node_access_allowed(&node, mode) ? 0 : -(int64_t)EACCES;
     }
   }
   char path[128];
@@ -1265,8 +1305,7 @@ static int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, 
   if (path_rc != 0) { return path_rc; }
   bool nofollow = (flags & AT_SYMLINK_NOFOLLOW) != 0;
   if (!(nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node))) { return -(int64_t)ENOENT; }
-  (void)mode;
-  return 0;
+  return node_access_allowed(&node, mode) ? 0 : -(int64_t)EACCES;
 }
 
 static uint16_t dirent_reclen(size_t name_len) {
@@ -1339,7 +1378,9 @@ static int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr) {
   if (!copy_resolved_path(path_addr, path, sizeof(path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
-  return vfs_mkdir(path) ? 0 : -(int64_t)EINVAL;
+  if (!vfs_mkdir(path)) { return -(int64_t)EINVAL; }
+  (void)vfs_chown(path, cell_current_euid(), cell_current_egid());
+  return 0;
 }
 
 static int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr) {
@@ -1410,6 +1451,37 @@ static int64_t sys_fchmod(uint64_t fd, uint64_t mode) {
   struct vfs_node node;
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
   return vfs_chmod_node(&node, (uint32_t)mode) ? 0 : -(int64_t)EINVAL;
+}
+
+static bool chown_ids(const struct vfs_node *node, uint64_t uid_arg, uint64_t gid_arg, uint32_t *uid, uint32_t *gid) {
+  *uid = uid_arg == 0xffffffffull ? node->uid : (uint32_t)uid_arg;
+  *gid = gid_arg == 0xffffffffull ? node->gid : (uint32_t)gid_arg;
+  return uid_arg <= 0xffffffffull && gid_arg <= 0xffffffffull;
+}
+
+static int64_t sys_fchownat(uint64_t dirfd, uint64_t path_addr, uint64_t uid_arg, uint64_t gid_arg, uint64_t flags) {
+  if ((flags & ~AT_SYMLINK_NOFOLLOW) != 0) { return -(int64_t)EINVAL; }
+  if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
+  char path[128];
+  int64_t path_rc = copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
+  if (path_rc != 0) { return path_rc; }
+  struct vfs_node node;
+  bool nofollow = (flags & AT_SYMLINK_NOFOLLOW) != 0;
+  if (!(nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node))) { return -(int64_t)ENOENT; }
+  uint32_t uid = 0;
+  uint32_t gid = 0;
+  if (!chown_ids(&node, uid_arg, gid_arg, &uid, &gid)) { return -(int64_t)EINVAL; }
+  return vfs_chown(path, uid, gid) ? 0 : -(int64_t)EINVAL;
+}
+
+static int64_t sys_fchown(uint64_t fd, uint64_t uid_arg, uint64_t gid_arg) {
+  if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
+  struct vfs_node node;
+  if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
+  uint32_t uid = 0;
+  uint32_t gid = 0;
+  if (!chown_ids(&node, uid_arg, gid_arg, &uid, &gid)) { return -(int64_t)EINVAL; }
+  return vfs_chown_node(&node, uid, gid) ? 0 : -(int64_t)EINVAL;
 }
 
 static int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
@@ -1574,6 +1646,8 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_CHROOT] = &&l_chroot,
     [SYS_FCHMOD] = &&l_fchmod,
     [SYS_FCHMODAT] = &&l_fchmodat,
+    [SYS_FCHOWNAT] = &&l_fchownat,
+    [SYS_FCHOWN] = &&l_fchown,
     [SYS_OPENAT] = &&l_openat,
     [SYS_CLOSE] = &&l_close,
     [SYS_GETDENTS64] = &&l_getdents64,
@@ -1602,14 +1676,16 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_TGKILL] = &&l_tgkill,
     [SYS_RT_SIGACTION] = &&l_zero,
     [SYS_RT_SIGPROCMASK] = &&l_zero,
+    [SYS_SETGID] = &&l_setgid,
+    [SYS_SETUID] = &&l_setuid,
     [SYS_UNAME] = &&l_uname,
     [SYS_UMASK] = &&l_umask,
     [SYS_GETPID] = &&l_getpid,
     [SYS_GETPPID] = &&l_getppid,
-    [SYS_GETUID] = &&l_zero,
-    [SYS_GETEUID] = &&l_zero,
-    [SYS_GETGID] = &&l_zero,
-    [SYS_GETEGID] = &&l_zero,
+    [SYS_GETUID] = &&l_getuid,
+    [SYS_GETEUID] = &&l_geteuid,
+    [SYS_GETGID] = &&l_getgid,
+    [SYS_GETEGID] = &&l_getegid,
     [SYS_GETTID] = &&l_gettid,
     [SYS_SYSINFO] = &&l_sysinfo,
     [SYS_SOCKET] = &&l_socket,
@@ -1702,6 +1778,18 @@ l_getppid:
   return cell_current_ppid();
 l_gettid:
   return cell_current_tid();
+l_getuid:
+  return cell_current_uid();
+l_geteuid:
+  return cell_current_euid();
+l_getgid:
+  return cell_current_gid();
+l_getegid:
+  return cell_current_egid();
+l_setuid:
+  return cell_setuid_current((uint32_t)a0) == 0 ? 0 : -(int64_t)EPERM;
+l_setgid:
+  return cell_setgid_current((uint32_t)a0) == 0 ? 0 : -(int64_t)EPERM;
 l_zero:
   return 0;
 l_clone:
@@ -1885,6 +1973,10 @@ l_fchmod:
   return sys_fchmod(a0, a1);
 l_fchmodat:
   return sys_fchmodat(a0, a1, a2, a3);
+l_fchownat:
+  return sys_fchownat(a0, a1, a2, a3, a4);
+l_fchown:
+  return sys_fchown(a0, a1, a2);
 l_ftruncate:
   return sys_ftruncate(a0, a1);
 l_chdir:

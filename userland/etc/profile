@@ -1,0 +1,3 @@
+export PATH=/bin:.
+export SHELL=/bin/msh
+export TERM=xterm-256color

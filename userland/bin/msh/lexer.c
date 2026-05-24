@@ -62,7 +62,7 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
   const char *p = line;
   *count = 0;
   while (*p != '\0') {
-    while (*p == ' ' || *p == '\t') {
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
       ++p;
     }
     if (*p == '\0' || *p == '#') { break; }
@@ -100,8 +100,8 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
 
     char word[WORD_CAP] = {0};
     size_t len = 0;
-    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != ';' && *p != '&' && *p != '<' && *p != '>' &&
-           !(*p == '&' && p[1] == '&') && !(*p == '|' && p[1] == '|')) {
+    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r' && *p != ';' && *p != '&' &&
+           *p != '<' && *p != '>' && !(*p == '&' && p[1] == '&') && !(*p == '|' && p[1] == '|')) {
       if (*p == '\'') {
         ++p;
         while (*p != '\0' && *p != '\'') {

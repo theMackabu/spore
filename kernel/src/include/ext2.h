@@ -29,6 +29,8 @@ struct __attribute__((aligned(8))) ext2_node {
   uint32_t ino;
   uint16_t mode;
   uint16_t links_count;
+  uint16_t uid;
+  uint16_t gid;
   uint32_t size;
   uint32_t sectors_count;
   uint32_t blocks[15];
@@ -63,6 +65,8 @@ bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path)
 bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out);
 bool ext2_chmod(struct ext2_fs *fs, const char *path, uint32_t mode);
 bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t mode);
+bool ext2_chown(struct ext2_fs *fs, const char *path, uint32_t uid, uint32_t gid);
+bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t uid, uint32_t gid);
 bool ext2_unlink(struct ext2_fs *fs, const char *path);
 bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path);
 bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out);

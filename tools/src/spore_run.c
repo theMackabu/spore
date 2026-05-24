@@ -1,13 +1,13 @@
 #include <errno.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/select.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -338,10 +338,10 @@ static pid_t start_udp_echo_server(void) {
 }
 
 static void build_qemu_args(char **argv, int *argc, const char *qemu, const char *image, const char *root,
-                            const char *accel,
-                            const char *cpu, const char *vars, char *firmware_arg, size_t firmware_cap, char *vars_arg,
-                            size_t vars_cap, char *image_drive_arg, size_t image_drive_cap, char *root_drive_arg,
-                            size_t root_drive_cap, int log_fd, char *log_chardev_arg, size_t log_chardev_cap) {
+                            const char *accel, const char *cpu, const char *vars, char *firmware_arg,
+                            size_t firmware_cap, char *vars_arg, size_t vars_cap, char *image_drive_arg,
+                            size_t image_drive_cap, char *root_drive_arg, size_t root_drive_cap, int log_fd,
+                            char *log_chardev_arg, size_t log_chardev_cap) {
   char firmware[PATH_CAP];
   if (!find_firmware(qemu, firmware, sizeof(firmware))) {
     fputs("spore-run: edk2-aarch64-code.fd not found\n", stderr);
@@ -482,13 +482,26 @@ static void startup_append(struct startup_serial *startup, const char *chunk, si
 }
 
 static ssize_t find_shell_prompt(const char *data, size_t len) {
-  for (size_t i = 0; i + 3 <= len; ++i) {
-    if (data[i] == ' ' && data[i + 1] == '$' && data[i + 2] == ' ') {
+  for (size_t i = 0; i + 2 <= len; ++i) {
+    if ((data[i] == '$' || data[i] == '#') && data[i + 1] == ' ') {
       size_t start = i;
       while (start > 0 && data[start - 1] != '\n' && data[start - 1] != '\r') {
         --start;
       }
-      return (ssize_t)start;
+      bool old_prompt = i > 0 && data[i - 1] == ' ';
+      bool user_host_prompt = false;
+      for (size_t j = start; j < i; ++j) {
+        if (data[j] == '@') {
+          for (size_t k = j + 1; k < i; ++k) {
+            if (data[k] == ':') {
+              user_host_prompt = true;
+              break;
+            }
+          }
+          break;
+        }
+      }
+      if (old_prompt || user_host_prompt) { return (ssize_t)start; }
     }
   }
   return -1;
@@ -663,7 +676,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
     {"spore-boot: exited boot services", "exit boot services", false, 0.0},
     {"[kernel] booted", "kernel first log", false, 0.0},
     {"[kernel] entering EL0", "enter EL0", false, 0.0},
-    {"/ $ ", "shell prompt", false, 0.0},
+    {"$ ", "shell prompt", false, 0.0},
   };
   if (timings) {
     fprintf(log_stream, "[host] qemu launched; timing summary prints at shell prompt\n");
@@ -749,7 +762,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
         }
       }
       if (len > 0) {
-        if (!shell_size_sent && contains(buf, " $")) {
+        if (!shell_size_sent && find_shell_prompt(buf, len) >= 0) {
           send_terminal_size(in_pipe[1]);
           shell_size_sent = true;
         }
@@ -758,7 +771,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
           write(in_pipe[1], "z\n", 2);
           stdin_sent = true;
         }
-        if (strcmp(mode, "shell") == 0 && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) && contains(buf, " $")) {
+        if (strcmp(mode, "shell") == 0 && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) &&
+            find_shell_prompt(buf, len) >= 0) {
           write(in_pipe[1], shell_commands[sent], strlen(shell_commands[sent]));
           ++sent;
           buf[0] = '\0';

@@ -80,6 +80,13 @@ static void copy_file(const char *src, const char *dst) {
   fclose(out);
 }
 
+static void write_text_file(const char *path, const char *text) {
+  FILE *out = fopen(path, "wb");
+  if (out == NULL) { die(path); }
+  if (fputs(text, out) == EOF) { die("fputs"); }
+  fclose(out);
+}
+
 static void run_argv(char *const argv[], bool quiet) {
   pid_t pid = fork();
   if (pid < 0) { die("fork"); }
@@ -98,6 +105,16 @@ static void run_argv(char *const argv[], bool quiet) {
   int status = 0;
   if (waitpid(pid, &status, 0) < 0) { die("waitpid"); }
   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) { die_msg("command failed"); }
+}
+
+static void run_debugfs_script(const char *image, const char *script) {
+  char script_path[MAX_PATH];
+  int n = snprintf(script_path, sizeof(script_path), "%s.debugfs", image);
+  if (n < 0 || (size_t)n >= sizeof(script_path)) { die_msg("path too long"); }
+  write_text_file(script_path, script);
+  char *const argv[] = {"debugfs", "-w", "-f", script_path, (char *)image, NULL};
+  run_argv(argv, true);
+  unlink(script_path);
 }
 
 static const char *basename_of(const char *path) {
@@ -269,6 +286,52 @@ static void symlink_into_rootfs(const char *target, const char *rootfs, const ch
   if (symlink(target, out) != 0) { die("symlink"); }
 }
 
+static void write_rootfs_text(const char *rootfs, const char *path, const char *text, mode_t mode) {
+  char out[MAX_PATH];
+  int n = snprintf(out, sizeof(out), "%s%s", rootfs, path);
+  if (n < 0 || (size_t)n >= sizeof(out)) { die_msg("path too long"); }
+  char parent[MAX_PATH];
+  snprintf(parent, sizeof(parent), "%s", out);
+  char *slash = strrchr(parent, '/');
+  if (slash != NULL) {
+    *slash = '\0';
+    ensure_dir(parent);
+  }
+  write_text_file(out, text);
+  chmod(out, mode);
+}
+
+static void install_default_accounts(const char *rootfs) {
+  char root_home[MAX_PATH];
+  char spore_home[MAX_PATH];
+  path_join(root_home, sizeof(root_home), rootfs, "root");
+  path_join(spore_home, sizeof(spore_home), rootfs, "home/spore");
+  ensure_dir(root_home);
+  ensure_dir(spore_home);
+
+  write_rootfs_text(rootfs, "/etc/passwd",
+                    "root:x:0:0:root:/root:/bin/msh\n"
+                    "spore:x:1000:1000:spore:/home/spore:/bin/msh\n",
+                    0644);
+  write_rootfs_text(rootfs, "/etc/group",
+                    "root:x:0:\n"
+                    "spore:x:1000:\n"
+                    "sudo:x:27:spore\n",
+                    0644);
+  write_rootfs_text(rootfs, "/etc/shadow",
+                    "root:!:0:0:99999:7:::\n"
+                    "spore::0:0:99999:7:::\n",
+                    0600);
+  write_rootfs_text(rootfs, "/etc/sudoers",
+                    "root ALL=(ALL) ALL\n"
+                    "spore ALL=(ALL) NOPASSWD: ALL\n",
+                    0440);
+  write_rootfs_text(rootfs, "/root/.profile", "# root login profile for msh\n", 0644);
+  write_rootfs_text(rootfs, "/root/.mshrc", "# interactive root msh startup\n", 0644);
+  write_rootfs_text(rootfs, "/home/spore/.profile", "# spore login profile for msh\n", 0644);
+  write_rootfs_text(rootfs, "/home/spore/.mshrc", "# interactive spore msh startup\n", 0644);
+}
+
 static void install_musl_runtime(const char *source_root, const char *rootfs) {
   (void)source_root;
   char lib_dir[MAX_PATH];
@@ -318,6 +381,38 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   };
   unlink(output_root);
   run_argv(mkfs_argv, false);
+
+  run_debugfs_script(output_root, "set_inode_field /home/spore uid 1000\n"
+                                  "set_inode_field /home/spore gid 1000\n"
+                                  "set_inode_field /home/spore/.profile uid 1000\n"
+                                  "set_inode_field /home/spore/.profile gid 1000\n"
+                                  "set_inode_field /home/spore/.mshrc uid 1000\n"
+                                  "set_inode_field /home/spore/.mshrc gid 1000\n");
+  char sudo_path[MAX_PATH];
+  path_join(sudo_path, sizeof(sudo_path), rootfs_dir, "bin/sudo");
+  if (exists(sudo_path)) {
+    run_debugfs_script(output_root, "set_inode_field /bin/sudo uid 0\n"
+                                    "set_inode_field /bin/sudo gid 0\n"
+                                    "set_inode_field /bin/sudo mode 0104755\n");
+  }
+  char su_path[MAX_PATH];
+  path_join(su_path, sizeof(su_path), rootfs_dir, "bin/su");
+  if (exists(su_path)) {
+    run_debugfs_script(output_root, "set_inode_field /bin/su uid 0\n"
+                                    "set_inode_field /bin/su gid 0\n"
+                                    "set_inode_field /bin/su mode 0104755\n");
+  }
+  char passwd_path[MAX_PATH];
+  path_join(passwd_path, sizeof(passwd_path), rootfs_dir, "bin/passwd");
+  if (exists(passwd_path)) {
+    run_debugfs_script(output_root, "set_inode_field /bin/passwd uid 0\n"
+                                    "set_inode_field /bin/passwd gid 0\n"
+                                    "set_inode_field /bin/passwd mode 0104755\n");
+  }
+  run_debugfs_script(output_root, "set_inode_field /etc/shadow uid 0\n"
+                                  "set_inode_field /etc/shadow gid 0\n"
+                                  "set_inode_field /etc/sudoers uid 0\n"
+                                  "set_inode_field /etc/sudoers gid 0\n");
   copy_file(output_root, output_copy);
 }
 
@@ -380,6 +475,13 @@ int main(int argc, char **argv) {
     char source[MAX_PATH];
     char target[MAX_PATH];
     if (sscanf(p, "%1023s %1023s", source, target) != 2) { die_msg("bad manifest line"); }
+    if (strcmp(source, "dir") == 0) {
+      char dir_path[MAX_PATH];
+      int n = snprintf(dir_path, sizeof(dir_path), "%s%s", rootfs_dir, target);
+      if (n < 0 || (size_t)n >= sizeof(dir_path)) { die_msg("path too long"); }
+      ensure_dir(dir_path);
+      continue;
+    }
     if (strcmp(source, "symlink") == 0) {
       char link_path[MAX_PATH];
       if (sscanf(p, "%1023s %1023s %1023s", source, target, link_path) != 3) { die_msg("bad symlink line"); }
@@ -396,6 +498,7 @@ int main(int argc, char **argv) {
   fclose(mf);
   fclose(mods);
   install_musl_runtime(source_root, rootfs_dir);
+  install_default_accounts(rootfs_dir);
 
   char of_arg[MAX_PATH + 4];
   snprintf(of_arg, sizeof(of_arg), "of=%s", output_image);

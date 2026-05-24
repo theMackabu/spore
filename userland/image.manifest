@@ -1,4 +1,6 @@
 # source baked-path
+dir /home
+dir /root
 userland/bin/init /init
 userland/bin/msh /bin/msh
 symlink msh /bin/sh
@@ -48,7 +50,15 @@ userland/bin/cp /bin/cp
 userland/bin/mv /bin/mv
 userland/bin/ln /bin/ln
 userland/bin/chmod /bin/chmod
+userland/bin/chgrp /bin/chgrp
+userland/bin/chown /bin/chown
 userland/bin/chroot /bin/chroot
+userland/bin/mkuser /bin/mkuser
+userland/bin/deluser /bin/deluser
+userland/bin/passwd /bin/passwd
+userland/bin/su /bin/su
+userland/bin/sudo /bin/sudo
+userland/bin/groups /bin/groups
 userland/bin/kill /bin/kill
 userland/bin/du /bin/du
 userland/bin/hexdump /bin/hexdump
@@ -81,10 +91,10 @@ userland/demos/signal-crash /demos/signal-crash
 
 userland/bin/fastfetch /bin/fastfetch
 userland/bin/htop/terminfo/x/xterm-256color /usr/share/terminfo/x/xterm-256color
-userland/etc/htoprc /.config/htop/htoprc
+dir /etc/htop
+userland/etc/htoprc /etc/htop/config
 userland/etc/motd /etc/motd
-userland/etc/passwd /etc/passwd
-userland/etc/group /etc/group
+userland/etc/profile /etc/profile
 userland/etc/os-release /etc/os-release
 userland/etc/fastfetch/config.jsonc /etc/fastfetch/config.jsonc
 userland/etc/fastfetch/spore.logo /etc/fastfetch/spore.logo

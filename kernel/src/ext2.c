@@ -228,6 +228,8 @@ static bool read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) 
   out->ino = ino;
   out->mode = inode.mode;
   out->links_count = inode.links_count;
+  out->uid = inode.uid;
+  out->gid = inode.gid;
   out->size = inode.size;
   out->sectors_count = inode.sectors_count;
   for (size_t i = 0; i < 15; ++i) {
@@ -251,6 +253,8 @@ static bool write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)local * fs->inode_size;
   if (!read_bytes(fs, off, &inode, sizeof(inode))) { return false; }
   inode.mode = node->mode;
+  inode.uid = node->uid;
+  inode.gid = node->gid;
   inode.size = node->size;
   inode.links_count = node->links_count;
   inode.sectors_count = ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)
@@ -835,6 +839,8 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_nod
     .ino = ino,
     .mode = (uint16_t)(dir ? (EXT2_S_IFDIR | 0755) : (EXT2_S_IFREG | 0755)),
     .links_count = (uint16_t)(dir ? 2 : 1),
+    .uid = 0,
+    .gid = 0,
   };
   if (dir) {
     uint32_t block = 0;
@@ -895,6 +901,8 @@ bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path)
     .ino = ino,
     .mode = (uint16_t)(EXT2_S_IFLNK | 0777),
     .links_count = 1,
+    .uid = 0,
+    .gid = 0,
   };
   int64_t wrote = ext2_write_file(fs, &node, 0, target, kstrlen(target));
   if (wrote < 0 || (uint64_t)wrote != kstrlen(target) || !add_dirent(fs, &parent, name, ino, EXT2_FT_SYMLINK)) {
@@ -920,6 +928,19 @@ bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
 bool ext2_chmod(struct ext2_fs *fs, const char *path, uint32_t mode) {
   struct ext2_node node;
   return ext2_lookup(fs, path, &node) && ext2_chmod_node(fs, &node, mode);
+}
+
+bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t uid, uint32_t gid) {
+  if (node == NULL || uid > UINT16_MAX || gid > UINT16_MAX) { return false; }
+  struct ext2_node copy = *node;
+  copy.uid = (uint16_t)uid;
+  copy.gid = (uint16_t)gid;
+  return write_inode(fs, &copy);
+}
+
+bool ext2_chown(struct ext2_fs *fs, const char *path, uint32_t uid, uint32_t gid) {
+  struct ext2_node node;
+  return ext2_lookup(fs, path, &node) && ext2_chown_node(fs, &node, uid, gid);
 }
 
 bool ext2_unlink(struct ext2_fs *fs, const char *path) {

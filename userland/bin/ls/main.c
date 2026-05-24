@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -19,7 +20,17 @@ struct linux_dirent64 {
 };
 
 int main(int argc, char **argv) {
-  const char *path = argc > 1 ? argv[1] : ".";
+  bool all = false;
+  const char *path = ".";
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--all") == 0) {
+      all = true;
+    } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+      return usage("ls", "[-a] [PATH]");
+    } else {
+      path = argv[i];
+    }
+  }
   int fd = open(path, O_RDONLY);
   if (fd < 0) {
     perror("ls");
@@ -39,6 +50,10 @@ int main(int argc, char **argv) {
       close(fd);
       eprintf("ls: bad directory entry\n");
       return EXIT_FAILURE;
+    }
+    if (!all && d->d_name[0] == '.') {
+      off += d->d_reclen;
+      continue;
     }
     printf("%s%s", first ? "" : "  ", d->d_name);
     first = 0;
