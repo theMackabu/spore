@@ -20,6 +20,9 @@ enum {
     CELL_O_RDWR = 2,
     CELL_O_APPEND = 02000,
     CAP_ENFORCE = 1u << 0,
+    EAGAIN = 11,
+    EFAULT = 14,
+    EINVAL = 22,
 };
 
 static bool str_eq(const char *a, const char *b) {
@@ -224,6 +227,23 @@ static void release_thread(struct thread *thread) {
     }
 }
 
+static int futex_wake(struct domain *domain, uint64_t uaddr, uint32_t count) {
+    int woke = 0;
+    for (size_t i = 0; i < MAX_THREADS && (uint32_t)woke < count; ++i) {
+        if (threads[i].domain == domain &&
+            threads[i].state == THREAD_BLOCKED &&
+            threads[i].wait_reason == WAIT_FUTEX &&
+            threads[i].futex_addr == uaddr) {
+            threads[i].state = THREAD_RUNNABLE;
+            threads[i].wait_reason = WAIT_NONE;
+            threads[i].futex_addr = 0;
+            threads[i].tf.x[0] = 0;
+            ++woke;
+        }
+    }
+    return woke;
+}
+
 static void wake_parent_of(struct domain *child) {
     struct domain *parent_domain = find_domain(child->parent_id);
     struct thread *parent = parent_domain == NULL ? NULL : thread_for_domain(parent_domain);
@@ -340,7 +360,7 @@ static void cap_allow(struct capability_set *caps, uint64_t nr) {
 
 static void cap_allow_common(struct capability_set *caps) {
     static const uint16_t common[] = {
-        17, 23, 24, 25, 29, 57, 63, 64, 65, 66, 80, 93, 94, 96, 99,
+        17, 23, 24, 25, 29, 57, 63, 64, 65, 66, 80, 93, 94, 96, 98, 99,
         101, 113, 115, 123, 124, 134, 135, 160, 172, 173, 174, 175,
         176, 177, 178, 179, 214, 215, 216, 220, 221, 222, 226, 233,
         260, 261, 278,
@@ -491,6 +511,7 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
     if (current_thread->clear_child_tid != 0) {
         uint32_t zero = 0;
         (void)vmm_copy_to_user(&domain->as, current_thread->clear_child_tid, &zero, sizeof(zero));
+        (void)futex_wake(domain, current_thread->clear_child_tid, 1);
     }
     if (runnable_or_blocked_threads_in_domain(domain) <= 1) {
         domain->exit_status = status;
@@ -602,6 +623,40 @@ int cell_set_robust_list_current(uint64_t robust_list) {
     }
     current_thread->robust_list = robust_list;
     return 0;
+}
+
+int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, struct trap_frame *frame) {
+    struct domain *domain = current_domain();
+    if (domain == NULL || current_thread == NULL || (uaddr & 3u) != 0) {
+        return -EINVAL;
+    }
+    if (!cell_ensure_user_range(uaddr, sizeof(uint32_t), VMM_ACCESS_READ)) {
+        return -EFAULT;
+    }
+    uint32_t actual = 0;
+    if (!vmm_copy_from_user(&domain->as, &actual, uaddr, sizeof(actual))) {
+        return -EFAULT;
+    }
+    if (actual != expected) {
+        return -EAGAIN;
+    }
+    cell_save_current(frame);
+    current_thread->state = THREAD_BLOCKED;
+    current_thread->wait_reason = WAIT_FUTEX;
+    current_thread->futex_addr = uaddr;
+    cell_schedule(frame);
+    return CELL_SWITCHED;
+}
+
+int cell_futex_wake_current(uint64_t uaddr, uint32_t count) {
+    struct domain *domain = current_domain();
+    if (domain == NULL || (uaddr & 3u) != 0) {
+        return -EINVAL;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    return futex_wake(domain, uaddr, count);
 }
 
 static struct domain *find_waitable_child(int parent_id, int pid) {

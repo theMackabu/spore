@@ -42,6 +42,7 @@ enum {
     SYS_EXIT = 93,
     SYS_EXIT_GROUP = 94,
     SYS_SET_TID_ADDRESS = 96,
+    SYS_FUTEX = 98,
     SYS_SET_ROBUST_LIST = 99,
     SYS_NANOSLEEP = 101,
     SYS_CLOCK_GETTIME = 113,
@@ -110,6 +111,10 @@ enum {
     F_DUPFD = 0,
     F_GETFL = 3,
     F_SETFL = 4,
+    FUTEX_WAIT = 0,
+    FUTEX_WAKE = 1,
+    FUTEX_PRIVATE_FLAG = 128,
+    FUTEX_CMD_MASK = 127,
     DT_REG = 8,
     DT_DIR = 4,
     EROFS = 30,
@@ -583,6 +588,31 @@ static int64_t sys_clone(struct trap_frame *f,
     return cell_clone_thread_current(f, flags, newsp, parent_tid, tls, child_tid);
 }
 
+static int64_t sys_futex(struct trap_frame *f,
+                         uint64_t uaddr,
+                         uint64_t op,
+                         uint64_t val,
+                         uint64_t timeout) {
+    uint64_t cmd = op & FUTEX_CMD_MASK;
+    if ((op & ~(uint64_t)(FUTEX_CMD_MASK | FUTEX_PRIVATE_FLAG)) != 0) {
+        kprintf("[kernel] futex op %d ENOSYS\n", (int)op);
+        return -(int64_t)ENOSYS;
+    }
+    switch (cmd) {
+    case FUTEX_WAIT:
+        if (timeout != 0) {
+            kprintf("[kernel] futex wait timeout ENOSYS\n");
+            return -(int64_t)ENOSYS;
+        }
+        return cell_futex_wait_current(uaddr, (uint32_t)val, f);
+    case FUTEX_WAKE:
+        return cell_futex_wake_current(uaddr, (uint32_t)val);
+    default:
+        kprintf("[kernel] futex op %d ENOSYS\n", (int)op);
+        return -(int64_t)ENOSYS;
+    }
+}
+
 static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
     char path[128];
     if (!copy_exec_path(path_addr, path, sizeof(path))) {
@@ -860,6 +890,10 @@ static int64_t dispatch(struct trap_frame *f) {
         return 0;
     case SYS_CLONE:
         return sys_clone(f, a0, a1, a2, a3, a4);
+    case SYS_FUTEX: {
+        int64_t rc = sys_futex(f, a0, a1, a2, a3);
+        return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
+    }
     case SYS_EXECVE:
         return sys_execve(f, a0, a1, a2);
     case SYS_CLONE3:

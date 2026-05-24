@@ -80,3 +80,10 @@ test_thread_model = executable('test_thread_model',
   native: true)
 
 test('thread-model', test_thread_model)
+
+test_futex_model = executable('test_futex_model',
+  files('test_futex_model.c'),
+  include_directories: test_include,
+  native: true)
+
+test('futex-model', test_futex_model)

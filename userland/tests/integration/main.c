@@ -22,6 +22,7 @@
 #define SYS_SPORE_SET_BUDGET 0x4004
 #define SYS_EXIT 93
 #define SYS_EXIT_GROUP 94
+#define SYS_FUTEX 98
 #define SYS_GETTID 178
 
 #define CLONE_VM 0x00000100
@@ -30,6 +31,8 @@
 #define CLONE_SIGHAND 0x00000800
 #define CLONE_THREAD 0x00010000
 #define CLONE_SYSVSEM 0x00040000
+#define FUTEX_WAIT_PRIVATE 128
+#define FUTEX_WAKE_PRIVATE 129
 
 struct linux_dirent64 {
     uint64_t d_ino;
@@ -45,6 +48,16 @@ static long raw_syscall3(long nr, long a0, long a1, long a2) {
     register long x2 __asm__("x2") = a2;
     register long x8 __asm__("x8") = nr;
     __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
+    return x0;
+}
+
+static long raw_syscall4(long nr, long a0, long a1, long a2, long a3) {
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    register long x8 __asm__("x8") = nr;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8) : "memory");
     return x0;
 }
 
@@ -208,6 +221,8 @@ static int thread_demo_tid;
 
 static unsigned char thread_stack_a[16384] __attribute__((aligned(16)));
 static unsigned char thread_stack_b[16384] __attribute__((aligned(16)));
+static unsigned char futex_stack_a[16384] __attribute__((aligned(16)));
+static unsigned char futex_stack_b[16384] __attribute__((aligned(16)));
 
 static void phase_a_thread_entry(void *arg) {
     long slot = (long)arg;
@@ -253,6 +268,66 @@ static int phase_a_thread_demo(void) {
     int ok = thread_slots[0] != 0 && thread_slots[1] != 0 &&
              thread_slots[0] != thread_slots[1];
     printf("[spore] v3a raw clone threads: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+static volatile int futex_word;
+static volatile int futex_started[2];
+static volatile int futex_finished[2];
+
+static void phase_b_futex_entry(void *arg) {
+    long slot = (long)arg;
+    if (slot >= 0 && slot < 2) {
+        futex_started[slot] = 1;
+    }
+    long rc = raw_syscall4(SYS_FUTEX,
+                           (long)&futex_word,
+                           FUTEX_WAIT_PRIVATE,
+                           0,
+                           0);
+    if ((rc == 0 || rc == -11) && slot >= 0 && slot < 2) {
+        futex_finished[slot] = 1;
+    }
+    printf("[spore] v3b futex thread %ld resumed rc=%ld\n", slot, rc);
+    raw_syscall3(SYS_EXIT, 0, 0, 0);
+    for (;;) {
+    }
+}
+
+static int phase_b_futex_demo(void) {
+    futex_word = 0;
+    futex_started[0] = futex_started[1] = 0;
+    futex_finished[0] = futex_finished[1] = 0;
+    long flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
+                 CLONE_THREAD | CLONE_SYSVSEM;
+    long a = spore_clone_start(flags,
+                               futex_stack_a + sizeof(futex_stack_a),
+                               NULL,
+                               NULL,
+                               NULL,
+                               phase_b_futex_entry,
+                               (void *)0);
+    long b = spore_clone_start(flags,
+                               futex_stack_b + sizeof(futex_stack_b),
+                               NULL,
+                               NULL,
+                               NULL,
+                               phase_b_futex_entry,
+                               (void *)1);
+    if (a < 0 || b < 0) {
+        printf("[spore] v3b futex wait/wake: FAIL clone=%ld/%ld\n", a, b);
+        return 0;
+    }
+    for (int i = 0; i < 100000 && (futex_started[0] == 0 || futex_started[1] == 0); ++i) {
+        sched_yield();
+    }
+    futex_word = 1;
+    long woke = raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAKE_PRIVATE, 2, 0);
+    for (int i = 0; i < 100000 && (futex_finished[0] == 0 || futex_finished[1] == 0); ++i) {
+        sched_yield();
+    }
+    int ok = futex_finished[0] != 0 && futex_finished[1] != 0 && woke >= 0;
+    printf("[spore] v3b futex wait/wake: %s (woke=%ld)\n", ok ? "PASS" : "FAIL", woke);
     return ok;
 }
 
@@ -376,6 +451,8 @@ int main(void) {
     int ok_all = 1;
     int ok_v3a = phase_a_thread_demo();
     ok_all = ok_all && ok_v3a;
+    int ok_v3b = phase_b_futex_demo();
+    ok_all = ok_all && ok_v3b;
 
     if (after_touch <= before || after_free >= after_touch) {
         ok_all = 0;

@@ -32,6 +32,7 @@ enum wait_reason {
     WAIT_CHILD,
     WAIT_STDIN,
     WAIT_THREAD,
+    WAIT_FUTEX,
 };
 
 enum cell_state {
@@ -98,6 +99,7 @@ struct thread {
     uint64_t stdin_len;
     uint64_t clear_child_tid;
     uint64_t robust_list;
+    uint64_t futex_addr;
 };
 
 struct snapshot {
@@ -133,6 +135,8 @@ int cell_clone_thread_current(struct trap_frame *frame,
                               uint64_t child_tid);
 int cell_set_tid_address_current(uint64_t clear_child_tid);
 int cell_set_robust_list_current(uint64_t robust_list);
+int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, struct trap_frame *frame);
+int cell_futex_wake_current(uint64_t uaddr, uint32_t count);
 int cell_wait4(int pid, uint64_t status_addr, struct trap_frame *frame);
 int cell_kill(int pid, int signal);
 bool cell_exec_replace(struct user_address_space *as,
