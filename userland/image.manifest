@@ -10,6 +10,7 @@ userland/bin/file /bin/file
 userland/bin/stat /bin/stat
 userland/bin/uname /bin/uname
 userland/bin/edit /bin/edit
+userland/bin/pico /bin/pico
 userland/bin/head /bin/head
 userland/bin/tail /bin/tail
 userland/bin/wc /bin/wc

@@ -8,6 +8,7 @@
 #include "mem.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "pl011.h"
 #include "ramfs.h"
 #include "spore_version.h"
 #include "vfs.h"
@@ -126,6 +127,15 @@ enum {
   F_DUPFD = 0,
   F_GETFL = 3,
   F_SETFL = 4,
+  TCGETS = 0x5401,
+  TCSETS = 0x5402,
+  TCSETSW = 0x5403,
+  TCSETSF = 0x5404,
+  TIOCGWINSZ = 0x5413,
+  TIOCSWINSZ = 0x5414,
+  NCCS = 32,
+  ICANON = 0000002,
+  ECHO = 0000010,
   FUTEX_WAIT = 0,
   FUTEX_WAKE = 1,
   FUTEX_PRIVATE_FLAG = 128,
@@ -212,6 +222,24 @@ struct sockaddr_in64 {
   uint16_t sin_port;
   uint32_t sin_addr;
   uint8_t sin_zero[8];
+};
+
+struct termios64 {
+  uint32_t c_iflag;
+  uint32_t c_oflag;
+  uint32_t c_cflag;
+  uint32_t c_lflag;
+  uint8_t c_line;
+  uint8_t c_cc[NCCS];
+  uint32_t c_ispeed;
+  uint32_t c_ospeed;
+};
+
+struct winsize64 {
+  uint16_t ws_row;
+  uint16_t ws_col;
+  uint16_t ws_xpixel;
+  uint16_t ws_ypixel;
 };
 
 static struct user_address_space *current_as;
@@ -923,6 +951,47 @@ static int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len) {
   return vmm_copy_to_user(active_as(), mask, &one, 1) ? 1 : -(int64_t)EFAULT;
 }
 
+static int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
+  (void)fd;
+  if (request == TIOCGWINSZ) {
+    uint16_t rows = 0;
+    uint16_t cols = 0;
+    pl011_get_winsize(&rows, &cols);
+    struct winsize64 ws = {
+      .ws_row = rows,
+      .ws_col = cols,
+      .ws_xpixel = 0,
+      .ws_ypixel = 0,
+    };
+    return user_writable(arg, sizeof(ws)) && vmm_copy_to_user(active_as(), arg, &ws, sizeof(ws)) ? 0 : -(int64_t)EFAULT;
+  }
+  if (request == TIOCSWINSZ) { return 0; }
+  if (request == TCGETS) {
+    struct termios64 tio = {
+      .c_iflag = 0,
+      .c_oflag = 0,
+      .c_cflag = 0,
+      .c_lflag = ICANON | ECHO,
+      .c_line = 0,
+      .c_cc = {0},
+      .c_ispeed = 38400,
+      .c_ospeed = 38400,
+    };
+    tio.c_cc[4] = 4;
+    tio.c_cc[5] = 0;
+    tio.c_cc[6] = 1;
+    return user_writable(arg, sizeof(tio)) && vmm_copy_to_user(active_as(), arg, &tio, sizeof(tio)) ? 0
+                                                                                                    : -(int64_t)EFAULT;
+  }
+  if (request == TCSETS || request == TCSETSW || request == TCSETSF) {
+    struct termios64 ignored;
+    return user_readable(arg, sizeof(ignored)) && vmm_copy_from_user(active_as(), &ignored, arg, sizeof(ignored))
+             ? 0
+             : -(int64_t)EFAULT;
+  }
+  return -(int64_t)EINVAL;
+}
+
 static int64_t zero_user(uint64_t addr, uint64_t len) {
   uint8_t zero = 0;
   for (uint64_t i = 0; i < len; ++i) {
@@ -1098,7 +1167,7 @@ static int64_t dispatch(struct trap_frame *f) {
   case SYS_SET_TID_ADDRESS:
     return cell_set_tid_address_current(a0);
   case SYS_IOCTL:
-    return 0;
+    return sys_ioctl(a0, a1, a2);
   case SYS_MKDIRAT:
     return sys_mkdirat(a0, a1);
   case SYS_LINKAT:

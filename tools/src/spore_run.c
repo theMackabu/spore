@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -18,6 +19,8 @@ enum {
   PATH_CAP = 1024,
   STARTUP_SERIAL_CAP = 32768,
 };
+
+static volatile sig_atomic_t resize_pending;
 
 static const char *shell_commands[] = {
   "ls /bin\n",
@@ -55,6 +58,8 @@ static const char *shell_commands[] = {
   "cat /tmp/f\n",
   "edit /tmp/edit-test\na\nfrom edit\n.\nw\nq\n",
   "cat /tmp/edit-test\n",
+  "pico /tmp/pico-test\nfrom pico\x0f\x18",
+  "cat /tmp/pico-test\n",
   "mkdir /tmp/d && cd /tmp/d && touch x && ls\n",
   "/bin/hello\n",
   "pthread-demo\n",
@@ -85,6 +90,11 @@ static bool ends_with(const char *s, const char *suffix) {
   size_t s_len = strlen(s);
   size_t suffix_len = strlen(suffix);
   return s_len >= suffix_len && strcmp(s + s_len - suffix_len, suffix) == 0;
+}
+
+static void on_sigwinch(int sig) {
+  (void)sig;
+  resize_pending = 1;
 }
 
 static bool find_firmware(const char *qemu, char *out, size_t cap) {
@@ -382,6 +392,26 @@ static void write_raw_to(const char *data, size_t len, FILE *out) {
   fflush(out);
 }
 
+static void terminal_size(unsigned *rows, unsigned *cols) {
+  struct winsize ws;
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row >= 8 && ws.ws_col >= 40) {
+    *rows = ws.ws_row;
+    *cols = ws.ws_col;
+    return;
+  }
+  *rows = 38;
+  *cols = 96;
+}
+
+static void send_terminal_size(int input_fd) {
+  unsigned rows = 0;
+  unsigned cols = 0;
+  terminal_size(&rows, &cols);
+  char msg[40];
+  int len = snprintf(msg, sizeof(msg), "\033]777;%u;%u\a", rows, cols);
+  if (len > 0) { (void)write(input_fd, msg, (size_t)len); }
+}
+
 static void startup_append(struct startup_serial *startup, const char *chunk, size_t n) {
   if (n > sizeof(startup->buf) - startup->len) {
     size_t keep = sizeof(startup->buf) / 2;
@@ -551,6 +581,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
   close(serial_pipe[1]);
   close(log_pipe[1]);
   pid_t echo_pid = start_udp_echo_server();
+  resize_pending = 1;
+  (void)signal(SIGWINCH, on_sigwinch);
 
   char buf[BUF_CAP] = {0};
   size_t len = 0;
@@ -621,6 +653,10 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
         (void)waitpid(echo_pid, NULL, 0);
       }
       return finish_harness(124, raw_terminal, &saved_termios, tmux_log_pane ? log_stream : NULL, tmux_pane_id);
+    }
+    if (resize_pending) {
+      resize_pending = 0;
+      send_terminal_size(in_pipe[1]);
     }
     fd_set rfds;
     FD_ZERO(&rfds);

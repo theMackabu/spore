@@ -26,6 +26,13 @@ static volatile uint32_t *uart_base;
 static char rx_ring[RX_RING_SIZE];
 static uint16_t rx_head;
 static uint16_t rx_tail;
+static uint16_t tty_rows = 38;
+static uint16_t tty_cols = 96;
+static char ctl_buf[32];
+static uint8_t ctl_len;
+static uint8_t ctl_state;
+static uint16_t ctl_rows;
+static uint16_t ctl_cols;
 
 static inline uint32_t mmio_read32(uint64_t offset) {
   return *(volatile uint32_t *)((uintptr_t)uart_base + offset);
@@ -57,11 +64,98 @@ static void rx_push(char c) {
   rx_head = next;
 }
 
+static void ctl_reset(void) {
+  ctl_len = 0;
+  ctl_state = 0;
+  ctl_rows = 0;
+  ctl_cols = 0;
+}
+
+static void ctl_remember(char c) {
+  if (ctl_len < sizeof(ctl_buf)) { ctl_buf[ctl_len++] = c; }
+}
+
+static void ctl_flush(void) {
+  for (uint8_t i = 0; i < ctl_len; ++i) {
+    rx_push(ctl_buf[i]);
+  }
+  ctl_reset();
+}
+
+static void tty_control_char(char c) {
+  if (ctl_state == 0) {
+    if ((uint8_t)c == 0x1b) {
+      ctl_remember(c);
+      ctl_state = 1;
+      return;
+    }
+    rx_push(c);
+    return;
+  }
+
+  ctl_remember(c);
+  switch (ctl_state) {
+  case 1:
+    if (c == ']') {
+      ctl_state = 2;
+    } else {
+      ctl_flush();
+    }
+    break;
+  case 2:
+  case 3:
+  case 4:
+    if (c == '7') {
+      ++ctl_state;
+    } else {
+      ctl_flush();
+    }
+    break;
+  case 5:
+    if (c == ';') {
+      ctl_state = 6;
+    } else {
+      ctl_flush();
+    }
+    break;
+  case 6:
+    if (c >= '0' && c <= '9') {
+      ctl_rows = (uint16_t)(ctl_rows * 10u + (uint16_t)(c - '0'));
+    } else if (c == ';') {
+      ctl_state = 7;
+    } else {
+      ctl_flush();
+    }
+    break;
+  case 7:
+    if (c >= '0' && c <= '9') {
+      ctl_cols = (uint16_t)(ctl_cols * 10u + (uint16_t)(c - '0'));
+    } else if ((uint8_t)c == 0x07) {
+      if (ctl_rows >= 8 && ctl_cols >= 40) {
+        tty_rows = ctl_rows;
+        tty_cols = ctl_cols;
+      }
+      ctl_reset();
+    } else {
+      ctl_flush();
+    }
+    break;
+  default:
+    ctl_flush();
+    break;
+  }
+}
+
 bool pl011_getc(char *out) {
   if (rx_tail == rx_head) { return false; }
   *out = rx_ring[rx_tail];
   rx_tail = (uint16_t)((rx_tail + 1u) % RX_RING_SIZE);
   return true;
+}
+
+void pl011_get_winsize(uint16_t *rows, uint16_t *cols) {
+  *rows = tty_rows;
+  *cols = tty_cols;
 }
 
 void pl011_enable_rx_irq(void) {
@@ -76,7 +170,7 @@ bool pl011_handle_irq(void) {
   uint32_t mis = mmio_read32(PL011_MIS);
   if ((mis & (PL011_INT_RX | PL011_INT_RT)) == 0) { return false; }
   while ((mmio_read32(PL011_FR) & PL011_FR_RXFE) == 0) {
-    rx_push((char)(mmio_read32(PL011_DR) & 0xffu));
+    tty_control_char((char)(mmio_read32(PL011_DR) & 0xffu));
   }
   mmio_write32(PL011_ICR, PL011_INT_RX | PL011_INT_RT);
   return true;
