@@ -4,6 +4,7 @@ CLANG_FORMAT ?= clang-format
 QEMU_RUNNER ?= $(BUILD_DIR)/tools/spore-run
 QEMU ?= qemu-system-aarch64
 EDK2_VARS ?= $(BUILD_DIR)/edk2-vars.fd
+RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --timings --tmux-log-pane --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --qemu "$(QEMU)"
 
 .PHONY: setup build image test-image runner test run run-tests run-shell-check format clean
 
@@ -26,7 +27,11 @@ test: build
 	$(MESON) test -C "$(BUILD_DIR)"
 
 run: image runner
-	$(QEMU_RUNNER) --mode plain --timings --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --qemu "$(QEMU)"
+	@if [ -n "$$TMUX" ]; then \
+		$(RUN_CMD); \
+	else \
+		tmux new-session '$(RUN_CMD)'; \
+	fi
 
 run-tests: test-image runner
 	$(QEMU_RUNNER) --mode filter --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img"

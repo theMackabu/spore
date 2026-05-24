@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -126,7 +127,8 @@ static void module_name(char *out, size_t cap, const char *target) {
   }
 }
 
-static bool prebuilt_path(char *out, size_t cap, const char *prebuilt_root, const char *source_root, const char *source) {
+static bool prebuilt_path(char *out, size_t cap, const char *prebuilt_root, const char *source_root,
+                          const char *source) {
   if (prebuilt_root == NULL || prebuilt_root[0] == '\0') { return false; }
   char src[MAX_PATH];
   path_join(src, sizeof(src), source_root, source);
@@ -155,19 +157,55 @@ static void compile_or_copy_userland(const char *source_root, const char *source
   snprintf(include, sizeof(include), "-I%s/userland/lib/spore", source_root);
 
   if (is_dir(src)) {
-    char main_c[MAX_PATH];
     char util_c[MAX_PATH];
-    path_join(main_c, sizeof(main_c), src, "main.c");
     snprintf(util_c, sizeof(util_c), "%s/userland/lib/spore/util.c", source_root);
-    char *const argv[] = {
-      "zig", "cc", "-target", "aarch64-linux-musl", "-static", "-std=c23", "-D_GNU_SOURCE",
-      include, main_c, util_c, "-o", (char *)out, NULL,
-    };
+
+    char source_files[32][MAX_PATH];
+    size_t source_count = 0;
+    DIR *dir = opendir(src);
+    if (dir == NULL) { die(src); }
+    for (struct dirent *entry = readdir(dir); entry != NULL; entry = readdir(dir)) {
+      size_t len = strlen(entry->d_name);
+      if (len > 2 && strcmp(entry->d_name + len - 2, ".c") == 0) {
+        if (source_count >= sizeof(source_files) / sizeof(source_files[0])) { die_msg("too many userland sources"); }
+        path_join(source_files[source_count++], sizeof(source_files[0]), src, entry->d_name);
+      }
+    }
+    closedir(dir);
+    if (source_count == 0) { die_msg("userland directory has no C sources"); }
+    for (size_t i = 0; i + 1 < source_count; ++i) {
+      for (size_t j = i + 1; j < source_count; ++j) {
+        if (strcmp(source_files[i], source_files[j]) > 0) {
+          char tmp[MAX_PATH];
+          snprintf(tmp, sizeof(tmp), "%s", source_files[i]);
+          snprintf(source_files[i], sizeof(source_files[i]), "%s", source_files[j]);
+          snprintf(source_files[j], sizeof(source_files[j]), "%s", tmp);
+        }
+      }
+    }
+
+    char *argv[48];
+    int argc = 0;
+    argv[argc++] = "zig";
+    argv[argc++] = "cc";
+    argv[argc++] = "-target";
+    argv[argc++] = "aarch64-linux-musl";
+    argv[argc++] = "-static";
+    argv[argc++] = "-std=c23";
+    argv[argc++] = "-D_GNU_SOURCE";
+    argv[argc++] = include;
+    for (size_t i = 0; i < source_count; ++i) {
+      argv[argc++] = source_files[i];
+    }
+    argv[argc++] = util_c;
+    argv[argc++] = "-o";
+    argv[argc++] = (char *)out;
+    argv[argc] = NULL;
     run_argv(argv, false);
   } else {
     char *const argv[] = {
-      "zig", "cc", "-target", "aarch64-linux-musl", "-static", "-std=c23", "-D_GNU_SOURCE",
-      src, "-o", (char *)out, NULL,
+      "zig",           "cc", "-target", "aarch64-linux-musl", "-static", "-std=c23",
+      "-D_GNU_SOURCE", src,  "-o",      (char *)out,          NULL,
     };
     run_argv(argv, false);
   }
@@ -247,15 +285,17 @@ int main(int argc, char **argv) {
   run_argv(dd_argv, true);
   char *const mkfs_argv[] = {"mkfs.fat", "-F", "32", (char *)output_image, NULL};
   run_argv(mkfs_argv, true);
-  char *const mmd_argv[] = {"mmd", "-i", (char *)output_image, "::/EFI", "::/EFI/BOOT", "::/boot", "::/boot/modules", NULL};
+  char *const mmd_argv[] = {"mmd",         "-i",      (char *)output_image, "::/EFI",
+                            "::/EFI/BOOT", "::/boot", "::/boot/modules",    NULL};
   run_argv(mmd_argv, false);
   mcopy_into(output_image, boot_efi, "/EFI/BOOT/BOOTAA64.EFI");
   mcopy_into(output_image, kernel_elf, "/boot/kernel.elf");
   mcopy_into(output_image, modules_txt, "/boot/modules.txt");
 
   char cmd[MAX_PATH * 3];
-  snprintf(cmd, sizeof(cmd), "for f in '%s'/*; do mcopy -i '%s' \"$f\" ::/boot/modules/$(basename \"$f\") || exit 1; done",
-           modules_dir, output_image);
+  snprintf(cmd, sizeof(cmd),
+           "for f in '%s'/*; do mcopy -i '%s' \"$f\" ::/boot/modules/$(basename \"$f\") || exit 1; done", modules_dir,
+           output_image);
   if (system(cmd) != 0) { die_msg("copy modules failed"); }
   copy_file(output_image, output_copy);
   return 0;

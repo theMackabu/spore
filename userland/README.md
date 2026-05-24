@@ -6,7 +6,8 @@ each tool independently confineable by the policy layer.
 ## Layout
 
 - `lib/spore/`: tiny shared helper runtime used by tools.
-- `bin/<tool>/main.c`: real commands baked into `/bin`.
+- `bin/<tool>/main.c`: real commands baked into `/bin`; `bin/sh` is also
+  baked as `/init`.
 - `demos/<name>/main.c`: confinement fixtures baked into `/demos`.
 - `tests/integration/`: regression binaries used only by `run-tests`.
 - `image.manifest`: declarative list of sources and baked paths for the

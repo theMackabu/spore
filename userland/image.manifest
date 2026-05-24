@@ -1,6 +1,6 @@
 # source baked-path
-userland/bin/spsh /init
-userland/bin/spsh /bin/spsh
+userland/bin/sh /init
+userland/bin/sh /bin/sh
 userland/bin/ls /bin/ls
 userland/bin/cat /bin/cat
 userland/bin/echo /bin/echo
