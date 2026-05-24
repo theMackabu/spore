@@ -23,6 +23,7 @@ userland_test_targets = []
 userland_image_data = []
 
 subdir('etc')
+userland_image_data += files('usr/local/htoprc')
 subdir('lib/spore')
 
 subdir('bin/init')

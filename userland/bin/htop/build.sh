@@ -59,6 +59,7 @@ mkdir -p "$ht_build"
   cd "$ht_build"
   "$ht_src/configure" \
     --host=aarch64-unknown-linux-musl \
+    --sysconfdir=/usr/local \
     --with-proc=/proc \
     --enable-static \
     --disable-unicode \

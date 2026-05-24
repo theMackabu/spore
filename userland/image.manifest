@@ -91,8 +91,9 @@ userland/demos/signal-crash /demos/signal-crash
 
 userland/bin/fastfetch /bin/fastfetch
 userland/bin/htop/terminfo/x/xterm-256color /usr/share/terminfo/x/xterm-256color
-dir /etc/htop
-userland/etc/htoprc /etc/htop/config
+dir /usr
+dir /usr/local
+userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd
 userland/etc/profile /etc/profile
 userland/etc/os-release /etc/os-release
