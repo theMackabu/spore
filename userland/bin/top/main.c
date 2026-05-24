@@ -96,6 +96,40 @@ static void fmt_mem(unsigned long long pages, char *out, size_t cap) {
   snprintf(out, cap, "%lluM", tenths / 10ull);
 }
 
+static void fmt_kib(unsigned long long kib, char *out, size_t cap) {
+  if (kib < 1024) {
+    snprintf(out, cap, "%lluK", kib);
+    return;
+  }
+  unsigned long long tenths = (kib * 10ull + 512ull) / 1024ull;
+  if (tenths < 100 || (tenths % 10ull) != 0) {
+    snprintf(out, cap, "%llu.%lluM", tenths / 10ull, tenths % 10ull);
+    return;
+  }
+  snprintf(out, cap, "%lluM", tenths / 10ull);
+}
+
+static int read_meminfo(unsigned long long *total_kib, unsigned long long *used_kib, unsigned long long *free_kib) {
+  FILE *f = fopen("/proc/meminfo", "r");
+  if (f == NULL) { return -1; }
+  char key[32];
+  unsigned long long value;
+  *total_kib = 0;
+  *used_kib = 0;
+  *free_kib = 0;
+  while (fscanf(f, "%31s %llu", key, &value) == 2) {
+    if (streq(key, "MemTotalKiB:")) {
+      *total_kib = value;
+    } else if (streq(key, "MemUsedKiB:")) {
+      *used_kib = value;
+    } else if (streq(key, "MemFreeKiB:")) {
+      *free_kib = value;
+    }
+  }
+  fclose(f);
+  return *total_kib == 0 ? -1 : 0;
+}
+
 static long load_procs(struct proc_row *infos, size_t cap) {
   FILE *f = fopen("/proc/procinfo", "r");
   if (f == NULL) { return -1; }
@@ -119,22 +153,64 @@ static int draw(void) {
   if (n < 0) { return -1; }
   qsort(infos, (size_t)n, sizeof(infos[0]), proc_cmp);
 
+  unsigned running = 0;
+  unsigned sleeping = 0;
+  unsigned zombie = 0;
+  unsigned long long total_cpu = 0;
+  unsigned long long total_age = 0;
+  for (long i = 0; i < n; ++i) {
+    if (streq(infos[i].state, "running")) {
+      ++running;
+    } else if (streq(infos[i].state, "zombie")) {
+      ++zombie;
+    } else {
+      ++sleeping;
+    }
+    total_cpu += infos[i].cpu_ticks;
+    total_age += infos[i].age_ticks;
+  }
+  unsigned long long busy_tenths = total_age == 0 ? 0 : (total_cpu * 1000ull) / total_age;
+  if (busy_tenths > 1000) { busy_tenths = 1000; }
+  unsigned long long idle_tenths = 1000ull - busy_tenths;
+  unsigned long long total_kib = 0;
+  unsigned long long used_kib = 0;
+  unsigned long long free_kib = 0;
+  char used_mem[16] = "?";
+  char free_mem[16] = "?";
+  if (read_meminfo(&total_kib, &used_kib, &free_kib) == 0) {
+    fmt_kib(used_kib, used_mem, sizeof(used_mem));
+    fmt_kib(free_kib, free_mem, sizeof(free_mem));
+  }
+  struct timespec now;
+  (void)clock_gettime(CLOCK_REALTIME, &now);
+  long long local = (long long)now.tv_sec - 7 * 60 * 60;
+  long long day_seconds = local % 86400;
+  if (day_seconds < 0) { day_seconds += 86400; }
+
   unsigned rows = screen_rows();
   printf("\033[H\033[2J");
-  printf("\033[7m Spore top - %ld process%s  (q to quit) \033[m\r\n", n, n == 1 ? "" : "es");
-  printf("PID  PPID  STATE       MEM  CPU  AGE  BUDGET       CMD\r\n");
-  unsigned used_rows = 2;
+  printf("Processes: %ld total, %u running, %u sleeping, %u zombie, %ld threads%*s%02lld:%02lld:%02lld\r\n", n, running,
+         sleeping, zombie, n, 1, "", day_seconds / 3600, (day_seconds % 3600) / 60, day_seconds % 60);
+  printf("Load Avg: 0.00, 0.00, 0.00  CPU usage: %llu.%llu%% user, 0.0%% sys, %llu.%llu%% idle\r\n",
+         busy_tenths / 10ull, busy_tenths % 10ull, idle_tenths / 10ull, idle_tenths % 10ull);
+  printf("PhysMem: %s used, %s unused.\r\n\r\n", used_mem, free_mem);
+  printf("PID  COMMAND         %%CPU TIME     MEM    PPID  STATE     BUDGET\r\n");
+  unsigned used_rows = 5;
   for (long i = 0; i < n && used_rows + 1 < rows; ++i, ++used_rows) {
     char budget[32];
     char mem[16];
+    char time[24];
+    unsigned long long cpu_tenths = infos[i].age_ticks == 0 ? 0 : (infos[i].cpu_ticks * 1000ull) / infos[i].age_ticks;
     if (infos[i].budget_max == 0) {
       snprintf(budget, sizeof(budget), "unlimited");
     } else {
       snprintf(budget, sizeof(budget), "%llu/%llu", infos[i].budget_remaining, infos[i].budget_max);
     }
     fmt_mem(infos[i].rss_pages, mem, sizeof(mem));
-    printf("%3u  %4u  %-7s  %6s  %3llu  %3llu  %-11s  %s\r\n", infos[i].pid, infos[i].ppid, infos[i].state, mem,
-           infos[i].cpu_ticks, infos[i].age_ticks, budget, infos[i].cmdline);
+    snprintf(time, sizeof(time), "%llu:%02llu.%02llu", (infos[i].cpu_ticks / 100ull) / 60ull,
+             (infos[i].cpu_ticks / 100ull) % 60ull, infos[i].cpu_ticks % 100ull);
+    printf("%3u  %-14s %3llu.%1llu %-8s %-6s %4u  %-8s  %s\r\n", infos[i].pid, infos[i].name, cpu_tenths / 10ull,
+           cpu_tenths % 10ull, time, mem, infos[i].ppid, infos[i].state, budget);
   }
   while (used_rows++ < rows - 1) {
     printf("\033[K\r\n");
