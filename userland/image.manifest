@@ -81,6 +81,7 @@ userland/demos/signal-crash /demos/signal-crash
 
 userland/bin/fastfetch /bin/fastfetch
 userland/bin/htop/terminfo/x/xterm-256color /usr/share/terminfo/x/xterm-256color
+userland/etc/htoprc /.config/htop/htoprc
 userland/etc/motd /etc/motd
 userland/etc/passwd /etc/passwd
 userland/etc/group /etc/group

@@ -21,6 +21,8 @@ static int next_snapshot_id;
 static uint64_t device_rng_state = 0x9e3779b97f4a7c15ull;
 static uint64_t scheduler_ticks;
 static uint64_t boot_epoch_sec;
+static uint64_t proc_cache_tick = UINT64_MAX;
+static size_t proc_cache_rss[MAX_DOMAINS];
 static uint32_t tty_lflag = 0000002 | 0000010;
 static char tty_line[256];
 static size_t tty_line_len;
@@ -37,6 +39,7 @@ static size_t tty_prompt_len;
 static bool tty_prompt_active;
 
 static size_t domain_resident_pages(const struct domain *domain);
+static void wake_poll_waiters(void);
 
 enum {
   CELL_O_ACCMODE = 3,
@@ -70,6 +73,12 @@ struct robust_list_head64 {
   uint64_t next;
   int64_t futex_offset;
   uint64_t pending;
+};
+
+struct pollfd64 {
+  int32_t fd;
+  int16_t events;
+  int16_t revents;
 };
 
 static bool str_eq(const char *a, const char *b) {
@@ -960,6 +969,7 @@ void cell_set_boot_epoch(uint64_t epoch_sec) {
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   ++scheduler_ticks;
   net_poll();
+  wake_poll_waiters();
   struct domain *domain = current_domain();
   if (domain == NULL) { return; }
   if (from_lower_el) { ++domain->cpu_ticks; }
@@ -1014,6 +1024,8 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "thread";
   case WAIT_FUTEX:
     return "futex";
+  case WAIT_POLL:
+    return "poll";
   }
   return "?";
 }
@@ -1486,9 +1498,18 @@ static size_t fs_tmp_text(char *dst, size_t cap) {
   return len;
 }
 
+static uint64_t total_domain_cpu_ticks(void) {
+  uint64_t ticks = 0;
+  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+    if (domains[i].used) { ticks += domains[i].cpu_ticks; }
+  }
+  return ticks;
+}
+
 static size_t stat_text(char *dst, size_t cap) {
   size_t len = 0;
-  uint64_t idle_ticks = scheduler_ticks > 0 ? scheduler_ticks : 1;
+  uint64_t busy_ticks = total_domain_cpu_ticks();
+  uint64_t idle_ticks = scheduler_ticks > busy_ticks ? scheduler_ticks - busy_ticks : 0;
   uint64_t running = 0;
   uint64_t blocked = 0;
   for (size_t i = 0; i < MAX_THREADS; ++i) {
@@ -1499,16 +1520,12 @@ static size_t stat_text(char *dst, size_t cap) {
     }
   }
   proc_append_str(dst, cap, &len, "cpu  ");
-  proc_append_u64(dst, cap, &len, scheduler_ticks);
-  proc_append_str(dst, cap, &len, " 0 ");
-  proc_append_u64(dst, cap, &len, scheduler_ticks / 4);
-  proc_append_char(dst, cap, &len, ' ');
+  proc_append_u64(dst, cap, &len, busy_ticks);
+  proc_append_str(dst, cap, &len, " 0 0 ");
   proc_append_u64(dst, cap, &len, idle_ticks);
   proc_append_str(dst, cap, &len, " 0 0 0 0 0 0\ncpu0 ");
-  proc_append_u64(dst, cap, &len, scheduler_ticks);
-  proc_append_str(dst, cap, &len, " 0 ");
-  proc_append_u64(dst, cap, &len, scheduler_ticks / 4);
-  proc_append_char(dst, cap, &len, ' ');
+  proc_append_u64(dst, cap, &len, busy_ticks);
+  proc_append_str(dst, cap, &len, " 0 0 ");
   proc_append_u64(dst, cap, &len, idle_ticks);
   proc_append_str(dst, cap, &len, " 0 0 0 0 0 0\nctxt ");
   proc_append_u64(dst, cap, &len, scheduler_ticks);
@@ -2088,6 +2105,12 @@ static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t 
   return (int64_t)n;
 }
 
+static bool tty_stdin_readable(void) {
+  if (tty_ready_len != 0) { return true; }
+  tty_process_input();
+  return tty_ready_len != 0;
+}
+
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
@@ -2121,8 +2144,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   return (int64_t)done;
 }
 
-int cell_fd_poll_events(int fd, int events) {
-  struct domain *domain = current_domain();
+static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return CELL_POLLNVAL; }
 
   struct open_file *file = domain->fds[fd];
@@ -2130,7 +2152,7 @@ int cell_fd_poll_events(int fd, int events) {
   if ((events & CELL_POLLIN) != 0) {
     if (file->type == OPEN_STDIN ||
         (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE))) {
-      if (tty_ready_len != 0 || pl011_poll_rx()) { revents |= CELL_POLLIN; }
+      if (tty_stdin_readable()) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_SOCKET) {
       net_poll();
       if (file->udp_rx_len != 0) { revents |= CELL_POLLIN; }
@@ -2146,6 +2168,149 @@ int cell_fd_poll_events(int fd, int events) {
     }
   }
   return revents;
+}
+
+int cell_fd_poll_events(int fd, int events) {
+  return fd_poll_events_for_domain(current_domain(), fd, events);
+}
+
+static int64_t ppoll_check(struct thread *thread, bool commit) {
+  if (thread == NULL || thread->domain == NULL || thread->poll_nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
+  int64_t ready = 0;
+  for (uint64_t i = 0; i < thread->poll_nfds; ++i) {
+    struct pollfd64 pfd;
+    uint64_t addr = thread->poll_fds + i * sizeof(pfd);
+    if (!vmm_copy_from_user(&thread->domain->as, &pfd, addr, sizeof(pfd))) { return -EFAULT; }
+
+    int revents = 0;
+    if (pfd.fd >= 0) { revents = fd_poll_events_for_domain(thread->domain, pfd.fd, pfd.events); }
+    if (revents != 0) { ++ready; }
+    if (commit) {
+      pfd.revents = (int16_t)revents;
+      if (!vmm_copy_to_user(&thread->domain->as, addr, &pfd, sizeof(pfd))) { return -EFAULT; }
+    }
+  }
+  return ready;
+}
+
+static int64_t pselect_check(struct thread *thread, bool commit) {
+  if (thread == NULL || thread->domain == NULL || thread->poll_nfds > 64) { return -EINVAL; }
+  uint64_t read_in = 0;
+  uint64_t write_in = 0;
+  uint64_t read_out = 0;
+  uint64_t write_out = 0;
+  uint64_t except_out = 0;
+  if (thread->poll_readfds != 0 &&
+      !vmm_copy_from_user(&thread->domain->as, &read_in, thread->poll_readfds, sizeof(read_in))) {
+    return -EFAULT;
+  }
+  if (thread->poll_writefds != 0 &&
+      !vmm_copy_from_user(&thread->domain->as, &write_in, thread->poll_writefds, sizeof(write_in))) {
+    return -EFAULT;
+  }
+
+  int64_t ready = 0;
+  for (uint64_t fd = 0; fd < thread->poll_nfds; ++fd) {
+    uint64_t bit = 1ull << fd;
+    int events = 0;
+    if ((read_in & bit) != 0) { events |= CELL_POLLIN; }
+    if ((write_in & bit) != 0) { events |= CELL_POLLOUT; }
+    if (events == 0) { continue; }
+    int revents = fd_poll_events_for_domain(thread->domain, (int)fd, events);
+    if ((revents & CELL_POLLIN) != 0 && (read_in & bit) != 0) { read_out |= bit; }
+    if ((revents & CELL_POLLOUT) != 0 && (write_in & bit) != 0) { write_out |= bit; }
+    if ((revents & (CELL_POLLIN | CELL_POLLOUT | CELL_POLLERR | CELL_POLLHUP | CELL_POLLNVAL)) != 0) { ++ready; }
+  }
+
+  if (commit) {
+    if ((thread->poll_readfds != 0 &&
+         !vmm_copy_to_user(&thread->domain->as, thread->poll_readfds, &read_out, sizeof(read_out))) ||
+        (thread->poll_writefds != 0 &&
+         !vmm_copy_to_user(&thread->domain->as, thread->poll_writefds, &write_out, sizeof(write_out))) ||
+        (thread->poll_exceptfds != 0 &&
+         !vmm_copy_to_user(&thread->domain->as, thread->poll_exceptfds, &except_out, sizeof(except_out)))) {
+      return -EFAULT;
+    }
+  }
+  return ready;
+}
+
+static void clear_poll_wait(struct thread *thread) {
+  thread->poll_kind = 0;
+  thread->poll_has_deadline = false;
+  thread->poll_deadline_tick = 0;
+  thread->poll_fds = 0;
+  thread->poll_nfds = 0;
+  thread->poll_readfds = 0;
+  thread->poll_writefds = 0;
+  thread->poll_exceptfds = 0;
+}
+
+static int64_t poll_wait_check(struct thread *thread, bool commit) {
+  if (thread->poll_kind == 1) { return ppoll_check(thread, commit); }
+  if (thread->poll_kind == 2) { return pselect_check(thread, commit); }
+  return -EINVAL;
+}
+
+static void wake_poll_waiters(void) {
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    struct thread *thread = &threads[i];
+    if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_POLL || thread->domain == NULL) { continue; }
+    int64_t ready = poll_wait_check(thread, false);
+    bool expired = thread->poll_has_deadline && scheduler_ticks >= thread->poll_deadline_tick;
+    if (ready < 0 || ready != 0 || expired) {
+      if (ready >= 0) { ready = poll_wait_check(thread, true); }
+      if (ready < 0) { ready = -EFAULT; }
+      thread->tf.x[0] = (uint64_t)ready;
+      thread->state = THREAD_RUNNABLE;
+      thread->wait_reason = WAIT_NONE;
+      clear_poll_wait(thread);
+    }
+  }
+}
+
+int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks,
+                       struct trap_frame *frame) {
+  if (current_thread == NULL || current_domain() == NULL || nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
+  cell_save_current(frame);
+  current_thread->poll_kind = 1;
+  current_thread->poll_fds = fds;
+  current_thread->poll_nfds = nfds;
+  int64_t ready = ppoll_check(current_thread, true);
+  if (ready != 0 || (has_timeout && timeout_ticks == 0) || ready < 0) {
+    clear_poll_wait(current_thread);
+    return (int)ready;
+  }
+  current_thread->state = THREAD_BLOCKED;
+  current_thread->wait_reason = WAIT_POLL;
+  current_thread->poll_has_deadline = has_timeout;
+  current_thread->poll_deadline_tick = scheduler_ticks + timeout_ticks;
+  cell_schedule(frame);
+  return CELL_SWITCHED;
+}
+
+int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds,
+                          bool has_timeout, uint64_t timeout_ticks, struct trap_frame *frame) {
+  if (current_thread == NULL || current_domain() == NULL || nfds > 64) { return -EINVAL; }
+  cell_save_current(frame);
+  current_thread->poll_kind = 2;
+  current_thread->poll_nfds = nfds;
+  current_thread->poll_readfds = readfds;
+  current_thread->poll_writefds = writefds;
+  current_thread->poll_exceptfds = exceptfds;
+  int64_t ready = pselect_check(current_thread, false);
+  if (ready > 0) { ready = pselect_check(current_thread, true); }
+  if (ready != 0 || (has_timeout && timeout_ticks == 0) || ready < 0) {
+    if (ready == 0) { ready = pselect_check(current_thread, true); }
+    clear_poll_wait(current_thread);
+    return (int)ready;
+  }
+  current_thread->state = THREAD_BLOCKED;
+  current_thread->wait_reason = WAIT_POLL;
+  current_thread->poll_has_deadline = has_timeout;
+  current_thread->poll_deadline_tick = scheduler_ticks + timeout_ticks;
+  cell_schedule(frame);
+  return CELL_SWITCHED;
 }
 
 int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len) {
@@ -2168,6 +2333,7 @@ void cell_wake_stdin(void) {
     thread->stdin_buf = 0;
     thread->stdin_len = 0;
   }
+  wake_poll_waiters();
 }
 
 int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
@@ -2326,6 +2492,7 @@ static void wake_socket_waiters(struct open_file *file) {
       thread->wait_target = -1;
     }
   }
+  wake_poll_waiters();
 }
 
 void cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
@@ -2500,13 +2667,27 @@ size_t cell_resident_pages(uint64_t start, uint64_t end) {
   return domain == NULL ? 0 : vmm_mapped_pages_in_range(&domain->as, start, end);
 }
 
-static size_t domain_resident_pages(const struct domain *domain) {
+static size_t domain_resident_pages_uncached(const struct domain *domain) {
   size_t pages = 0;
   for (size_t i = 0; i < MAX_VMAS; ++i) {
     const struct vma *vma = &domain->vmas.entries[i];
     if (vma->used) { pages += vmm_mapped_pages_in_range(&domain->as, vma->start, vma->end); }
   }
   return pages;
+}
+
+static void refresh_proc_cache(void) {
+  if (proc_cache_tick == scheduler_ticks) { return; }
+  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+    proc_cache_rss[i] = domains[i].used ? domain_resident_pages_uncached(&domains[i]) : 0;
+  }
+  proc_cache_tick = scheduler_ticks;
+}
+
+static size_t domain_resident_pages(const struct domain *domain) {
+  if (domain == NULL) { return 0; }
+  refresh_proc_cache();
+  return proc_cache_rss[(size_t)(domain - domains)];
 }
 
 size_t cell_proc_info(struct proc_info *out, size_t max) {

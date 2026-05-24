@@ -9,6 +9,7 @@ userland_image_data += files(
   'motd',
   'passwd',
   'group',
+  'htoprc',
   'fastfetch/config.jsonc',
   'fastfetch/spore.logo',
 ) + userland_os_release

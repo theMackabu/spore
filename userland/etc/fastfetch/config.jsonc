@@ -21,7 +21,6 @@
     "uptime",
     "processes",
     "shell",
-    "terminalsize",
     "cpu",
     "cpuusage",
     "memory",

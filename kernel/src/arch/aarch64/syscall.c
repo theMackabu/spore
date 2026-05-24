@@ -736,39 +736,13 @@ static int64_t sys_readv(uint64_t fd, uint64_t iov, uint64_t iovcnt) {
   return total;
 }
 
-static uint64_t read_cntvct(void) {
-  uint64_t cnt;
-  __asm__ volatile("mrs %0, cntvct_el0" : "=r"(cnt));
-  return cnt;
+static uint64_t timespec_to_scheduler_ticks(const struct timespec64 *timeout) {
+  uint64_t ticks = (uint64_t)timeout->tv_sec * 100ull + ((uint64_t)timeout->tv_nsec * 100ull + 999999999ull) / 1000000000ull;
+  return ticks == 0 ? 1 : ticks;
 }
 
-static uint64_t read_cntfrq(void) {
-  uint64_t freq;
-  __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
-  return freq;
-}
-
-static int64_t poll_once(uint64_t fds, uint64_t nfds) {
-  int64_t ready = 0;
-  for (uint64_t i = 0; i < nfds; ++i) {
-    struct pollfd64 pfd;
-    uint64_t addr = fds + i * sizeof(pfd);
-    if (!vmm_copy_from_user(active_as(), &pfd, addr, sizeof(pfd))) { return -(int64_t)EFAULT; }
-
-    int revents = 0;
-    if (pfd.fd < 0) {
-      revents = 0;
-    } else {
-      revents = cell_fd_poll_events(pfd.fd, pfd.events);
-    }
-    pfd.revents = (int16_t)revents;
-    if (!vmm_copy_to_user(active_as(), addr, &pfd, sizeof(pfd))) { return -(int64_t)EFAULT; }
-    if (revents != 0) { ++ready; }
-  }
-  return ready;
-}
-
-static int64_t sys_ppoll(uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask, uint64_t sigsetsize) {
+static int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
+                         uint64_t sigsetsize) {
   (void)sigmask;
   (void)sigsetsize;
   if (nfds > MAX_POLL_FDS) { return -(int64_t)EINVAL; }
@@ -780,91 +754,32 @@ static int64_t sys_ppoll(uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uin
 
   struct timespec64 timeout = {.tv_sec = 0, .tv_nsec = 0};
   bool has_timeout = timeout_addr != 0;
+  uint64_t timeout_ticks = 0;
   if (has_timeout) {
     if (!user_readable(timeout_addr, sizeof(timeout)) ||
         !vmm_copy_from_user(active_as(), &timeout, timeout_addr, sizeof(timeout))) {
       return -(int64_t)EFAULT;
     }
     if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 || timeout.tv_nsec >= 1000000000) { return -(int64_t)EINVAL; }
+    if (timeout.tv_sec != 0 || timeout.tv_nsec != 0) { timeout_ticks = timespec_to_scheduler_ticks(&timeout); }
   }
-
-  int64_t ready = poll_once(fds, nfds);
-  if (ready != 0 || !has_timeout || (timeout.tv_sec == 0 && timeout.tv_nsec == 0)) { return ready; }
-
-  uint64_t freq = read_cntfrq();
-  if (freq == 0) { return ready; }
-  uint64_t wait_ticks = (uint64_t)timeout.tv_sec * freq + ((uint64_t)timeout.tv_nsec * freq) / 1000000000ull;
-  if (wait_ticks == 0) { wait_ticks = 1; }
-  uint64_t start = read_cntvct();
-  while (read_cntvct() - start < wait_ticks) {
-    ready = poll_once(fds, nfds);
-    if (ready != 0) { return ready; }
-    __asm__ volatile("yield");
-  }
-  return 0;
+  return cell_ppoll_current(fds, nfds, has_timeout, timeout_ticks, frame);
 }
 
-static int64_t pselect_once(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds) {
-  if (nfds > 64) { return -(int64_t)EINVAL; }
-  uint64_t read_in = 0;
-  uint64_t write_in = 0;
-  uint64_t read_out = 0;
-  uint64_t write_out = 0;
-  uint64_t except_out = 0;
-  if (readfds != 0 && !vmm_copy_from_user(active_as(), &read_in, readfds, sizeof(read_in))) {
-    return -(int64_t)EFAULT;
-  }
-  if (writefds != 0 && !vmm_copy_from_user(active_as(), &write_in, writefds, sizeof(write_in))) {
-    return -(int64_t)EFAULT;
-  }
-
-  int64_t ready = 0;
-  for (uint64_t fd = 0; fd < nfds; ++fd) {
-    uint64_t bit = 1ull << fd;
-    int events = 0;
-    if ((read_in & bit) != 0) { events |= CELL_POLLIN; }
-    if ((write_in & bit) != 0) { events |= CELL_POLLOUT; }
-    if (events == 0) { continue; }
-    int revents = cell_fd_poll_events((int)fd, events);
-    if ((revents & CELL_POLLIN) != 0 && (read_in & bit) != 0) { read_out |= bit; }
-    if ((revents & CELL_POLLOUT) != 0 && (write_in & bit) != 0) { write_out |= bit; }
-    if ((revents & (CELL_POLLIN | CELL_POLLOUT | CELL_POLLERR | CELL_POLLHUP)) != 0) { ++ready; }
-  }
-
-  if ((readfds != 0 && !vmm_copy_to_user(active_as(), readfds, &read_out, sizeof(read_out))) ||
-      (writefds != 0 && !vmm_copy_to_user(active_as(), writefds, &write_out, sizeof(write_out))) ||
-      (exceptfds != 0 && !vmm_copy_to_user(active_as(), exceptfds, &except_out, sizeof(except_out)))) {
-    return -(int64_t)EFAULT;
-  }
-  return ready;
-}
-
-static int64_t sys_pselect6(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds,
-                            uint64_t timeout_addr) {
+static int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, uint64_t writefds,
+                            uint64_t exceptfds, uint64_t timeout_addr) {
   struct timespec64 timeout = {.tv_sec = 0, .tv_nsec = 0};
   bool has_timeout = timeout_addr != 0;
+  uint64_t timeout_ticks = 0;
   if (has_timeout) {
     if (!user_readable(timeout_addr, sizeof(timeout)) ||
         !vmm_copy_from_user(active_as(), &timeout, timeout_addr, sizeof(timeout))) {
       return -(int64_t)EFAULT;
     }
     if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 || timeout.tv_nsec >= 1000000000) { return -(int64_t)EINVAL; }
+    if (timeout.tv_sec != 0 || timeout.tv_nsec != 0) { timeout_ticks = timespec_to_scheduler_ticks(&timeout); }
   }
-
-  int64_t ready = pselect_once(nfds, readfds, writefds, exceptfds);
-  if (ready != 0 || !has_timeout || (timeout.tv_sec == 0 && timeout.tv_nsec == 0)) { return ready; }
-
-  uint64_t freq = read_cntfrq();
-  if (freq == 0) { return ready; }
-  uint64_t wait_ticks = (uint64_t)timeout.tv_sec * freq + ((uint64_t)timeout.tv_nsec * freq) / 1000000000ull;
-  if (wait_ticks == 0) { wait_ticks = 1; }
-  uint64_t start = read_cntvct();
-  while (read_cntvct() - start < wait_ticks) {
-    ready = pselect_once(nfds, readfds, writefds, exceptfds);
-    if (ready != 0) { return ready; }
-    __asm__ volatile("yield");
-  }
-  return 0;
+  return cell_pselect6_current(nfds, readfds, writefds, exceptfds, has_timeout, timeout_ticks, frame);
 }
 
 static int64_t sys_brk(uint64_t requested) {
@@ -1770,9 +1685,9 @@ l_readv:
 l_writev:
   return sys_writev(a0, a1, a2);
 l_pselect6:
-  return sys_pselect6(a0, a1, a2, a3, a4);
+  return sys_pselect6(f, a0, a1, a2, a3, a4);
 l_ppoll:
-  return sys_ppoll(a0, a1, a2, a3, a4);
+  return sys_ppoll(f, a0, a1, a2, a3, a4);
 l_exit:
   kprintf("[kernel] exit(%d)\n", (int)a0);
   cell_exit_thread_current((int)a0, f);
