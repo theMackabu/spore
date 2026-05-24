@@ -5,14 +5,21 @@
 #include <string.h>
 #include <unistd.h>
 
-enum {
-  ANSI_GREEN = 32,
-  ANSI_BLUE = 34,
-};
-
 static bool path_has_prefix_dir(const char *path, const char *prefix) {
   size_t n = strlen(prefix);
   return n > 0 && strncmp(path, prefix, n) == 0 && (path[n] == '\0' || path[n] == '/');
+}
+
+static void append_char(char *out, size_t cap, size_t *len, char c) {
+  if (*len + 1 >= cap) { return; }
+  out[(*len)++] = c;
+  out[*len] = '\0';
+}
+
+static void append_text(char *out, size_t cap, size_t *len, const char *text) {
+  while (*text != '\0') {
+    append_char(out, cap, len, *text++);
+  }
 }
 
 static void format_path(char *out, size_t cap, const char *path) {
@@ -26,6 +33,17 @@ static void format_path(char *out, size_t cap, const char *path) {
     return;
   }
   snprintf(out, cap, "%s", path);
+}
+
+static void format_path_base(char *out, size_t cap, const char *path) {
+  char folded[128];
+  format_path(folded, sizeof(folded), path);
+  const char *base = strrchr(folded, '/');
+  if (base != NULL && base[1] != '\0') {
+    snprintf(out, cap, "%s", base + 1);
+  } else {
+    snprintf(out, cap, "%s", folded);
+  }
 }
 
 static void current_user(char *out, size_t cap) {
@@ -45,30 +63,75 @@ static void current_hostname(char *out, size_t cap) {
   }
 }
 
-static void make_prompt(char *out, size_t cap) {
-  const char *ps1 = getenv("PS1");
-  if (ps1 != NULL) {
-    snprintf(out, cap, "%s", ps1);
-    return;
-  }
-
+void sh_expand_prompt(const char *src, char *out, size_t cap) {
+  if (cap == 0) { return; }
+  out[0] = '\0';
   char cwd[128];
   const char *path = getcwd(cwd, sizeof(cwd)) == NULL ? "/" : cwd;
   char display_path[128];
+  char display_base[128];
   char user[32];
   char host[64];
   format_path(display_path, sizeof(display_path), path);
+  format_path_base(display_base, sizeof(display_base), path);
   current_user(user, sizeof(user));
   current_hostname(host, sizeof(host));
 
-  char sigil = geteuid() == 0 ? '#' : '$';
-  snprintf(out, cap, "\033[%dm%s@%s\033[0m:\033[%dm%s\033[0m%c ", ANSI_GREEN, user, host, ANSI_BLUE, display_path,
-           sigil);
+  size_t len = 0;
+  for (const char *p = src; *p != '\0'; ++p) {
+    if (*p != '\\') {
+      append_char(out, cap, &len, *p);
+      continue;
+    }
+    ++p;
+    if (*p == '\0') {
+      append_char(out, cap, &len, '\\');
+      break;
+    }
+    switch (*p) {
+    case 'u':
+      append_text(out, cap, &len, user);
+      break;
+    case 'h':
+      append_text(out, cap, &len, host);
+      break;
+    case 'w':
+      append_text(out, cap, &len, display_path);
+      break;
+    case 'W':
+      append_text(out, cap, &len, display_base);
+      break;
+    case '$':
+      append_char(out, cap, &len, geteuid() == 0 ? '#' : '$');
+      break;
+    case 'e':
+      append_char(out, cap, &len, '\033');
+      break;
+    case '\\':
+      append_char(out, cap, &len, '\\');
+      break;
+    case '[':
+    case ']':
+      break;
+    default:
+      append_char(out, cap, &len, *p);
+      break;
+    }
+  }
+}
+
+static void make_prompt(char *out, size_t cap) {
+  const char *ps1 = getenv("PS1");
+  if (ps1 != NULL) {
+    sh_expand_prompt(ps1, out, cap);
+    return;
+  }
+  snprintf(out, cap, "msh%c ", geteuid() == 0 ? '#' : '$');
 }
 
 static void make_secondary_prompt(char *out, size_t cap) {
   const char *ps2 = getenv("PS2");
-  snprintf(out, cap, "%s", ps2 == NULL ? "> " : ps2);
+  sh_expand_prompt(ps2 == NULL ? "> " : ps2, out, cap);
 }
 
 static bool line_has_trailing_backslash(const char *buf) {

@@ -53,6 +53,7 @@ struct parser {
 };
 
 int sh_read_line(char *buf, size_t cap);
+void sh_expand_prompt(const char *src, char *out, size_t cap);
 void sh_reap_jobs(bool verbose);
 int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status);
 enum token_type sh_parser_peek(struct parser *p);

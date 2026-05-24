@@ -258,7 +258,9 @@ static bool all_assignments(struct command *cmd) {
 static void trace_command(const struct command *cmd) {
   if (!xtrace || cmd->argc == 0) { return; }
   const char *ps4 = getenv("PS4");
-  fputs(ps4 == NULL ? "+ " : ps4, stderr);
+  char prompt[96];
+  sh_expand_prompt(ps4 == NULL ? "+ " : ps4, prompt, sizeof(prompt));
+  fputs(prompt, stderr);
   for (int i = 0; i < cmd->argc; ++i) {
     if (i > 0) { fputc(' ', stderr); }
     fputs(cmd->argv[i], stderr);
@@ -421,7 +423,9 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
       printf("%d) %s\n", i - 1, cmd->argv[i]);
     }
     const char *ps3 = getenv("PS3");
-    fputs(ps3 == NULL ? "#? " : ps3, stdout);
+    char prompt[96];
+    sh_expand_prompt(ps3 == NULL ? "#? " : ps3, prompt, sizeof(prompt));
+    fputs(prompt, stdout);
     fflush(stdout);
     char reply[32];
     if (fgets(reply, sizeof(reply), stdin) == NULL) { return 1; }
