@@ -19,18 +19,8 @@ CompileFlags:
     - -march=*
     - -mcmodel=*
   Add:
-    - --target=aarch64-linux-musl
     - -std=c23
     - -D_GNU_SOURCE
     - -I
-    - /Users/themackabu/Developer/c_cxx/spore/userland/lib/spore
-    - -isystem
-    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/include
-    - -isystem
-    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/aarch64-linux-musl
-    - -isystem
-    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/generic-musl
-    - -isystem
-    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/aarch64-linux-any
-    - -isystem
-    - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/libc/include/any-linux-any
+    - userland/lib/spore
+    - -Wno-deprecated-declarations
