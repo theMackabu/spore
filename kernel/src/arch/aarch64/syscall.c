@@ -9,6 +9,7 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "ramfs.h"
+#include "vfs.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -552,8 +553,9 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
     argc = 1;
   }
 
-  struct ramfs_file file;
-  if (!ramfs_lookup(sys_ramfs, path, &file)) { return -(int64_t)ENOENT; }
+  const void *file_data = NULL;
+  uint64_t file_size = 0;
+  if (!vfs_lookup_exec(path, &file_data, &file_size)) { return -(int64_t)ENOENT; }
 
   struct user_address_space new_as;
   struct loaded_elf elf;
@@ -562,7 +564,7 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   uint64_t hhdm_offset = active_as()->hhdm_offset;
   vma_list_init(&new_vmas);
   if (!vmm_user_init(&new_as, hhdm_offset)) { return -12; }
-  if (!elf_load_static_aarch64(&new_as, file.data, (size_t)file.size, &elf) ||
+  if (!elf_load_static_aarch64(&new_as, file_data, (size_t)file_size, &elf) ||
       !build_initial_stack_args(&new_as, &elf, argv, argc, envp, envc, &user_sp)) {
     vmm_destroy(&new_as);
     return -(int64_t)EINVAL;
@@ -577,15 +579,18 @@ static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   if (!copy_resolved_path(path_addr, path, sizeof(path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
-  struct ramfs_node node;
-  if (!ramfs_lookup_node(sys_ramfs, path, &node)) {
-    if ((flags & O_CREAT) == 0 || !ramfs_create(sys_ramfs, path, &node)) { return -(int64_t)ENOENT; }
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node)) {
+    if ((flags & O_CREAT) == 0 || !vfs_create(path, &node)) { return -(int64_t)ENOENT; }
   }
-  if ((flags & O_TRUNC) != 0 && !node.is_dir) { (void)ramfs_truncate(sys_ramfs, node.index, 0); }
+  if ((flags & O_TRUNC) != 0 && !node.is_dir) {
+    (void)vfs_truncate(&node, 0);
+    (void)vfs_lookup(path, &node);
+  }
   return cell_fd_open_node(&node, (uint32_t)flags);
 }
 
-static void fill_stat(struct stat64_aarch64 *st, const struct ramfs_node *node) {
+static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   kmemset(st, 0, sizeof(*st));
   st->st_ino = node->ino;
   uint32_t type = 0100000u;
@@ -602,7 +607,7 @@ static void fill_stat(struct stat64_aarch64 *st, const struct ramfs_node *node) 
 }
 
 static int64_t sys_fstat(uint64_t fd, uint64_t stat_addr) {
-  struct ramfs_node node;
+  struct vfs_node node;
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
   struct stat64_aarch64 st;
   fill_stat(&st, &node);
@@ -617,8 +622,8 @@ static int64_t sys_newfstatat(uint64_t dirfd, uint64_t path_addr, uint64_t stat_
   if (!copy_resolved_path(path_addr, path, sizeof(path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
-  struct ramfs_node node;
-  if (!ramfs_lookup_node(sys_ramfs, path, &node)) { return -(int64_t)ENOENT; }
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
   struct stat64_aarch64 st;
   fill_stat(&st, &node);
   return user_writable(stat_addr, sizeof(st)) && vmm_copy_to_user(active_as(), stat_addr, &st, sizeof(st))
@@ -633,7 +638,7 @@ static uint16_t dirent_reclen(size_t name_len) {
 static int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
   uint64_t written = 0;
   for (;;) {
-    struct ramfs_dirent ent;
+    struct vfs_dirent ent;
     if (!cell_fd_next_dirent((int)fd, &ent)) { break; }
     size_t name_len = kstrlen(ent.name);
     uint16_t reclen = dirent_reclen(name_len);
@@ -669,8 +674,8 @@ static int64_t sys_chdir(uint64_t path_addr) {
   if (!copy_resolved_path(path_addr, path, sizeof(path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
-  struct ramfs_node node;
-  if (!ramfs_lookup_node(sys_ramfs, path, &node)) { return -(int64_t)ENOENT; }
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
   if (!node.is_dir) { return -(int64_t)ENOTDIR; }
   return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
 }
@@ -681,7 +686,7 @@ static int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr) {
   if (!copy_resolved_path(path_addr, path, sizeof(path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
-  return ramfs_mkdir(sys_ramfs, path) ? 0 : -(int64_t)EINVAL;
+  return vfs_mkdir(path) ? 0 : -(int64_t)EINVAL;
 }
 
 static int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr) {
@@ -690,7 +695,7 @@ static int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr) {
   if (!copy_resolved_path(path_addr, path, sizeof(path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
-  return ramfs_unlink(sys_ramfs, path) ? 0 : -(int64_t)ENOTEMPTY;
+  return vfs_unlink(path) ? 0 : -(int64_t)ENOTEMPTY;
 }
 
 static int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr) {
@@ -701,13 +706,13 @@ static int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t
       !copy_resolved_path(new_path_addr, new_path, sizeof(new_path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
-  return ramfs_rename(sys_ramfs, old_path, new_path) ? 0 : -(int64_t)ENOENT;
+  return vfs_rename(old_path, new_path) ? 0 : -(int64_t)ENOENT;
 }
 
 static int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
-  struct ramfs_node node;
+  struct vfs_node node;
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
-  return ramfs_truncate(node.fs, node.index, size) ? 0 : -(int64_t)EINVAL;
+  return vfs_truncate(&node, size) ? 0 : -(int64_t)EINVAL;
 }
 
 static uint16_t bswap16(uint16_t x) {

@@ -218,10 +218,56 @@ static void mcopy_into(const char *efi_img, const char *src, const char *dst) {
   run_argv(argv, false);
 }
 
+static void copy_into_rootfs(const char *src, const char *rootfs, const char *dst) {
+  char out[MAX_PATH];
+  int n = snprintf(out, sizeof(out), "%s%s", rootfs, dst);
+  if (n < 0 || (size_t)n >= sizeof(out)) { die_msg("path too long"); }
+
+  char parent[MAX_PATH];
+  snprintf(parent, sizeof(parent), "%s", out);
+  char *slash = strrchr(parent, '/');
+  if (slash != NULL) {
+    *slash = '\0';
+    ensure_dir(parent);
+  }
+  copy_file(src, out);
+  chmod(out, 0755);
+}
+
+static void write_text_file(const char *path, const char *text) {
+  FILE *f = fopen(path, "wb");
+  if (f == NULL) { die(path); }
+  if (fwrite(text, 1, strlen(text), f) != strlen(text)) { die("fwrite"); }
+  fclose(f);
+}
+
+static void build_root_ext2(const char *rootfs_dir, const char *output_root, const char *output_copy) {
+  char dev_dir[MAX_PATH];
+  char etc_dir[MAX_PATH];
+  char tmp_dir[MAX_PATH];
+  path_join(dev_dir, sizeof(dev_dir), rootfs_dir, "dev");
+  path_join(etc_dir, sizeof(etc_dir), rootfs_dir, "etc");
+  path_join(tmp_dir, sizeof(tmp_dir), rootfs_dir, "tmp");
+  ensure_dir(dev_dir);
+  ensure_dir(etc_dir);
+  ensure_dir(tmp_dir);
+
+  char motd[MAX_PATH];
+  path_join(motd, sizeof(motd), etc_dir, "motd");
+  if (!exists(motd)) { write_text_file(motd, "welcome to spore\n"); }
+
+  char *const mkfs_argv[] = {
+    "mke2fs", "-q", "-t", "ext2", "-b", "4096", "-d", (char *)rootfs_dir, (char *)output_root, "262144", NULL,
+  };
+  unlink(output_root);
+  run_argv(mkfs_argv, false);
+  copy_file(output_root, output_copy);
+}
+
 int main(int argc, char **argv) {
-  if (argc != 7 && argc != 8 && argc != 9) {
-    fputs("usage: spore-image SOURCE_ROOT ISO_ROOT KERNEL_ELF BOOT_EFI OUTPUT_IMAGE OUTPUT_COPY [MANIFEST] "
-          "[PREBUILT_ROOT]\n",
+  if (argc != 9 && argc != 10 && argc != 11) {
+    fputs("usage: spore-image SOURCE_ROOT ISO_ROOT KERNEL_ELF BOOT_EFI OUTPUT_IMAGE OUTPUT_COPY OUTPUT_ROOT_EXT2 "
+          "OUTPUT_ROOT_COPY [MANIFEST] [PREBUILT_ROOT]\n",
           stderr);
     return 2;
   }
@@ -231,18 +277,26 @@ int main(int argc, char **argv) {
   const char *boot_efi = argv[4];
   const char *output_image = argv[5];
   const char *output_copy = argv[6];
+  const char *output_root = argv[7];
+  const char *output_root_copy = argv[8];
   char default_manifest[MAX_PATH];
   snprintf(default_manifest, sizeof(default_manifest), "%s/userland/image.manifest", source_root);
-  const char *manifest = argc >= 8 ? argv[7] : default_manifest;
-  const char *prebuilt_root = argc == 9 ? argv[8] : NULL;
+  const char *manifest = argc >= 10 ? argv[9] : default_manifest;
+  const char *prebuilt_root = argc == 11 ? argv[10] : NULL;
 
   remove_tree(iso_root);
+  char programs_dir[MAX_PATH];
   char modules_dir[MAX_PATH];
   char efi_boot_dir[MAX_PATH];
+  char rootfs_dir[MAX_PATH];
+  path_join(programs_dir, sizeof(programs_dir), iso_root, "programs");
   path_join(modules_dir, sizeof(modules_dir), iso_root, "boot/modules");
   path_join(efi_boot_dir, sizeof(efi_boot_dir), iso_root, "EFI/BOOT");
+  path_join(rootfs_dir, sizeof(rootfs_dir), iso_root, "rootfs");
+  ensure_dir(programs_dir);
   ensure_dir(modules_dir);
   ensure_dir(efi_boot_dir);
+  ensure_dir(rootfs_dir);
 
   char kernel_dst[MAX_PATH];
   char boot_dst[MAX_PATH];
@@ -272,9 +326,9 @@ int main(int argc, char **argv) {
     char name[MAX_PATH];
     module_name(name, sizeof(name), target);
     char out[MAX_PATH];
-    path_join(out, sizeof(out), modules_dir, name);
+    path_join(out, sizeof(out), programs_dir, name);
     compile_or_copy_userland(source_root, source, out, prebuilt_root);
-    fprintf(mods, "boot/modules/%s %s\n", name, target);
+    copy_into_rootfs(out, rootfs_dir, target);
   }
   fclose(mf);
   fclose(mods);
@@ -291,12 +345,7 @@ int main(int argc, char **argv) {
   mcopy_into(output_image, boot_efi, "/EFI/BOOT/BOOTAA64.EFI");
   mcopy_into(output_image, kernel_elf, "/boot/kernel.elf");
   mcopy_into(output_image, modules_txt, "/boot/modules.txt");
-
-  char cmd[MAX_PATH * 3];
-  snprintf(cmd, sizeof(cmd),
-           "for f in '%s'/*; do mcopy -i '%s' \"$f\" ::/boot/modules/$(basename \"$f\") || exit 1; done", modules_dir,
-           output_image);
-  if (system(cmd) != 0) { die_msg("copy modules failed"); }
   copy_file(output_image, output_copy);
+  build_root_ext2(rootfs_dir, output_root, output_root_copy);
   return 0;
 }

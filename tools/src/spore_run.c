@@ -26,6 +26,8 @@ static const char *shell_commands[] = {
   "echo console-ok > /dev/console\n",
   "echo full > /dev/full\n",
   "cat /etc/motd\n",
+  "edit /etc/motd\nd 1\na\nhello from ext2\n.\nw\nq\n",
+  "cat /etc/motd\n",
   "echo hi > /tmp/f\n",
   "cat /tmp/f\n",
   "edit /tmp/edit-test\na\nfrom edit\n.\nw\nq\n",
@@ -47,7 +49,7 @@ static const char *shell_commands[] = {
 
 static void usage(void) {
   fputs("usage: spore-run [--mode plain|filter|shell|stdin] [--timings] [--tmux-log-pane] --image IMAGE "
-        "[--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--vars VARS_FD]\n",
+        "[--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--vars VARS_FD]\n",
         stderr);
   exit(2);
 }
@@ -249,10 +251,11 @@ static pid_t start_udp_echo_server(void) {
   }
 }
 
-static void build_qemu_args(char **argv, int *argc, const char *qemu, const char *image, const char *accel,
+static void build_qemu_args(char **argv, int *argc, const char *qemu, const char *image, const char *root,
+                            const char *accel,
                             const char *cpu, const char *vars, char *firmware_arg, size_t firmware_cap, char *vars_arg,
-                            size_t vars_cap, char *image_drive_arg, size_t image_drive_cap, int log_fd,
-                            char *log_chardev_arg, size_t log_chardev_cap) {
+                            size_t vars_cap, char *image_drive_arg, size_t image_drive_cap, char *root_drive_arg,
+                            size_t root_drive_cap, int log_fd, char *log_chardev_arg, size_t log_chardev_cap) {
   char firmware[PATH_CAP];
   if (!find_firmware(qemu, firmware, sizeof(firmware))) {
     fputs("spore-run: edk2-aarch64-code.fd not found\n", stderr);
@@ -262,6 +265,7 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
   snprintf(firmware_arg, firmware_cap, "if=pflash,format=raw,readonly=on,file=%s", firmware);
   if (vars != NULL) { snprintf(vars_arg, vars_cap, "if=pflash,format=raw,file=%s", vars); }
   snprintf(image_drive_arg, image_drive_cap, "if=none,format=raw,readonly=on,file=%s,id=sporeesp", image);
+  if (root != NULL) { snprintf(root_drive_arg, root_drive_cap, "if=none,format=raw,file=%s,id=sporeroot", root); }
   snprintf(log_chardev_arg, log_chardev_cap, "file,id=sporelog,path=/dev/fd/%d", log_fd);
   int i = 0;
   argv[i++] = (char *)qemu;
@@ -301,6 +305,12 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
     argv[i++] = image_drive_arg;
     argv[i++] = "-device";
     argv[i++] = "virtio-blk-device,drive=sporeesp,bootindex=0";
+  }
+  if (root != NULL) {
+    argv[i++] = "-drive";
+    argv[i++] = root_drive_arg;
+    argv[i++] = "-device";
+    argv[i++] = "virtio-blk-device,drive=sporeroot";
   }
   argv[i++] = "-serial";
   argv[i++] = "stdio";
@@ -646,6 +656,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
 int main(int argc, char **argv) {
   const char *mode = "filter";
   const char *image = NULL;
+  const char *root = NULL;
   const char *qemu = "qemu-system-aarch64";
   const char *accel = "hvf";
   const char *cpu = "host";
@@ -661,6 +672,8 @@ int main(int argc, char **argv) {
       tmux_log_pane = true;
     } else if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
       image = argv[++i];
+    } else if (strcmp(argv[i], "--root") == 0 && i + 1 < argc) {
+      root = argv[++i];
     } else if (strcmp(argv[i], "--qemu") == 0 && i + 1 < argc) {
       qemu = argv[++i];
     } else if (strcmp(argv[i], "--accel") == 0 && i + 1 < argc) {
@@ -677,17 +690,18 @@ int main(int argc, char **argv) {
   char firmware_arg[PATH_CAP];
   char vars_arg[PATH_CAP];
   char image_drive_arg[PATH_CAP];
+  char root_drive_arg[PATH_CAP];
   char log_chardev_arg[PATH_CAP];
   int log_pipe[2];
   if (pipe(log_pipe) != 0) {
     perror("pipe");
     return 1;
   }
-  char *qemu_argv[80];
+  char *qemu_argv[96];
   int qemu_argc = 0;
-  build_qemu_args(qemu_argv, &qemu_argc, qemu, image, accel, cpu, vars, firmware_arg, sizeof(firmware_arg), vars_arg,
-                  sizeof(vars_arg), image_drive_arg, sizeof(image_drive_arg), log_pipe[1], log_chardev_arg,
-                  sizeof(log_chardev_arg));
+  build_qemu_args(qemu_argv, &qemu_argc, qemu, image, root, accel, cpu, vars, firmware_arg, sizeof(firmware_arg),
+                  vars_arg, sizeof(vars_arg), image_drive_arg, sizeof(image_drive_arg), root_drive_arg,
+                  sizeof(root_drive_arg), log_pipe[1], log_chardev_arg, sizeof(log_chardev_arg));
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
       strcmp(mode, "stdin") == 0) {

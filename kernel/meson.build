@@ -36,8 +36,10 @@ kernel_sources = files(
   'src/arch/aarch64/timer.c',
   'src/arch/aarch64/vectors.S',
   'src/cell.c',
+  'src/ext2.c',
   'src/main.c',
   'src/drivers/pl011.c',
+  'src/drivers/virtio_blk.c',
   'src/drivers/virtio_console.c',
   'src/drivers/virtio_net.c',
   'src/elf/loader.c',
@@ -48,6 +50,7 @@ kernel_sources = files(
   'src/mm/vmm.c',
   'src/net/net.c',
   'src/ramfs.c',
+  'src/vfs.c',
 )
 
 kernel_elf = executable('kernel.elf',
@@ -62,8 +65,10 @@ kernel_elf = executable('kernel.elf',
 
 image_root = meson.current_build_dir() / 'image_root'
 image_img = meson.project_build_root() / 'image.img'
+root_ext2 = meson.project_build_root() / 'root.ext2'
 test_image_root = meson.current_build_dir() / 'test_image_root'
 test_image_img = meson.project_build_root() / 'test_image.img'
+test_root_ext2 = meson.project_build_root() / 'test_root.ext2'
 
 boot_efi = custom_target('BOOTAA64.EFI',
   input: files('../bootloader/main.c'),
@@ -92,7 +97,7 @@ image = custom_target('image.img',
     files('../userland/image.manifest'),
     boot_efi,
   ],
-  output: 'image.img',
+  output: ['image.img', 'root.ext2'],
   command: [
     spore_image,
     meson.project_source_root(),
@@ -100,7 +105,9 @@ image = custom_target('image.img',
     kernel_elf,
     boot_efi,
     image_img,
-    '@OUTPUT@',
+    '@OUTPUT0@',
+    root_ext2,
+    '@OUTPUT1@',
     files('../userland/image.manifest'),
     meson.project_build_root(),
   ],
@@ -113,7 +120,7 @@ test_image = custom_target('test_image.img',
     files('../userland/tests/integration/image.manifest'),
     boot_efi,
   ],
-  output: 'test_image.img',
+  output: ['test_image.img', 'test_root.ext2'],
   command: [
     spore_image,
     meson.project_source_root(),
@@ -121,7 +128,9 @@ test_image = custom_target('test_image.img',
     kernel_elf,
     boot_efi,
     test_image_img,
-    '@OUTPUT@',
+    '@OUTPUT0@',
+    test_root_ext2,
+    '@OUTPUT1@',
     files('../userland/tests/integration/image.manifest'),
     meson.project_build_root(),
   ],

@@ -5,6 +5,7 @@
 #include "mm/vma.h"
 #include "mm/vmm.h"
 #include "ramfs.h"
+#include "vfs.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -57,7 +58,7 @@ struct open_file {
   enum open_file_type type;
   uint64_t offset;
   uint32_t flags;
-  struct ramfs_node node;
+  struct vfs_node node;
   uint8_t socket_proto;
   uint32_t udp_remote_ip;
   uint32_t udp_rx_ip;
@@ -156,7 +157,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len);
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
-int cell_fd_open_node(const struct ramfs_node *node, uint32_t flags);
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags);
 int cell_fd_socket_inet(uint8_t proto);
 bool cell_fd_udp_bind(int fd, uint16_t port);
 bool cell_fd_udp_connect(int fd, uint32_t ip, uint16_t port);
@@ -166,9 +167,9 @@ void cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
 void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_close(int fd);
-bool cell_fd_stat(int fd, struct ramfs_node *out);
+bool cell_fd_stat(int fd, struct vfs_node *out);
 bool cell_fd_is_dir(int fd);
-bool cell_fd_next_dirent(int fd, struct ramfs_dirent *out);
+bool cell_fd_next_dirent(int fd, struct vfs_dirent *out);
 void cell_fd_rewind_one_dirent(int fd);
 uint64_t cell_fd_dir_offset(int fd);
 bool cell_handle_cow_fault(uint64_t far);

@@ -4,6 +4,7 @@
 #include "cell.h"
 #include "elf/loader.h"
 #include "exec/stack.h"
+#include "ext2.h"
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/pmm.h"
@@ -11,6 +12,8 @@
 #include "net.h"
 #include "pl011.h"
 #include "ramfs.h"
+#include "vfs.h"
+#include "virtio_blk.h"
 #include "virtio_console.h"
 #include "virtio_net.h"
 
@@ -130,6 +133,41 @@ static uint64_t early_l3[EARLY_L3_TABLES][PT_ENTRIES] __attribute__((aligned(EAR
 static size_t early_l3_used;
 static uint8_t kernel_stack[64 * 1024] __attribute__((aligned(16)));
 static struct ramfs boot_ramfs;
+static struct ext2_fs root_ext2;
+static bool root_ext2_ready;
+
+static bool ext2_blk_read(void *ctx, uint64_t offset, void *dst, uint32_t len) {
+  (void)ctx;
+  return virtio_blk_read(offset, dst, len);
+}
+
+static bool ext2_blk_write(void *ctx, uint64_t offset, const void *src, uint32_t len) {
+  (void)ctx;
+  return virtio_blk_write(offset, src, len);
+}
+
+static void probe_ext2_root(void) {
+  if (!ext2_mount_rw(&root_ext2, ext2_blk_read, ext2_blk_write, NULL)) {
+    kprintf("[spore] ext2: mount failed\n");
+    return;
+  }
+  root_ext2_ready = true;
+
+  struct ext2_node motd;
+  if (ext2_lookup(&root_ext2, "/etc/motd", &motd)) {
+    kprintf("[spore] ext2: /etc/motd size=%u\n", (unsigned)motd.size);
+  }
+
+  struct ext2_node bin;
+  if (ext2_lookup(&root_ext2, "/bin", &bin)) {
+    struct ext2_dirent ent;
+    unsigned count = 0;
+    while (ext2_dirent(&root_ext2, &bin, count, &ent)) {
+      ++count;
+    }
+    kprintf("[spore] ext2: /bin entries=%u\n", count);
+  }
+}
 
 static uint64_t kernel_virt_to_phys(uintptr_t va) {
   return (uint64_t)va - boot->kernel_virt_base + boot->kernel_phys_base;
@@ -281,16 +319,19 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   kprintf("[kernel] booted at EL%u\n", (unsigned)current_el());
   exceptions_init();
   timer_init(boot->hhdm_offset);
+  if (virtio_blk_init(boot->hhdm_offset)) { probe_ext2_root(); }
   if (virtio_net_init(boot->hhdm_offset)) {
     net_init();
     (void)virtio_net_smoke_tx();
   }
   cell_system_init(boot->hhdm_offset);
 
-  struct ramfs_file init;
   ramfs_init(&boot_ramfs, modules, boot->module_count, boot->hhdm_offset);
+  vfs_init(&boot_ramfs, root_ext2_ready ? &root_ext2 : NULL, boot->hhdm_offset);
   syscall_set_ramfs(&boot_ramfs);
-  if (!ramfs_lookup(&boot_ramfs, "/init", &init)) {
+  const void *init_data = NULL;
+  uint64_t init_size = 0;
+  if (!vfs_lookup_exec("/init", &init_data, &init_size)) {
     kprintf("[kernel] missing /init\n");
     for (;;) {
       __asm__ volatile("wfe");
@@ -301,7 +342,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   struct user_address_space as;
   struct loaded_elf elf;
   uint64_t user_sp;
-  if (!vmm_user_init(&as, boot->hhdm_offset) || !elf_load_static_aarch64(&as, init.data, init.size, &elf) ||
+  if (!vmm_user_init(&as, boot->hhdm_offset) || !elf_load_static_aarch64(&as, init_data, init_size, &elf) ||
       !build_initial_stack(&as, &elf, &user_sp)) {
     kprintf("[kernel] failed to prepare /init\n");
     for (;;) {

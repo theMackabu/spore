@@ -46,6 +46,17 @@ test_ramfs = executable('test_ramfs',
 
 test('ramfs', test_ramfs)
 
+test_ext2 = executable('test_ext2',
+  files(
+    'test_ext2.c',
+    '../kernel/src/ext2.c',
+    '../kernel/src/lib/mem.c',
+  ),
+  include_directories: test_include,
+  native: true)
+
+test('ext2', test_ext2, args: [meson.project_build_root() / 'root.ext2'])
+
 test_vmm = executable('test_vmm',
   files(
     'test_vmm.c',

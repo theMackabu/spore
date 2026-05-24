@@ -19,7 +19,14 @@ void exceptions_init(void) {
 }
 
 void handle_unhandled_exception(void) {
-  kprintf("[kernel] unhandled exception\n");
+  uint64_t esr;
+  uint64_t elr;
+  uint64_t far;
+  __asm__ volatile("mrs %0, esr_el1" : "=r"(esr));
+  __asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
+  __asm__ volatile("mrs %0, far_el1" : "=r"(far));
+  kprintf("[kernel] unhandled exception esr=%x elr=%p far=%p\n", (unsigned)esr, (void *)(uintptr_t)elr,
+          (void *)(uintptr_t)far);
 }
 
 void handle_lower_sync(struct trap_frame *frame);
