@@ -1,4 +1,4 @@
-#include "sh.h"
+#include "msh.h"
 
 #include <stdlib.h>
 
@@ -7,7 +7,7 @@ int main(void) {
   setenv("HOME", "/", 0);
   setenv("USER", "root", 0);
   setenv("LOGNAME", "root", 0);
-  setenv("SHELL", "/bin/sh", 0);
+  setenv("SHELL", "/bin/msh", 0);
 
   char line[LINE_CAP];
   int last = 0;

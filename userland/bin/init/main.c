@@ -18,7 +18,7 @@ static void print_motd(void) {
 }
 
 int main(void) {
-  char *const argv[] = {"/bin/sh", NULL};
+  char *const argv[] = {"/bin/msh", NULL};
   print_motd();
   for (;;) {
     pid_t pid = fork();
@@ -27,8 +27,8 @@ int main(void) {
       return 1;
     }
     if (pid == 0) {
-      execve("/bin/sh", argv, environ);
-      perror("init: exec /bin/sh");
+      execve("/bin/msh", argv, environ);
+      perror("init: exec /bin/msh");
       _exit(127);
     }
     int status = 0;

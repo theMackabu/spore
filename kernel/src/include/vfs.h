@@ -61,6 +61,8 @@ bool vfs_mkdir(const char *path);
 bool vfs_create(const char *path, struct vfs_node *out);
 bool vfs_truncate(const struct vfs_node *node, uint64_t size);
 bool vfs_link(const char *old_path, const char *new_path);
+bool vfs_symlink(const char *target, const char *link_path);
+bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out);
 bool vfs_chmod(const char *path, uint32_t mode);
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode);
 bool vfs_unlink(const char *path);

@@ -10,7 +10,7 @@ RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --timings --tmux-log-pan
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup build image test-image runner run-root test-run-root test run run-tests run-shell-check format clean
+.PHONY: all setup build image test-image runner run-root test-run-root test run run-tests run-shell-check kill format clean
 
 all: image test-image runner
 
@@ -59,6 +59,10 @@ run-shell-check: runner run-root
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
 	$(QEMU_RUNNER) --mode shell --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
+
+kill:
+	@pkill -f 'qemu-system-aarch64.*(image\.img|root\.ext2|edk2-vars\.fd)' >/dev/null 2>&1 || true
+	@pkill -f '(^|/)spore-run( |$$)' >/dev/null 2>&1 || true
 
 format:
 	find bootloader kernel tests userland -type f \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 $(CLANG_FORMAT) -i

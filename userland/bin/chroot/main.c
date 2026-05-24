@@ -9,7 +9,7 @@ extern char **environ;
 
 static void exec_shell(void) {
   const char *shell = getenv("SHELL");
-  if (shell == NULL || shell[0] == '\0') { shell = "/bin/sh"; }
+  if (shell == NULL || shell[0] == '\0') { shell = "/bin/msh"; }
   char *argv[] = {(char *)shell, NULL};
   execve(shell, argv, environ);
 }

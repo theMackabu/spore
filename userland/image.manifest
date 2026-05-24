@@ -1,6 +1,7 @@
 # source baked-path
 userland/bin/init /init
-userland/bin/sh /bin/sh
+userland/bin/msh /bin/msh
+symlink msh /bin/sh
 userland/bin/shutdown /bin/shutdown
 userland/bin/ls /bin/ls
 userland/bin/cat /bin/cat

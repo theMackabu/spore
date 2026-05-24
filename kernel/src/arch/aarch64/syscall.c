@@ -25,8 +25,9 @@ enum {
   SYS_FCNTL = 25,
   SYS_IOCTL = 29,
   SYS_MKDIRAT = 34,
-  SYS_LINKAT = 37,
   SYS_UNLINKAT = 35,
+  SYS_SYMLINKAT = 36,
+  SYS_LINKAT = 37,
   SYS_RENAMEAT = 38,
   SYS_STATFS = 43,
   SYS_FSTATFS = 44,
@@ -126,6 +127,7 @@ enum {
   MADV_FREE = 8,
   AT_FDCWD = -100,
   AT_EMPTY_PATH = 0x1000,
+  AT_SYMLINK_NOFOLLOW = 0x100,
   O_ACCMODE = 3,
   O_WRONLY = 1,
   O_RDWR = 2,
@@ -161,6 +163,7 @@ enum {
   EBADF = 9,
   ENOMEM = 12,
   EFAULT = 14,
+  EEXIST = 17,
   EINVAL = 22,
   ENOTDIR = 20,
   ENOSYS = 38,
@@ -549,6 +552,49 @@ static bool copy_string_array_from_user(uint64_t user, char store[][MAX_EXEC_STR
   return true;
 }
 
+static bool copy_kernel_string(char *dst, size_t cap, const char *src) {
+  size_t len = kstrlen(src);
+  if (len >= cap) { return false; }
+  kmemcpy(dst, src, len + 1);
+  return true;
+}
+
+static bool parse_shebang(const void *data, uint64_t size, char *interp, size_t interp_cap, char *arg, size_t arg_cap,
+                          bool *has_arg) {
+  const char *text = data;
+  *has_arg = false;
+  if (size < 3 || text[0] != '#' || text[1] != '!') { return false; }
+  size_t i = 2;
+  while (i < size && (text[i] == ' ' || text[i] == '\t')) {
+    ++i;
+  }
+  size_t interp_len = 0;
+  while (i + interp_len < size && text[i + interp_len] != '\n' && text[i + interp_len] != '\r' &&
+         text[i + interp_len] != ' ' && text[i + interp_len] != '\t') {
+    if (interp_len + 1 >= interp_cap) { return false; }
+    interp[interp_len] = text[i + interp_len];
+    ++interp_len;
+  }
+  if (interp_len == 0) { return false; }
+  interp[interp_len] = '\0';
+  i += interp_len;
+  while (i < size && (text[i] == ' ' || text[i] == '\t')) {
+    ++i;
+  }
+  size_t arg_len = 0;
+  while (i + arg_len < size && text[i + arg_len] != '\n' && text[i + arg_len] != '\r') {
+    if (arg_len + 1 >= arg_cap) { return false; }
+    arg[arg_len] = text[i + arg_len];
+    ++arg_len;
+  }
+  while (arg_len > 0 && (arg[arg_len - 1] == ' ' || arg[arg_len - 1] == '\t')) {
+    --arg_len;
+  }
+  arg[arg_len] = '\0';
+  *has_arg = arg_len != 0;
+  return true;
+}
+
 static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len) {
   if (!user_readable(buf, len)) { return -(int64_t)EFAULT; }
   return cell_fd_write((int)fd, buf, len);
@@ -810,6 +856,45 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   const void *file_data = NULL;
   uint64_t file_size = 0;
   if (!vfs_lookup_exec(path, &file_data, &file_size)) { return -(int64_t)ENOENT; }
+  char shebang_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
+  char shebang_interp[128];
+  char shebang_arg[128];
+  bool shebang_has_arg = false;
+  if (parse_shebang(file_data, file_size, shebang_interp, sizeof(shebang_interp), shebang_arg, sizeof(shebang_arg),
+                    &shebang_has_arg)) {
+    const void *interp_data = NULL;
+    uint64_t interp_size = 0;
+    if (!vfs_lookup_exec(shebang_interp, &interp_data, &interp_size)) { return -(int64_t)ENOENT; }
+    const char *old_argv[MAX_EXEC_ARGS];
+    uint64_t old_argc = argc;
+    for (uint64_t i = 0; i < old_argc; ++i) {
+      old_argv[i] = argv[i];
+    }
+    uint64_t new_argc = 0;
+    if (!copy_kernel_string(shebang_store[new_argc], MAX_EXEC_STRING, shebang_interp)) { return -(int64_t)EINVAL; }
+    argv[new_argc] = shebang_store[new_argc];
+    ++new_argc;
+    if (shebang_has_arg) {
+      if (new_argc >= MAX_EXEC_ARGS || !copy_kernel_string(shebang_store[new_argc], MAX_EXEC_STRING, shebang_arg)) {
+        return -(int64_t)EINVAL;
+      }
+      argv[new_argc] = shebang_store[new_argc];
+      ++new_argc;
+    }
+    if (new_argc >= MAX_EXEC_ARGS || !copy_kernel_string(shebang_store[new_argc], MAX_EXEC_STRING, path)) {
+      return -(int64_t)EINVAL;
+    }
+    argv[new_argc] = shebang_store[new_argc];
+    ++new_argc;
+    for (uint64_t i = 1; i < old_argc && new_argc < MAX_EXEC_ARGS; ++i) {
+      if (!copy_kernel_string(shebang_store[new_argc], MAX_EXEC_STRING, old_argv[i])) { return -(int64_t)EINVAL; }
+      argv[new_argc] = shebang_store[new_argc];
+      ++new_argc;
+    }
+    argc = new_argc;
+    file_data = interp_data;
+    file_size = interp_size;
+  }
   char interp_path[128];
   bool has_interp = elf_find_interp_aarch64(file_data, (size_t)file_size, interp_path, sizeof(interp_path));
 
@@ -1124,6 +1209,31 @@ static int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t n
   return vfs_link(old_path, new_path) ? 0 : -(int64_t)ENOENT;
 }
 
+static int64_t sys_symlinkat(uint64_t target_addr, uint64_t new_dirfd, uint64_t link_path_addr) {
+  if ((int64_t)new_dirfd != AT_FDCWD) { return -(int64_t)EINVAL; }
+  char target[128];
+  char link_path[128];
+  if (!copy_string_from_user(target_addr, target, sizeof(target)) ||
+      !copy_resolved_path(link_path_addr, link_path, sizeof(link_path))) {
+    return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
+  }
+  return vfs_symlink(target, link_path) ? 0 : -(int64_t)EEXIST;
+}
+
+static int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf, uint64_t len) {
+  if ((int64_t)dirfd != AT_FDCWD) { return -(int64_t)EINVAL; }
+  char path[128];
+  char target[128];
+  size_t target_len = 0;
+  if (!copy_resolved_path(path_addr, path, sizeof(path))) {
+    return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
+  }
+  if (len == 0 || !user_writable(buf, len)) { return -(int64_t)EFAULT; }
+  if (!vfs_readlink(path, target, sizeof(target), &target_len)) { return -(int64_t)EINVAL; }
+  if (target_len > len) { target_len = (size_t)len; }
+  return vmm_copy_to_user(active_as(), buf, target, target_len) ? (int64_t)target_len : -(int64_t)EFAULT;
+}
+
 static int64_t sys_fchmodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_t flags) {
   if ((int64_t)dirfd != AT_FDCWD || (flags & ~0x100ull) != 0) { return -(int64_t)EINVAL; }
   char path[128];
@@ -1288,8 +1398,9 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_FCNTL] = &&l_fcntl,
     [SYS_IOCTL] = &&l_ioctl,
     [SYS_MKDIRAT] = &&l_mkdirat,
-    [SYS_LINKAT] = &&l_linkat,
     [SYS_UNLINKAT] = &&l_unlinkat,
+    [SYS_SYMLINKAT] = &&l_symlinkat,
+    [SYS_LINKAT] = &&l_linkat,
     [SYS_RENAMEAT] = &&l_renameat,
     [SYS_STATFS] = &&l_statfs,
     [SYS_FSTATFS] = &&l_fstatfs,
@@ -1547,7 +1658,7 @@ l_newfstatat:
 l_getdents64:
   return sys_getdents64(a0, a1, a2);
 l_readlinkat:
-  return -(int64_t)EINVAL;
+  return sys_readlinkat(a0, a1, a2, a3);
 l_dup:
   return cell_fd_dup((int)a0, 0);
 l_dup3:
@@ -1578,6 +1689,8 @@ l_mkdirat:
   return sys_mkdirat(a0, a1);
 l_linkat:
   return sys_linkat(a0, a1, a2, a3, a4);
+l_symlinkat:
+  return sys_symlinkat(a0, a1, a2);
 l_unlinkat:
   return sys_unlinkat(a0, a1);
 l_renameat:

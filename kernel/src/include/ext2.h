@@ -50,6 +50,7 @@ struct ext2_info {
 bool ext2_mount(struct ext2_fs *fs, ext2_read_fn read, void *ctx);
 bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, void *ctx);
 bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out);
+bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out);
 bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);
 bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, void *dst, uint32_t len,
                     uint32_t *read_out);
@@ -57,6 +58,8 @@ int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off
 bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size);
 bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_node *out);
 bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path);
+bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path);
+bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out);
 bool ext2_chmod(struct ext2_fs *fs, const char *path, uint32_t mode);
 bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t mode);
 bool ext2_unlink(struct ext2_fs *fs, const char *path);
@@ -64,5 +67,6 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
 bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out);
 bool ext2_is_dir(const struct ext2_node *node);
 bool ext2_is_regular(const struct ext2_node *node);
+bool ext2_is_symlink(const struct ext2_node *node);
 bool ext2_info(struct ext2_fs *fs, struct ext2_info *out);
 uint64_t ext2_cache_used_pages(void);

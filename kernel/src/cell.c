@@ -1024,6 +1024,14 @@ static const char *domain_state_text(const struct domain *domain) {
   return blocked ? "blocked" : "unknown";
 }
 
+static char domain_proc_state_char(const struct domain *domain) {
+  const char *state = domain_state_text(domain);
+  if (state[0] == 'r') { return 'R'; }
+  if (state[0] == 'b') { return 'S'; }
+  if (state[0] == 'z') { return 'Z'; }
+  return '?';
+}
+
 static const char *domain_wait_text(const struct domain *domain) {
   if (domain == NULL || domain->zombie) { return "-"; }
   for (size_t i = 0; i < MAX_THREADS; ++i) {
@@ -1476,18 +1484,25 @@ static size_t proc_pid_stat_text(char *dst, size_t cap, int pid) {
   size_t len = 0;
   const struct domain *domain = domain_for_pid(pid);
   if (domain == NULL) { return 0; }
+  uint64_t rss = domain_resident_pages(domain);
+  uint64_t start_time = domain->start_ticks;
+  uint64_t utime = domain->cpu_ticks;
   proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
   proc_append_str(dst, cap, &len, " (");
   proc_append_str(dst, cap, &len, domain->name);
   proc_append_str(dst, cap, &len, ") ");
-  proc_append_char(dst, cap, &len, domain_state_text(domain)[0]);
+  proc_append_char(dst, cap, &len, domain_proc_state_char(domain));
   proc_append_char(dst, cap, &len, ' ');
   proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
-  proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, domain->cpu_ticks);
-  proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, domain_resident_pages(domain));
-  proc_append_char(dst, cap, &len, '\n');
+  proc_append_str(dst, cap, &len, " 0 0 0 0 0 0 0 0 0 0 ");
+  proc_append_u64(dst, cap, &len, utime);
+  proc_append_str(dst, cap, &len, " 0 0 0 20 0 1 0 ");
+  proc_append_u64(dst, cap, &len, start_time);
+  proc_append_str(dst, cap, &len, " ");
+  proc_append_u64(dst, cap, &len, rss * PAGE_SIZE);
+  proc_append_str(dst, cap, &len, " ");
+  proc_append_u64(dst, cap, &len, rss);
+  proc_append_str(dst, cap, &len, " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
   return len;
 }
 
@@ -1495,8 +1510,8 @@ static size_t proc_pid_cmdline_text(char *dst, size_t cap, int pid) {
   size_t len = 0;
   const struct domain *domain = domain_for_pid(pid);
   if (domain == NULL) { return 0; }
-  proc_append_str(dst, cap, &len, domain->cmdline[0] == '\0' ? domain->name : domain->cmdline);
-  proc_append_char(dst, cap, &len, '\n');
+  proc_append_str(dst, cap, &len, domain->exec_path[0] == '\0' ? domain->name : domain->exec_path);
+  proc_append_char(dst, cap, &len, '\0');
   return len;
 }
 

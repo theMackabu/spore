@@ -246,6 +246,22 @@ static void copy_into_rootfs(const char *src, const char *rootfs, const char *ds
   chmod(out, 0755);
 }
 
+static void symlink_into_rootfs(const char *target, const char *rootfs, const char *dst) {
+  char out[MAX_PATH];
+  int n = snprintf(out, sizeof(out), "%s%s", rootfs, dst);
+  if (n < 0 || (size_t)n >= sizeof(out)) { die_msg("path too long"); }
+
+  char parent[MAX_PATH];
+  snprintf(parent, sizeof(parent), "%s", out);
+  char *slash = strrchr(parent, '/');
+  if (slash != NULL) {
+    *slash = '\0';
+    ensure_dir(parent);
+  }
+  unlink(out);
+  if (symlink(target, out) != 0) { die("symlink"); }
+}
+
 static void install_musl_runtime(const char *source_root, const char *rootfs) {
   (void)source_root;
   char lib_dir[MAX_PATH];
@@ -303,7 +319,7 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
 
   char passwd[MAX_PATH];
   path_join(passwd, sizeof(passwd), etc_dir, "passwd");
-  if (!exists(passwd)) { write_text_file(passwd, "root:x:0:0:root:/root:/bin/sh\n"); }
+  if (!exists(passwd)) { write_text_file(passwd, "root:x:0:0:root:/root:/bin/msh\n"); }
 
   char group[MAX_PATH];
   path_join(group, sizeof(group), etc_dir, "group");
@@ -387,6 +403,12 @@ int main(int argc, char **argv) {
     char source[MAX_PATH];
     char target[MAX_PATH];
     if (sscanf(p, "%1023s %1023s", source, target) != 2) { die_msg("bad manifest line"); }
+    if (strcmp(source, "symlink") == 0) {
+      char link_path[MAX_PATH];
+      if (sscanf(p, "%1023s %1023s %1023s", source, target, link_path) != 3) { die_msg("bad symlink line"); }
+      symlink_into_rootfs(target, rootfs_dir, link_path);
+      continue;
+    }
     char name[MAX_PATH];
     module_name(name, sizeof(name), target);
     char out[MAX_PATH];

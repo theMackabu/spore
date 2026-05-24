@@ -1,5 +1,5 @@
-userland_sh = custom_target('userland-sh',
+userland_msh = custom_target('userland-msh',
   input: files('main.c', 'input.c', 'lexer.c', 'eval.c') + userland_libspore,
-  output: 'sh',
+  output: 'msh',
   command: userland_cc + ['@INPUT@', '-o', '@OUTPUT@'])
-userland_image_targets += userland_sh
+userland_image_targets += userland_msh

@@ -410,6 +410,20 @@ bool vfs_link(const char *old_path, const char *new_path) {
   return false;
 }
 
+bool vfs_symlink(const char *target, const char *link_path) {
+  if (root_ext2 != NULL && !ramfs_route(link_path)) {
+    bool ok = ext2_symlink(root_ext2, target, link_path);
+    if (ok) { invalidate_exec_cache(); }
+    return ok;
+  }
+  return false;
+}
+
+bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
+  if (root_ext2 != NULL && !ramfs_route(path)) { return ext2_readlink(root_ext2, path, out, cap, len_out); }
+  return false;
+}
+
 bool vfs_chmod(const char *path, uint32_t mode) {
   if (root_ext2 != NULL && !ramfs_route(path)) { return ext2_chmod(root_ext2, path, mode); }
   struct ramfs_node node;

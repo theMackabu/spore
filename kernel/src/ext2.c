@@ -10,11 +10,14 @@ enum {
   EXT2_SUPER_MAGIC = 0xef53,
   EXT2_ROOT_INO = 2,
   EXT2_S_IFDIR = 0040000,
+  EXT2_S_IFLNK = 0120000,
   EXT2_S_IFREG = 0100000,
   EXT2_FT_REG_FILE = 1,
   EXT2_FT_DIR = 2,
+  EXT2_FT_SYMLINK = 7,
   EXT2_INCOMPAT_FILETYPE = 0x2,
   BLOCK_CACHE_ENTRIES = 32,
+  SYMLINK_DEPTH_MAX = 8,
 };
 
 struct ext2_super {
@@ -304,6 +307,10 @@ bool ext2_is_dir(const struct ext2_node *node) {
 
 bool ext2_is_regular(const struct ext2_node *node) {
   return (node->mode & EXT2_S_IFREG) == EXT2_S_IFREG;
+}
+
+bool ext2_is_symlink(const struct ext2_node *node) {
+  return (node->mode & EXT2_S_IFLNK) == EXT2_S_IFLNK;
 }
 
 bool ext2_info(struct ext2_fs *fs, struct ext2_info *out) {
@@ -613,6 +620,55 @@ static bool split_parent_path(const char *path, char *parent, size_t parent_cap,
   return true;
 }
 
+static bool append_path_component(char *path, size_t cap, const char *name, size_t name_len) {
+  size_t len = kstrlen(path);
+  if (len == 0) { return false; }
+  if (!(len == 1 && path[0] == '/')) {
+    if (len + 1 >= cap) { return false; }
+    path[len++] = '/';
+  }
+  if (len + name_len >= cap) { return false; }
+  kmemcpy(path + len, name, name_len);
+  path[len + name_len] = '\0';
+  return true;
+}
+
+static bool combine_symlink_path(char *out, size_t cap, const char *parent, const char *target, const char *rest) {
+  size_t pos = 0;
+  if (cap == 0 || target[0] == '\0') { return false; }
+  if (target[0] == '/') {
+    for (const char *p = target; *p != '\0'; ++p) {
+      if (pos + 1 >= cap) { return false; }
+      out[pos++] = *p;
+    }
+  } else {
+    for (const char *p = parent; *p != '\0'; ++p) {
+      if (pos + 1 >= cap) { return false; }
+      out[pos++] = *p;
+    }
+    if (!(pos == 1 && out[0] == '/')) {
+      if (pos + 1 >= cap) { return false; }
+      out[pos++] = '/';
+    }
+    for (const char *p = target; *p != '\0'; ++p) {
+      if (pos + 1 >= cap) { return false; }
+      out[pos++] = *p;
+    }
+  }
+  if (rest != NULL && rest[0] != '\0') {
+    if (pos == 0 || out[pos - 1] != '/') {
+      if (pos + 1 >= cap) { return false; }
+      out[pos++] = '/';
+    }
+    for (const char *p = rest; *p != '\0'; ++p) {
+      if (pos + 1 >= cap) { return false; }
+      out[pos++] = *p;
+    }
+  }
+  out[pos] = '\0';
+  return true;
+}
+
 static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *name, uint32_t ino, uint8_t type) {
   uint8_t name_len = (uint8_t)kstrlen(name);
   uint16_t need = rec_len_for(name_len);
@@ -671,10 +727,24 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
   return false;
 }
 
-bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
-  if (path == NULL || path[0] != '/') { return false; }
+static bool ext2_readlink_node(struct ext2_fs *fs, const struct ext2_node *node, char *out, size_t cap,
+                               size_t *len_out) {
+  if (!ext2_is_symlink(node) || cap == 0) { return false; }
+  uint32_t len = node->size;
+  if ((size_t)len >= cap) { len = (uint32_t)(cap - 1); }
+  uint32_t got = 0;
+  if (!ext2_read_file(fs, node, 0, out, len, &got) || got != len) { return false; }
+  out[len] = '\0';
+  if (len_out != NULL) { *len_out = len; }
+  return true;
+}
+
+static bool ext2_lookup_inner(struct ext2_fs *fs, const char *path, struct ext2_node *out, bool follow_final,
+                              int depth) {
+  if (path == NULL || path[0] != '/' || depth > SYMLINK_DEPTH_MAX) { return false; }
   struct ext2_node cur;
   if (!read_inode(fs, EXT2_ROOT_INO, &cur)) { return false; }
+  char parent_path[256] = "/";
   const char *p = path;
   while (*p == '/') {
     ++p;
@@ -690,13 +760,34 @@ bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
     }
     size_t len = (size_t)(p - start);
     if (len == 0) { return false; }
-    if (!lookup_child(fs, &cur, start, len, &cur)) { return false; }
+    struct ext2_node next;
+    if (!lookup_child(fs, &cur, start, len, &next)) { return false; }
     while (*p == '/') {
       ++p;
     }
+    bool final = *p == '\0';
+    if (ext2_is_symlink(&next) && (!final || follow_final)) {
+      char target[256];
+      char combined[256];
+      if (!ext2_readlink_node(fs, &next, target, sizeof(target), NULL) ||
+          !combine_symlink_path(combined, sizeof(combined), parent_path, target, p)) {
+        return false;
+      }
+      return ext2_lookup_inner(fs, combined, out, follow_final, depth + 1);
+    }
+    cur = next;
+    if (!append_path_component(parent_path, sizeof(parent_path), start, len)) { return false; }
   }
   *out = cur;
   return true;
+}
+
+bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+  return ext2_lookup_inner(fs, path, out, true, 0);
+}
+
+bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+  return ext2_lookup_inner(fs, path, out, false, 0);
 }
 
 bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_node *out) {
@@ -755,6 +846,40 @@ bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path) {
   }
   ++node.links_count;
   return write_inode(fs, &node);
+}
+
+bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path) {
+  char parent_path[256];
+  char name[EXT2_NAME_MAX + 1];
+  if (target == NULL || target[0] == '\0' ||
+      !split_parent_path(link_path, parent_path, sizeof(parent_path), name, sizeof(name))) {
+    return false;
+  }
+  struct ext2_node parent;
+  struct ext2_node existing;
+  if (!ext2_lookup(fs, parent_path, &parent) || !ext2_is_dir(&parent) ||
+      lookup_child(fs, &parent, name, kstrlen(name), &existing)) {
+    return false;
+  }
+  uint32_t ino = 0;
+  if (!alloc_inode(fs, &ino)) { return false; }
+  struct ext2_node node = {
+    .ino = ino,
+    .mode = (uint16_t)(EXT2_S_IFLNK | 0777),
+    .links_count = 1,
+  };
+  int64_t wrote = ext2_write_file(fs, &node, 0, target, kstrlen(target));
+  if (wrote < 0 || (uint64_t)wrote != kstrlen(target) || !add_dirent(fs, &parent, name, ino, EXT2_FT_SYMLINK)) {
+    (void)ext2_truncate(fs, &node, 0);
+    (void)free_inode(fs, ino);
+    return false;
+  }
+  return true;
+}
+
+bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out) {
+  struct ext2_node node;
+  return ext2_lstat(fs, path, &node) && ext2_readlink_node(fs, &node, out, cap, len_out);
 }
 
 bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t mode) {
