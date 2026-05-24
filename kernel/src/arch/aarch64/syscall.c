@@ -881,6 +881,9 @@ static int64_t sys_connect(uint64_t fd, uint64_t addr, uint64_t len) {
     if (!copy_sockaddr_in(addr, len, &sa)) {
         return -(int64_t)EINVAL;
     }
+    if (!cell_egress_allowed(IPPROTO_UDP, sa.sin_addr, bswap16(sa.sin_port))) {
+        return -(int64_t)EPERM;
+    }
     return cell_fd_udp_connect((int)fd, sa.sin_addr, bswap16(sa.sin_port)) ? 0 : -(int64_t)EBADF;
 }
 
@@ -903,9 +906,6 @@ static int64_t sys_sendto(uint64_t fd,
         }
         ip = sa.sin_addr;
         port = bswap16(sa.sin_port);
-    }
-    if (!cell_egress_allowed(IPPROTO_UDP, ip, port)) {
-        return -(int64_t)EPERM;
     }
     return cell_fd_udp_send((int)fd, ip, port, buf, len);
 }

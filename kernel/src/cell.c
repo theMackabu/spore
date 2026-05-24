@@ -22,6 +22,7 @@ enum {
     CAP_ENFORCE = 1u << 0,
     CAP_EGRESS_ENFORCE = 1u << 1,
     IPPROTO_UDP = 17,
+    EPERM = 1,
     EMSGSIZE = 90,
     EAGAIN = 11,
     EFAULT = 14,
@@ -72,21 +73,86 @@ static bool parse_dec(const char **cursor, uint32_t max, uint32_t *out) {
     return true;
 }
 
-static bool parse_ipv4_port(const char *s, uint32_t *ip, uint16_t *port) {
+static bool parse_ipv4_port(const char *s, uint32_t *ip, uint8_t *prefix, uint16_t *port) {
     uint32_t a;
     uint32_t b;
     uint32_t c;
     uint32_t d;
+    uint32_t prefix_value = 32;
     uint32_t p;
     if (!parse_dec(&s, 255, &a) || *s++ != '.' ||
         !parse_dec(&s, 255, &b) || *s++ != '.' ||
         !parse_dec(&s, 255, &c) || *s++ != '.' ||
-        !parse_dec(&s, 255, &d) || *s++ != ':' ||
+        !parse_dec(&s, 255, &d)) {
+        return false;
+    }
+    if (*s == '/') {
+        ++s;
+        if (!parse_dec(&s, 32, &prefix_value)) {
+            return false;
+        }
+    }
+    if (*s++ != ':' ||
         !parse_dec(&s, 65535, &p) || *s != '\0') {
         return false;
     }
     *ip = a | (b << 8) | (c << 16) | (d << 24);
+    *prefix = (uint8_t)prefix_value;
     *port = (uint16_t)p;
+    return true;
+}
+
+static uint32_t egress_mask(uint8_t prefix) {
+    if (prefix == 0) {
+        return 0;
+    }
+    return 0xffffffffu >> (32u - prefix);
+}
+
+static bool egress_match(const struct capability_set *caps,
+                         uint8_t proto,
+                         uint32_t ip,
+                         uint16_t port) {
+    if ((caps->flags & CAP_EGRESS_ENFORCE) == 0) {
+        return true;
+    }
+    uint32_t mask = egress_mask(caps->egress_prefix);
+    return caps->egress_proto == proto &&
+           caps->egress_port == port &&
+           ((caps->egress_ip ^ ip) & mask) == 0;
+}
+
+static bool caps_subset(const struct capability_set *requested,
+                        const struct capability_set *parent) {
+    for (size_t i = 0; i < sizeof(requested->syscall_allow) / sizeof(requested->syscall_allow[0]); ++i) {
+        if ((requested->syscall_allow[i] & ~parent->syscall_allow[i]) != 0) {
+            return false;
+        }
+    }
+    if ((requested->flags & CAP_EGRESS_ENFORCE) != 0) {
+        if ((parent->flags & CAP_EGRESS_ENFORCE) == 0) {
+            return true;
+        }
+        uint32_t parent_mask = egress_mask(parent->egress_prefix);
+        uint32_t requested_mask = egress_mask(requested->egress_prefix);
+        bool cidr_subset = parent->egress_proto == requested->egress_proto &&
+                           parent->egress_port == requested->egress_port &&
+                           parent->egress_prefix <= requested->egress_prefix &&
+                           ((parent->egress_ip ^ requested->egress_ip) & parent_mask) == 0 &&
+                           ((requested->egress_ip & requested_mask) == requested->egress_ip ||
+                            requested->egress_prefix == 32);
+        if (!cidr_subset) {
+            return false;
+        }
+    }
+    if ((requested->flags & CAP_EGRESS_ENFORCE) == 0 &&
+        (parent->flags & CAP_EGRESS_ENFORCE) != 0) {
+        return false;
+    }
+    if (parent->memory_page_cap != 0 &&
+        (requested->memory_page_cap == 0 || requested->memory_page_cap > parent->memory_page_cap)) {
+        return false;
+    }
     return true;
 }
 
@@ -490,9 +556,7 @@ bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
     if (domain == NULL || (domain->caps.flags & CAP_EGRESS_ENFORCE) == 0) {
         return true;
     }
-    bool allowed = domain->caps.egress_proto == proto &&
-                   domain->caps.egress_ip == ip &&
-                   domain->caps.egress_port == port;
+    bool allowed = egress_match(&domain->caps, proto, ip, port);
     if (!allowed) {
         kprintf("[spore] egress denied domain=%d proto=%u dst=%x:%u\n",
                 domain->id,
@@ -538,18 +602,24 @@ int cell_apply_policy(const char *manifest) {
         caps.memory_page_cap = 1;
     } else if (str_eq(manifest, "net:none")) {
         caps.flags |= CAP_EGRESS_ENFORCE;
+        caps.egress_prefix = 32;
     } else if (starts_with(manifest, "net:udp:")) {
         uint32_t ip = 0;
+        uint8_t prefix = 32;
         uint16_t port = 0;
-        if (!parse_ipv4_port(manifest + 8, &ip, &port)) {
+        if (!parse_ipv4_port(manifest + 8, &ip, &prefix, &port)) {
             return -2;
         }
         caps.flags |= CAP_EGRESS_ENFORCE;
         caps.egress_proto = IPPROTO_UDP;
-        caps.egress_ip = ip;
+        caps.egress_prefix = prefix;
+        caps.egress_ip = ip & egress_mask(prefix);
         caps.egress_port = port;
     } else {
         return -2;
+    }
+    if ((domain->caps.flags & CAP_ENFORCE) != 0 && !caps_subset(&caps, &domain->caps)) {
+        return -1;
     }
     domain->caps = caps;
     kprintf("[spore] policy applied: %s\n", manifest);
@@ -1175,9 +1245,21 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
     if (file == NULL) {
         return -9;
     }
+    uint32_t effective_ip = ip;
+    uint16_t effective_port = port;
+    if (effective_ip == 0 && effective_port == 0 && file->udp_connected) {
+        effective_ip = file->udp_remote_ip;
+        effective_port = file->udp_remote_port;
+    }
+    if (effective_ip == 0 || effective_port == 0) {
+        return -EINVAL;
+    }
+    if (!cell_egress_allowed(IPPROTO_UDP, effective_ip, effective_port)) {
+        return -EPERM;
+    }
     if (!file->udp_connected) {
-        file->udp_remote_ip = ip;
-        file->udp_remote_port = port;
+        file->udp_remote_ip = effective_ip;
+        file->udp_remote_port = effective_port;
         file->udp_connected = true;
     }
     if (len > sizeof(file->udp_rx)) {
@@ -1189,8 +1271,8 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
     file->udp_rx_len = len;
     kprintf("[spore] udp send fd=%d dst=%x:%u len=%u\n",
             fd,
-            (unsigned)(ip == 0 ? file->udp_remote_ip : ip),
-            (unsigned)(port == 0 ? file->udp_remote_port : port),
+            (unsigned)effective_ip,
+            (unsigned)effective_port,
             (unsigned)len);
     return (int64_t)len;
 }

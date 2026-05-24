@@ -11,6 +11,7 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -377,11 +378,15 @@ static uint16_t be16(uint16_t x) {
     return (uint16_t)((x << 8) | (x >> 8));
 }
 
-static uint32_t be32(uint32_t x) {
-    return ((x & 0xffu) << 24) |
-           ((x & 0xff00u) << 8) |
-           ((x >> 8) & 0xff00u) |
-           ((x >> 24) & 0xffu);
+static uint32_t ip4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+    return a | (b << 8) | (c << 16) | (d << 24);
+}
+
+static void fill_udp_addr(struct sockaddr_in *sa, uint32_t ip, uint16_t port) {
+    memset(sa, 0, sizeof(*sa));
+    sa->sin_family = AF_INET;
+    sa->sin_port = be16(port);
+    sa->sin_addr.s_addr = ip;
 }
 
 static int phase_e_udp_demo(void) {
@@ -391,10 +396,7 @@ static int phase_e_udp_demo(void) {
         return 0;
     }
     struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_port = be16(5555);
-    sa.sin_addr.s_addr = be32((10u << 24) | (0u << 16) | (2u << 8) | 2u);
+    fill_udp_addr(&sa, ip4(10, 0, 2, 2), 5555);
     const char msg[] = "udp-hi";
     ssize_t sent = sendto(fd, msg, sizeof(msg) - 1, 0, (struct sockaddr *)&sa, sizeof(sa));
     char buf[32] = {0};
@@ -407,18 +409,42 @@ static int phase_e_udp_demo(void) {
     return ok;
 }
 
-static int udp_send_once(void) {
+static int udp_send_target(uint32_t ip, uint16_t port) {
     int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) {
         return -1;
     }
     struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_port = be16(5555);
-    sa.sin_addr.s_addr = be32((10u << 24) | (0u << 16) | (2u << 8) | 2u);
+    fill_udp_addr(&sa, ip, port);
     const char msg[] = "egress";
     int rc = (int)sendto(fd, msg, sizeof(msg) - 1, 0, (struct sockaddr *)&sa, sizeof(sa));
+    close(fd);
+    return rc;
+}
+
+static int udp_connect_send(uint32_t connect_ip,
+                            uint16_t connect_port,
+                            uint32_t send_ip,
+                            uint16_t send_port,
+                            int null_dest) {
+    int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) {
+        return -1;
+    }
+    struct sockaddr_in sa;
+    fill_udp_addr(&sa, connect_ip, connect_port);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
+        close(fd);
+        return -1;
+    }
+    const char msg[] = "spoof";
+    int rc;
+    if (null_dest) {
+        rc = (int)sendto(fd, msg, sizeof(msg) - 1, 0, NULL, 0);
+    } else {
+        fill_udp_addr(&sa, send_ip, send_port);
+        rc = (int)sendto(fd, msg, sizeof(msg) - 1, 0, (struct sockaddr *)&sa, sizeof(sa));
+    }
     close(fd);
     return rc;
 }
@@ -428,11 +454,84 @@ static void egress_child(const char *manifest, int expect_success) {
         exit_group(20);
     }
     errno = 0;
-    int rc = udp_send_once();
+    int rc = udp_send_target(ip4(10, 0, 2, 2), 5555);
     if (expect_success) {
         exit_group(rc == 6 ? 0 : 21);
     }
     exit_group(rc < 0 && errno == EPERM ? 0 : 22);
+}
+
+static void egress_attack_child(int mode) {
+    long policy = 0;
+    int rc = -1;
+    switch (mode) {
+    case 0:
+        policy = syscall(SYS_SPORE_APPLY_POLICY, "net:udp:10.0.2.2:5555");
+        errno = 0;
+        rc = udp_send_target(ip4(10, 0, 2, 2), 5556);
+        exit_group(policy == 0 && rc < 0 && errno == EPERM ? 0 : 30);
+    case 1:
+        policy = syscall(SYS_SPORE_APPLY_POLICY, "net:udp:10.0.2.0/24:5555");
+        rc = udp_send_target(ip4(10, 0, 2, 200), 5555);
+        exit_group(policy == 0 && rc == 6 ? 0 : 31);
+    case 2:
+        policy = syscall(SYS_SPORE_APPLY_POLICY, "net:udp:10.0.2.0/24:5555");
+        errno = 0;
+        rc = udp_send_target(ip4(10, 0, 3, 2), 5555);
+        exit_group(policy == 0 && rc < 0 && errno == EPERM ? 0 : 32);
+    case 3:
+        policy = syscall(SYS_SPORE_APPLY_POLICY, "net:udp:10.0.2.2:5555");
+        errno = 0;
+        rc = udp_connect_send(ip4(10, 0, 2, 2), 5555, 0, 0, 1);
+        exit_group(policy == 0 && rc == 5 ? 0 : 33);
+    case 4:
+        policy = syscall(SYS_SPORE_APPLY_POLICY, "net:udp:10.0.2.2:5555");
+        errno = 0;
+        rc = udp_connect_send(ip4(10, 0, 2, 2), 5555, ip4(10, 0, 3, 2), 5555, 0);
+        exit_group(policy == 0 && rc < 0 && errno == EPERM ? 0 : 34);
+    case 5: {
+        policy = syscall(SYS_SPORE_APPLY_POLICY, "net:udp:10.0.2.2:5555");
+        int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        struct sockaddr_in sa;
+        fill_udp_addr(&sa, ip4(10, 0, 2, 2), 5556);
+        errno = 0;
+        rc = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
+        close(fd);
+        exit_group(policy == 0 && rc < 0 && errno == EPERM ? 0 : 35);
+    }
+    default:
+        exit_group(99);
+    }
+}
+
+static int run_egress_attack(int mode) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        egress_attack_child(mode);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static int egress_escalation_demo(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        if (syscall(SYS_SPORE_APPLY_POLICY, "net:none") != 0) {
+            exit_group(40);
+        }
+        pid_t grandchild = fork();
+        if (grandchild == 0) {
+            long rc = syscall(SYS_SPORE_APPLY_POLICY, "net:udp:10.0.2.2:5555");
+            exit_group(rc < 0 && errno == EPERM ? 0 : 41);
+        }
+        int status = 0;
+        waitpid(grandchild, &status, 0);
+        exit_group(WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 42);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 static int phase_f_egress_demo(void) {
@@ -452,8 +551,59 @@ static int phase_f_egress_demo(void) {
 
     int ok = WIFEXITED(status_deny) && WEXITSTATUS(status_deny) == 0 &&
              WIFEXITED(status_allow) && WEXITSTATUS(status_allow) == 0;
-    printf("[spore] v3f egress allow/deny: %s\n", ok ? "PASS" : "FAIL");
+    int wrong_port = run_egress_attack(0);
+    int cidr_in = run_egress_attack(1);
+    int cidr_out = run_egress_attack(2);
+    int connect_null = run_egress_attack(3);
+    int connect_spoof = run_egress_attack(4);
+    int connect_setpeer = run_egress_attack(5);
+    int escalation = egress_escalation_demo();
+    ok = ok && wrong_port && cidr_in && cidr_out && connect_null &&
+         connect_spoof && connect_setpeer && escalation;
+    printf("[spore] v3f egress pressure: %s port=%s cidr-in=%s cidr-out=%s connect-null=%s connect-spoof=%s connect-setpeer=%s child-escalate=%s\n",
+           ok ? "PASS" : "FAIL",
+           wrong_port ? "PASS" : "FAIL",
+           cidr_in ? "PASS" : "FAIL",
+           cidr_out ? "PASS" : "FAIL",
+           connect_null ? "PASS" : "FAIL",
+           connect_spoof ? "PASS" : "FAIL",
+           connect_setpeer ? "PASS" : "FAIL",
+           escalation ? "PASS" : "FAIL");
     return ok;
+}
+
+static uint64_t usec_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+}
+
+static int fork_latency_profile(void) {
+    enum { SAMPLES = 4 };
+    uint64_t start = usec_now();
+    for (int i = 0; i < SAMPLES; ++i) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            exit_group(0);
+        }
+        int status = 0;
+        waitpid(pid, &status, 0);
+    }
+    uint64_t fork_us = (usec_now() - start) / SAMPLES;
+
+    int snap = (int)raw_syscall3(SYS_SPORE_SNAPSHOT, 0, 0, 0);
+    start = usec_now();
+    for (int i = 0; i < SAMPLES; ++i) {
+        int child = (int)raw_syscall3(SYS_SPORE_SPAWN, snap, (long)regression_child, 0);
+        int status = 0;
+        raw_syscall3(SYS_SPORE_REAP, child, (long)&status, 0);
+    }
+    uint64_t spawn_us = (usec_now() - start) / SAMPLES;
+    printf("[spore] fork latency profile: fork+wait=%uus snapshot-spawn+reap=%uus samples=%d\n",
+           (unsigned)fork_us,
+           (unsigned)spawn_us,
+           SAMPLES);
+    return 1;
 }
 
 static int phase_d_fs_demo(void) {
@@ -584,6 +734,7 @@ int main(void) {
     ok_all = ok_all && ok_v3e;
     int ok_v3f = phase_f_egress_demo();
     ok_all = ok_all && ok_v3f;
+    ok_all = ok_all && fork_latency_profile();
 
     if (after_touch <= before || after_free >= after_touch) {
         ok_all = 0;

@@ -74,6 +74,7 @@ struct capability_set {
     uint32_t egress_ip;
     uint16_t egress_port;
     uint8_t egress_proto;
+    uint8_t egress_prefix;
 };
 
 struct cpu_budget {
