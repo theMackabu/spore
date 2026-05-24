@@ -1196,11 +1196,12 @@ static int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
   uint64_t written = 0;
   for (;;) {
     struct vfs_dirent ent;
+    uint64_t old_dir_offset = cell_fd_dir_offset((int)fd);
     if (!cell_fd_next_dirent((int)fd, &ent)) { break; }
     size_t name_len = kstrlen(ent.name);
     uint16_t reclen = dirent_reclen(name_len);
     if (written + reclen > len) {
-      cell_fd_rewind_one_dirent((int)fd);
+      cell_fd_set_dir_offset((int)fd, old_dir_offset);
       break;
     }
     if (!user_writable(buf + written, reclen)) { return -(int64_t)EFAULT; }

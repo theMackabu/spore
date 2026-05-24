@@ -555,35 +555,54 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
   return write_inode(fs, node);
 }
 
-bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out) {
+bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
   if (!ext2_is_dir(dir)) { return false; }
-  uint64_t off = 0;
-  size_t seen = 0;
-  uint8_t header[8];
-  while (off + sizeof(header) <= dir->size) {
-    uint32_t got = 0;
-    if (!ext2_read_file(fs, dir, off, header, sizeof(header), &got) || got != sizeof(header)) { return false; }
+  uint64_t off = cursor == NULL ? 0 : *cursor;
+  uint8_t block[4096];
+  if (fs->block_size > sizeof(block)) { return false; }
+  while (off + 8 <= dir->size) {
+    uint32_t file_block_index = (uint32_t)(off / fs->block_size);
+    uint32_t within = (uint32_t)(off % fs->block_size);
+    if (within + 8 > fs->block_size) {
+      off += fs->block_size - within;
+      continue;
+    }
+    uint32_t disk_block = 0;
+    if (!file_block(fs, dir, file_block_index, &disk_block)) { return false; }
+    if (disk_block == 0) {
+      kmemset(block, 0, fs->block_size);
+    } else if (!read_block(fs, disk_block, block)) {
+      return false;
+    }
+    uint8_t *record = block + within;
     uint32_t ino =
-      (uint32_t)header[0] | ((uint32_t)header[1] << 8) | ((uint32_t)header[2] << 16) | ((uint32_t)header[3] << 24);
-    uint16_t rec_len = (uint16_t)header[4] | ((uint16_t)header[5] << 8);
-    uint8_t name_len = header[6];
-    uint8_t type = header[7];
-    if (rec_len < 8 || off + rec_len > dir->size) { return false; }
+      (uint32_t)record[0] | ((uint32_t)record[1] << 8) | ((uint32_t)record[2] << 16) | ((uint32_t)record[3] << 24);
+    uint16_t rec_len = (uint16_t)record[4] | ((uint16_t)record[5] << 8);
+    uint8_t name_len = record[6];
+    uint8_t type = record[7];
+    if (rec_len < 8 || within + rec_len > fs->block_size || off + rec_len > dir->size) { return false; }
+    off += rec_len;
+    if (cursor != NULL) { *cursor = off; }
     if (ino != 0 && name_len > 0 && name_len <= EXT2_NAME_MAX && name_len + 8 <= rec_len) {
       char name[EXT2_NAME_MAX + 1];
-      uint32_t name_got = 0;
-      if (!ext2_read_file(fs, dir, off + 8, name, name_len, &name_got) || name_got != name_len) { return false; }
+      kmemcpy(name, record + 8, name_len);
       name[name_len] = '\0';
       bool dot = (name_len == 1 && name[0] == '.') || (name_len == 2 && name[0] == '.' && name[1] == '.');
-      if (!dot && seen == index) {
+      if (!dot) {
         kmemcpy(out->name, name, name_len + 1);
         out->ino = ino;
         out->type = type;
         return true;
       }
-      if (!dot) { ++seen; }
     }
-    off += rec_len;
+  }
+  return false;
+}
+
+bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out) {
+  uint64_t cursor = 0;
+  for (size_t i = 0; ext2_next_dirent(fs, dir, &cursor, out); ++i) {
+    if (i == index) { return true; }
   }
   return false;
 }
@@ -596,7 +615,8 @@ static bool name_equals(const char *a, size_t a_len, const char *b) {
 static bool lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t name_len,
                          struct ext2_node *out) {
   struct ext2_dirent ent;
-  for (size_t i = 0; ext2_dirent(fs, dir, i, &ent); ++i) {
+  uint64_t cursor = 0;
+  while (ext2_next_dirent(fs, dir, &cursor, &ent)) {
     if (name_equals(name, name_len, ent.name)) { return read_inode(fs, ent.ino, out); }
   }
   return false;

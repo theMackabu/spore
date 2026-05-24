@@ -72,6 +72,7 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out);
+bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);
 uint64_t vfs_exec_cache_pages(void);

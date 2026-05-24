@@ -215,6 +215,7 @@ bool cell_fd_is_dir(int fd);
 bool cell_fd_next_dirent(int fd, struct vfs_dirent *out);
 void cell_fd_rewind_one_dirent(int fd);
 uint64_t cell_fd_dir_offset(int fd);
+void cell_fd_set_dir_offset(int fd, uint64_t offset);
 bool cell_handle_cow_fault(uint64_t far);
 bool cell_handle_translation_fault(uint64_t far, enum vmm_access access);
 bool cell_ensure_user_range(uint64_t va, size_t len, enum vmm_access access);

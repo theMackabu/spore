@@ -66,6 +66,7 @@ bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
 bool ext2_unlink(struct ext2_fs *fs, const char *path);
 bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path);
 bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out);
+bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out);
 bool ext2_is_dir(const struct ext2_node *node);
 bool ext2_is_regular(const struct ext2_node *node);
 bool ext2_is_symlink(const struct ext2_node *node);

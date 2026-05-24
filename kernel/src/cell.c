@@ -2350,9 +2350,7 @@ bool cell_fd_next_dirent(int fd, struct vfs_dirent *out) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
   if (file->type != OPEN_RAMFS || !file->node.is_dir) { return false; }
-  if (!vfs_dirent(&file->node, (size_t)file->offset, out)) { return false; }
-  ++file->offset;
-  return true;
+  return vfs_next_dirent(&file->node, &file->offset, out);
 }
 
 void cell_fd_rewind_one_dirent(int fd) {
@@ -2366,6 +2364,11 @@ uint64_t cell_fd_dir_offset(int fd) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return 0; }
   return domain->fds[fd]->offset;
+}
+
+void cell_fd_set_dir_offset(int fd, uint64_t offset) {
+  struct domain *domain = current_domain();
+  if (domain != NULL && fd >= 0 && fd < MAX_FDS && domain->fds[fd] != NULL) { domain->fds[fd]->offset = offset; }
 }
 
 static bool access_allowed(const struct vma *vma, enum vmm_access access) {

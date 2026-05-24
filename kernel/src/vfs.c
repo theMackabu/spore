@@ -544,6 +544,21 @@ bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out
   return false;
 }
 
+bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
+  if (cursor == NULL) { return false; }
+  if (dir->backend == VFS_EXT2) {
+    struct ext2_dirent ent;
+    if (!ext2_next_dirent(root_ext2, &dir->ext2, cursor, &ent)) { return false; }
+    *out = (struct vfs_dirent){.ino = ent.ino, .is_dir = ent.type == 2, .is_device = false};
+    kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
+    return true;
+  }
+  size_t index = (size_t)*cursor;
+  if (!vfs_dirent(dir, index, out)) { return false; }
+  *cursor = index + 1;
+  return true;
+}
+
 bool vfs_fs_info(struct vfs_fs_info *out) {
   if (out == NULL) { return false; }
   if (root_ext2 != NULL) {
