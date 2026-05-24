@@ -5,6 +5,7 @@ userland/bin/shutdown /bin/shutdown
 userland/bin/ls /bin/ls
 userland/bin/cat /bin/cat
 userland/bin/echo /bin/echo
+userland/bin/clear /bin/clear
 userland/bin/edit /bin/edit
 userland/bin/mkdir /bin/mkdir
 userland/bin/rm /bin/rm

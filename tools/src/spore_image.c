@@ -281,7 +281,7 @@ int main(int argc, char **argv) {
 
   char of_arg[MAX_PATH + 4];
   snprintf(of_arg, sizeof(of_arg), "of=%s", output_image);
-  char *const dd_argv[] = {"dd", "if=/dev/zero", of_arg, "bs=1M", "count=64", NULL};
+  char *const dd_argv[] = {"dd", "if=/dev/zero", of_arg, "bs=1M", "count=96", NULL};
   run_argv(dd_argv, true);
   char *const mkfs_argv[] = {"mkfs.fat", "-F", "32", (char *)output_image, NULL};
   run_argv(mkfs_argv, true);
