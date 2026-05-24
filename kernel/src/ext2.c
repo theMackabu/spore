@@ -14,6 +14,7 @@ enum {
   EXT2_FT_REG_FILE = 1,
   EXT2_FT_DIR = 2,
   EXT2_INCOMPAT_FILETYPE = 0x2,
+  BLOCK_CACHE_ENTRIES = 32,
 };
 
 struct ext2_super {
@@ -77,16 +78,110 @@ struct ext2_inode_disk {
   uint32_t block[15];
 };
 
+struct block_cache_entry {
+  bool valid;
+  struct ext2_fs *fs;
+  uint32_t block;
+  uint64_t age;
+  uint8_t data[4096];
+};
+
+static struct block_cache_entry block_cache[BLOCK_CACHE_ENTRIES];
+static uint64_t block_cache_clock;
+
 static uint32_t div_round_up(uint32_t a, uint32_t b) {
   return (a + b - 1) / b;
 }
 
+static void cache_reset(struct ext2_fs *fs) {
+  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
+    if (block_cache[i].fs == fs) { block_cache[i].valid = false; }
+  }
+}
+
+static struct block_cache_entry *cache_find(struct ext2_fs *fs, uint32_t block) {
+  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
+    if (block_cache[i].valid && block_cache[i].fs == fs && block_cache[i].block == block) { return &block_cache[i]; }
+  }
+  return NULL;
+}
+
+static struct block_cache_entry *cache_victim(void) {
+  struct block_cache_entry *victim = &block_cache[0];
+  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
+    if (!block_cache[i].valid) { return &block_cache[i]; }
+    if (block_cache[i].age < victim->age) { victim = &block_cache[i]; }
+  }
+  return victim;
+}
+
 static bool read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
-  return fs->read(fs->ctx, (uint64_t)block * fs->block_size, dst, fs->block_size);
+  if (fs->block_size > sizeof(block_cache[0].data)) { return false; }
+  struct block_cache_entry *entry = cache_find(fs, block);
+  if (entry == NULL) {
+    entry = cache_victim();
+    if (!fs->read(fs->ctx, (uint64_t)block * fs->block_size, entry->data, fs->block_size)) { return false; }
+    entry->valid = true;
+    entry->fs = fs;
+    entry->block = block;
+  }
+  entry->age = ++block_cache_clock;
+  kmemcpy(dst, entry->data, fs->block_size);
+  return true;
 }
 
 static bool write_block(struct ext2_fs *fs, uint32_t block, const void *src) {
-  return fs->write != NULL && fs->write(fs->ctx, (uint64_t)block * fs->block_size, src, fs->block_size);
+  if (fs->write == NULL || fs->block_size > sizeof(block_cache[0].data)) { return false; }
+  if (!fs->write(fs->ctx, (uint64_t)block * fs->block_size, src, fs->block_size)) { return false; }
+  struct block_cache_entry *entry = cache_find(fs, block);
+  if (entry == NULL) {
+    entry = cache_victim();
+    entry->valid = true;
+    entry->fs = fs;
+    entry->block = block;
+  }
+  entry->age = ++block_cache_clock;
+  kmemcpy(entry->data, src, fs->block_size);
+  return true;
+}
+
+static bool read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t len) {
+  uint8_t *out = dst;
+  uint8_t block[4096];
+  while (len > 0) {
+    uint32_t block_index = (uint32_t)(offset / fs->block_size);
+    uint32_t within = (uint32_t)(offset % fs->block_size);
+    uint32_t chunk = fs->block_size - within;
+    if (chunk > len) { chunk = len; }
+    if (!read_block(fs, block_index, block)) { return false; }
+    kmemcpy(out, block + within, chunk);
+    out += chunk;
+    offset += chunk;
+    len -= chunk;
+  }
+  return true;
+}
+
+static bool write_bytes(struct ext2_fs *fs, uint64_t offset, const void *src, uint32_t len) {
+  const uint8_t *in = src;
+  uint8_t block[4096];
+  while (len > 0) {
+    uint32_t block_index = (uint32_t)(offset / fs->block_size);
+    uint32_t within = (uint32_t)(offset % fs->block_size);
+    uint32_t chunk = fs->block_size - within;
+    if (chunk > len) { chunk = len; }
+    if (within != 0 || chunk != fs->block_size) {
+      if (!read_block(fs, block_index, block)) { return false; }
+    } else {
+      kmemset(block, 0, fs->block_size);
+    }
+    kmemcpy(block + within, in, chunk);
+    if (!write_block(fs, block_index, block)) { return false; }
+    in += chunk;
+    offset += chunk;
+    len -= chunk;
+  }
+  return true;
 }
 
 static bool read_super(struct ext2_fs *fs, struct ext2_super *out) {
@@ -94,19 +189,19 @@ static bool read_super(struct ext2_fs *fs, struct ext2_super *out) {
 }
 
 static bool write_super(struct ext2_fs *fs, const struct ext2_super *sb) {
-  return fs->write != NULL && fs->write(fs->ctx, EXT2_SUPER_OFFSET, sb, sizeof(*sb));
+  return fs->write != NULL && write_bytes(fs, EXT2_SUPER_OFFSET, sb, sizeof(*sb));
 }
 
 static bool read_group_desc(struct ext2_fs *fs, uint32_t group, struct ext2_group_desc *out) {
   if (group >= fs->group_count) { return false; }
   uint64_t table = fs->block_size == 1024 ? 2ull * fs->block_size : fs->block_size;
-  return fs->read(fs->ctx, table + (uint64_t)group * sizeof(*out), out, sizeof(*out));
+  return read_bytes(fs, table + (uint64_t)group * sizeof(*out), out, sizeof(*out));
 }
 
 static bool write_group_desc(struct ext2_fs *fs, uint32_t group, const struct ext2_group_desc *in) {
   if (group >= fs->group_count || fs->write == NULL) { return false; }
   uint64_t table = fs->block_size == 1024 ? 2ull * fs->block_size : fs->block_size;
-  return fs->write(fs->ctx, table + (uint64_t)group * sizeof(*in), in, sizeof(*in));
+  return write_bytes(fs, table + (uint64_t)group * sizeof(*in), in, sizeof(*in));
 }
 
 static bool read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
@@ -118,7 +213,7 @@ static bool read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) 
   if (!read_group_desc(fs, group, &gd)) { return false; }
   struct ext2_inode_disk inode;
   uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)local * fs->inode_size;
-  if (!fs->read(fs->ctx, off, &inode, sizeof(inode))) { return false; }
+  if (!read_bytes(fs, off, &inode, sizeof(inode))) { return false; }
   out->ino = ino;
   out->mode = inode.mode;
   out->size = inode.size;
@@ -141,7 +236,7 @@ static bool write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   if (!read_group_desc(fs, group, &gd)) { return false; }
   struct ext2_inode_disk inode;
   uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)local * fs->inode_size;
-  if (!fs->read(fs->ctx, off, &inode, sizeof(inode))) { return false; }
+  if (!read_bytes(fs, off, &inode, sizeof(inode))) { return false; }
   inode.mode = node->mode;
   inode.size = node->size;
   inode.links_count = ext2_is_dir(node) ? 2 : 1;
@@ -149,7 +244,7 @@ static bool write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   for (size_t i = 0; i < 15; ++i) {
     inode.block[i] = node->blocks[i];
   }
-  return fs->write(fs->ctx, off, &inode, sizeof(inode));
+  return write_bytes(fs, off, &inode, sizeof(inode));
 }
 
 static bool file_block(struct ext2_fs *fs, const struct ext2_node *node, uint32_t file_block_index,
@@ -186,6 +281,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   fs->inode_count = sb.inodes_count;
   fs->block_count = sb.blocks_count;
   fs->group_count = div_round_up(sb.blocks_count - sb.first_data_block, sb.blocks_per_group);
+  cache_reset(fs);
   return fs->inodes_per_group != 0 && fs->blocks_per_group != 0 && fs->group_count != 0;
 }
 

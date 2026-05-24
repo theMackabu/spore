@@ -46,6 +46,7 @@ enum {
   VIRTIO_BLK_T_IN = 0,
   VIRTIO_BLK_T_OUT = 1,
   SECTOR_SIZE = 512,
+  MAX_IO_SIZE = 4096,
 };
 
 struct virtq_desc {
@@ -172,10 +173,10 @@ static bool setup_device(uint64_t base) {
   return true;
 }
 
-static bool rw_sector(uint64_t sector, void *buf, bool write) {
-  if (!blk_ready) { return false; }
+static bool rw_sectors(uint64_t sector, void *buf, uint32_t bytes, bool write) {
+  if (!blk_ready || bytes == 0 || bytes > MAX_IO_SIZE || (bytes % SECTOR_SIZE) != 0) { return false; }
 
-  if (write) { kmemcpy(sector_buf, buf, SECTOR_SIZE); }
+  if (write) { kmemcpy(sector_buf, buf, bytes); }
   *req = (struct virtio_blk_req){.type = write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN, .reserved = 0, .sector = sector};
   *status_buf = 0xff;
 
@@ -184,7 +185,7 @@ static bool rw_sector(uint64_t sector, void *buf, bool write) {
   desc[0].flags = VIRTQ_DESC_F_NEXT;
   desc[0].next = 1;
   desc[1].addr = sector_pa;
-  desc[1].len = SECTOR_SIZE;
+  desc[1].len = bytes;
   desc[1].flags = write ? VIRTQ_DESC_F_NEXT : (VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE);
   desc[1].next = 2;
   desc[2].addr = status_pa;
@@ -203,7 +204,7 @@ static bool rw_sector(uint64_t sector, void *buf, bool write) {
     if (used->idx != used_idx) {
       ++used_idx;
       if (*status_buf != 0) { return false; }
-      if (!write) { kmemcpy(buf, sector_buf, SECTOR_SIZE); }
+      if (!write) { kmemcpy(buf, sector_buf, bytes); }
       uint32_t isr = read32(VIRTIO_MMIO_INTERRUPT_STATUS);
       if (isr != 0) { write32(VIRTIO_MMIO_INTERRUPT_ACK, isr); }
       return true;
@@ -213,11 +214,11 @@ static bool rw_sector(uint64_t sector, void *buf, bool write) {
 }
 
 static bool read_sector(uint64_t sector, void *dst) {
-  return rw_sector(sector, dst, false);
+  return rw_sectors(sector, dst, SECTOR_SIZE, false);
 }
 
 static bool write_sector(uint64_t sector, const void *src) {
-  return rw_sector(sector, (void *)src, true);
+  return rw_sectors(sector, (void *)src, SECTOR_SIZE, true);
 }
 
 bool virtio_blk_read(uint64_t offset, void *dst, uint32_t len) {
@@ -225,6 +226,15 @@ bool virtio_blk_read(uint64_t offset, void *dst, uint32_t len) {
   while (len > 0) {
     uint64_t sector = offset / SECTOR_SIZE;
     uint32_t within = (uint32_t)(offset % SECTOR_SIZE);
+    if (within == 0 && len >= SECTOR_SIZE) {
+      uint32_t chunk = len > MAX_IO_SIZE ? MAX_IO_SIZE : len;
+      chunk -= chunk % SECTOR_SIZE;
+      if (!rw_sectors(sector, out, chunk, false)) { return false; }
+      out += chunk;
+      offset += chunk;
+      len -= chunk;
+      continue;
+    }
     uint32_t chunk = SECTOR_SIZE - within;
     if (chunk > len) { chunk = len; }
     if (!read_sector(sector, sector_buf)) { return false; }
@@ -241,6 +251,15 @@ bool virtio_blk_write(uint64_t offset, const void *src, uint32_t len) {
   while (len > 0) {
     uint64_t sector = offset / SECTOR_SIZE;
     uint32_t within = (uint32_t)(offset % SECTOR_SIZE);
+    if (within == 0 && len >= SECTOR_SIZE) {
+      uint32_t chunk = len > MAX_IO_SIZE ? MAX_IO_SIZE : len;
+      chunk -= chunk % SECTOR_SIZE;
+      if (!rw_sectors(sector, (void *)in, chunk, true)) { return false; }
+      in += chunk;
+      offset += chunk;
+      len -= chunk;
+      continue;
+    }
     uint32_t chunk = SECTOR_SIZE - within;
     if (chunk > len) { chunk = len; }
     if (within != 0 || chunk != SECTOR_SIZE) {

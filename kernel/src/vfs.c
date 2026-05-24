@@ -9,8 +9,22 @@
 static struct ramfs *root_ramfs;
 static struct ext2_fs *root_ext2;
 static uint64_t root_hhdm;
-static uint8_t *exec_buf;
-static uint64_t exec_buf_cap;
+
+enum {
+  EXEC_CACHE_ENTRIES = 1,
+  EXEC_CACHE_MAX = 4 * 1024 * 1024,
+};
+
+struct exec_cache_entry {
+  bool valid;
+  char path[128];
+  uint8_t *data;
+  uint64_t cap;
+  uint64_t size;
+};
+
+static struct exec_cache_entry exec_cache[EXEC_CACHE_ENTRIES];
+static size_t exec_cache_clock;
 
 static bool starts_with(const char *s, const char *prefix) {
   while (*prefix != '\0') {
@@ -49,10 +63,39 @@ void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset) {
   root_hhdm = hhdm_offset;
 }
 
-static bool ensure_exec_buf(uint64_t need) {
-  if (exec_buf != NULL && need <= exec_buf_cap) { return true; }
-  if (need > 4ull * 1024 * 1024) { return false; }
-  uint64_t pages = (4ull * 1024 * 1024) / PAGE_SIZE;
+static bool streq(const char *a, const char *b) {
+  while (*a != '\0' && *b != '\0') {
+    if (*a++ != *b++) { return false; }
+  }
+  return *a == '\0' && *b == '\0';
+}
+
+static void copy_path(char *dst, size_t cap, const char *src) {
+  size_t i = 0;
+  while (i + 1 < cap && src[i] != '\0') {
+    dst[i] = src[i];
+    ++i;
+  }
+  dst[i] = '\0';
+}
+
+static void invalidate_exec_cache(void) {
+  for (size_t i = 0; i < EXEC_CACHE_ENTRIES; ++i) {
+    exec_cache[i].valid = false;
+  }
+}
+
+static struct exec_cache_entry *find_exec_cache(const char *path, uint64_t size) {
+  for (size_t i = 0; i < EXEC_CACHE_ENTRIES; ++i) {
+    if (exec_cache[i].valid && exec_cache[i].size == size && streq(exec_cache[i].path, path)) { return &exec_cache[i]; }
+  }
+  return NULL;
+}
+
+static bool allocate_exec_entry(struct exec_cache_entry *entry, uint64_t need) {
+  if (entry->data != NULL && need <= entry->cap) { return true; }
+  if (need > EXEC_CACHE_MAX) { return false; }
+  uint64_t pages = EXEC_CACHE_MAX / PAGE_SIZE;
   uint64_t first = 0;
   for (uint64_t i = 0; i < pages; ++i) {
     uint64_t pa = pmm_alloc_zero_page();
@@ -63,9 +106,15 @@ static bool ensure_exec_buf(uint64_t need) {
       return false;
     }
   }
-  exec_buf = (uint8_t *)(uintptr_t)(root_hhdm + first);
-  exec_buf_cap = pages * PAGE_SIZE;
+  entry->data = (uint8_t *)(uintptr_t)(root_hhdm + first);
+  entry->cap = pages * PAGE_SIZE;
   return true;
+}
+
+static struct exec_cache_entry *next_exec_entry(uint64_t need) {
+  struct exec_cache_entry *entry = &exec_cache[exec_cache_clock++ % EXEC_CACHE_ENTRIES];
+  entry->valid = false;
+  return allocate_exec_entry(entry, need) ? entry : NULL;
 }
 
 static bool lookup_ramfs(const char *path, struct vfs_node *out) {
@@ -93,11 +142,21 @@ bool vfs_lookup_exec(const char *path, const void **data, uint64_t *size) {
   if (root_ext2 != NULL) {
     struct ext2_node node;
     if (ext2_lookup(root_ext2, path, &node) && ext2_is_regular(&node)) {
-      if (!ensure_exec_buf(node.size)) { return false; }
+      struct exec_cache_entry *entry = find_exec_cache(path, node.size);
+      if (entry != NULL) {
+        *data = entry->data;
+        *size = entry->size;
+        return true;
+      }
+      entry = next_exec_entry(node.size);
+      if (entry == NULL) { return false; }
       uint32_t got = 0;
-      if (!ext2_read_file(root_ext2, &node, 0, exec_buf, node.size, &got) || got != node.size) { return false; }
-      *data = exec_buf;
-      *size = node.size;
+      if (!ext2_read_file(root_ext2, &node, 0, entry->data, node.size, &got) || got != node.size) { return false; }
+      copy_path(entry->path, sizeof(entry->path), path);
+      entry->size = node.size;
+      entry->valid = true;
+      *data = entry->data;
+      *size = entry->size;
       return true;
     }
   }
@@ -114,7 +173,9 @@ bool vfs_lookup_exec(const char *path, const void **data, uint64_t *size) {
 bool vfs_mkdir(const char *path) {
   if (root_ext2 != NULL && !starts_with(path, "/dev")) {
     struct ext2_node node;
-    return ext2_create(root_ext2, path, true, &node);
+    bool ok = ext2_create(root_ext2, path, true, &node);
+    if (ok) { invalidate_exec_cache(); }
+    return ok;
   }
   return root_ramfs != NULL && ramfs_mkdir(root_ramfs, path);
 }
@@ -125,6 +186,7 @@ bool vfs_create(const char *path, struct vfs_node *out) {
     if (!ext2_create(root_ext2, path, false, &node)) { return false; }
     from_ext2(&node, out);
     out->writable = true;
+    invalidate_exec_cache();
     return true;
   }
   struct ramfs_node node;
@@ -136,20 +198,28 @@ bool vfs_create(const char *path, struct vfs_node *out) {
 bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext = node->ext2;
-    return ext2_truncate(root_ext2, &ext, size);
+    bool ok = ext2_truncate(root_ext2, &ext, size);
+    if (ok) { invalidate_exec_cache(); }
+    return ok;
   }
   if (node->backend != VFS_RAMFS) { return false; }
   return ramfs_truncate(node->ramfs.fs, node->ramfs.index, size);
 }
 
 bool vfs_unlink(const char *path) {
-  if (root_ext2 != NULL && !starts_with(path, "/dev")) { return ext2_unlink(root_ext2, path); }
+  if (root_ext2 != NULL && !starts_with(path, "/dev")) {
+    bool ok = ext2_unlink(root_ext2, path);
+    if (ok) { invalidate_exec_cache(); }
+    return ok;
+  }
   return root_ramfs != NULL && ramfs_unlink(root_ramfs, path);
 }
 
 bool vfs_rename(const char *old_path, const char *new_path) {
   if (root_ext2 != NULL && !starts_with(old_path, "/dev") && !starts_with(new_path, "/dev")) {
-    return ext2_rename(root_ext2, old_path, new_path);
+    bool ok = ext2_rename(root_ext2, old_path, new_path);
+    if (ok) { invalidate_exec_cache(); }
+    return ok;
   }
   return root_ramfs != NULL && ramfs_rename(root_ramfs, old_path, new_path);
 }
@@ -167,7 +237,9 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext = node->ext2;
-    return ext2_write_file(root_ext2, &ext, off, src, len);
+    int64_t wrote = ext2_write_file(root_ext2, &ext, off, src, len);
+    if (wrote >= 0) { invalidate_exec_cache(); }
+    return wrote;
   }
   if (node->backend != VFS_RAMFS) { return -28; }
   return ramfs_write(node->ramfs.fs, node->ramfs.index, off, src, len);
