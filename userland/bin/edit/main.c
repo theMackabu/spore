@@ -186,14 +186,14 @@ static size_t line_arg(char *s, size_t fallback) {
 }
 
 int main(int argc, char **argv) {
-  if (argc != 2) { return spore_usage(argv[0], "FILE"); }
+  if (argc != 2) { return usage(argv[0], "FILE"); }
   const char *path = argv[1];
-  if (load_file(path) != 0) { return SPORE_ERROR; }
+  if (load_file(path) != 0) { return EXIT_FAILURE; }
 
   printf("edit: %s (%u lines). h for help.\n", path, (unsigned)line_count);
   char cmd[LINE_LEN];
   for (;;) {
-    if (read_line(cmd, sizeof(cmd), "edit> ") != 0) { return dirty ? SPORE_ERROR : SPORE_OK; }
+    if (read_line(cmd, sizeof(cmd), "edit> ") != 0) { return dirty ? EXIT_FAILURE : EXIT_SUCCESS; }
     if (cmd[0] == '\0') { continue; }
     if (strcmp(cmd, "h") == 0 || strcmp(cmd, "?") == 0) {
       help();
@@ -220,10 +220,10 @@ int main(int argc, char **argv) {
       if (dirty) {
         puts("edit: unsaved changes; use q! to discard");
       } else {
-        return SPORE_OK;
+        return EXIT_SUCCESS;
       }
     } else if (strcmp(cmd, "q!") == 0) {
-      return SPORE_OK;
+      return EXIT_SUCCESS;
     } else {
       puts("edit: unknown command");
     }

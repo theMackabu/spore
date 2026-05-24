@@ -1,14 +1,14 @@
-#include "util.h"
+#include <stdlib.h>
 
 #include <stdio.h>
 #include <sys/stat.h>
 
 int main(int argc, char **argv) {
-  int rc = SPORE_OK;
+  int rc = EXIT_SUCCESS;
   for (int i = 1; i < argc; ++i) {
     if (mkdir(argv[i], 0777) != 0) {
       perror("mkdir");
-      rc = SPORE_ERROR;
+      rc = EXIT_FAILURE;
     }
   }
   return rc;

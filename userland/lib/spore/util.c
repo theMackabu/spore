@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
-int spore_eprintf(const char *fmt, ...) {
+int eprintf(const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   int rc = vfprintf(stderr, fmt, ap);
@@ -12,12 +12,12 @@ int spore_eprintf(const char *fmt, ...) {
   return rc;
 }
 
-int spore_usage(const char *tool, const char *usage) {
-  spore_eprintf("usage: %s %s\n", tool, usage);
-  return SPORE_USAGE;
+int usage(const char *tool, const char *usage) {
+  eprintf("usage: %s %s\n", tool, usage);
+  return EXIT_USAGE;
 }
 
-const char *spore_basename(const char *path) {
+const char *basename(const char *path) {
   const char *name = path;
   for (const char *p = path; *p != '\0'; ++p) {
     if (*p == '/' && p[1] != '\0') { name = p + 1; }
@@ -25,6 +25,6 @@ const char *spore_basename(const char *path) {
   return name;
 }
 
-int spore_streq(const char *a, const char *b) {
+int streq(const char *a, const char *b) {
   return strcmp(a, b) == 0;
 }

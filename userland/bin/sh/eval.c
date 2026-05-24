@@ -80,7 +80,7 @@ static int run_external(struct command *cmd) {
 }
 
 static int run_confined(const char *manifest, char **argv, const struct redirs *redir) {
-  if (spore_streq(manifest, "bad-manifest")) {
+  if (streq(manifest, "bad-manifest")) {
     puts("spore: spawn rejected: requested caps exceed parent");
     return 1;
   }
@@ -102,7 +102,7 @@ static int run_confined(const char *manifest, char **argv, const struct redirs *
     exec_search(argv);
     _exit(127);
   }
-  bool cpu_demo = spore_streq(manifest, "compute-only") && spore_streq(spore_basename(argv[0]), "spinner");
+  bool cpu_demo = streq(manifest, "compute-only") && streq(basename(argv[0]), "spinner");
   if (cpu_demo) { printf("spore: '%s' confined: syscall-class=compute, cpu=200ms\n", argv[0]); }
   int status = wait_status(pid);
   if (cpu_demo) { puts("spore: 'spinner' exceeded CPU budget -> killed (shell alive)"); }
@@ -113,7 +113,7 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   *handled = true;
   if (cmd->argc == 0) { return 0; }
 
-  if (spore_streq(cmd->argv[0], "cd")) {
+  if (streq(cmd->argv[0], "cd")) {
     const char *path = cmd->argc > 1 ? cmd->argv[1] : getenv("HOME");
     if (path == NULL) { path = "/"; }
     if (chdir(path) != 0) {
@@ -122,18 +122,18 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
     }
     return 0;
   }
-  if (spore_streq(cmd->argv[0], "pwd")) {
+  if (streq(cmd->argv[0], "pwd")) {
     char cwd[128];
     puts(getcwd(cwd, sizeof(cwd)) == NULL ? "?" : cwd);
     return 0;
   }
-  if (spore_streq(cmd->argv[0], "exit")) { exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : 0); }
-  if (spore_streq(cmd->argv[0], "help")) {
+  if (streq(cmd->argv[0], "exit")) { exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : 0); }
+  if (streq(cmd->argv[0], "help")) {
     puts("builtins: cd pwd exit help export confine runc");
     puts("syntax: words quotes $VAR $? ; && || < > >>");
     return 0;
   }
-  if (spore_streq(cmd->argv[0], "export")) {
+  if (streq(cmd->argv[0], "export")) {
     for (int i = 1; i < cmd->argc; ++i) {
       char *eq = strchr(cmd->argv[i], '=');
       if (eq == NULL) {
@@ -149,7 +149,7 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
     }
     return 0;
   }
-  if ((spore_streq(cmd->argv[0], "confine") || spore_streq(cmd->argv[0], "runc")) && cmd->argc >= 3) {
+  if ((streq(cmd->argv[0], "confine") || streq(cmd->argv[0], "runc")) && cmd->argc >= 3) {
     return run_confined(cmd->argv[1], &cmd->argv[2], &cmd->redir);
   }
 
@@ -160,7 +160,7 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
 int sh_execute_line(char *line, int last_status) {
   size_t count = 0;
   if (sh_tokenize(line, parse_tokens, &count, last_status) != 0) {
-    spore_eprintf("sh: parse buffer exhausted\n");
+    eprintf("sh: parse buffer exhausted\n");
     return 2;
   }
 

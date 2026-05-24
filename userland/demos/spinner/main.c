@@ -1,9 +1,9 @@
-#include "util.h"
+#include <stdlib.h>
 
 int main(void) {
   volatile unsigned long x = 0;
   for (;;) {
     ++x;
   }
-  return SPORE_OK;
+  return EXIT_SUCCESS;
 }

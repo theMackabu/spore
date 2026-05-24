@@ -1,8 +1,8 @@
-#include "util.h"
+#include <stdlib.h>
 
 #include <stdio.h>
 
 int main(void) {
   puts("hello, world");
-  return SPORE_OK;
+  return EXIT_SUCCESS;
 }

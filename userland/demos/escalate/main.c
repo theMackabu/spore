@@ -1,8 +1,8 @@
-#include "util.h"
+#include <stdlib.h>
 
 #include <stdio.h>
 
 int main(void) {
   puts("escalate: should not run");
-  return SPORE_ERROR;
+  return EXIT_FAILURE;
 }

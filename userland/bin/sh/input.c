@@ -37,7 +37,7 @@ static void redraw_line(const char *prompt, const char *line, size_t len, size_t
 
 static void history_add(const char *line) {
   if (line[0] == '\0') { return; }
-  if (history_count > 0 && spore_streq(history[history_count - 1], line)) { return; }
+  if (history_count > 0 && streq(history[history_count - 1], line)) { return; }
   if (history_count == HISTORY_CAP) {
     memmove(history[0], history[1], sizeof(history[0]) * (HISTORY_CAP - 1));
     --history_count;

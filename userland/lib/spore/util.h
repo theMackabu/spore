@@ -1,14 +1,13 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdlib.h>
 
-enum spore_exit {
-  SPORE_OK = 0,
-  SPORE_USAGE = 64,
-  SPORE_ERROR = 1,
+enum exit_code {
+  EXIT_USAGE = 64,
 };
 
-int spore_eprintf(const char *fmt, ...);
-int spore_usage(const char *tool, const char *usage);
-const char *spore_basename(const char *path);
-int spore_streq(const char *a, const char *b);
+int eprintf(const char *fmt, ...);
+int usage(const char *tool, const char *usage);
+const char *basename(const char *path);
+int streq(const char *a, const char *b);

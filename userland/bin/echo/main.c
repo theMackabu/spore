@@ -1,6 +1,5 @@
-#include "util.h"
-
 #include <stdio.h>
+#include <stdlib.h>
 
 int main(int argc, char **argv) {
   (void)argv;
@@ -9,5 +8,5 @@ int main(int argc, char **argv) {
     fputs(argv[i], stdout);
   }
   putchar('\n');
-  return SPORE_OK;
+  return EXIT_SUCCESS;
 }

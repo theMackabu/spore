@@ -22,6 +22,8 @@ CompileFlags:
     - --target=aarch64-linux-musl
     - -std=c23
     - -D_GNU_SOURCE
+    - -I
+    - /Users/themackabu/Developer/c_cxx/spore/userland/lib/spore
     - -isystem
     - /Users/themackabu/.local/share/mise/installs/zig/0.15.2/lib/include
     - -isystem

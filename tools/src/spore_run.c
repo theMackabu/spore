@@ -386,8 +386,7 @@ static ssize_t find_after_last_marker(const char *data, size_t len, const char *
 
 static void write_serial_output(struct csi_filter *serial_csi, const char *chunk, size_t n, bool tmux_log_pane,
                                 struct startup_serial *startup, FILE *log_stream) {
-  if (!tmux_log_pane || startup->done) {
-    (void)serial_csi;
+  if (startup->done) {
     write_raw_to(chunk, n, stdout);
     return;
   }
@@ -402,7 +401,8 @@ static void write_serial_output(struct csi_filter *serial_csi, const char *chunk
     ++handoff_at;
   }
 
-  if (handoff_at > 0) { write_sanitized_to(serial_csi, startup->buf, (size_t)handoff_at, log_stream); }
+  FILE *startup_out = tmux_log_pane ? log_stream : stdout;
+  if (handoff_at > 0) { write_sanitized_to(serial_csi, startup->buf, (size_t)handoff_at, startup_out); }
   write_raw_to(startup->buf + handoff_at, startup->len - (size_t)handoff_at, stdout);
   startup->done = true;
   startup->len = 0;

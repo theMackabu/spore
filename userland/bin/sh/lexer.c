@@ -21,7 +21,7 @@ static bool append_text(char *word, size_t *len, const char *text) {
 
 static const char *var_value(const char *name, int last_status) {
   static char status_buf[16];
-  if (spore_streq(name, "?")) {
+  if (streq(name, "?")) {
     snprintf(status_buf, sizeof(status_buf), "%d", last_status);
     return status_buf;
   }
@@ -154,7 +154,7 @@ int sh_parse_command(struct parser *p, struct command *cmd) {
     struct token *tok = sh_parser_take(p);
     if (tok->type == TOK_WORD) {
       if (cmd->argc + 1 >= ARG_CAP) {
-        spore_eprintf("sh: too many arguments\n");
+        eprintf("sh: too many arguments\n");
         return -1;
       }
       cmd->argv[cmd->argc++] = tok->text;
@@ -162,7 +162,7 @@ int sh_parse_command(struct parser *p, struct command *cmd) {
     } else if (tok->type == TOK_GT || tok->type == TOK_GTGT || tok->type == TOK_LT) {
       struct token *path = sh_parser_take(p);
       if (path == NULL || path->type != TOK_WORD) {
-        spore_eprintf("sh: redirection missing path\n");
+        eprintf("sh: redirection missing path\n");
         return -1;
       }
       if (tok->type == TOK_LT) {
@@ -172,7 +172,7 @@ int sh_parse_command(struct parser *p, struct command *cmd) {
         cmd->redir.append = tok->type == TOK_GTGT;
       }
     } else {
-      spore_eprintf("sh: syntax error\n");
+      eprintf("sh: syntax error\n");
       return -1;
     }
   }

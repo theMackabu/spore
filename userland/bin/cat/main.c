@@ -1,4 +1,4 @@
-#include "util.h"
+#include <stdlib.h>
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -10,7 +10,7 @@ int main(int argc, char **argv) {
     int fd = open(argv[i], O_RDONLY);
     if (fd < 0) {
       perror("cat");
-      return SPORE_ERROR;
+      return EXIT_FAILURE;
     }
     for (;;) {
       ssize_t n = read(fd, buf, sizeof(buf));
@@ -19,5 +19,5 @@ int main(int argc, char **argv) {
     }
     close(fd);
   }
-  return SPORE_OK;
+  return EXIT_SUCCESS;
 }

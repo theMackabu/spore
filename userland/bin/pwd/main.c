@@ -1,11 +1,11 @@
-#include "util.h"
+#include <stdlib.h>
 
 #include <stdio.h>
 #include <unistd.h>
 
 int main(void) {
   char cwd[128];
-  if (getcwd(cwd, sizeof(cwd)) == NULL) { return SPORE_ERROR; }
+  if (getcwd(cwd, sizeof(cwd)) == NULL) { return EXIT_FAILURE; }
   puts(cwd);
-  return SPORE_OK;
+  return EXIT_SUCCESS;
 }
