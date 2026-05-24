@@ -1072,8 +1072,13 @@ static size_t meminfo_text(char *dst, size_t cap) {
   proc_append_u64(dst, cap, &len, pmm_total_pages());
   proc_append_str(dst, cap, &len, "\nMemFreePages: ");
   proc_append_u64(dst, cap, &len, pmm_free_pages());
+  proc_append_str(dst, cap, &len, "\nMemUsedPages: ");
+  proc_append_u64(dst, cap, &len, pmm_total_pages() > pmm_free_pages() ? pmm_total_pages() - pmm_free_pages() : 0);
   proc_append_str(dst, cap, &len, "\nMemTotalKiB: ");
   proc_append_u64(dst, cap, &len, pmm_total_pages() * 4);
+  proc_append_str(dst, cap, &len, "\nMemUsedKiB: ");
+  proc_append_u64(dst, cap, &len,
+                  pmm_total_pages() > pmm_free_pages() ? (pmm_total_pages() - pmm_free_pages()) * 4 : 0);
   proc_append_str(dst, cap, &len, "\nMemFreeKiB: ");
   proc_append_u64(dst, cap, &len, pmm_free_pages() * 4);
   proc_append_char(dst, cap, &len, '\n');
@@ -1104,6 +1109,8 @@ static size_t mounts_text(char *dst, size_t cap) {
   proc_append_str(dst, cap, &len,
                   "ext2-root / ext2 rw 0 0\n"
                   "tmpfs /tmp tmpfs rw 0 0\n"
+                  "bootfs /dev/fs/boot fat16 ro 0 0\n"
+                  "ramfs /dev/fs/ram0 ramfs ro 0 0\n"
                   "proc /proc proc ro 0 0\n"
                   "dev /dev devfs rw 0 0\n");
   return len;

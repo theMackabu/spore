@@ -25,6 +25,7 @@ userland/bin/tar /bin/tar
 userland/bin/ps /bin/ps
 userland/bin/top /bin/top
 userland/bin/df /bin/df
+userland/bin/free /bin/free
 userland/bin/dirname /bin/dirname
 userland/bin/basename /bin/basename
 userland/bin/sleep /bin/sleep
@@ -74,3 +75,4 @@ userland/demos/peeker /demos/peeker
 userland/demos/writer /demos/writer
 userland/demos/memhog /demos/memhog
 userland/demos/escalate /demos/escalate
+userland/demos/signal-crash /demos/signal-crash

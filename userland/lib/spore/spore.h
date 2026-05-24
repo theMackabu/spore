@@ -17,6 +17,7 @@ bool streq(const char *a, const char *b);
 enum {
   SYS_spore_procinfo = 0x4007,
   SYS_spore_fsinfo = 0x4008,
+  SYS_spore_mountinfo = 0x4009,
 };
 
 struct proc_info {
@@ -38,4 +39,13 @@ struct fs_info {
   uint64_t free_blocks;
   uint64_t inode_count;
   uint64_t free_inodes;
+};
+
+struct mount_info {
+  char source[32];
+  char target[32];
+  char fstype[16];
+  uint64_t block_size;
+  uint64_t block_count;
+  uint64_t free_blocks;
 };

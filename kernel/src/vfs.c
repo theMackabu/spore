@@ -16,6 +16,7 @@ int cell_proc_pid_at(size_t index);
 enum {
   EXEC_CACHE_ENTRIES = 1,
   EXEC_CACHE_MAX = 4 * 1024 * 1024,
+  BOOT_IMAGE_BYTES = 16 * 1024 * 1024,
   VFS_DEV_EXT2_ROOT = 0x0801,
   VFS_DEV_DEVFS = 0x0005,
   VFS_DEV_PROC = 0x0006,
@@ -528,4 +529,49 @@ bool vfs_fs_info(struct vfs_fs_info *out) {
     .free_inodes = 0,
   };
   return true;
+}
+
+static void copy_cstr(char *dst, size_t cap, const char *src) {
+  if (cap == 0) { return; }
+  size_t i = 0;
+  for (; i + 1 < cap && src[i] != '\0'; ++i) {
+    dst[i] = src[i];
+  }
+  dst[i] = '\0';
+}
+
+static void set_mount_info(struct vfs_mount_info *out, const char *source, const char *target, const char *fstype,
+                           uint64_t block_size, uint64_t block_count, uint64_t free_blocks) {
+  copy_cstr(out->source, sizeof(out->source), source);
+  copy_cstr(out->target, sizeof(out->target), target);
+  copy_cstr(out->fstype, sizeof(out->fstype), fstype);
+  out->block_size = block_size;
+  out->block_count = block_count;
+  out->free_blocks = free_blocks;
+}
+
+size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
+  enum { MOUNT_COUNT = 6 };
+  if (out == NULL || cap == 0) { return MOUNT_COUNT; }
+
+  size_t n = 0;
+  struct vfs_fs_info root = {0};
+  if (vfs_fs_info(&root) && n < cap) {
+    set_mount_info(&out[n++], "ext2-root", "/", "ext2", root.block_size, root.block_count, root.free_blocks);
+  }
+
+  uint64_t tmp_blocks = RAMFS_FILE_CAP / RAMFS_PAGE_SIZE;
+  uint64_t tmp_used = ramfs_backing_used_pages();
+  if (n < cap) {
+    set_mount_info(&out[n++], "tmpfs", "/tmp", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks,
+                   tmp_used < tmp_blocks ? tmp_blocks - tmp_used : 0);
+  }
+  if (n < cap) {
+    uint64_t boot_blocks = BOOT_IMAGE_BYTES / 1024;
+    set_mount_info(&out[n++], "bootfs", "/dev/fs/boot", "fat16", 1024, boot_blocks, 0);
+  }
+  if (n < cap) { set_mount_info(&out[n++], "ramfs", "/dev/fs/ram0", "ramfs", 1024, 0, 0); }
+  if (n < cap) { set_mount_info(&out[n++], "proc", "/proc", "proc", 1024, 0, 0); }
+  if (n < cap) { set_mount_info(&out[n++], "devfs", "/dev", "devfs", 1024, 0, 0); }
+  return MOUNT_COUNT;
 }

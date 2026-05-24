@@ -108,7 +108,7 @@ static int draw(void) {
   unsigned rows = screen_rows();
   printf("\033[H\033[2J");
   printf("\033[7m Spore top - %ld process%s  (q to quit) \033[m\r\n", n, n == 1 ? "" : "es");
-  printf("PID  PPID  STATE    RSS-PG  CPU  AGE  BUDGET       CMD\r\n");
+  printf("PID  PPID  STATE    RSS(K)  CPU  AGE  BUDGET       CMD\r\n");
   unsigned used_rows = 2;
   for (long i = 0; i < n && used_rows + 1 < rows; ++i, ++used_rows) {
     char budget[32];
@@ -118,7 +118,7 @@ static int draw(void) {
       snprintf(budget, sizeof(budget), "%llu/%llu", infos[i].budget_remaining, infos[i].budget_max);
     }
     printf("%3u  %4u  %-7s  %6llu  %3llu  %3llu  %-11s  %s\r\n", infos[i].pid, infos[i].ppid, infos[i].state,
-           infos[i].rss_pages, infos[i].cpu_ticks, infos[i].age_ticks, budget, infos[i].cmdline);
+           infos[i].rss_pages * 4, infos[i].cpu_ticks, infos[i].age_ticks, budget, infos[i].cmdline);
   }
   while (used_rows++ < rows - 1) {
     printf("\033[K\r\n");

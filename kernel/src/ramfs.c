@@ -95,6 +95,14 @@ static void reset_backing_pages(void) {
   }
 }
 
+uint64_t ramfs_backing_used_pages(void) {
+  uint64_t count = 0;
+  for (size_t i = 0; i < RAMFS_MAX_BACKING_PAGES; ++i) {
+    if (backing_pages[i].used) { ++count; }
+  }
+  return count;
+}
+
 static int find_backing_page(const struct ramfs *fs, int node, uint32_t file_page) {
   for (int slot = fs->nodes[node].first_page; slot >= 0; slot = backing_pages[slot].next) {
     if (backing_pages[slot].file_page == file_page) { return slot; }

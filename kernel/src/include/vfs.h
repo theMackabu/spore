@@ -45,6 +45,15 @@ struct vfs_fs_info {
   uint64_t free_inodes;
 };
 
+struct vfs_mount_info {
+  char source[32];
+  char target[32];
+  char fstype[16];
+  uint64_t block_size;
+  uint64_t block_count;
+  uint64_t free_blocks;
+};
+
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset);
 bool vfs_lookup(const char *path, struct vfs_node *out);
 bool vfs_lookup_exec(const char *path, const void **data, uint64_t *size);
@@ -61,3 +70,4 @@ int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, ui
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);
+size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);

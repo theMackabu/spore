@@ -53,7 +53,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   for (size_t i = 0; i < PMM_MAX_PAGES; ++i) {
     refcounts[i] = 0;
   }
-  total_page_count = PMM_MAX_PAGES;
+  total_page_count = 0;
   free_page_count = 0;
 
   for (uint32_t i = 0; i < memmap_count; ++i) {
@@ -64,6 +64,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
     uint64_t end = align_down(entry->base + entry->length, PAGE_SIZE);
     if (end > PMM_MAX_PHYS) { end = PMM_MAX_PHYS; }
     for (uint64_t pa = start; pa < end; pa += PAGE_SIZE) {
+      ++total_page_count;
       set_free(pa / PAGE_SIZE);
     }
   }

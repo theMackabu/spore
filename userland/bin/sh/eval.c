@@ -1,6 +1,7 @@
 #include "sh.h"
 
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,32 @@ static struct job jobs[JOB_CAP];
 
 static const char *command_name(char **argv) {
   return argv != NULL && argv[0] != NULL ? argv[0] : "?";
+}
+
+struct signal_name {
+  const char *name;
+  int value;
+};
+
+static const struct signal_name signals[] = {
+  {"INT", SIGINT}, {"SIGINT", SIGINT}, {"KILL", SIGKILL}, {"SIGKILL", SIGKILL}, {"TERM", SIGTERM}, {"SIGTERM", SIGTERM},
+};
+
+static bool parse_signal(const char *text, int *out) {
+  if (text == NULL || text[0] == '\0') { return false; }
+  char *end = NULL;
+  long value = strtol(text, &end, 10);
+  if (end != text && *end == '\0' && value > 0 && value < 128) {
+    *out = (int)value;
+    return true;
+  }
+  for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); ++i) {
+    if (streq(text, signals[i].name)) {
+      *out = signals[i].value;
+      return true;
+    }
+  }
+  return false;
 }
 
 static void remember_job(pid_t pid, char **argv) {
@@ -119,11 +146,13 @@ static int wait_status(pid_t pid) {
     return 1;
   }
   if (WIFEXITED(status)) { return WEXITSTATUS(status); }
+  if (WIFSIGNALED(status)) { return 128 + WTERMSIG(status); }
   return 128;
 }
 
 static int status_code(int status) {
   if (WIFEXITED(status)) { return WEXITSTATUS(status); }
+  if (WIFSIGNALED(status)) { return 128 + WTERMSIG(status); }
   return 128;
 }
 
@@ -199,7 +228,7 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   }
   if (streq(cmd->argv[0], "exit")) { exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : 0); }
   if (streq(cmd->argv[0], "help")) {
-    puts("builtins: cd pwd exit help export jobs wait fg confine runc");
+    puts("builtins: cd pwd exit help export jobs wait fg kill confine runc");
     puts("syntax: words quotes $VAR $? ; && || & < > >>");
     return 0;
   }
@@ -233,6 +262,44 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
       if (jobs[i].pid != 0 && jobs[i].running) { rc = wait_status(jobs[i].pid); }
       jobs[i].running = false;
       jobs[i].reported = true;
+    }
+    return rc;
+  }
+  if (streq(cmd->argv[0], "kill")) {
+    int sig = SIGTERM;
+    int first = 1;
+    if (cmd->argc == 2 && streq(cmd->argv[1], "-l")) {
+      puts("INT KILL TERM");
+      return 0;
+    }
+    if (cmd->argc > 2 && (streq(cmd->argv[1], "-s") || streq(cmd->argv[1], "--signal"))) {
+      if (!parse_signal(cmd->argv[2], &sig)) {
+        fprintf(stderr, "kill: unknown signal: %s\n", cmd->argv[2]);
+        return 1;
+      }
+      first = 3;
+    } else if (cmd->argc > 1 && cmd->argv[1][0] == '-' && cmd->argv[1][1] != '\0') {
+      if (!parse_signal(cmd->argv[1] + 1, &sig)) {
+        fprintf(stderr, "kill: unknown signal: %s\n", cmd->argv[1] + 1);
+        return 1;
+      }
+      first = 2;
+    }
+    if (first >= cmd->argc) { return usage("kill", "[-l] [-s SIGNAL|-SIGNAL] PID|%JOB..."); }
+    int rc = 0;
+    for (int i = first; i < cmd->argc; ++i) {
+      struct job *job = find_job_spec(cmd->argv[i]);
+      char *end = NULL;
+      long pid = job != NULL ? (long)job->pid : strtol(cmd->argv[i], &end, 10);
+      if (job == NULL && (end == cmd->argv[i] || *end != '\0')) {
+        fprintf(stderr, "kill: invalid pid: %s\n", cmd->argv[i]);
+        rc = 1;
+        continue;
+      }
+      if (kill((pid_t)pid, sig) != 0) {
+        perror(cmd->argv[i]);
+        rc = 1;
+      }
     }
     return rc;
   }

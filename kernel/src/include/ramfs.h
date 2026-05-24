@@ -113,3 +113,4 @@ bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path);
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len);
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
 bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out);
+uint64_t ramfs_backing_used_pages(void);
