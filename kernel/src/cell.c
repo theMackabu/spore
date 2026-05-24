@@ -14,6 +14,7 @@ static struct thread *current_thread;
 static int next_domain_id = 1;
 static int next_thread_id = 1;
 static int next_snapshot_id;
+static uint64_t device_rng_state = 0x9e3779b97f4a7c15ull;
 
 enum {
   CELL_O_ACCMODE = 3,
@@ -830,6 +831,75 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   if (from_lower_el) { cell_schedule(frame); }
 }
 
+static uint8_t device_random_byte(void) {
+  device_rng_state = device_rng_state * 6364136223846793005ull + 1442695040888963407ull;
+  return (uint8_t)(device_rng_state >> 32);
+}
+
+static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t len);
+
+static int64_t write_console_from_user(struct domain *domain, uint64_t buf, uint64_t len) {
+  for (uint64_t i = 0; i < len; ++i) {
+    char c;
+    if (!vmm_copy_from_user(&domain->as, &c, buf + i, 1)) { return -14; }
+    pl011_putc(c);
+  }
+  return (int64_t)len;
+}
+
+static int64_t write_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len) {
+  switch (file->node.device) {
+  case RAMFS_DEV_NULL:
+  case RAMFS_DEV_ZERO:
+  case RAMFS_DEV_RANDOM:
+  case RAMFS_DEV_URANDOM:
+    return (int64_t)len;
+  case RAMFS_DEV_FULL:
+    return -28;
+  case RAMFS_DEV_CONSOLE:
+  case RAMFS_DEV_TTY:
+    return write_console_from_user(domain, buf, len);
+  case RAMFS_DEV_NONE:
+    break;
+  }
+  return -22;
+}
+
+static int64_t read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
+                           struct trap_frame *frame) {
+  if (len == 0) { return 0; }
+  switch (file->node.device) {
+  case RAMFS_DEV_NULL:
+    return 0;
+  case RAMFS_DEV_ZERO:
+  case RAMFS_DEV_FULL:
+  case RAMFS_DEV_RANDOM:
+  case RAMFS_DEV_URANDOM:
+    for (uint64_t i = 0; i < len; ++i) {
+      uint8_t byte =
+        file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM ? device_random_byte() : 0;
+      if (!vmm_copy_to_user(&domain->as, buf + i, &byte, 1)) { return -14; }
+    }
+    return (int64_t)len;
+  case RAMFS_DEV_CONSOLE:
+  case RAMFS_DEV_TTY: {
+    int64_t n = read_stdin_to_user(domain, buf, len);
+    if (n != 0) { return n; }
+    if (frame == NULL) { return 0; }
+    cell_save_current(frame);
+    current_thread->state = THREAD_BLOCKED;
+    current_thread->wait_reason = WAIT_STDIN;
+    current_thread->stdin_buf = buf;
+    current_thread->stdin_len = len;
+    cell_schedule(frame);
+    return CELL_SWITCHED;
+  }
+  case RAMFS_DEV_NONE:
+    break;
+  }
+  return -22;
+}
+
 bool cell_handle_cow_fault(uint64_t far) {
   struct domain *domain = current_domain();
   return domain != NULL && vmm_handle_cow_fault(&domain->as, far);
@@ -844,6 +914,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len) {
         ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR)) {
       return -22;
     }
+    if (file->node.device != RAMFS_DEV_NONE) { return write_device(file, domain, buf, len); }
     if ((file->flags & CELL_O_APPEND) != 0) {
       struct ramfs_node fresh;
       if (ramfs_refresh_node(file->node.fs, file->node.index, &fresh)) { file->offset = fresh.size; }
@@ -861,12 +932,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len) {
     }
     return (int64_t)done;
   }
-  for (uint64_t i = 0; i < len; ++i) {
-    char c;
-    if (!vmm_copy_from_user(&domain->as, &c, buf + i, 1)) { return -14; }
-    pl011_putc(c);
-  }
-  return (int64_t)len;
+  return write_console_from_user(domain, buf, len);
 }
 
 static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t len) {
@@ -899,6 +965,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     return CELL_SWITCHED;
   }
   if (file->type != OPEN_RAMFS || file->node.is_dir) { return -22; }
+  if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, buf, len, frame); }
   uint8_t tmp[128];
   uint64_t done = 0;
   while (done < len) {
@@ -1146,7 +1213,7 @@ bool cell_fd_stat(int fd, struct ramfs_node *out) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
   if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN) {
-    *out = (struct ramfs_node){.ino = 10, .is_dir = false};
+    *out = (struct ramfs_node){.ino = 10, .is_dir = false, .device = RAMFS_DEV_TTY};
     return true;
   }
   return ramfs_refresh_node(file->node.fs, file->node.index, out);

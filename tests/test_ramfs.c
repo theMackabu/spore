@@ -43,11 +43,17 @@ int main(void) {
   assert(ramfs_root_dirent(1, &ent));
   assert(strcmp(ent.name, "demos") == 0 && ent.is_dir);
   assert(ramfs_root_dirent(2, &ent));
-  assert(strcmp(ent.name, "etc") == 0 && ent.is_dir);
+  assert(strcmp(ent.name, "dev") == 0 && ent.is_dir);
   assert(ramfs_root_dirent(3, &ent));
-  assert(strcmp(ent.name, "tmp") == 0 && ent.is_dir);
+  assert(strcmp(ent.name, "etc") == 0 && ent.is_dir);
   assert(ramfs_root_dirent(4, &ent));
+  assert(strcmp(ent.name, "tmp") == 0 && ent.is_dir);
+  assert(ramfs_root_dirent(5, &ent));
   assert(strcmp(ent.name, "init") == 0 && !ent.is_dir);
+  assert(ramfs_lookup_node(&fs, "/dev/null", &node));
+  assert(!node.is_dir && node.device == RAMFS_DEV_NULL);
+  assert(ramfs_lookup_node(&fs, "/dev/zero", &node));
+  assert(!node.is_dir && node.device == RAMFS_DEV_ZERO);
 
   assert(ramfs_mkdir(&fs, "/tmp/d"));
   assert(ramfs_create(&fs, "/tmp/d/a", &node));

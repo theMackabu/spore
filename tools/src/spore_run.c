@@ -21,6 +21,10 @@ enum {
 
 static const char *shell_commands[] = {
   "ls /bin\n",
+  "ls /dev\n",
+  "echo null-ok > /dev/null\n",
+  "echo console-ok > /dev/console\n",
+  "echo full > /dev/full\n",
   "cat /etc/motd\n",
   "echo hi > /tmp/f\n",
   "cat /tmp/f\n",

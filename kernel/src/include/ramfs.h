@@ -11,10 +11,22 @@ enum {
   RAMFS_FILE_CAP = 8192,
 };
 
+enum ramfs_device {
+  RAMFS_DEV_NONE,
+  RAMFS_DEV_NULL,
+  RAMFS_DEV_ZERO,
+  RAMFS_DEV_FULL,
+  RAMFS_DEV_RANDOM,
+  RAMFS_DEV_URANDOM,
+  RAMFS_DEV_CONSOLE,
+  RAMFS_DEV_TTY,
+};
+
 struct ramfs_mem_node {
   bool used;
   bool is_dir;
   bool writable;
+  enum ramfs_device device;
   int parent;
   char name[RAMFS_NAME_MAX + 1];
   const void *ro_data;
@@ -42,12 +54,14 @@ struct ramfs_node {
   uint64_t size;
   uint64_t ino;
   bool is_dir;
+  enum ramfs_device device;
 };
 
 struct ramfs_dirent {
   const char *name;
   uint64_t ino;
   bool is_dir;
+  bool is_device;
 };
 
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);

@@ -111,6 +111,16 @@ static bool add_ro_file(struct ramfs *fs, const char *path, const void *data, ui
   return true;
 }
 
+static bool add_device(struct ramfs *fs, const char *path, enum ramfs_device device) {
+  int parent;
+  const char *name;
+  if (!split_parent(fs, path, &parent, &name)) { return false; }
+  int index = add_node(fs, parent, name, false, false);
+  if (index < 0) { return false; }
+  fs->nodes[index].device = device;
+  return true;
+}
+
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
                 uint64_t hhdm_offset) {
   kmemset(fs, 0, sizeof(*fs));
@@ -123,9 +133,17 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
 
   (void)add_node(fs, root, "bin", true, true);
   (void)add_node(fs, root, "demos", true, true);
+  (void)add_node(fs, root, "dev", true, true);
   (void)add_node(fs, root, "etc", true, true);
   (void)add_node(fs, root, "tmp", true, true);
   (void)add_ro_file(fs, "/etc/motd", motd, sizeof(motd) - 1);
+  (void)add_device(fs, "/dev/null", RAMFS_DEV_NULL);
+  (void)add_device(fs, "/dev/zero", RAMFS_DEV_ZERO);
+  (void)add_device(fs, "/dev/full", RAMFS_DEV_FULL);
+  (void)add_device(fs, "/dev/random", RAMFS_DEV_RANDOM);
+  (void)add_device(fs, "/dev/urandom", RAMFS_DEV_URANDOM);
+  (void)add_device(fs, "/dev/console", RAMFS_DEV_CONSOLE);
+  (void)add_device(fs, "/dev/tty", RAMFS_DEV_TTY);
 
   if (modules == NULL) { return; }
   for (uint32_t i = 0; i < module_count; ++i) {
@@ -139,7 +157,7 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
 
 bool ramfs_lookup(const struct ramfs *fs, const char *path, struct ramfs_file *out) {
   int index = lookup_index(fs, path);
-  if (index < 0 || fs->nodes[index].is_dir) { return false; }
+  if (index < 0 || fs->nodes[index].is_dir || fs->nodes[index].device != RAMFS_DEV_NONE) { return false; }
   out->path = path;
   out->data = fs->nodes[index].writable ? fs->nodes[index].data : fs->nodes[index].ro_data;
   out->size = fs->nodes[index].size;
@@ -157,6 +175,7 @@ bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
     .size = node->size,
     .ino = node->ino,
     .is_dir = node->is_dir,
+    .device = node->device,
   };
   return true;
 }
@@ -178,6 +197,7 @@ bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ra
         out->name = fs->nodes[i].name;
         out->ino = fs->nodes[i].ino;
         out->is_dir = fs->nodes[i].is_dir;
+        out->is_device = fs->nodes[i].device != RAMFS_DEV_NONE;
         return true;
       }
       ++seen;
@@ -188,9 +208,9 @@ bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ra
 
 bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out) {
   static const struct ramfs_dirent entries[] = {
-    {.name = "bin", .ino = 2, .is_dir = true},   {.name = "demos", .ino = 3, .is_dir = true},
-    {.name = "etc", .ino = 4, .is_dir = true},   {.name = "tmp", .ino = 5, .is_dir = true},
-    {.name = "init", .ino = 7, .is_dir = false},
+    {.name = "bin", .ino = 2, .is_dir = true}, {.name = "demos", .ino = 3, .is_dir = true},
+    {.name = "dev", .ino = 4, .is_dir = true}, {.name = "etc", .ino = 5, .is_dir = true},
+    {.name = "tmp", .ino = 6, .is_dir = true}, {.name = "init", .ino = 7, .is_dir = false},
   };
   if (index >= sizeof(entries) / sizeof(entries[0])) { return false; }
   *out = entries[index];
@@ -215,7 +235,7 @@ bool ramfs_create(struct ramfs *fs, const char *path, struct ramfs_node *out) {
 
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      !fs->nodes[index].writable || size > RAMFS_FILE_CAP) {
+      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || size > RAMFS_FILE_CAP) {
     return false;
   }
   if (size > fs->nodes[index].size) {
@@ -251,7 +271,7 @@ bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path) 
 
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      off >= fs->nodes[index].size) {
+      fs->nodes[index].device != RAMFS_DEV_NONE || off >= fs->nodes[index].size) {
     return 0;
   }
   uint64_t n = fs->nodes[index].size - off;
@@ -263,7 +283,7 @@ uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64
 
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      !fs->nodes[index].writable || off + len > RAMFS_FILE_CAP) {
+      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || off + len > RAMFS_FILE_CAP) {
     return -1;
   }
   kmemcpy(fs->nodes[index].data + off, src, (size_t)len);

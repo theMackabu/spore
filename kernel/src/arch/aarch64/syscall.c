@@ -127,6 +127,7 @@ enum {
   FUTEX_CMD_MASK = 127,
   DT_REG = 8,
   DT_DIR = 4,
+  DT_CHR = 2,
   AF_INET = 2,
   SOCK_DGRAM = 2,
   IPPROTO_ICMP = 1,
@@ -587,7 +588,13 @@ static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
 static void fill_stat(struct stat64_aarch64 *st, const struct ramfs_node *node) {
   kmemset(st, 0, sizeof(*st));
   st->st_ino = node->ino;
-  st->st_mode = (node->is_dir ? 0040000u : 0100000u) | 0444u;
+  uint32_t type = 0100000u;
+  if (node->is_dir) {
+    type = 0040000u;
+  } else if (node->device != RAMFS_DEV_NONE) {
+    type = 0020000u;
+  }
+  st->st_mode = type | 0666u;
   st->st_nlink = 1;
   st->st_size = (int64_t)node->size;
   st->st_blksize = PAGE_SIZE;
@@ -639,7 +646,7 @@ static int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
       .d_ino = ent.ino,
       .d_off = (int64_t)cell_fd_dir_offset((int)fd),
       .d_reclen = reclen,
-      .d_type = ent.is_dir ? DT_DIR : DT_REG,
+      .d_type = ent.is_dir ? DT_DIR : (ent.is_device ? DT_CHR : DT_REG),
     };
     if (!vmm_copy_to_user(active_as(), buf + written, &hdr, sizeof(hdr)) ||
         !vmm_copy_to_user(active_as(), buf + written + sizeof(hdr), ent.name, name_len + 1)) {
