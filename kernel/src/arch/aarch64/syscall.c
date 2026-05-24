@@ -62,6 +62,15 @@ enum {
     SYS_GETEGID = 177,
     SYS_GETTID = 178,
     SYS_SYSINFO = 179,
+    SYS_SOCKET = 198,
+    SYS_BIND = 200,
+    SYS_LISTEN = 201,
+    SYS_ACCEPT = 202,
+    SYS_CONNECT = 203,
+    SYS_GETSOCKNAME = 204,
+    SYS_SENDTO = 206,
+    SYS_RECVFROM = 207,
+    SYS_SETSOCKOPT = 208,
     SYS_BRK = 214,
     SYS_MUNMAP = 215,
     SYS_MREMAP = 216,
@@ -117,6 +126,9 @@ enum {
     FUTEX_CMD_MASK = 127,
     DT_REG = 8,
     DT_DIR = 4,
+    AF_INET = 2,
+    SOCK_DGRAM = 2,
+    IPPROTO_UDP = 17,
     EROFS = 30,
     ENOENT = 2,
     EPERM = 1,
@@ -128,6 +140,8 @@ enum {
     ENOSYS = 38,
     ENAMETOOLONG = 36,
     ENOTEMPTY = 39,
+    EAFNOSUPPORT = 97,
+    EPROTONOSUPPORT = 93,
     MAX_IOVCNT = 1024,
     MAX_EXEC_ARGS = 8,
     MAX_EXEC_ENVS = 8,
@@ -174,6 +188,13 @@ struct linux_dirent64_header {
     uint16_t d_reclen;
     uint8_t d_type;
 } __attribute__((packed));
+
+struct sockaddr_in64 {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t sin_zero[8];
+};
 
 static struct user_address_space *current_as;
 static struct ramfs *sys_ramfs;
@@ -825,6 +846,96 @@ static int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
     return ramfs_truncate(node.fs, node.index, size) ? 0 : -(int64_t)EINVAL;
 }
 
+static uint16_t bswap16(uint16_t x) {
+    return (uint16_t)((x << 8) | (x >> 8));
+}
+
+static bool copy_sockaddr_in(uint64_t addr, uint64_t len, struct sockaddr_in64 *out) {
+    if (addr == 0 || len < sizeof(*out) || !user_readable(addr, sizeof(*out))) {
+        return false;
+    }
+    return vmm_copy_from_user(active_as(), out, addr, sizeof(*out)) &&
+           out->sin_family == AF_INET;
+}
+
+static int64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
+    if (domain != AF_INET) {
+        return -(int64_t)EAFNOSUPPORT;
+    }
+    if ((type & 0xf) != SOCK_DGRAM || (protocol != 0 && protocol != IPPROTO_UDP)) {
+        return -(int64_t)EPROTONOSUPPORT;
+    }
+    return cell_fd_socket_udp();
+}
+
+static int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
+    struct sockaddr_in64 sa;
+    if (!copy_sockaddr_in(addr, len, &sa)) {
+        return -(int64_t)EINVAL;
+    }
+    return cell_fd_udp_bind((int)fd, bswap16(sa.sin_port)) ? 0 : -(int64_t)EBADF;
+}
+
+static int64_t sys_connect(uint64_t fd, uint64_t addr, uint64_t len) {
+    struct sockaddr_in64 sa;
+    if (!copy_sockaddr_in(addr, len, &sa)) {
+        return -(int64_t)EINVAL;
+    }
+    return cell_fd_udp_connect((int)fd, sa.sin_addr, bswap16(sa.sin_port)) ? 0 : -(int64_t)EBADF;
+}
+
+static int64_t sys_sendto(uint64_t fd,
+                          uint64_t buf,
+                          uint64_t len,
+                          uint64_t flags,
+                          uint64_t addr,
+                          uint64_t addrlen) {
+    (void)flags;
+    if (!user_readable(buf, len)) {
+        return -(int64_t)EFAULT;
+    }
+    uint32_t ip = 0;
+    uint16_t port = 0;
+    if (addr != 0) {
+        struct sockaddr_in64 sa;
+        if (!copy_sockaddr_in(addr, addrlen, &sa)) {
+            return -(int64_t)EINVAL;
+        }
+        ip = sa.sin_addr;
+        port = bswap16(sa.sin_port);
+    }
+    return cell_fd_udp_send((int)fd, ip, port, buf, len);
+}
+
+static int64_t sys_recvfrom(uint64_t fd,
+                            uint64_t buf,
+                            uint64_t len,
+                            uint64_t flags,
+                            uint64_t addr,
+                            uint64_t addrlen) {
+    (void)flags;
+    (void)addr;
+    (void)addrlen;
+    if (!user_writable(buf, len)) {
+        return -(int64_t)EFAULT;
+    }
+    return cell_fd_udp_recv((int)fd, buf, len);
+}
+
+static int64_t sys_getsockname(uint64_t fd, uint64_t addr, uint64_t addrlen) {
+    (void)fd;
+    if (addr == 0 || addrlen == 0 || !user_writable(addrlen, sizeof(uint32_t))) {
+        return -(int64_t)EFAULT;
+    }
+    uint32_t len = sizeof(struct sockaddr_in64);
+    (void)vmm_copy_to_user(active_as(), addrlen, &len, sizeof(len));
+    if (!user_writable(addr, sizeof(struct sockaddr_in64))) {
+        return -(int64_t)EFAULT;
+    }
+    struct sockaddr_in64 sa = {.sin_family = AF_INET};
+    return vmm_copy_to_user(active_as(), addr, &sa, sizeof(sa)) ? 0 : -(int64_t)EFAULT;
+}
+
 static int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len) {
     uint8_t one = 1;
     if (len == 0 || !user_writable(mask, 1)) {
@@ -937,6 +1048,23 @@ static int64_t dispatch(struct trap_frame *f) {
         return sys_madvise(a0, a1, a2);
     case SYS_MREMAP:
         return sys_mremap(a0, a1, a2, a3);
+    case SYS_SOCKET:
+        return sys_socket(a0, a1, a2);
+    case SYS_BIND:
+        return sys_bind(a0, a1, a2);
+    case SYS_CONNECT:
+        return sys_connect(a0, a1, a2);
+    case SYS_SENDTO:
+        return sys_sendto(a0, a1, a2, a3, a4, f->x[5]);
+    case SYS_RECVFROM:
+        return sys_recvfrom(a0, a1, a2, a3, a4, f->x[5]);
+    case SYS_GETSOCKNAME:
+        return sys_getsockname(a0, a1, a2);
+    case SYS_SETSOCKOPT:
+        return 0;
+    case SYS_LISTEN:
+    case SYS_ACCEPT:
+        return -(int64_t)ENOSYS;
     case SYS_OPENAT:
         return sys_openat(a0, a1, a2);
     case SYS_CLOSE:

@@ -20,6 +20,7 @@ enum {
     CELL_O_RDWR = 2,
     CELL_O_APPEND = 02000,
     CAP_ENFORCE = 1u << 0,
+    EMSGSIZE = 90,
     EAGAIN = 11,
     EFAULT = 14,
     EINVAL = 22,
@@ -410,7 +411,8 @@ static void cap_allow_common(struct capability_set *caps) {
     static const uint16_t common[] = {
         17, 23, 24, 25, 29, 57, 63, 64, 65, 66, 80, 93, 94, 96, 98, 99,
         101, 113, 115, 123, 124, 134, 135, 160, 172, 173, 174, 175,
-        176, 177, 178, 179, 214, 215, 216, 220, 221, 222, 226, 233,
+        176, 177, 178, 179, 198, 200, 203, 204, 206, 207, 208,
+        214, 215, 216, 220, 221, 222, 226, 233,
         260, 261, 278,
     };
     for (size_t i = 0; i < sizeof(common) / sizeof(common[0]); ++i) {
@@ -1035,6 +1037,102 @@ int cell_fd_open_node(const struct ramfs_node *node, uint32_t flags) {
     }
     domain->fds[fd] = file;
     return fd;
+}
+
+int cell_fd_socket_udp(void) {
+    struct domain *domain = current_domain();
+    if (domain == NULL) {
+        return -12;
+    }
+    int fd = -1;
+    for (int i = 0; i < MAX_FDS; ++i) {
+        if (domain->fds[i] == NULL) {
+            fd = i;
+            break;
+        }
+    }
+    if (fd < 0) {
+        return -24;
+    }
+    struct open_file *file = alloc_open_file();
+    if (file == NULL) {
+        return -12;
+    }
+    file->type = OPEN_SOCKET;
+    file->udp_local_port = (uint16_t)(40000 + fd);
+    domain->fds[fd] = file;
+    return fd;
+}
+
+static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
+    if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL ||
+        domain->fds[fd]->type != OPEN_SOCKET) {
+        return NULL;
+    }
+    return domain->fds[fd];
+}
+
+bool cell_fd_udp_bind(int fd, uint16_t port) {
+    struct open_file *file = udp_socket_for_fd(current_domain(), fd);
+    if (file == NULL) {
+        return false;
+    }
+    file->udp_local_port = port;
+    return true;
+}
+
+bool cell_fd_udp_connect(int fd, uint32_t ip, uint16_t port) {
+    struct open_file *file = udp_socket_for_fd(current_domain(), fd);
+    if (file == NULL) {
+        return false;
+    }
+    file->udp_remote_ip = ip;
+    file->udp_remote_port = port;
+    file->udp_connected = true;
+    return true;
+}
+
+int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint64_t len) {
+    struct domain *domain = current_domain();
+    struct open_file *file = udp_socket_for_fd(domain, fd);
+    if (file == NULL) {
+        return -9;
+    }
+    if (!file->udp_connected) {
+        file->udp_remote_ip = ip;
+        file->udp_remote_port = port;
+        file->udp_connected = true;
+    }
+    if (len > sizeof(file->udp_rx)) {
+        return -EMSGSIZE;
+    }
+    if (!vmm_copy_from_user(&domain->as, file->udp_rx, buf, (size_t)len)) {
+        return -EFAULT;
+    }
+    file->udp_rx_len = len;
+    kprintf("[spore] udp send fd=%d dst=%x:%u len=%u\n",
+            fd,
+            (unsigned)(ip == 0 ? file->udp_remote_ip : ip),
+            (unsigned)(port == 0 ? file->udp_remote_port : port),
+            (unsigned)len);
+    return (int64_t)len;
+}
+
+int64_t cell_fd_udp_recv(int fd, uint64_t buf, uint64_t len) {
+    struct domain *domain = current_domain();
+    struct open_file *file = udp_socket_for_fd(domain, fd);
+    if (file == NULL) {
+        return -9;
+    }
+    if (file->udp_rx_len == 0) {
+        return -EAGAIN;
+    }
+    uint64_t n = file->udp_rx_len < len ? file->udp_rx_len : len;
+    if (!vmm_copy_to_user(&domain->as, buf, file->udp_rx, (size_t)n)) {
+        return -EFAULT;
+    }
+    file->udp_rx_len = 0;
+    return (int64_t)n;
 }
 
 int cell_fd_dup(int oldfd, int minfd) {

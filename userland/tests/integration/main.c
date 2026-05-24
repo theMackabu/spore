@@ -11,6 +11,8 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <unistd.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #ifndef SYS_getdents64
 #define SYS_getdents64 61
@@ -369,6 +371,40 @@ static int phase_c_pthread_demo(void) {
     return ok;
 }
 
+static uint16_t be16(uint16_t x) {
+    return (uint16_t)((x << 8) | (x >> 8));
+}
+
+static uint32_t be32(uint32_t x) {
+    return ((x & 0xffu) << 24) |
+           ((x & 0xff00u) << 8) |
+           ((x >> 8) & 0xff00u) |
+           ((x >> 24) & 0xffu);
+}
+
+static int phase_e_udp_demo(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) {
+        printf("[spore] v3e udp socket echo: FAIL socket\n");
+        return 0;
+    }
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = be16(5555);
+    sa.sin_addr.s_addr = be32((10u << 24) | (0u << 16) | (2u << 8) | 2u);
+    const char msg[] = "udp-hi";
+    ssize_t sent = sendto(fd, msg, sizeof(msg) - 1, 0, (struct sockaddr *)&sa, sizeof(sa));
+    char buf[32] = {0};
+    ssize_t got = recvfrom(fd, buf, sizeof(buf) - 1, 0, NULL, NULL);
+    close(fd);
+    int ok = sent == (ssize_t)(sizeof(msg) - 1) &&
+             got == (ssize_t)(sizeof(msg) - 1) &&
+             strcmp(buf, msg) == 0;
+    printf("[spore] v3e udp socket echo: %s (%s)\n", ok ? "PASS" : "FAIL", buf);
+    return ok;
+}
+
 static int phase_d_fs_demo(void) {
     int ok = 1;
     if (mkdir("/tmp/spore-demo-d", 0777) != 0) {
@@ -493,6 +529,8 @@ int main(void) {
     ok_all = ok_all && ok_v3b;
     int ok_v3c = phase_c_pthread_demo();
     ok_all = ok_all && ok_v3c;
+    int ok_v3e = phase_e_udp_demo();
+    ok_all = ok_all && ok_v3e;
 
     if (after_touch <= before || after_free >= after_touch) {
         ok_all = 0;
