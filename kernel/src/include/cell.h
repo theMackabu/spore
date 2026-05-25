@@ -48,6 +48,7 @@ enum wait_reason {
   WAIT_SLEEP,
   WAIT_VFORK,
   WAIT_PIPE,
+  WAIT_EPOLL,
 };
 
 enum cell_state {
@@ -66,6 +67,17 @@ enum open_file_type {
   OPEN_PIPE,
   OPEN_UNIX_STREAM,
   OPEN_UNIX_LISTENER,
+  OPEN_EPOLL,
+  OPEN_EVENTFD,
+};
+
+enum { CELL_EPOLL_WATCH_CAP = 16 };
+
+struct epoll_watch {
+  bool used;
+  int32_t fd;
+  uint32_t events;
+  uint64_t data;
 };
 
 struct open_file {
@@ -95,6 +107,9 @@ struct open_file {
   bool udp_connected;
   uint8_t udp_rx[1472];
   uint64_t udp_rx_len;
+  struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
+  uint64_t eventfd_value;
+  bool eventfd_semaphore;
 };
 
 struct capability_set {
@@ -166,6 +181,9 @@ struct thread {
   uint64_t poll_readfds;
   uint64_t poll_writefds;
   uint64_t poll_exceptfds;
+  int epoll_fd;
+  uint64_t epoll_events;
+  int epoll_maxevents;
   uint64_t clear_child_tid;
   uint64_t robust_list;
   uint64_t futex_addr;
@@ -248,6 +266,7 @@ int cell_futex_wake_current(uint64_t uaddr, uint32_t count);
 int cell_wait4(int pid, uint64_t status_addr, struct trap_frame *frame);
 int cell_wait4_options(int pid, uint64_t status_addr, int options, struct trap_frame *frame);
 int cell_kill(int pid, int signal);
+int cell_tkill(int tid, int signal);
 bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp,
                        struct trap_frame *frame, const char *path, const char *const argv[], uint64_t argc);
 bool cell_proc_exists(int pid);
@@ -278,6 +297,11 @@ bool cell_fd_unix_peer_cred(int fd, struct cell_peer_cred *out);
 void cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
 void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
+int cell_fd_epoll_create(int flags);
+int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data);
+int cell_fd_epoll_wait(int epfd, uint64_t events_addr, int maxevents);
+int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, struct trap_frame *frame);
+int cell_fd_eventfd(uint64_t initval, int flags);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);
 int cell_fd_close(int fd);

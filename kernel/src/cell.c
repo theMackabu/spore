@@ -63,6 +63,7 @@ static void wake_poll_waiters(void);
 static void wake_pipe_waiters(void);
 static void wake_socket_waiters(struct open_file *file);
 static void wake_sleep_waiters(void);
+static void wake_epoll_waiters(void);
 static void wake_vfork_parent_of(int child_id);
 
 enum {
@@ -89,7 +90,12 @@ enum {
   EADDRINUSE = 98,
   ESRCH = 3,
   WNOHANG = 1,
+  EPOLL_CTL_ADD = 1,
+  EPOLL_CTL_DEL = 2,
+  EPOLL_CTL_MOD = 3,
+  EFD_SEMAPHORE = 1,
   SIGINT = 2,
+  SIGABRT = 6,
   SIGKILL = 9,
   SIGSEGV = 11,
   SIGTERM = 15,
@@ -100,6 +106,11 @@ enum {
   CELL_S_IFMT = 0170000,
   CELL_S_IFIFO = 0010000,
 };
+
+struct epoll_event64 {
+  uint32_t events;
+  uint64_t data;
+} __attribute__((packed));
 
 static struct pipe_obj *pipe_for_file(struct open_file *file) {
   if (file == NULL || file->type != OPEN_PIPE || file->pipe_id >= sizeof(pipes) / sizeof(pipes[0])) { return NULL; }
@@ -1155,7 +1166,7 @@ int cell_kill(int pid, int signal) {
           ++delivered;
           continue;
         }
-        if (signal != SIGTERM && signal != SIGINT && signal != SIGKILL && signal != SIGSEGV) {
+        if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
           ++delivered;
           continue;
         }
@@ -1174,7 +1185,7 @@ int cell_kill(int pid, int signal) {
   struct domain *domain = find_domain(pid);
   if (domain == NULL || domain->zombie) { return -ESRCH; }
   if (signal == 0) { return 0; }
-  if (signal != SIGTERM && signal != SIGINT && signal != SIGKILL && signal != SIGSEGV) { return 0; }
+  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) { return 0; }
   domain->exit_status = 128 + signal;
   domain->term_signal = signal;
   domain->zombie = true;
@@ -1183,6 +1194,31 @@ int cell_kill(int pid, int signal) {
   }
   wake_parent_of(domain);
   return 0;
+}
+
+int cell_tkill(int tid, int signal) {
+  if (signal == 0) {
+    for (size_t i = 0; i < MAX_THREADS; ++i) {
+      if (threads[i].state != THREAD_UNUSED && threads[i].tid == tid) { return 0; }
+    }
+    return -ESRCH;
+  }
+  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
+    return 0;
+  }
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    if (threads[i].state == THREAD_UNUSED || threads[i].tid != tid || threads[i].domain == NULL) { continue; }
+    struct domain *domain = threads[i].domain;
+    domain->exit_status = 128 + signal;
+    domain->term_signal = signal;
+    domain->zombie = true;
+    for (size_t j = 0; j < MAX_THREADS; ++j) {
+      if (threads[j].domain == domain) { threads[j].state = THREAD_ZOMBIE; }
+    }
+    wake_parent_of(domain);
+    return 0;
+  }
+  return -ESRCH;
 }
 
 bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp,
@@ -1302,6 +1338,8 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "vfork";
   case WAIT_PIPE:
     return "pipe";
+  case WAIT_EPOLL:
+    return "epoll";
   }
   return "?";
 }
@@ -2216,10 +2254,34 @@ static void block_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, struct
   cell_schedule(frame);
 }
 
+static int64_t eventfd_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
+  if (len < sizeof(uint64_t)) { return -EINVAL; }
+  uint64_t add = 0;
+  if (!vmm_copy_from_user(&domain->as, &add, buf, sizeof(add))) { return -EFAULT; }
+  if (add == UINT64_MAX || UINT64_MAX - file->eventfd_value <= add) { return -EAGAIN; }
+  file->eventfd_value += add;
+  wake_poll_waiters();
+  return sizeof(add);
+}
+
+static int64_t eventfd_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
+  if (len < sizeof(uint64_t)) { return -EINVAL; }
+  if (file->eventfd_value == 0) { return -EAGAIN; }
+  uint64_t value = file->eventfd_semaphore ? 1 : file->eventfd_value;
+  file->eventfd_value -= value;
+  if (!vmm_copy_to_user(&domain->as, buf, &value, sizeof(value))) { return -EFAULT; }
+  wake_poll_waiters();
+  return sizeof(value);
+}
+
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_EVENTFD) {
+    int64_t wrote = eventfd_write_from_domain(domain, file, buf, len);
+    return wrote == -EAGAIN && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL ? -EAGAIN : wrote;
+  }
   if (file->type == OPEN_PIPE) {
     int64_t wrote = pipe_write_from_domain(domain, file, buf, len);
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
@@ -2481,6 +2543,10 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_EVENTFD) {
+    int64_t got = eventfd_read_to_domain(domain, file, buf, len);
+    return got == -EAGAIN && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL ? -EAGAIN : got;
+  }
   if (file->type == OPEN_PIPE) {
     int64_t got = pipe_read_to_domain(domain, file, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
@@ -2551,12 +2617,23 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
       }
     } else if (file->type == OPEN_RAMFS) {
       revents |= CELL_POLLIN;
+    } else if (file->type == OPEN_EPOLL) {
+      for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP; ++i) {
+        if (!file->epoll_watches[i].used) { continue; }
+        int ready = fd_poll_events_for_domain(domain, file->epoll_watches[i].fd, (int)file->epoll_watches[i].events);
+        if ((ready & (CELL_POLLIN | CELL_POLLOUT | CELL_POLLERR | CELL_POLLHUP | CELL_POLLNVAL)) != 0) {
+          revents |= CELL_POLLIN;
+          break;
+        }
+      }
+    } else if (file->type == OPEN_EVENTFD) {
+      if (file->eventfd_value != 0) { revents |= CELL_POLLIN; }
     }
   }
 
   if ((events & CELL_POLLOUT) != 0) {
     if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_RAMFS ||
-        file->type == OPEN_SOCKET) {
+        file->type == OPEN_SOCKET || file->type == OPEN_EPOLL || file->type == OPEN_EVENTFD) {
       revents |= CELL_POLLOUT;
     } else if (file->type == OPEN_PIPE) {
       struct pipe_obj *pipe = pipe_for_file(file);
@@ -2670,6 +2747,53 @@ static void wake_poll_waiters(void) {
       thread->wait_reason = WAIT_NONE;
       clear_poll_wait(thread);
     }
+  }
+  wake_epoll_waiters();
+}
+
+static void clear_epoll_wait(struct thread *thread) {
+  thread->epoll_fd = -1;
+  thread->epoll_events = 0;
+  thread->epoll_maxevents = 0;
+  thread->poll_has_deadline = false;
+  thread->poll_deadline_tick = 0;
+}
+
+static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t events_addr, int maxevents, bool commit) {
+  if (maxevents <= 0) { return -EINVAL; }
+  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || domain->fds[epfd] == NULL ||
+      domain->fds[epfd]->type != OPEN_EPOLL) {
+    return -9;
+  }
+  struct open_file *ep = domain->fds[epfd];
+  int written = 0;
+  for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP && written < maxevents; ++i) {
+    if (!ep->epoll_watches[i].used) { continue; }
+    int ready = fd_poll_events_for_domain(domain, ep->epoll_watches[i].fd, (int)ep->epoll_watches[i].events);
+    if ((ready & (CELL_POLLIN | CELL_POLLOUT | CELL_POLLERR | CELL_POLLHUP | CELL_POLLNVAL)) == 0) { continue; }
+    if (commit) {
+      struct epoll_event64 out = {.events = (uint32_t)ready, .data = ep->epoll_watches[i].data};
+      uint64_t dst = events_addr + (uint64_t)written * sizeof(out);
+      if (!vmm_copy_to_user(&domain->as, dst, &out, sizeof(out))) { return -EFAULT; }
+    }
+    ++written;
+  }
+  return written;
+}
+
+static void wake_epoll_waiters(void) {
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    struct thread *thread = &threads[i];
+    if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_EPOLL || thread->domain == NULL) { continue; }
+    int ready = epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, false);
+    bool expired = thread->poll_has_deadline && scheduler_ticks >= thread->poll_deadline_tick;
+    if (ready == 0 && !expired) { continue; }
+    if (ready > 0) { ready = epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, true); }
+    if (ready < 0) { ready = -EFAULT; }
+    thread->tf.x[0] = (uint64_t)ready;
+    thread->state = THREAD_RUNNABLE;
+    thread->wait_reason = WAIT_NONE;
+    clear_epoll_wait(thread);
   }
 }
 
@@ -3084,6 +3208,97 @@ int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
   domain->fds[read_fd] = read_file;
   domain->fds[write_fd] = write_file;
   return 0;
+}
+
+int cell_fd_epoll_create(int flags) {
+  if ((flags & ~CELL_O_CLOEXEC) != 0) { return -EINVAL; }
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return -12; }
+  int fd = find_free_fd(domain, 0);
+  if (fd < 0) { return -24; }
+  struct open_file *file = alloc_open_file();
+  if (file == NULL) { return -12; }
+  file->type = OPEN_EPOLL;
+  file->flags = (uint32_t)flags;
+  domain->fds[fd] = file;
+  return fd;
+}
+
+int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || domain->fds[epfd] == NULL ||
+      domain->fds[epfd]->type != OPEN_EPOLL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) {
+    return -9;
+  }
+  struct open_file *ep = domain->fds[epfd];
+  int free_slot = -1;
+  for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP; ++i) {
+    if (ep->epoll_watches[i].used && ep->epoll_watches[i].fd == fd) {
+      if (op == EPOLL_CTL_DEL) {
+        ep->epoll_watches[i] = (struct epoll_watch){0};
+        return 0;
+      }
+      if (op == EPOLL_CTL_MOD || op == EPOLL_CTL_ADD) {
+        ep->epoll_watches[i].events = events;
+        ep->epoll_watches[i].data = data;
+        return 0;
+      }
+      return -EINVAL;
+    }
+    if (!ep->epoll_watches[i].used && free_slot < 0) { free_slot = (int)i; }
+  }
+  if (op == EPOLL_CTL_DEL) { return -9; }
+  if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_MOD) { return -EINVAL; }
+  if (free_slot < 0) { return -12; }
+  ep->epoll_watches[free_slot] =
+    (struct epoll_watch){.used = true, .fd = fd, .events = events, .data = data};
+  return 0;
+}
+
+int cell_fd_epoll_wait(int epfd, uint64_t events_addr, int maxevents) {
+  struct domain *domain = current_domain();
+  if (maxevents <= 0) { return -EINVAL; }
+  if (!cell_ensure_user_range(events_addr, (size_t)maxevents * sizeof(struct epoll_event64), VMM_ACCESS_WRITE)) {
+    return -EFAULT;
+  }
+  return epoll_wait_for_domain(domain, epfd, events_addr, maxevents, true);
+}
+
+int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, struct trap_frame *frame) {
+  if (maxevents <= 0) { return -EINVAL; }
+  if (!cell_ensure_user_range(events_addr, (size_t)maxevents * sizeof(struct epoll_event64), VMM_ACCESS_WRITE)) {
+    return -EFAULT;
+  }
+  struct domain *domain = current_domain();
+  int ready = epoll_wait_for_domain(domain, epfd, events_addr, maxevents, true);
+  if (ready != 0 || timeout_ms == 0 || frame == NULL) { return ready; }
+
+  cell_save_current(frame);
+  current_thread->state = THREAD_BLOCKED;
+  current_thread->wait_reason = WAIT_EPOLL;
+  current_thread->epoll_fd = epfd;
+  current_thread->epoll_events = events_addr;
+  current_thread->epoll_maxevents = maxevents;
+  current_thread->poll_has_deadline = timeout_ms > 0;
+  current_thread->poll_deadline_tick = timeout_ms > 0 ? scheduler_ticks + ((uint64_t)timeout_ms + 9) / 10 : 0;
+  cell_schedule(frame);
+  return CELL_SWITCHED;
+}
+
+int cell_fd_eventfd(uint64_t initval, int flags) {
+  if ((flags & ~(CELL_O_CLOEXEC | CELL_O_NONBLOCK | EFD_SEMAPHORE)) != 0) { return -EINVAL; }
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return -12; }
+  int fd = find_free_fd(domain, 0);
+  if (fd < 0) { return -24; }
+  struct open_file *file = alloc_open_file();
+  if (file == NULL) { return -12; }
+  file->type = OPEN_EVENTFD;
+  file->flags = (uint32_t)flags;
+  file->eventfd_value = initval;
+  file->eventfd_semaphore = (flags & EFD_SEMAPHORE) != 0;
+  domain->fds[fd] = file;
+  return fd;
 }
 
 static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {

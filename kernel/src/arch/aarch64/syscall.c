@@ -20,6 +20,10 @@
 enum {
   EC_SVC_A64 = 0x15,
   SYS_GETCWD = 17,
+  SYS_EVENTFD2 = 19,
+  SYS_EPOLL_CREATE1 = 20,
+  SYS_EPOLL_CTL = 21,
+  SYS_EPOLL_PWAIT = 22,
   SYS_DUP = 23,
   SYS_DUP3 = 24,
   SYS_FCNTL = 25,
@@ -63,11 +67,14 @@ enum {
   SYS_SET_ROBUST_LIST = 99,
   SYS_NANOSLEEP = 101,
   SYS_CLOCK_GETTIME = 113,
+  SYS_CLOCK_GETRES = 114,
   SYS_CLOCK_NANOSLEEP = 115,
   SYS_SCHED_GETAFFINITY = 123,
   SYS_SCHED_YIELD = 124,
   SYS_KILL = 129,
+  SYS_TKILL = 130,
   SYS_TGKILL = 131,
+  SYS_SIGALTSTACK = 132,
   SYS_RT_SIGACTION = 134,
   SYS_RT_SIGPROCMASK = 135,
   SYS_SETGID = 144,
@@ -125,6 +132,7 @@ enum {
   MAP_FIXED = 0x10,
   MAP_ANONYMOUS = 0x20,
   MREMAP_MAYMOVE = 1,
+  MREMAP_FIXED = 2,
   CLONE_VM = 0x00000100,
   CLONE_FS = 0x00000200,
   CLONE_FILES = 0x00000400,
@@ -253,6 +261,23 @@ struct pollfd64 {
   int32_t fd;
   int16_t events;
   int16_t revents;
+};
+
+struct epoll_event64 {
+  uint32_t events;
+  uint64_t data;
+} __attribute__((packed));
+
+struct stack_t64 {
+  uint64_t ss_sp;
+  int32_t ss_flags;
+  uint32_t _pad;
+  uint64_t ss_size;
+};
+
+struct rlimit64 {
+  uint64_t rlim_cur;
+  uint64_t rlim_max;
 };
 
 struct utsname64 {
@@ -963,6 +988,10 @@ static int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len,
     (void)sys_munmap(old_addr + new_len, old_len - new_len);
     return (int64_t)old_addr;
   }
+  uint64_t stack_start = USER_STACK_TOP - USER_STACK_SIZE;
+  if ((flags & (MREMAP_MAYMOVE | MREMAP_FIXED)) == 0 && old_addr < USER_STACK_TOP && old_addr + old_len > stack_start) {
+    return -(int64_t)ENOMEM;
+  }
   if ((flags & MREMAP_MAYMOVE) == 0) { return -(int64_t)EINVAL; }
   return sys_mmap(0, new_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, (uint64_t)-1, 0);
 }
@@ -1000,6 +1029,91 @@ static int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp) {
     .tv_nsec = (int64_t)(((elapsed_cnt % freq) * 1000000000ull) / freq),
   };
   return user_writable(tp, sizeof(ts)) && vmm_copy_to_user(active_as(), tp, &ts, sizeof(ts)) ? 0 : -(int64_t)EFAULT;
+}
+
+static int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
+  enum {
+    CLOCK_REALTIME = 0,
+    CLOCK_MONOTONIC = 1,
+  };
+  if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) { return -(int64_t)EINVAL; }
+  if (tp == 0) { return 0; }
+  struct timespec64 ts = {.tv_sec = 0, .tv_nsec = 10000000};
+  return user_writable(tp, sizeof(ts)) && vmm_copy_to_user(active_as(), tp, &ts, sizeof(ts)) ? 0 : -(int64_t)EFAULT;
+}
+
+static int64_t sys_sigaltstack(uint64_t new_addr, uint64_t old_addr) {
+  enum { SS_DISABLE = 2 };
+  if (old_addr != 0) {
+    struct stack_t64 old = {.ss_sp = 0, .ss_flags = SS_DISABLE, .ss_size = 0};
+    if (!user_writable(old_addr, sizeof(old)) || !vmm_copy_to_user(active_as(), old_addr, &old, sizeof(old))) {
+      return -(int64_t)EFAULT;
+    }
+  }
+  if (new_addr != 0) {
+    struct stack_t64 ignored;
+    if (!user_readable(new_addr, sizeof(ignored)) ||
+        !vmm_copy_from_user(active_as(), &ignored, new_addr, sizeof(ignored))) {
+      return -(int64_t)EFAULT;
+    }
+  }
+  return 0;
+}
+
+static int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr) {
+  uint32_t events = 0;
+  uint64_t data = 0;
+  if ((int)op != 2) {
+    struct epoll_event64 event;
+    if (!user_readable(event_addr, sizeof(event)) ||
+        !vmm_copy_from_user(active_as(), &event, event_addr, sizeof(event))) {
+      return -(int64_t)EFAULT;
+    }
+    events = event.events;
+    data = event.data;
+  }
+  return cell_fd_epoll_ctl((int)epfd, (int)op, (int)fd, events, data);
+}
+
+static int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
+                               uint64_t timeout_ms, uint64_t sigmask, uint64_t sigsetsize) {
+  (void)sigmask;
+  (void)sigsetsize;
+  int rc = cell_epoll_wait_current((int)epfd, events_addr, (int)maxevents, (int)timeout_ms, frame);
+  return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
+}
+
+static int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, uint64_t old_limit) {
+  enum {
+    RLIMIT_STACK = 3,
+    RLIMIT_NOFILE = 7,
+    RLIMIT_AS = 9,
+  };
+  if (pid != 0 && (int)pid != cell_current_pid()) { return -(int64_t)EINVAL; }
+  if (new_limit != 0) {
+    struct rlimit64 ignored;
+    if (!user_readable(new_limit, sizeof(ignored)) ||
+        !vmm_copy_from_user(active_as(), &ignored, new_limit, sizeof(ignored))) {
+      return -(int64_t)EFAULT;
+    }
+  }
+  if (old_limit == 0) { return 0; }
+
+  uint64_t unlimited = UINT64_MAX;
+  struct rlimit64 out = {.rlim_cur = unlimited, .rlim_max = unlimited};
+  if (resource == RLIMIT_STACK) {
+    out.rlim_cur = USER_STACK_SIZE;
+    out.rlim_max = USER_STACK_SIZE;
+  } else if (resource == RLIMIT_NOFILE) {
+    out.rlim_cur = MAX_FDS;
+    out.rlim_max = MAX_FDS;
+  } else if (resource == RLIMIT_AS) {
+    out.rlim_cur = USER_STACK_TOP;
+    out.rlim_max = USER_STACK_TOP;
+  }
+  return user_writable(old_limit, sizeof(out)) && vmm_copy_to_user(active_as(), old_limit, &out, sizeof(out))
+           ? 0
+           : -(int64_t)EFAULT;
 }
 
 static void uts_copy(char dst[65], const char *src) {
@@ -1851,6 +1965,10 @@ static void system_reboot(void) {
 static int64_t dispatch(struct trap_frame *f) {
   static const void *linux_dispatch[] = {
     [SYS_GETCWD] = &&l_getcwd,
+    [SYS_EVENTFD2] = &&l_eventfd2,
+    [SYS_EPOLL_CREATE1] = &&l_epoll_create1,
+    [SYS_EPOLL_CTL] = &&l_epoll_ctl,
+    [SYS_EPOLL_PWAIT] = &&l_epoll_pwait,
     [SYS_DUP] = &&l_dup,
     [SYS_DUP3] = &&l_dup3,
     [SYS_FCNTL] = &&l_fcntl,
@@ -1894,11 +2012,14 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_SET_ROBUST_LIST] = &&l_set_robust_list,
     [SYS_NANOSLEEP] = &&l_nanosleep,
     [SYS_CLOCK_GETTIME] = &&l_clock_gettime,
+    [SYS_CLOCK_GETRES] = &&l_clock_getres,
     [SYS_CLOCK_NANOSLEEP] = &&l_clock_nanosleep,
     [SYS_SCHED_GETAFFINITY] = &&l_sched_getaffinity,
     [SYS_SCHED_YIELD] = &&l_sched_yield,
     [SYS_KILL] = &&l_kill,
+    [SYS_TKILL] = &&l_tkill,
     [SYS_TGKILL] = &&l_tgkill,
+    [SYS_SIGALTSTACK] = &&l_sigaltstack,
     [SYS_RT_SIGACTION] = &&l_zero,
     [SYS_RT_SIGPROCMASK] = &&l_zero,
     [SYS_SETGID] = &&l_setgid,
@@ -1994,6 +2115,14 @@ l_pselect6:
   return sys_pselect6(f, a0, a1, a2, a3, a4);
 l_ppoll:
   return sys_ppoll(f, a0, a1, a2, a3, a4);
+l_eventfd2:
+  return cell_fd_eventfd(a0, (int)a1);
+l_epoll_create1:
+  return cell_fd_epoll_create((int)a0);
+l_epoll_ctl:
+  return sys_epoll_ctl(a0, a1, a2, a3);
+l_epoll_pwait:
+  return sys_epoll_pwait(f, a0, a1, a2, a3, a4, a5);
 l_nanosleep:
   return sys_nanosleep(f, a0, a1);
 l_clock_nanosleep:
@@ -2047,17 +2176,28 @@ l_wait4: {
   return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
 }
 l_kill:
-  if ((int)a0 == cell_current_pid() && ((int)a1 == 2 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 15)) {
+  if ((int)a0 == cell_current_pid() &&
+      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 15)) {
     cell_signal_current((int)a1, f);
     return SYSCALL_SWITCHED;
   }
   return cell_kill((int)a0, (int)a1);
+l_tkill:
+  if ((int)a0 == cell_current_tid() &&
+      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 15)) {
+    cell_signal_current((int)a1, f);
+    return SYSCALL_SWITCHED;
+  }
+  return cell_tkill((int)a0, (int)a1);
 l_tgkill:
-  if ((int)a1 == cell_current_pid() && ((int)a2 == 2 || (int)a2 == 9 || (int)a2 == 11 || (int)a2 == 15)) {
+  if ((int)a1 == cell_current_pid() &&
+      ((int)a2 == 2 || (int)a2 == 6 || (int)a2 == 9 || (int)a2 == 11 || (int)a2 == 15)) {
     cell_signal_current((int)a2, f);
     return SYSCALL_SWITCHED;
   }
   return cell_kill((int)a1, (int)a2);
+l_sigaltstack:
+  return sys_sigaltstack(a0, a1);
 l_spore_snapshot:
   return snapshot_create_current();
 l_spore_spawn:
@@ -2193,7 +2333,7 @@ l_fcntl:
 l_getcwd:
   return sys_getcwd(a0, a1);
 l_prlimit64:
-  return a3 == 0 ? 0 : zero_user(a3, 128);
+  return sys_prlimit64(a0, a1, a2, a3);
 l_sysinfo:
   return zero_user(a0 == 0 ? a2 : a0, 128);
 l_uname:
@@ -2250,6 +2390,8 @@ l_getrandom:
   return sys_getrandom(a0, a1);
 l_clock_gettime:
   return sys_clock_gettime(a0, a1);
+l_clock_getres:
+  return sys_clock_getres(a0, a1);
 l_enosys:
   return -(int64_t)ENOSYS;
 l_unknown:
