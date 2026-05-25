@@ -76,8 +76,8 @@ enum {
   CELL_O_NONBLOCK = 04000,
   CELL_O_APPEND = 02000,
   CELL_O_CLOEXEC = 02000000,
-  CAP_ENFORCE = 1u << 0,
-  CAP_EGRESS_ENFORCE = 1u << 1,
+  CAP_ENFORCE = 1 << 0,
+  CAP_EGRESS_ENFORCE = 1 << 1,
   IPPROTO_UDP = 17,
   IPPROTO_ICMP = 1,
   EPERM = 1,
@@ -107,13 +107,14 @@ enum {
   TTY_ICANON = 0000002,
   TTY_ECHO = 0000010,
   SA_SIGINFO = 4,
-  SA_RESETHAND = 0x80000000u,
   NSIG = 65,
   ROBUST_LIST_LIMIT = 16,
-  FUTEX_OWNER_DIED = 0x40000000u,
+  FUTEX_OWNER_DIED = 0x40000000,
   CELL_S_IFMT = 0170000,
   CELL_S_IFIFO = 0010000,
 };
+
+static const uint64_t SA_RESETHAND = 0x80000000ull;
 
 struct k_sigaction64 {
   uint64_t handler;
@@ -1159,6 +1160,22 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
   }
   *frame = sigframe.saved;
   return 0;
+}
+
+void cell_dump_current_fault(uint64_t esr, uint64_t elr, uint64_t far) {
+  struct domain *domain = current_domain();
+  struct thread *thread = current_thread;
+  if (domain == NULL || thread == NULL) {
+    kprintf("[kernel] fault: no current domain esr=%x elr=%p far=%p\n", (unsigned)esr, (void *)(uintptr_t)elr,
+            (void *)(uintptr_t)far);
+    return;
+  }
+  kprintf("[kernel] fault: pid=%d tid=%d cmd=%s cwd=%s esr=%x elr=%p far=%p sp=%p x0=%p x1=%p x2=%p x3=%p\n",
+          domain->id, thread->tid, domain->cmdline[0] != '\0' ? domain->cmdline : domain->name,
+          domain->cwd[0] != '\0' ? domain->cwd : "/", (unsigned)esr, (void *)(uintptr_t)elr,
+          (void *)(uintptr_t)far, (void *)(uintptr_t)thread->tf.sp_el0, (void *)(uintptr_t)thread->tf.x[0],
+          (void *)(uintptr_t)thread->tf.x[1], (void *)(uintptr_t)thread->tf.x[2],
+          (void *)(uintptr_t)thread->tf.x[3]);
 }
 
 int cell_fork_current(struct trap_frame *frame) {
@@ -3528,7 +3545,12 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
   } else if (file->socket_proto == IPPROTO_ICMP) {
     sent = net_icmp_send_echo(effective_ip, tmp, (size_t)len);
   }
-  if (!sent) { return -EIO; }
+  if (!sent) {
+    if (file->socket_proto == IPPROTO_UDP && !cell_egress_allowed(IPPROTO_UDP, effective_ip, effective_port)) {
+      return -EPERM;
+    }
+    return -EIO;
+  }
   kprintf("[spore] socket send fd=%d proto=%u dst=%x:%u len=%u\n", fd, (unsigned)file->socket_proto,
           (unsigned)effective_ip, (unsigned)effective_port, (unsigned)len);
   return (int64_t)len;

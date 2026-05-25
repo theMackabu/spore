@@ -259,6 +259,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame);
 void cell_signal_current(int signal, struct trap_frame *frame);
 int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t sigset_size);
 int cell_rt_sigreturn(struct trap_frame *frame);
+void cell_dump_current_fault(uint64_t esr, uint64_t elr, uint64_t far);
 int cell_fork_current(struct trap_frame *frame);
 int cell_vfork_current(struct trap_frame *frame);
 int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid,

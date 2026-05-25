@@ -2419,8 +2419,10 @@ void handle_lower_sync(struct trap_frame *frame) {
       return;
     }
     if (ec == 0x24 && write && dfsc >= 0x0c && dfsc <= 0x0f && cell_handle_cow_fault(far)) { return; }
-    kprintf("[kernel] lower sync fault ec=%x esr=%x elr=%p far=%p\n", (unsigned)ec, (unsigned)frame->esr_el1,
-            (void *)(uintptr_t)frame->elr_el1, (void *)(uintptr_t)far);
+    kprintf("[kernel] lower sync fault ec=%x dfsc=%x write=%u esr=%x elr=%p far=%p\n", (unsigned)ec,
+            (unsigned)dfsc, write ? 1u : 0u, (unsigned)frame->esr_el1, (void *)(uintptr_t)frame->elr_el1,
+            (void *)(uintptr_t)far);
+    cell_dump_current_fault(frame->esr_el1, frame->elr_el1, far);
     cell_signal_current(11, frame);
     return;
   }

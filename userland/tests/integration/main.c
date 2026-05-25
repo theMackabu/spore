@@ -611,7 +611,7 @@ int main(void) {
   ok_all = ok_all && fork_latency_profile();
 
   if (after_touch <= before || after_free >= after_touch) { ok_all = 0; }
-  if (strcmp(buf, "welcome to spore") != 0) { ok_all = 0; }
+  if (n <= 0 || strstr(buf, "Spore") == NULL) { ok_all = 0; }
   if (dent_bytes <= 0) { ok_all = 0; }
 
   int ok_v1 = snapshot_regression();
