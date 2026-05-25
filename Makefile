@@ -10,7 +10,7 @@ RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --timings --tmux-log-pan
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup build image test-image runner run-root test-run-root test run run-tests run-shell-check kill format fetch clean
+.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run run-tests run-shell-check kill format fetch clean
 
 all: image test-image runner
 
@@ -33,7 +33,19 @@ runner: setup
 	$(MESON) compile -C "$(BUILD_DIR)" spore-run
 
 run-root: image
+	@if [ ! -f "$(RUN_ROOT)" ]; then \
+		cp -f "$(BUILD_DIR)/root.ext2" "$(RUN_ROOT)"; \
+		echo "created persistent run disk: $(RUN_ROOT)"; \
+	elif [ "$(BUILD_DIR)/root.ext2" -nt "$(RUN_ROOT)" ]; then \
+		cp -f "$(BUILD_DIR)/root.ext2" "$(RUN_ROOT)"; \
+		echo "reseeded persistent run disk from newer base image: $(RUN_ROOT)"; \
+	else \
+		echo "using persistent run disk: $(RUN_ROOT)"; \
+	fi
+
+reset-disk: image
 	cp -f "$(BUILD_DIR)/root.ext2" "$(RUN_ROOT)"
+	@echo "reset persistent run disk: $(RUN_ROOT)"
 
 test-run-root: test-image
 	cp -f "$(BUILD_DIR)/test_root.ext2" "$(TEST_RUN_ROOT)"

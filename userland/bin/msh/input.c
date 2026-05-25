@@ -3,7 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <unistd.h>
+
+static char history[HISTORY_CAP][LINE_CAP];
+static size_t history_len;
 
 static bool path_has_prefix_dir(const char *path, const char *prefix) {
   size_t n = strlen(prefix);
@@ -134,6 +138,141 @@ static void make_secondary_prompt(char *out, size_t cap) {
   sh_expand_prompt(ps2 == NULL ? "> " : ps2, out, cap);
 }
 
+static void move_cursor_left(size_t n) {
+  if (n == 0) { return; }
+  printf("\033[%zuD", n);
+}
+
+static void redraw_input(const char *prompt, const char *line, size_t len, size_t cursor) {
+  printf("\r\033[K%s", prompt);
+  if (len > 0) { fwrite(line, 1, len, stdout); }
+  if (cursor < len) { move_cursor_left(len - cursor); }
+  fflush(stdout);
+}
+
+static void history_add(const char *line) {
+  if (line[0] == '\0') { return; }
+  if (history_len > 0 && strcmp(history[history_len - 1], line) == 0) { return; }
+  if (history_len == HISTORY_CAP) {
+    for (size_t i = 1; i < history_len; ++i) {
+      memcpy(history[i - 1], history[i], sizeof(history[0]));
+    }
+    --history_len;
+  }
+  snprintf(history[history_len++], sizeof(history[0]), "%s", line);
+}
+
+static int read_fallback_line(const char *prompt, char *buf, size_t cap) {
+  fputs(prompt, stdout);
+  fflush(stdout);
+  if (fgets(buf, (int)cap, stdin) == NULL) { return -1; }
+  size_t len = strlen(buf);
+  while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) {
+    buf[--len] = '\0';
+  }
+  return 0;
+}
+
+static void insert_char(char *buf, size_t cap, size_t *len, size_t *cursor, char c) {
+  if (*len + 1 >= cap) { return; }
+  for (size_t i = *len; i > *cursor; --i) {
+    buf[i] = buf[i - 1];
+  }
+  buf[(*cursor)++] = c;
+  ++*len;
+  buf[*len] = '\0';
+}
+
+static void erase_before_cursor(char *buf, size_t *len, size_t *cursor) {
+  if (*cursor == 0) { return; }
+  for (size_t i = *cursor - 1; i + 1 < *len; ++i) {
+    buf[i] = buf[i + 1];
+  }
+  --*cursor;
+  --*len;
+  buf[*len] = '\0';
+}
+
+static void replace_line(char *buf, size_t cap, size_t *len, size_t *cursor, const char *text) {
+  snprintf(buf, cap, "%s", text);
+  *len = strlen(buf);
+  *cursor = *len;
+}
+
+static int read_prompt_line(const char *prompt, char *buf, size_t cap, bool use_history) {
+  if (cap == 0) { return -1; }
+  struct termios saved;
+  if (tcgetattr(STDIN_FILENO, &saved) != 0) { return read_fallback_line(prompt, buf, cap); }
+
+  struct termios raw = saved;
+  raw.c_lflag &= ~(unsigned)(ICANON | ECHO);
+  raw.c_cc[VMIN] = 1;
+  raw.c_cc[VTIME] = 0;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) { return read_fallback_line(prompt, buf, cap); }
+
+  buf[0] = '\0';
+  size_t len = 0;
+  size_t cursor = 0;
+  size_t history_cursor = history_len;
+  fputs(prompt, stdout);
+  fflush(stdout);
+
+  for (;;) {
+    char c;
+    if (read(STDIN_FILENO, &c, 1) <= 0) {
+      (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+      return -1;
+    }
+    if (c == '\r' || c == '\n') {
+      putchar('\n');
+      if (use_history) { history_add(buf); }
+      (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+      return 0;
+    }
+    if (c == 3) {
+      fputs("^C\n", stdout);
+      buf[0] = '\0';
+      (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+      return 0;
+    }
+    if (c == '\b' || c == 0x7f) {
+      erase_before_cursor(buf, &len, &cursor);
+      redraw_input(prompt, buf, len, cursor);
+      continue;
+    }
+    if (c == 0x1b) {
+      char seq[2];
+      if (read(STDIN_FILENO, &seq[0], 1) <= 0 || read(STDIN_FILENO, &seq[1], 1) <= 0) { continue; }
+      if (seq[0] != '[') { continue; }
+      if (seq[1] == 'A' && use_history && history_cursor > 0) {
+        replace_line(buf, cap, &len, &cursor, history[--history_cursor]);
+        redraw_input(prompt, buf, len, cursor);
+      } else if (seq[1] == 'B' && use_history && history_cursor < history_len) {
+        ++history_cursor;
+        replace_line(buf, cap, &len, &cursor, history_cursor == history_len ? "" : history[history_cursor]);
+        redraw_input(prompt, buf, len, cursor);
+      } else if (seq[1] == 'C' && cursor < len) {
+        ++cursor;
+        fputs("\033[C", stdout);
+        fflush(stdout);
+      } else if (seq[1] == 'D' && cursor > 0) {
+        --cursor;
+        fputs("\033[D", stdout);
+        fflush(stdout);
+      }
+      continue;
+    }
+    if ((unsigned char)c < 0x20 && c != '\t') { continue; }
+    insert_char(buf, cap, &len, &cursor, c);
+    if (cursor == len) {
+      putchar(c);
+      fflush(stdout);
+    } else {
+      redraw_input(prompt, buf, len, cursor);
+    }
+  }
+}
+
 static bool line_has_trailing_backslash(const char *buf) {
   size_t len = strlen(buf);
   size_t slashes = 0;
@@ -178,24 +317,12 @@ static bool append_continuation(char *buf, size_t cap, const char *more) {
 int sh_read_line(char *buf, size_t cap) {
   char prompt[160];
   make_prompt(prompt, sizeof(prompt));
-  fputs(prompt, stdout);
-  fflush(stdout);
-  if (fgets(buf, (int)cap, stdin) == NULL) { return -1; }
-  size_t len = strlen(buf);
-  while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) {
-    buf[--len] = '\0';
-  }
+  if (read_prompt_line(prompt, buf, cap, true) != 0) { return -1; }
   while (line_needs_more(buf)) {
     char more[LINE_CAP];
     char ps2[64];
     make_secondary_prompt(ps2, sizeof(ps2));
-    fputs(ps2, stdout);
-    fflush(stdout);
-    if (fgets(more, (int)sizeof(more), stdin) == NULL) { return -1; }
-    size_t more_len = strlen(more);
-    while (more_len > 0 && (more[more_len - 1] == '\n' || more[more_len - 1] == '\r')) {
-      more[--more_len] = '\0';
-    }
+    if (read_prompt_line(ps2, more, sizeof(more), false) != 0) { return -1; }
     if (!append_continuation(buf, cap, more)) {
       eprintf("sh: line too long\n");
       return 0;

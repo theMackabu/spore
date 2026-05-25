@@ -26,12 +26,10 @@ static size_t proc_cache_rss[MAX_DOMAINS];
 static uint32_t tty_lflag = 0000002 | 0000010;
 static char tty_line[256];
 static size_t tty_line_len;
+static size_t tty_line_cursor;
 static char tty_ready[512];
 static size_t tty_ready_head;
 static size_t tty_ready_len;
-static char tty_history[16][256];
-static size_t tty_history_len;
-static size_t tty_history_cursor;
 static char tty_output_line[256];
 static size_t tty_output_line_len;
 static char tty_prompt[256];
@@ -1970,6 +1968,7 @@ void cell_tty_set_lflag(uint32_t lflag) {
   tty_lflag = lflag;
   if (!tty_canonical()) {
     tty_line_len = 0;
+    tty_line_cursor = 0;
     tty_ready_head = 0;
     tty_ready_len = 0;
     tty_prompt_active = false;
@@ -1984,7 +1983,7 @@ static void tty_begin_canonical_read(void) {
     tty_prompt[i] = tty_output_line[i];
   }
   tty_prompt[tty_prompt_len] = '\0';
-  tty_history_cursor = tty_history_len;
+  tty_line_cursor = tty_line_len;
   tty_prompt_active = true;
 }
 
@@ -2018,6 +2017,21 @@ static void tty_redraw_line(void) {
   for (size_t i = 0; i < tty_line_len; ++i) {
     pl011_putc(tty_line[i]);
   }
+  if (tty_line_cursor < tty_line_len) {
+    tty_echo_str("\033[");
+    size_t move = tty_line_len - tty_line_cursor;
+    char rev[20];
+    size_t n = 0;
+    do {
+      rev[n++] = (char)('0' + (move % 10u));
+      move /= 10u;
+    } while (move != 0 && n < sizeof(rev));
+    while (n > 0) {
+      pl011_putc(rev[n - 1]);
+      --n;
+    }
+    pl011_putc('D');
+  }
 }
 
 static void tty_ready_push(char c) {
@@ -2035,66 +2049,14 @@ static bool tty_ready_pop(char *out) {
   return true;
 }
 
-static void tty_history_add(void) {
-  if (tty_line_len == 0) { return; }
-  if (tty_history_len > 0) {
-    const char *last = tty_history[tty_history_len - 1];
-    bool same = last[tty_line_len] == '\0';
-    for (size_t i = 0; same && i < tty_line_len; ++i) {
-      if (last[i] != tty_line[i]) { same = false; }
-    }
-    if (same) { return; }
-  }
-  if (tty_history_len == sizeof(tty_history) / sizeof(tty_history[0])) {
-    for (size_t i = 1; i < tty_history_len; ++i) {
-      kmemcpy(tty_history[i - 1], tty_history[i], sizeof(tty_history[0]));
-    }
-    --tty_history_len;
-  }
-  size_t n = tty_line_len;
-  if (n >= sizeof(tty_history[0])) { n = sizeof(tty_history[0]) - 1; }
-  for (size_t i = 0; i < n; ++i) {
-    tty_history[tty_history_len][i] = tty_line[i];
-  }
-  tty_history[tty_history_len][n] = '\0';
-  ++tty_history_len;
-}
-
 static void tty_line_commit(void) {
-  tty_history_add();
   for (size_t i = 0; i < tty_line_len; ++i) {
     tty_ready_push(tty_line[i]);
   }
   tty_ready_push('\n');
   tty_line_len = 0;
+  tty_line_cursor = 0;
   tty_prompt_active = false;
-}
-
-static void tty_replace_line_from_history(size_t index) {
-  size_t n = 0;
-  while (n + 1 < sizeof(tty_line) && tty_history[index][n] != '\0') {
-    tty_line[n] = tty_history[index][n];
-    ++n;
-  }
-  tty_line_len = n;
-  tty_redraw_line();
-}
-
-static void tty_history_up(void) {
-  if (tty_history_len == 0 || tty_history_cursor == 0) { return; }
-  --tty_history_cursor;
-  tty_replace_line_from_history(tty_history_cursor);
-}
-
-static void tty_history_down(void) {
-  if (tty_history_cursor >= tty_history_len) { return; }
-  ++tty_history_cursor;
-  if (tty_history_cursor == tty_history_len) {
-    tty_line_len = 0;
-    tty_redraw_line();
-    return;
-  }
-  tty_replace_line_from_history(tty_history_cursor);
 }
 
 static bool tty_try_escape(void) {
@@ -2107,10 +2069,16 @@ static bool tty_try_escape(void) {
     if (final >= '@' && final <= '~') { break; }
   }
 
-  if (final == 'A') {
-    tty_history_up();
-  } else if (final == 'B') {
-    tty_history_down();
+  if (final == 'C') {
+    if (tty_line_cursor < tty_line_len) {
+      ++tty_line_cursor;
+      tty_echo_str("\033[C");
+    }
+  } else if (final == 'D') {
+    if (tty_line_cursor > 0) {
+      --tty_line_cursor;
+      tty_echo_str("\033[D");
+    }
   }
   return true;
 }
@@ -2139,21 +2107,34 @@ static void tty_process_input(void) {
         pl011_putc('\n');
       }
       tty_line_len = 0;
+      tty_line_cursor = 0;
       tty_prompt_active = false;
       tty_ready_push('\n');
       return;
     }
     if (c == '\b' || c == 0x7f) {
-      if (tty_line_len > 0) {
+      if (tty_line_cursor > 0) {
+        for (size_t i = tty_line_cursor - 1; i + 1 < tty_line_len; ++i) {
+          tty_line[i] = tty_line[i + 1];
+        }
         --tty_line_len;
-        tty_echo_char('\b');
+        --tty_line_cursor;
+        tty_redraw_line();
       }
       continue;
     }
     if ((uint8_t)c < 0x20 && c != '\t') { continue; }
     if (tty_line_len + 1 < sizeof(tty_line)) {
-      tty_line[tty_line_len++] = c;
-      tty_echo_char(c);
+      for (size_t i = tty_line_len; i > tty_line_cursor; --i) {
+        tty_line[i] = tty_line[i - 1];
+      }
+      tty_line[tty_line_cursor++] = c;
+      ++tty_line_len;
+      if (tty_line_cursor == tty_line_len) {
+        tty_echo_char(c);
+      } else {
+        tty_redraw_line();
+      }
     }
   }
 }
