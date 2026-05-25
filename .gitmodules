@@ -16,3 +16,6 @@
 [submodule "userland/third_party/dash"]
 	path = userland/third_party/dash
 	url = https://git.kernel.org/pub/scm/utils/dash/dash.git
+[submodule "userland/third_party/tinycc"]
+	path = userland/third_party/tinycc
+	url = https://github.com/TinyCC/tinycc.git

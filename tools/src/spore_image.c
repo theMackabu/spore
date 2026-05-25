@@ -35,6 +35,16 @@ static bool is_dir(const char *path) {
   return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+static bool is_dir_lstat(const char *path) {
+  struct stat st;
+  return lstat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static bool is_symlink_lstat(const char *path) {
+  struct stat st;
+  return lstat(path, &st) == 0 && S_ISLNK(st.st_mode);
+}
+
 static uint64_t file_size(const char *path) {
   struct stat st;
   if (stat(path, &st) != 0) { die(path); }
@@ -91,11 +101,46 @@ static void copy_file(const char *src, const char *dst) {
   fclose(out);
 }
 
+static void copy_tree(const char *src, const char *dst) {
+  if (is_symlink_lstat(src)) {
+    char target[MAX_PATH];
+    ssize_t n = readlink(src, target, sizeof(target) - 1);
+    if (n < 0) { die(src); }
+    target[n] = '\0';
+    unlink(dst);
+    if (symlink(target, dst) != 0) { die("symlink"); }
+    return;
+  }
+  if (!is_dir_lstat(src)) {
+    copy_file(src, dst);
+    return;
+  }
+
+  ensure_dir(dst);
+  DIR *dir = opendir(src);
+  if (dir == NULL) { die(src); }
+  for (struct dirent *entry = readdir(dir); entry != NULL; entry = readdir(dir)) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) { continue; }
+    char child_src[MAX_PATH];
+    char child_dst[MAX_PATH];
+    path_join(child_src, sizeof(child_src), src, entry->d_name);
+    path_join(child_dst, sizeof(child_dst), dst, entry->d_name);
+    copy_tree(child_src, child_dst);
+  }
+  closedir(dir);
+}
+
 static void write_text_file(const char *path, const char *text) {
   FILE *out = fopen(path, "wb");
   if (out == NULL) { die(path); }
   if (fputs(text, out) == EOF) { die("fputs"); }
   fclose(out);
+}
+
+static void command_output(char *out, size_t cap, const char *cmd) {
+  FILE *pipe = popen(cmd, "r");
+  if (pipe == NULL || fgets(out, cap, pipe) == NULL || pclose(pipe) != 0) { die_msg(cmd); }
+  out[strcspn(out, "\r\n")] = '\0';
 }
 
 static void create_sparse_file(const char *path, uint64_t bytes) {
@@ -267,7 +312,10 @@ static void compile_or_copy_userland(const char *source_root, const char *source
       }
     }
     closedir(dir);
-    if (source_count == 0) { die_msg("userland directory has no C sources"); }
+    if (source_count == 0) {
+      copy_tree(src, out);
+      return;
+    }
     for (size_t i = 0; i + 1 < source_count; ++i) {
       for (size_t j = i + 1; j < source_count; ++j) {
         if (strcmp(source_files[i], source_files[j]) > 0) {
@@ -338,6 +386,10 @@ static void copy_into_rootfs(const char *src, const char *rootfs, const char *ds
   if (slash != NULL) {
     *slash = '\0';
     ensure_dir(parent);
+  }
+  if (is_dir_lstat(src)) {
+    copy_tree(src, out);
+    return;
   }
   copy_file(src, out);
   bool executable = strncmp(dst, "/bin/", 5) == 0 || strncmp(dst, "/sbin/", 6) == 0 ||
@@ -417,16 +469,8 @@ static void install_musl_runtime(const char *source_root, const char *rootfs) {
 
   char ld_src[MAX_PATH];
   char libc_src[MAX_PATH];
-  FILE *ld_pipe = popen("aarch64-unknown-linux-musl-gcc -print-file-name=ld-musl-aarch64.so.1", "r");
-  if (ld_pipe == NULL || fgets(ld_src, sizeof(ld_src), ld_pipe) == NULL || pclose(ld_pipe) != 0) {
-    die_msg("failed to locate ld-musl-aarch64.so.1");
-  }
-  FILE *libc_pipe = popen("aarch64-unknown-linux-musl-gcc -print-file-name=libc.so", "r");
-  if (libc_pipe == NULL || fgets(libc_src, sizeof(libc_src), libc_pipe) == NULL || pclose(libc_pipe) != 0) {
-    die_msg("failed to locate libc.so");
-  }
-  ld_src[strcspn(ld_src, "\r\n")] = '\0';
-  libc_src[strcspn(libc_src, "\r\n")] = '\0';
+  command_output(ld_src, sizeof(ld_src), "aarch64-unknown-linux-musl-gcc -print-file-name=ld-musl-aarch64.so.1");
+  command_output(libc_src, sizeof(libc_src), "aarch64-unknown-linux-musl-gcc -print-file-name=libc.so");
 
   char ld_dst[MAX_PATH];
   path_join(ld_dst, sizeof(ld_dst), lib_dir, "ld-musl-aarch64.so.1");
@@ -437,6 +481,44 @@ static void install_musl_runtime(const char *source_root, const char *rootfs) {
   path_join(libc_dst, sizeof(libc_dst), lib_dir, "libc.so");
   copy_file(libc_src, libc_dst);
   chmod(libc_dst, 0755);
+}
+
+static void install_musl_devel(const char *rootfs) {
+  char usr_include[MAX_PATH];
+  char usr_lib[MAX_PATH];
+  path_join(usr_include, sizeof(usr_include), rootfs, "usr/include");
+  path_join(usr_lib, sizeof(usr_lib), rootfs, "usr/lib");
+  ensure_dir(usr_include);
+  ensure_dir(usr_lib);
+
+  char gcc_include[MAX_PATH];
+  command_output(gcc_include, sizeof(gcc_include), "aarch64-unknown-linux-musl-gcc -print-file-name=include");
+  char musl_include_guess[MAX_PATH];
+  int n = snprintf(musl_include_guess, sizeof(musl_include_guess), "%s/../../../../../aarch64-unknown-linux-musl/sys-include",
+                   gcc_include);
+  if (n < 0 || (size_t)n >= sizeof(musl_include_guess)) { die_msg("path too long"); }
+  char musl_include[MAX_PATH];
+  if (realpath(musl_include_guess, musl_include) == NULL) { die("realpath musl include"); }
+  copy_tree(musl_include, usr_include);
+
+  const char *crt_names[] = {"crt1.o", "crti.o", "crtn.o", "Scrt1.o", "rcrt1.o"};
+  for (size_t i = 0; i < sizeof(crt_names) / sizeof(crt_names[0]); ++i) {
+    char cmd[MAX_PATH];
+    n = snprintf(cmd, sizeof(cmd), "aarch64-unknown-linux-musl-gcc -print-file-name=%s", crt_names[i]);
+    if (n < 0 || (size_t)n >= sizeof(cmd)) { die_msg("command too long"); }
+    char src[MAX_PATH];
+    command_output(src, sizeof(src), cmd);
+    if (!exists(src)) { continue; }
+    char dst[MAX_PATH];
+    path_join(dst, sizeof(dst), usr_lib, crt_names[i]);
+    copy_file(src, dst);
+    chmod(dst, 0644);
+  }
+
+  char libc_link[MAX_PATH];
+  path_join(libc_link, sizeof(libc_link), usr_lib, "libc.so");
+  unlink(libc_link);
+  if (symlink("/lib/libc.so", libc_link) != 0) { die("symlink libc.so"); }
 }
 
 static void build_root_ext2(const char *rootfs_dir, const char *output_root, const char *output_copy) {
@@ -570,6 +652,7 @@ int main(int argc, char **argv) {
   fclose(mf);
   fclose(mods);
   install_musl_runtime(source_root, rootfs_dir);
+  install_musl_devel(rootfs_dir);
   install_default_accounts(rootfs_dir);
 
   uint64_t esp_payload = file_size(boot_efi) + file_size(kernel_elf) + file_size(modules_txt);

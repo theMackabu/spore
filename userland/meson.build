@@ -118,6 +118,7 @@ subdir('usr/bin/env')
 subdir('usr/local/bin/fastfetch')
 subdir('usr/local/bin/htop')
 subdir('usr/local/bin/nano')
+subdir('usr/local/bin/tcc')
 subdir('usr/local/bin/vim')
 
 subdir('demos/spinner')
