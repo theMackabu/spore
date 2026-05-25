@@ -110,7 +110,6 @@ void sync_kernel_log(bool boot_snapshot) {
   if (start >= have) { return; }
   const char *delta = buf + start;
   append_log_file("/var/log/kern.log", delta);
-  append_log_file("/var/log/messages", delta);
   if (boot_snapshot) { append_log_file("/var/log/boot.log", delta); }
   seen = have;
 }
