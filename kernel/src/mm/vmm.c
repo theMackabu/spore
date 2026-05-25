@@ -250,6 +250,28 @@ bool vmm_is_mapped(const struct user_address_space *as, uint64_t va) {
   return pte != NULL && (*pte & PTE_VALID) != 0;
 }
 
+bool vmm_move_page(struct user_address_space *as, uint64_t old_va, uint64_t new_va) {
+  uint64_t *old_pte = leaf_for_va(as, old_va);
+  if (old_pte == NULL || (*old_pte & PTE_VALID) == 0) { return true; }
+
+  uint64_t *l0 = pt_virt(as, as->root_pa);
+  uint64_t *l1;
+  uint64_t *l2;
+  uint64_t *l3;
+  if (!ensure_table(as, l0, pt_index(new_va, 39), &l1) || !ensure_table(as, l1, pt_index(new_va, 30), &l2) ||
+      !ensure_table(as, l2, pt_index(new_va, 21), &l3)) {
+    return false;
+  }
+
+  uint64_t *new_pte = &l3[pt_index(new_va, 12)];
+  if ((*new_pte & PTE_VALID) != 0) { return false; }
+  *new_pte = *old_pte;
+  *old_pte = 0;
+  vmm_flush_user_va(old_va);
+  vmm_flush_user_va(new_va);
+  return true;
+}
+
 void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end) {
   for (uint64_t va = start; va < end; va += PAGE_SIZE) {
     uint64_t *pte = leaf_for_va(as, va);

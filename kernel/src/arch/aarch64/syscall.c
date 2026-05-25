@@ -1010,17 +1010,87 @@ static int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
   return 0;
 }
 
-static int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64_t flags) {
-  if (new_len <= old_len) {
-    (void)sys_munmap(old_addr + new_len, old_len - new_len);
-    return (int64_t)old_addr;
+static bool ranges_overlap(uint64_t a_start, uint64_t a_end, uint64_t b_start, uint64_t b_end) {
+  return a_start < b_end && b_start < a_end;
+}
+
+static bool find_free_mmap_range(uint64_t len, uint64_t *base_out) {
+  uint64_t base = align_up(active_as()->mmap_base, PAGE_SIZE);
+  for (size_t attempts = 0; attempts < 4096; ++attempts) {
+    uint64_t end;
+    if (!checked_add(base, len, &end)) { return false; }
+    if (!cell_vma_overlaps(base, end)) {
+      *base_out = base;
+      active_as()->mmap_base = end;
+      return true;
+    }
+    base = align_up(end + PAGE_SIZE, PAGE_SIZE);
   }
-  uint64_t stack_start = USER_STACK_TOP - USER_STACK_SIZE;
-  if ((flags & (MREMAP_MAYMOVE | MREMAP_FIXED)) == 0 && old_addr < USER_STACK_TOP && old_addr + old_len > stack_start) {
+  return false;
+}
+
+static bool move_mapped_pages(uint64_t old_start, uint64_t old_len, uint64_t new_start) {
+  for (uint64_t off = 0; off < old_len; off += PAGE_SIZE) {
+    if (!vmm_move_page(active_as(), old_start + off, new_start + off)) { return false; }
+  }
+  return true;
+}
+
+static int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64_t flags, uint64_t new_addr) {
+  if ((old_addr & (PAGE_SIZE - 1)) != 0 || (flags & ~(uint64_t)(MREMAP_MAYMOVE | MREMAP_FIXED)) != 0 ||
+      new_len == 0 || ((flags & MREMAP_FIXED) != 0 && (flags & MREMAP_MAYMOVE) == 0)) {
+    return -(int64_t)EINVAL;
+  }
+
+  uint64_t old_size = align_up(old_len, PAGE_SIZE);
+  uint64_t new_size = align_up(new_len, PAGE_SIZE);
+  uint64_t old_end;
+  if (old_len == 0 || old_size < old_len || new_size < new_len || !checked_add(old_addr, old_size, &old_end)) {
+    return -(int64_t)EINVAL;
+  }
+
+  struct vma old_vma;
+  if (!cell_vma_lookup_range(old_addr, old_end, &old_vma)) { return -(int64_t)EFAULT; }
+
+  if (old_vma.type == VMA_STACK && new_size > old_size && (flags & (MREMAP_MAYMOVE | MREMAP_FIXED)) == 0) {
     return -(int64_t)ENOMEM;
   }
-  if ((flags & MREMAP_MAYMOVE) == 0) { return -(int64_t)EINVAL; }
-  return sys_mmap(0, new_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, (uint64_t)-1, 0);
+
+  if (new_size == old_size && (flags & MREMAP_FIXED) == 0) { return (int64_t)old_addr; }
+
+  if (new_size < old_size && (flags & MREMAP_FIXED) == 0) {
+    uint64_t tail = old_addr + new_size;
+    return cell_remove_vma(tail, old_end) ? (int64_t)old_addr : -(int64_t)ENOMEM;
+  }
+
+  if ((flags & MREMAP_FIXED) == 0) {
+    uint64_t in_place_end;
+    if (checked_add(old_addr, new_size, &in_place_end) && !cell_vma_overlaps(old_end, in_place_end)) {
+      if (!cell_add_vma_typed(old_end, in_place_end, old_vma.prot, old_vma.flags, old_vma.type)) {
+        return -(int64_t)ENOMEM;
+      }
+      return (int64_t)old_addr;
+    }
+    if ((flags & MREMAP_MAYMOVE) == 0) { return -(int64_t)ENOMEM; }
+  }
+
+  uint64_t new_start;
+  if ((flags & MREMAP_FIXED) != 0) {
+    if ((new_addr & (PAGE_SIZE - 1)) != 0) { return -(int64_t)EINVAL; }
+    new_start = new_addr;
+  } else if (!find_free_mmap_range(new_size, &new_start)) {
+    return -(int64_t)ENOMEM;
+  }
+  uint64_t new_end;
+  if (!checked_add(new_start, new_size, &new_end)) { return -(int64_t)EINVAL; }
+  if (ranges_overlap(old_addr, old_end, new_start, new_end)) { return -(int64_t)EINVAL; }
+
+  if ((flags & MREMAP_FIXED) != 0) { (void)cell_remove_vma(new_start, new_end); }
+  if (cell_vma_overlaps(new_start, new_end)) { return -(int64_t)ENOMEM; }
+  if (!move_mapped_pages(old_addr, old_size < new_size ? old_size : new_size, new_start)) { return -(int64_t)ENOMEM; }
+  (void)cell_remove_vma(old_addr, old_end);
+  if (!cell_add_vma_typed(new_start, new_end, old_vma.prot, old_vma.flags, old_vma.type)) { return -(int64_t)ENOMEM; }
+  return (int64_t)new_start;
 }
 
 static int64_t sys_getrandom(uint64_t buf, uint64_t len) {
@@ -1343,6 +1413,7 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   if (!vmm_user_init(&new_as, hhdm_offset)) { return -12; }
   if (!elf_load_aarch64(&new_as, &exec_reader, 0, &elf)) {
     vmm_destroy(&new_as);
+    vma_list_destroy(&new_vmas);
     return -(int64_t)EINVAL;
   }
   if (has_interp) {
@@ -1352,6 +1423,7 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
     if (!vfs_lookup(interp_path, &interp_node) || !make_elf_reader(&interp_node, &interp_reader) ||
         !elf_load_aarch64(&new_as, &interp_reader, INTERP_LOAD_BASE, &interp)) {
       vmm_destroy(&new_as);
+      vma_list_destroy(&new_vmas);
       return -(int64_t)ENOENT;
     }
     elf.runtime_entry = interp.entry;
@@ -1359,15 +1431,21 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   }
   if (!build_initial_stack_args(&new_as, &elf, argv, argc, envp, envc, &user_sp)) {
     vmm_destroy(&new_as);
+    vma_list_destroy(&new_vmas);
     return -(int64_t)EINVAL;
   }
   if (!vma_insert(&new_vmas, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP, VMM_USER_READ | VMM_USER_WRITE, 0,
-                  VMA_ANON)) {
+                  VMA_STACK)) {
     vmm_destroy(&new_as);
+    vma_list_destroy(&new_vmas);
     return -(int64_t)EINVAL;
   }
   kprintf("[spore] execve %s\n", path);
-  if (!cell_exec_replace(&new_as, &new_vmas, elf.runtime_entry, user_sp, frame, path, argv, argc)) { return -12; }
+  if (!cell_exec_replace(&new_as, &new_vmas, elf.runtime_entry, user_sp, frame, path, argv, argc)) {
+    vmm_destroy(&new_as);
+    vma_list_destroy(&new_vmas);
+    return -12;
+  }
   cell_apply_exec_creds(exec_node.mode, exec_node.uid, exec_node.gid);
   return 0;
 }
@@ -2366,7 +2444,7 @@ l_mprotect:
 l_madvise:
   return sys_madvise(a0, a1, a2);
 l_mremap:
-  return sys_mremap(a0, a1, a2, a3);
+  return sys_mremap(a0, a1, a2, a3, a4);
 l_socket:
   return sys_socket(a0, a1, a2);
 l_bind:
@@ -2508,9 +2586,8 @@ void handle_lower_sync(struct trap_frame *frame) {
       return;
     }
     if (ec == 0x24 && write && dfsc >= 0x0c && dfsc <= 0x0f && cell_handle_cow_fault(far)) { return; }
-    kprintf("[kernel] lower sync fault ec=%x dfsc=%x write=%u esr=%x elr=%p far=%p\n", (unsigned)ec,
-            (unsigned)dfsc, write ? 1u : 0u, (unsigned)frame->esr_el1, (void *)(uintptr_t)frame->elr_el1,
-            (void *)(uintptr_t)far);
+    kprintf("[kernel] lower sync fault ec=%x dfsc=%x write=%u esr=%x elr=%p far=%p\n", (unsigned)ec, (unsigned)dfsc,
+            write ? 1u : 0u, (unsigned)frame->esr_el1, (void *)(uintptr_t)frame->elr_el1, (void *)(uintptr_t)far);
     cell_dump_current_fault(frame->esr_el1, frame->elr_el1, far);
     cell_signal_current(11, frame);
     return;

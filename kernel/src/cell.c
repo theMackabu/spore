@@ -524,6 +524,7 @@ static void destroy_domain(struct domain *domain) {
   }
   close_all_fds(domain);
   vmm_destroy(&domain->as);
+  vma_list_destroy(&domain->vmas);
   domain->used = false;
   domain->zombie = false;
   domain->refcount = 0;
@@ -626,7 +627,7 @@ static void wake_vfork_parent_of(int child_id) {
 }
 
 void cell_system_init(uint64_t hhdm_offset) {
-  (void)hhdm_offset;
+  vma_set_hhdm_offset(hhdm_offset);
   kmemset(domains, 0, sizeof(domains));
   kmemset(threads, 0, sizeof(threads));
   kmemset(snapshots, 0, sizeof(snapshots));
@@ -663,13 +664,15 @@ bool cell_create_init(struct user_address_space *as, uint64_t entry, uint64_t sp
   domain->as.asid = 0;
   vma_list_init(&domain->vmas);
   if (!vma_insert(&domain->vmas, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP, VMM_USER_READ | VMM_USER_WRITE, 0,
-                  VMA_ANON)) {
+                  VMA_STACK)) {
     thread->state = THREAD_UNUSED;
+    vma_list_destroy(&domain->vmas);
     domain->used = false;
     return false;
   }
   if (!init_stdio(domain)) {
     thread->state = THREAD_UNUSED;
+    vma_list_destroy(&domain->vmas);
     domain->used = false;
     return false;
   }
@@ -1025,7 +1028,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
 }
 
 static bool domain_access_allowed(const struct vma *vma, enum vmm_access access) {
-  if (vma == NULL || vma->type != VMA_ANON) { return false; }
+  if (vma == NULL || (vma->type != VMA_ANON && vma->type != VMA_STACK)) { return false; }
   if (access == VMM_ACCESS_READ) { return (vma->prot & VMM_USER_READ) != 0; }
   if (access == VMM_ACCESS_WRITE) { return (vma->prot & VMM_USER_WRITE) != 0; }
   if (access == VMM_ACCESS_EXEC) { return (vma->prot & VMM_USER_EXEC) != 0; }
@@ -1178,10 +1181,9 @@ void cell_dump_current_fault(uint64_t esr, uint64_t elr, uint64_t far) {
   }
   kprintf("[kernel] fault: pid=%d tid=%d cmd=%s cwd=%s esr=%x elr=%p far=%p sp=%p x0=%p x1=%p x2=%p x3=%p\n",
           domain->id, thread->tid, domain->cmdline[0] != '\0' ? domain->cmdline : domain->name,
-          domain->cwd[0] != '\0' ? domain->cwd : "/", (unsigned)esr, (void *)(uintptr_t)elr,
-          (void *)(uintptr_t)far, (void *)(uintptr_t)thread->tf.sp_el0, (void *)(uintptr_t)thread->tf.x[0],
-          (void *)(uintptr_t)thread->tf.x[1], (void *)(uintptr_t)thread->tf.x[2],
-          (void *)(uintptr_t)thread->tf.x[3]);
+          domain->cwd[0] != '\0' ? domain->cwd : "/", (unsigned)esr, (void *)(uintptr_t)elr, (void *)(uintptr_t)far,
+          (void *)(uintptr_t)thread->tf.sp_el0, (void *)(uintptr_t)thread->tf.x[0], (void *)(uintptr_t)thread->tf.x[1],
+          (void *)(uintptr_t)thread->tf.x[2], (void *)(uintptr_t)thread->tf.x[3]);
 }
 
 int cell_fork_current(struct trap_frame *frame) {
@@ -1199,7 +1201,12 @@ int cell_fork_current(struct trap_frame *frame) {
     child_domain->used = false;
     return -12;
   }
-  (void)vma_clone(&child_domain->vmas, &parent->vmas);
+  if (!vma_clone(&child_domain->vmas, &parent->vmas)) {
+    vmm_destroy(&child_domain->as);
+    child_thread->state = THREAD_UNUSED;
+    child_domain->used = false;
+    return -12;
+  }
   copy_domain_metadata(child_domain, parent);
   copy_fd_table(child_domain, parent);
   child_domain->parent_id = parent->id;
@@ -1354,7 +1361,9 @@ int cell_kill(int pid, int signal) {
   struct domain *domain = find_domain(pid);
   if (domain == NULL || domain->zombie) { return -ESRCH; }
   if (signal == 0) { return 0; }
-  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) { return 0; }
+  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
+    return 0;
+  }
   (void)deliver_signal_to_thread(thread_for_domain(domain), signal);
   return 0;
 }
@@ -1383,6 +1392,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   if (domain == NULL || current_thread == NULL) { return false; }
 
   struct user_address_space old_as = domain->as;
+  struct vma_list old_vmas = domain->vmas;
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     if (&threads[i] != current_thread && threads[i].domain == domain) {
       threads[i].state = THREAD_UNUSED;
@@ -1398,10 +1408,12 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   }
   domain->as = *as;
   domain->vmas = *vmas;
+  vma_list_init(vmas);
   kmemset(domain->signal_actions, 0, sizeof(domain->signal_actions));
   set_domain_identity(domain, path, argv, argc);
   vmm_install_user(&domain->as);
   vmm_destroy(&old_as);
+  vma_list_destroy(&old_vmas);
 
   kmemset(frame, 0, sizeof(*frame));
   frame->elr_el1 = entry;
@@ -2982,10 +2994,14 @@ static void wake_epoll_waiters(void) {
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = &threads[i];
     if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_EPOLL || thread->domain == NULL) { continue; }
-    int ready = epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, false);
+    int ready =
+      epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, false);
     bool expired = thread->poll_has_deadline && scheduler_ticks >= thread->poll_deadline_tick;
     if (ready == 0 && !expired) { continue; }
-    if (ready > 0) { ready = epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, true); }
+    if (ready > 0) {
+      ready =
+        epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, true);
+    }
     if (ready < 0) { ready = -EFAULT; }
     thread->tf.x[0] = (uint64_t)ready;
     thread->state = THREAD_RUNNABLE;
@@ -3453,8 +3469,7 @@ int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data) 
   if (op == EPOLL_CTL_DEL) { return -9; }
   if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_MOD) { return -EINVAL; }
   if (free_slot < 0) { return -12; }
-  ep->epoll_watches[free_slot] =
-    (struct epoll_watch){.used = true, .fd = fd, .events = events, .data = data};
+  ep->epoll_watches[free_slot] = (struct epoll_watch){.used = true, .fd = fd, .events = events, .data = data};
   return 0;
 }
 
@@ -3774,7 +3789,7 @@ bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
   if (domain == NULL) { return false; }
   uint64_t va = far & ~(uint64_t)(PAGE_SIZE - 1);
   const struct vma *vma = vma_lookup(&domain->vmas, va);
-  if (vma == NULL || vma->type != VMA_ANON || !access_allowed(vma, access)) { return false; }
+  if (vma == NULL || (vma->type != VMA_ANON && vma->type != VMA_STACK) || !access_allowed(vma, access)) { return false; }
   return vmm_alloc_page(&domain->as, va, vma->prot);
 }
 
@@ -3798,13 +3813,26 @@ bool cell_ensure_user_range(uint64_t va, size_t len, enum vmm_access access) {
 }
 
 bool cell_add_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags) {
+  return cell_add_vma_typed(start, end, prot, flags, VMA_ANON);
+}
+
+bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, enum vma_type type) {
   struct domain *domain = current_domain();
-  return domain != NULL && vma_insert(&domain->vmas, start, end, prot, flags, VMA_ANON);
+  return domain != NULL && vma_insert(&domain->vmas, start, end, prot, flags, type);
 }
 
 bool cell_vma_overlaps(uint64_t start, uint64_t end) {
   struct domain *domain = current_domain();
   return domain == NULL || vma_overlaps(&domain->vmas, start, end);
+}
+
+bool cell_vma_lookup_range(uint64_t start, uint64_t end, struct vma *out) {
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return false; }
+  const struct vma *vma = vma_lookup_range(&domain->vmas, start, end);
+  if (vma == NULL) { return false; }
+  if (out != NULL) { *out = *vma; }
+  return true;
 }
 
 bool cell_remove_vma(uint64_t start, uint64_t end) {
@@ -3829,8 +3857,8 @@ size_t cell_resident_pages(uint64_t start, uint64_t end) {
 
 static size_t domain_resident_pages_uncached(const struct domain *domain) {
   size_t pages = 0;
-  for (size_t i = 0; i < MAX_VMAS; ++i) {
-    const struct vma *vma = &domain->vmas.entries[i];
+  for (size_t i = 0; i < vma_capacity(&domain->vmas); ++i) {
+    const struct vma *vma = vma_at(&domain->vmas, i);
     if (vma->used) { pages += vmm_mapped_pages_in_range(&domain->as, vma->start, vma->end); }
   }
   return pages;
@@ -3916,7 +3944,11 @@ int snapshot_create_current(void) {
     snap->used = false;
     return -12;
   }
-  (void)vma_clone(&snap->vmas, &domain->vmas);
+  if (!vma_clone(&snap->vmas, &domain->vmas)) {
+    vmm_destroy(&snap->as);
+    snap->used = false;
+    return -12;
+  }
   return snap->id;
 }
 
@@ -3935,7 +3967,12 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
     child_domain->used = false;
     return -12;
   }
-  (void)vma_clone(&child_domain->vmas, &snap->vmas);
+  if (!vma_clone(&child_domain->vmas, &snap->vmas)) {
+    vmm_destroy(&child_domain->as);
+    child_thread->state = THREAD_UNUSED;
+    child_domain->used = false;
+    return -12;
+  }
   copy_domain_metadata(child_domain, parent);
   copy_fd_table(child_domain, parent);
   child_domain->parent_id = parent->id;

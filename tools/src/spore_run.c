@@ -161,7 +161,7 @@ static const char *shell_commands[] = {
 };
 
 static void usage(void) {
-  fputs("usage: spore-run [--mode plain|filter|shell|stdin] [--timings] --image IMAGE "
+  fputs("usage: spore-run [--mode plain|filter|shell|stdin] [--timings] [--log-to-stderr] --image IMAGE "
         "[--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--vars VARS_FD]\n",
         stderr);
   exit(2);
@@ -612,7 +612,7 @@ static void record_output(char *buf, size_t *len, const char *chunk, size_t n, s
   }
 }
 
-static int run_harness(char **qemu_argv, const char *mode, bool timings, int log_pipe[2]) {
+static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mirror_log, int log_pipe[2]) {
   int in_pipe[2];
   int serial_pipe[2];
   if (pipe(in_pipe) != 0 || pipe(serial_pipe) != 0) {
@@ -683,6 +683,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, int log
         append(buf, &len, chunk, (size_t)n);
       }
       while ((n = read(log_pipe[0], chunk, sizeof(chunk))) > 0) {
+        if (mirror_log) { write_raw_to(chunk, (size_t)n, stderr); }
         append(buf, &len, chunk, (size_t)n);
       }
       if (strcmp(mode, "filter") == 0 || strcmp(mode, "stdin") == 0) {
@@ -736,6 +737,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, int log
       if (FD_ISSET(log_pipe[0], &rfds)) {
         ssize_t n = read(log_pipe[0], chunk, sizeof(chunk));
         if (n > 0) {
+          if (mirror_log) { write_raw_to(chunk, (size_t)n, stderr); }
           record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
                         start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
         }
@@ -771,11 +773,14 @@ int main(int argc, char **argv) {
   const char *cpu = "host";
   const char *vars = NULL;
   bool timings = false;
+  bool mirror_log = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
       mode = argv[++i];
     } else if (strcmp(argv[i], "--timings") == 0) {
       timings = true;
+    } else if (strcmp(argv[i], "--log-to-stderr") == 0) {
+      mirror_log = true;
     } else if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
       image = argv[++i];
     } else if (strcmp(argv[i], "--root") == 0 && i + 1 < argc) {
@@ -811,7 +816,7 @@ int main(int argc, char **argv) {
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
       strcmp(mode, "stdin") == 0) {
-    return run_harness(qemu_argv, mode, timings, log_pipe);
+    return run_harness(qemu_argv, mode, timings, mirror_log, log_pipe);
   }
   usage();
   return 2;
