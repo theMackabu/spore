@@ -155,13 +155,6 @@ static void exec_search(char **argv) {
     return;
   }
 
-  snprintf(path, sizeof(path), "./%s", argv[0]);
-  execve(path, argv, environ);
-  if (shell_script && access(path, R_OK) == 0) {
-    script_argv[1] = path;
-    execve("/bin/msh", script_argv, environ);
-  }
-
   const char *path_env = getenv("PATH");
   if (path_env == NULL || path_env[0] == '\0') { path_env = "/bin"; }
   const char *p = path_env;

@@ -268,17 +268,73 @@ static bool write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
 
 static bool file_block(struct ext2_fs *fs, const struct ext2_node *node, uint32_t file_block_index,
                        uint32_t *block_out) {
+  uint32_t entries_per_block = fs->block_size / sizeof(uint32_t);
+  uint8_t block[4096];
+  if (fs->block_size > sizeof(block) || entries_per_block == 0) { return false; }
+
   if (file_block_index < 12) {
     *block_out = node->blocks[file_block_index];
     return true;
   }
   file_block_index -= 12;
-  uint32_t entries_per_block = fs->block_size / sizeof(uint32_t);
-  if (file_block_index >= entries_per_block || node->blocks[12] == 0) { return false; }
-  uint8_t block[4096];
-  if (fs->block_size > sizeof(block) || !read_block(fs, node->blocks[12], block)) { return false; }
-  const uint32_t *entries = (const uint32_t *)block;
-  *block_out = entries[file_block_index];
+
+  if (file_block_index < entries_per_block) {
+    if (node->blocks[12] == 0) {
+      *block_out = 0;
+      return true;
+    }
+    if (!read_block(fs, node->blocks[12], block)) { return false; }
+    const uint32_t *entries = (const uint32_t *)block;
+    *block_out = entries[file_block_index];
+    return true;
+  }
+  file_block_index -= entries_per_block;
+
+  uint32_t double_span = entries_per_block * entries_per_block;
+  if (file_block_index < double_span) {
+    if (node->blocks[13] == 0) {
+      *block_out = 0;
+      return true;
+    }
+    if (!read_block(fs, node->blocks[13], block)) { return false; }
+    const uint32_t *outer = (const uint32_t *)block;
+    uint32_t outer_index = file_block_index / entries_per_block;
+    uint32_t inner_index = file_block_index % entries_per_block;
+    uint32_t indirect_block = outer[outer_index];
+    if (indirect_block == 0) {
+      *block_out = 0;
+      return true;
+    }
+    if (!read_block(fs, indirect_block, block)) { return false; }
+    const uint32_t *inner = (const uint32_t *)block;
+    *block_out = inner[inner_index];
+    return true;
+  }
+
+  file_block_index -= double_span;
+  if (node->blocks[14] == 0) { return false; }
+  uint32_t triple_span = entries_per_block * entries_per_block * entries_per_block;
+  if (file_block_index >= triple_span) { return false; }
+  if (!read_block(fs, node->blocks[14], block)) { return false; }
+  const uint32_t *l1 = (const uint32_t *)block;
+  uint32_t l1_index = file_block_index / (entries_per_block * entries_per_block);
+  uint32_t rem = file_block_index % (entries_per_block * entries_per_block);
+  uint32_t l2_block = l1[l1_index];
+  if (l2_block == 0) {
+    *block_out = 0;
+    return true;
+  }
+  if (!read_block(fs, l2_block, block)) { return false; }
+  const uint32_t *l2 = (const uint32_t *)block;
+  uint32_t l2_index = rem / entries_per_block;
+  uint32_t l3_block = l2[l2_index];
+  if (l3_block == 0) {
+    *block_out = 0;
+    return true;
+  }
+  if (!read_block(fs, l3_block, block)) { return false; }
+  const uint32_t *l3 = (const uint32_t *)block;
+  *block_out = l3[rem % entries_per_block];
   return true;
 }
 

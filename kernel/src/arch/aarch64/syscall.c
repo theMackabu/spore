@@ -724,6 +724,29 @@ static bool parse_shebang(const void *data, uint64_t size, char *interp, size_t 
   return true;
 }
 
+static bool vfs_elf_read_at(void *ctx, uint64_t offset, void *dst, size_t len) {
+  const struct vfs_node *node = ctx;
+  return node != NULL && vfs_read(node, offset, dst, len) == len;
+}
+
+static bool make_elf_reader(const struct vfs_node *node, struct elf_reader *reader) {
+  if (node == NULL || reader == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
+  *reader = (struct elf_reader){
+    .read_at = vfs_elf_read_at,
+    .ctx = (void *)node,
+    .size = node->size,
+  };
+  return true;
+}
+
+static bool parse_shebang_node(const struct vfs_node *node, char *interp, size_t interp_cap, char *arg, size_t arg_cap,
+                               bool *has_arg) {
+  char head[256];
+  uint64_t n = node->size < sizeof(head) ? node->size : sizeof(head);
+  if (n == 0 || vfs_read(node, 0, head, n) != n) { return false; }
+  return parse_shebang(head, n, interp, interp_cap, arg, arg_cap, has_arg);
+}
+
 static int64_t sys_write(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len) {
   if (!user_readable(buf, len)) { return -(int64_t)EFAULT; }
   return cell_fd_write((int)fd, buf, len, frame);
@@ -1079,21 +1102,22 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
     argc = 1;
   }
 
-  const void *file_data = NULL;
-  uint64_t file_size = 0;
   struct vfs_node exec_node;
   if (!vfs_lookup(path, &exec_node)) { return -(int64_t)ENOENT; }
   if (!node_access_allowed(&exec_node, X_OK)) { return -(int64_t)EACCES; }
-  if (!vfs_lookup_exec(path, &file_data, &file_size)) { return -(int64_t)ENOENT; }
+  struct elf_reader exec_reader;
+  if (!make_elf_reader(&exec_node, &exec_reader)) { return -(int64_t)ENOENT; }
   char shebang_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
   char shebang_interp[128];
   char shebang_arg[128];
   bool shebang_has_arg = false;
-  if (parse_shebang(file_data, file_size, shebang_interp, sizeof(shebang_interp), shebang_arg, sizeof(shebang_arg),
-                    &shebang_has_arg)) {
-    const void *interp_data = NULL;
-    uint64_t interp_size = 0;
-    if (!vfs_lookup_exec(shebang_interp, &interp_data, &interp_size)) { return -(int64_t)ENOENT; }
+  if (parse_shebang_node(&exec_node, shebang_interp, sizeof(shebang_interp), shebang_arg, sizeof(shebang_arg),
+                         &shebang_has_arg)) {
+    struct vfs_node script_node = exec_node;
+    struct vfs_node shebang_node;
+    if (!vfs_lookup(shebang_interp, &shebang_node) || !make_elf_reader(&shebang_node, &exec_reader)) {
+      return -(int64_t)ENOENT;
+    }
     const char *old_argv[MAX_EXEC_ARGS];
     uint64_t old_argc = argc;
     for (uint64_t i = 0; i < old_argc; ++i) {
@@ -1121,11 +1145,11 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
       ++new_argc;
     }
     argc = new_argc;
-    file_data = interp_data;
-    file_size = interp_size;
+    exec_node = shebang_node;
+    (void)script_node;
   }
   char interp_path[128];
-  bool has_interp = elf_find_interp_aarch64(file_data, (size_t)file_size, interp_path, sizeof(interp_path));
+  bool has_interp = elf_find_interp_aarch64(&exec_reader, interp_path, sizeof(interp_path));
 
   struct user_address_space new_as;
   struct loaded_elf elf;
@@ -1134,16 +1158,16 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   uint64_t hhdm_offset = active_as()->hhdm_offset;
   vma_list_init(&new_vmas);
   if (!vmm_user_init(&new_as, hhdm_offset)) { return -12; }
-  if (!elf_load_aarch64(&new_as, file_data, (size_t)file_size, 0, &elf)) {
+  if (!elf_load_aarch64(&new_as, &exec_reader, 0, &elf)) {
     vmm_destroy(&new_as);
     return -(int64_t)EINVAL;
   }
   if (has_interp) {
-    const void *interp_data = NULL;
-    uint64_t interp_size = 0;
+    struct vfs_node interp_node;
+    struct elf_reader interp_reader;
     struct loaded_elf interp;
-    if (!vfs_lookup_exec(interp_path, &interp_data, &interp_size) ||
-        !elf_load_aarch64(&new_as, interp_data, (size_t)interp_size, INTERP_LOAD_BASE, &interp)) {
+    if (!vfs_lookup(interp_path, &interp_node) || !make_elf_reader(&interp_node, &interp_reader) ||
+        !elf_load_aarch64(&new_as, &interp_reader, INTERP_LOAD_BASE, &interp)) {
       vmm_destroy(&new_as);
       return -(int64_t)ENOENT;
     }

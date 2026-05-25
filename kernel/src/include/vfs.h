@@ -60,7 +60,6 @@ struct vfs_mount_info {
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset);
 bool vfs_lookup(const char *path, struct vfs_node *out);
 bool vfs_lstat(const char *path, struct vfs_node *out);
-bool vfs_lookup_exec(const char *path, const void **data, uint64_t *size);
 bool vfs_mkdir(const char *path);
 bool vfs_create(const char *path, struct vfs_node *out);
 bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out);
@@ -82,4 +81,3 @@ bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out
 bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);
-uint64_t vfs_exec_cache_pages(void);

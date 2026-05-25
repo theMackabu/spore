@@ -78,6 +78,18 @@ static uint64_t phys_for(uint64_t va) {
   return 0;
 }
 
+struct memory_reader {
+  const uint8_t *data;
+  size_t size;
+};
+
+static bool memory_read_at(void *ctx, uint64_t offset, void *dst, size_t len) {
+  const struct memory_reader *reader = ctx;
+  if (reader == NULL || offset > reader->size || len > reader->size - offset) { return false; }
+  memcpy(dst, reader->data + offset, len);
+  return true;
+}
+
 static void make_test_elf(uint8_t *image, size_t image_size) {
   memset(image, 0, image_size);
   struct elf64_ehdr *eh = (struct elf64_ehdr *)image;
@@ -121,7 +133,9 @@ int main(void) {
 
   struct user_address_space as = {.hhdm_offset = (uint64_t)(uintptr_t)phys};
   struct loaded_elf loaded = {0};
-  assert(elf_load_static_aarch64(&as, image, sizeof(image), &loaded));
+  struct memory_reader mem = {.data = image, .size = sizeof(image)};
+  struct elf_reader reader = {.read_at = memory_read_at, .ctx = &mem, .size = sizeof(image)};
+  assert(elf_load_aarch64(&as, &reader, 0, &loaded));
 
   assert(loaded.entry == 0x401000);
   assert(loaded.phdr == 0x400040);
@@ -135,6 +149,6 @@ int main(void) {
   assert(memcmp(&phys[data_pa], "abc\0\0\0\0\0", 8) == 0);
 
   image[18] = 0;
-  assert(!elf_load_static_aarch64(&as, image, sizeof(image), &loaded));
+  assert(!elf_load_aarch64(&as, &reader, 0, &loaded));
   return 0;
 }

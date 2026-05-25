@@ -1,6 +1,6 @@
 htop_version=3.3.0-dev
 config_reader_min_version=3
-fields=0 48 17 18 38 39 46 47 49 1
+fields=1 49 3 47 48 40 39 50 2
 hide_kernel_threads=1
 hide_userland_threads=0
 show_thread_names=1
@@ -36,7 +36,7 @@ sort_direction=-1
 tree_sort_direction=1
 tree_view_always_by_pid=0
 all_branches_collapsed=0
-screen:Main=PID USER STATE PERCENT_CPU PERCENT_MEM M_RESIDENT TIME Command
+screen:Main=PID USER STATE PERCENT_CPU PERCENT_MEM M_RESIDENT M_VIRT TIME Command
 .sort_key=PERCENT_CPU
 .tree_sort_key=PID
 .tree_view_always_by_pid=0

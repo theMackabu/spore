@@ -112,6 +112,7 @@ userland/demos/something-else.msh /home/spore/demos/something-else.msh
 userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
 userland/usr/local/bin/htop /usr/local/bin/htop
 userland/usr/local/bin/nano /usr/local/bin/nano
+userland/third_party/ant /usr/local/bin/ant
 userland/usr/local/bin/tcc /usr/local/bin/tcc
 userland/usr/local/bin/tcc/libtcc1.a /usr/local/lib/tcc/libtcc1.a
 userland/usr/local/bin/vim /usr/local/bin/vim

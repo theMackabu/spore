@@ -165,6 +165,21 @@ static bool ext2_blk_write(void *ctx, uint64_t offset, const void *src, uint32_t
   return virtio_blk_write(offset, src, len);
 }
 
+static bool vfs_elf_read_at(void *ctx, uint64_t offset, void *dst, size_t len) {
+  const struct vfs_node *node = ctx;
+  return node != NULL && vfs_read(node, offset, dst, len) == len;
+}
+
+static bool make_elf_reader(const struct vfs_node *node, struct elf_reader *reader) {
+  if (node == NULL || reader == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
+  *reader = (struct elf_reader){
+    .read_at = vfs_elf_read_at,
+    .ctx = (void *)node,
+    .size = node->size,
+  };
+  return true;
+}
+
 static void probe_ext2_root(void) {
   if (!ext2_mount_rw(&root_ext2, ext2_blk_read, ext2_blk_write, NULL)) {
     kprintf("[spore] ext2: mount failed\n");
@@ -351,9 +366,9 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   ramfs_init(&boot_ramfs, modules, boot->module_count, boot->hhdm_offset);
   vfs_init(&boot_ramfs, root_ext2_ready ? &root_ext2 : NULL, boot->hhdm_offset);
   syscall_set_ramfs(&boot_ramfs);
-  const void *init_data = NULL;
-  uint64_t init_size = 0;
-  if (!vfs_lookup_exec("/sbin/init", &init_data, &init_size)) {
+  struct vfs_node init_node;
+  struct elf_reader init_reader;
+  if (!vfs_lookup("/sbin/init", &init_node) || !make_elf_reader(&init_node, &init_reader)) {
     kprintf("[kernel] missing /sbin/init\n");
     for (;;) {
       __asm__ volatile("wfe");
@@ -361,23 +376,23 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   }
   kprintf("[kernel] loading /sbin/init\n");
   char interp_path[128];
-  bool has_interp = elf_find_interp_aarch64(init_data, (size_t)init_size, interp_path, sizeof(interp_path));
+  bool has_interp = elf_find_interp_aarch64(&init_reader, interp_path, sizeof(interp_path));
 
   struct user_address_space as;
   struct loaded_elf elf;
   uint64_t user_sp;
-  if (!vmm_user_init(&as, boot->hhdm_offset) || !elf_load_aarch64(&as, init_data, init_size, 0, &elf)) {
+  if (!vmm_user_init(&as, boot->hhdm_offset) || !elf_load_aarch64(&as, &init_reader, 0, &elf)) {
     kprintf("[kernel] failed to prepare /sbin/init\n");
     for (;;) {
       __asm__ volatile("wfe");
     }
   }
   if (has_interp) {
-    const void *interp_data = NULL;
-    uint64_t interp_size = 0;
+    struct vfs_node interp_node;
+    struct elf_reader interp_reader;
     struct loaded_elf interp;
-    if (!vfs_lookup_exec(interp_path, &interp_data, &interp_size) ||
-        !elf_load_aarch64(&as, interp_data, (size_t)interp_size, 0x0000006000000000ull, &interp)) {
+    if (!vfs_lookup(interp_path, &interp_node) || !make_elf_reader(&interp_node, &interp_reader) ||
+        !elf_load_aarch64(&as, &interp_reader, 0x0000006000000000ull, &interp)) {
       kprintf("[kernel] failed to load %s\n", interp_path);
       for (;;) {
         __asm__ volatile("wfe");
