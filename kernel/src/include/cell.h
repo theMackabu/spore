@@ -62,6 +62,7 @@ enum open_file_type {
   OPEN_STDOUT,
   OPEN_RAMFS,
   OPEN_SOCKET,
+  OPEN_PIPE,
 };
 
 struct open_file {
@@ -70,6 +71,8 @@ struct open_file {
   enum open_file_type type;
   uint64_t offset;
   uint32_t flags;
+  uint8_t pipe_id;
+  bool pipe_write_end;
   struct vfs_node node;
   uint8_t socket_proto;
   uint32_t udp_remote_ip;
@@ -247,6 +250,7 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
 int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
 void cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
 void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len);
+int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_close(int fd);
 bool cell_fd_stat(int fd, struct vfs_node *out);

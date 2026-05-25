@@ -14,6 +14,15 @@ static struct domain domains[MAX_DOMAINS];
 static struct thread threads[MAX_THREADS];
 static struct snapshot snapshots[MAX_SNAPSHOTS];
 static struct open_file open_files[MAX_OPEN_FILES];
+struct pipe_obj {
+  bool used;
+  uint16_t readers;
+  uint16_t writers;
+  uint8_t data[4096];
+  uint64_t head;
+  uint64_t len;
+};
+static struct pipe_obj pipes[16];
 static struct thread *current_thread;
 static int next_domain_id = 1;
 static int next_thread_id = 1;
@@ -48,7 +57,9 @@ enum {
   CELL_O_ACCMODE = 3,
   CELL_O_WRONLY = 1,
   CELL_O_RDWR = 2,
+  CELL_O_NONBLOCK = 04000,
   CELL_O_APPEND = 02000,
+  CELL_O_CLOEXEC = 02000000,
   CAP_ENFORCE = 1u << 0,
   CAP_EGRESS_ENFORCE = 1u << 1,
   IPPROTO_UDP = 17,
@@ -60,6 +71,7 @@ enum {
   EINVAL = 22,
   EIO = 5,
   ECHILD = 10,
+  EPIPE = 32,
   ESRCH = 3,
   WNOHANG = 1,
   SIGINT = 2,
@@ -71,6 +83,19 @@ enum {
   ROBUST_LIST_LIMIT = 16,
   FUTEX_OWNER_DIED = 0x40000000u,
 };
+
+static struct pipe_obj *pipe_for_file(struct open_file *file) {
+  if (file == NULL || file->type != OPEN_PIPE || file->pipe_id >= sizeof(pipes) / sizeof(pipes[0])) { return NULL; }
+  return pipes[file->pipe_id].used ? &pipes[file->pipe_id] : NULL;
+}
+
+static int find_free_fd(struct domain *domain, int start) {
+  if (domain == NULL) { return -1; }
+  for (int fd = start; fd < MAX_FDS; ++fd) {
+    if (domain->fds[fd] == NULL) { return fd; }
+  }
+  return -1;
+}
 
 struct robust_list_head64 {
   uint64_t next;
@@ -293,7 +318,19 @@ static void retain_open_file(struct open_file *file) {
 static void release_open_file(struct open_file *file) {
   if (file == NULL || file->refcount == 0) { return; }
   --file->refcount;
-  if (file->refcount == 0) { file->used = false; }
+  if (file->refcount == 0) {
+    struct pipe_obj *pipe = pipe_for_file(file);
+    if (pipe != NULL) {
+      if (file->pipe_write_end) {
+        if (pipe->writers > 0) { --pipe->writers; }
+      } else if (pipe->readers > 0) {
+        --pipe->readers;
+      }
+      if (pipe->readers == 0 && pipe->writers == 0) { pipe->used = false; }
+      wake_poll_waiters();
+    }
+    file->used = false;
+  }
 }
 
 static void close_all_fds(struct domain *domain) {
@@ -491,6 +528,7 @@ void cell_system_init(uint64_t hhdm_offset) {
   kmemset(threads, 0, sizeof(threads));
   kmemset(snapshots, 0, sizeof(snapshots));
   kmemset(open_files, 0, sizeof(open_files));
+  kmemset(pipes, 0, sizeof(pipes));
   current_thread = NULL;
   next_domain_id = 1;
   next_thread_id = 1;
@@ -2040,6 +2078,25 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_PIPE) {
+    struct pipe_obj *pipe = pipe_for_file(file);
+    if (pipe == NULL || !file->pipe_write_end) { return -9; }
+    if (pipe->readers == 0) { return -EPIPE; }
+    uint64_t done = 0;
+    while (done < len && pipe->len < sizeof(pipe->data)) {
+      char c;
+      if (!vmm_copy_from_user(&domain->as, &c, buf + done, 1)) { return -EFAULT; }
+      uint64_t tail = (pipe->head + pipe->len) % sizeof(pipe->data);
+      pipe->data[tail] = (uint8_t)c;
+      ++pipe->len;
+      ++done;
+    }
+    if (done != 0) {
+      wake_poll_waiters();
+      return (int64_t)done;
+    }
+    return -EAGAIN;
+  }
   if (file->type != OPEN_STDOUT) {
     if (file->type != OPEN_RAMFS ||
         ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR)) {
@@ -2280,6 +2337,24 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_PIPE) {
+    (void)frame;
+    struct pipe_obj *pipe = pipe_for_file(file);
+    if (pipe == NULL || file->pipe_write_end) { return -9; }
+    uint64_t done = 0;
+    while (done < len && pipe->len != 0) {
+      char c = (char)pipe->data[pipe->head];
+      pipe->head = (pipe->head + 1u) % sizeof(pipe->data);
+      --pipe->len;
+      if (!vmm_copy_to_user(&domain->as, buf + done, &c, 1)) { return -EFAULT; }
+      ++done;
+    }
+    if (done != 0) {
+      wake_poll_waiters();
+      return (int64_t)done;
+    }
+    return pipe->writers == 0 ? 0 : -EAGAIN;
+  }
   if (file->type == OPEN_STDIN) {
     if (len == 0) { return 0; }
     int64_t n = read_stdin_to_user(domain, buf, len);
@@ -2321,6 +2396,9 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
     } else if (file->type == OPEN_SOCKET) {
       net_poll();
       if (file->udp_rx_len != 0) { revents |= CELL_POLLIN; }
+    } else if (file->type == OPEN_PIPE) {
+      struct pipe_obj *pipe = pipe_for_file(file);
+      if (pipe != NULL && !file->pipe_write_end && (pipe->len != 0 || pipe->writers == 0)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_RAMFS) {
       revents |= CELL_POLLIN;
     }
@@ -2330,6 +2408,11 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
     if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_RAMFS ||
         file->type == OPEN_SOCKET) {
       revents |= CELL_POLLOUT;
+    } else if (file->type == OPEN_PIPE) {
+      struct pipe_obj *pipe = pipe_for_file(file);
+      if (pipe != NULL && file->pipe_write_end && pipe->readers != 0 && pipe->len < sizeof(pipe->data)) {
+        revents |= CELL_POLLOUT;
+      }
     }
   }
   return revents;
@@ -2586,6 +2669,56 @@ int cell_fd_socket_inet(uint8_t proto) {
   return fd;
 }
 
+int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
+  if ((flags & ~(CELL_O_CLOEXEC | CELL_O_NONBLOCK)) != 0) { return -EINVAL; }
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return -12; }
+  int read_fd = find_free_fd(domain, 0);
+  int write_fd = read_fd < 0 ? -1 : find_free_fd(domain, read_fd + 1);
+  if (read_fd < 0 || write_fd < 0) { return -24; }
+
+  int pipe_id = -1;
+  for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
+    if (!pipes[i].used) {
+      pipe_id = (int)i;
+      break;
+    }
+  }
+  if (pipe_id < 0) { return -23; }
+
+  struct open_file *read_file = alloc_open_file();
+  struct open_file *write_file = alloc_open_file();
+  if (read_file == NULL || write_file == NULL) {
+    release_open_file(read_file);
+    release_open_file(write_file);
+    return -12;
+  }
+
+  kmemset(&pipes[pipe_id], 0, sizeof(pipes[pipe_id]));
+  pipes[pipe_id].used = true;
+  pipes[pipe_id].readers = 1;
+  pipes[pipe_id].writers = 1;
+
+  read_file->type = OPEN_PIPE;
+  read_file->flags = (uint32_t)flags;
+  read_file->pipe_id = (uint8_t)pipe_id;
+  read_file->pipe_write_end = false;
+  write_file->type = OPEN_PIPE;
+  write_file->flags = (uint32_t)flags;
+  write_file->pipe_id = (uint8_t)pipe_id;
+  write_file->pipe_write_end = true;
+
+  int fds[2] = {read_fd, write_fd};
+  if (!vmm_copy_to_user(&domain->as, pipefd_addr, fds, sizeof(fds))) {
+    release_open_file(read_file);
+    release_open_file(write_file);
+    return -EFAULT;
+  }
+  domain->fds[read_fd] = read_file;
+  domain->fds[write_fd] = write_file;
+  return 0;
+}
+
 static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || domain->fds[fd]->type != OPEN_SOCKET) {
     return NULL;
@@ -2753,6 +2886,18 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
       .links_count = 1,
       .dev_id = 0x0005,
       .rdev = (5u << 8),
+    };
+    return true;
+  }
+  if (file->type == OPEN_PIPE) {
+    *out = (struct vfs_node){
+      .backend = VFS_RAMFS,
+      .ino = 20 + (uint64_t)file->pipe_id,
+      .is_dir = false,
+      .device = RAMFS_DEV_NONE,
+      .mode = 0010666u,
+      .links_count = 1,
+      .dev_id = 0x0005,
     };
     return true;
   }

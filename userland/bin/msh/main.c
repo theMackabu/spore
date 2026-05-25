@@ -2,9 +2,25 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
-int main(void) {
+static void update_pwd(void) {
+  char cwd[128];
+  if (getcwd(cwd, sizeof(cwd)) != NULL) { setenv("PWD", cwd, 1); }
+}
+
+int main(int argc, char **argv) {
+  if (argc > 1) {
+    if (streq(argv[1], "-c")) {
+      if (argc < 3) { return usage("msh", "-c COMMAND"); }
+      char line[LINE_CAP];
+      snprintf(line, sizeof(line), "%s", argv[2]);
+      return sh_execute_line(line, 0);
+    }
+    return sh_source_file(argv[1], 0, true);
+  }
+
   char line[LINE_CAP];
   int last = 0;
   last = sh_source_file("/etc/profile", last, false);
@@ -12,8 +28,7 @@ int main(void) {
   const char *home = getenv("HOME");
   if (home == NULL || home[0] == '\0') { home = "/"; }
   (void)chdir(home);
-  char cwd[128];
-  if (getcwd(cwd, sizeof(cwd)) != NULL) { setenv("PWD", cwd, 1); }
+  update_pwd();
   sh_history_load();
 
   char startup[256];

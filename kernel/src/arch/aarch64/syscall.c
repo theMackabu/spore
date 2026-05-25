@@ -42,6 +42,7 @@ enum {
   SYS_FCHOWN = 55,
   SYS_OPENAT = 56,
   SYS_CLOSE = 57,
+  SYS_PIPE2 = 59,
   SYS_GETDENTS64 = 61,
   SYS_LSEEK = 62,
   SYS_READ = 63,
@@ -1641,6 +1642,9 @@ static int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
       .c_ispeed = 38400,
       .c_ospeed = 38400,
     };
+    tio.c_cc[0] = 3;
+    tio.c_cc[2] = 0x7f;
+    tio.c_cc[3] = 21;
     tio.c_cc[4] = 4;
     tio.c_cc[5] = 0;
     tio.c_cc[6] = 1;
@@ -1705,6 +1709,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_FCHOWN] = &&l_fchown,
     [SYS_OPENAT] = &&l_openat,
     [SYS_CLOSE] = &&l_close,
+    [SYS_PIPE2] = &&l_pipe2,
     [SYS_GETDENTS64] = &&l_getdents64,
     [SYS_LSEEK] = &&l_lseek,
     [SYS_READ] = &&l_read,
@@ -1984,6 +1989,8 @@ l_openat:
   return sys_openat(a0, a1, a2);
 l_close:
   return cell_fd_close((int)a0);
+l_pipe2:
+  return cell_fd_pipe2(a0, (int)a1);
 l_lseek:
   return cell_fd_lseek((int)a0, (int64_t)a1, (int)a2);
 l_fstat:
