@@ -42,6 +42,21 @@ static void print_ok_line(const char *text) {
   fputs("[ " MYC_GREEN "OK" MYC_RESET " ]\n", stdout);
 }
 
+static void append_ok_line(char *out, size_t cap, const char *text) {
+  unsigned cols = console_cols();
+  size_t text_len = strlen(text);
+  const size_t marker_len = 6;
+  append_response(out, cap, "%s", text);
+  if (cols > text_len + marker_len + 1) {
+    for (size_t i = 0; i < cols - text_len - marker_len; ++i) {
+      append_response(out, cap, " ");
+    }
+  } else {
+    append_response(out, cap, " ");
+  }
+  append_response(out, cap, "[ " MYC_GREEN "OK" MYC_RESET " ]\n");
+}
+
 static void print_spore_logo(void) {
   puts(MYC_CYAN "       .-." MYC_RESET);
   puts(MYC_CYAN "    .-(" MYC_GREEN "   " MYC_CYAN ")-." MYC_RESET);
@@ -80,7 +95,7 @@ void append_done_line(char *out, size_t cap, const char *fmt, ...) {
   va_start(ap, fmt);
   vsnprintf(text, sizeof(text), fmt, ap);
   va_end(ap);
-  append_response(out, cap, "%s [ " MYC_GREEN "OK" MYC_RESET " ]\n", text);
+  append_ok_line(out, cap, text);
   append_plain_status_log("OK", text);
 }
 

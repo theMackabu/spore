@@ -136,9 +136,10 @@ static void exec_search(char **argv) {
   char *script_argv[ARG_CAP + 1];
   const char *name = basename(argv[0]);
   size_t name_len = strlen(name);
-  bool msh_script = name_len > 4 && strcmp(name + name_len - 4, ".msh") == 0;
+  bool shell_script = (name_len > 4 && strcmp(name + name_len - 4, ".msh") == 0) ||
+                      (name_len > 3 && strcmp(name + name_len - 3, ".sh") == 0);
 
-  if (msh_script) {
+  if (shell_script) {
     script_argv[0] = "/bin/msh";
     script_argv[1] = argv[0];
     int i = 1;
@@ -150,13 +151,13 @@ static void exec_search(char **argv) {
 
   if (strchr(argv[0], '/') != NULL) {
     execve(argv[0], argv, environ);
-    if (msh_script && access(argv[0], R_OK) == 0) { execve("/bin/msh", script_argv, environ); }
+    if (shell_script && access(argv[0], R_OK) == 0) { execve("/bin/msh", script_argv, environ); }
     return;
   }
 
   snprintf(path, sizeof(path), "./%s", argv[0]);
   execve(path, argv, environ);
-  if (msh_script && access(path, R_OK) == 0) {
+  if (shell_script && access(path, R_OK) == 0) {
     script_argv[1] = path;
     execve("/bin/msh", script_argv, environ);
   }
@@ -173,7 +174,7 @@ static void exec_search(char **argv) {
       snprintf(path, sizeof(path), "%.*s/%s", (int)len, p, argv[0]);
     }
     execve(path, argv, environ);
-    if (msh_script && access(path, R_OK) == 0) {
+    if (shell_script && access(path, R_OK) == 0) {
       script_argv[1] = path;
       execve("/bin/msh", script_argv, environ);
     }
