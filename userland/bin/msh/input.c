@@ -414,7 +414,7 @@ static int read_prompt_line(const char *prompt, char *buf, size_t cap, bool use_
   if (tcgetattr(STDIN_FILENO, &saved) != 0) { return read_fallback_line(prompt, buf, cap); }
 
   struct termios raw = saved;
-  raw.c_lflag &= ~(unsigned)(ICANON | ECHO);
+  raw.c_lflag &= ~(unsigned)(ICANON | ECHO | ISIG);
   raw.c_cc[VMIN] = 1;
   raw.c_cc[VTIME] = 0;
   if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) { return read_fallback_line(prompt, buf, cap); }

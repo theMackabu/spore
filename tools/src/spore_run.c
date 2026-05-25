@@ -177,6 +177,25 @@ static bool ends_with(const char *s, const char *suffix) {
   return s_len >= suffix_len && strcmp(s + s_len - suffix_len, suffix) == 0;
 }
 
+static void write_serial_input(int fd, const char *buf, size_t len) {
+  enum { CHUNK = 32 };
+  for (size_t off = 0; off < len;) {
+    size_t todo = len - off;
+    if (todo > CHUNK) { todo = CHUNK; }
+    ssize_t n = write(fd, buf + off, todo);
+    if (n < 0) {
+      if (errno == EINTR) { continue; }
+      return;
+    }
+    if (n == 0) { return; }
+    off += (size_t)n;
+    if (off < len) {
+      struct timespec ts = {.tv_sec = 0, .tv_nsec = 1000000};
+      (void)nanosleep(&ts, NULL);
+    }
+  }
+}
+
 static void on_sigwinch(int sig) {
   (void)sig;
   resize_pending = 1;
@@ -703,7 +722,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, int log
       if (interactive && FD_ISSET(STDIN_FILENO, &rfds)) {
         char input[1024];
         ssize_t n = read(STDIN_FILENO, input, sizeof(input));
-        if (n > 0) { (void)write(in_pipe[1], input, (size_t)n); }
+        if (n > 0) { write_serial_input(in_pipe[1], input, (size_t)n); }
       }
       char chunk[1024];
       if (FD_ISSET(serial_pipe[0], &rfds)) {
@@ -728,12 +747,12 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, int log
         }
         if (strcmp(mode, "stdin") == 0 && !stdin_sent &&
             contains(buf, "[spore] stdin demo: child blocking on read(0)")) {
-          write(in_pipe[1], "z\n", 2);
+          write_serial_input(in_pipe[1], "z\n", 2);
           stdin_sent = true;
         }
         if (strcmp(mode, "shell") == 0 && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) &&
             find_shell_prompt(buf, len) >= 0) {
-          write(in_pipe[1], shell_commands[sent], strlen(shell_commands[sent]));
+          write_serial_input(in_pipe[1], shell_commands[sent], strlen(shell_commands[sent]));
           ++sent;
           buf[0] = '\0';
           len = 0;

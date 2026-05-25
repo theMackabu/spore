@@ -97,6 +97,15 @@ void timer_init(uint64_t hhdm_offset) {
   gic_hhdm_offset = hhdm_offset;
   uint64_t freq;
   __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+  uint64_t cntkctl;
+  __asm__ volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
+  cntkctl |= 3ull; // EL0PCTEN | EL0VCTEN: userland may read generic counters.
+  __asm__ volatile("msr cntkctl_el1, %0" : : "r"(cntkctl) : "memory");
+  uint64_t sctlr;
+  __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+  sctlr |= 1ull << 15; // UCT: userland may read CTR_EL0 like Linux permits.
+  sctlr |= 1ull << 26; // UCI: userland JITs may issue cache maintenance.
+  __asm__ volatile("msr sctlr_el1, %0\nisb" : : "r"(sctlr) : "memory");
   timer_interval = (uint32_t)(freq / 100);
   if (timer_interval == 0) { timer_interval = 1; }
   gic_dist_init();

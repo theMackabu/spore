@@ -19,13 +19,13 @@ enum {
   PL011_CR_RXE = 1u << 9,
   PL011_INT_RX = 1u << 4,
   PL011_INT_RT = 1u << 6,
-  RX_RING_SIZE = 256,
+  RX_RING_SIZE = 8192,
 };
 
 static volatile uint32_t *uart_base;
 static char rx_ring[RX_RING_SIZE];
-static uint16_t rx_head;
-static uint16_t rx_tail;
+static size_t rx_head;
+static size_t rx_tail;
 static uint16_t tty_rows = 38;
 static uint16_t tty_cols = 96;
 static char ctl_buf[32];
@@ -58,7 +58,7 @@ void pl011_putc(char c) {
 }
 
 static void rx_push(char c) {
-  uint16_t next = (uint16_t)((rx_head + 1u) % RX_RING_SIZE);
+  size_t next = (rx_head + 1u) % RX_RING_SIZE;
   if (next == rx_tail) { return; }
   rx_ring[rx_head] = c;
   rx_head = next;
@@ -149,7 +149,7 @@ static void tty_control_char(char c) {
 bool pl011_getc(char *out) {
   if (rx_tail == rx_head) { return false; }
   *out = rx_ring[rx_tail];
-  rx_tail = (uint16_t)((rx_tail + 1u) % RX_RING_SIZE);
+  rx_tail = (rx_tail + 1u) % RX_RING_SIZE;
   return true;
 }
 

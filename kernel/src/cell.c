@@ -10,6 +10,8 @@
 #include "virtio_blk.h"
 #include "virtio_net.h"
 
+#include <stddef.h>
+
 static struct domain domains[MAX_DOMAINS];
 static struct thread threads[MAX_THREADS];
 static struct snapshot snapshots[MAX_SNAPSHOTS];
@@ -42,14 +44,15 @@ static uint64_t boot_epoch_sec;
 static bool pipe_waking;
 static uint64_t proc_cache_tick = UINT64_MAX;
 static size_t proc_cache_rss[MAX_DOMAINS];
-static uint32_t tty_lflag = 0000002 | 0000010;
+static uint32_t tty_lflag = 0000001 | 0000002 | 0000010;
 static uint8_t tty_erase = 0x7f;
-static char tty_line[256];
+static char tty_line[8192];
 static size_t tty_line_len;
 static size_t tty_line_cursor;
-static char tty_ready[512];
+static char tty_ready[8192];
 static size_t tty_ready_head;
 static size_t tty_ready_len;
+static int tty_pending_signal;
 static char tty_output_line[256];
 static size_t tty_output_line_len;
 static char tty_prompt[256];
@@ -94,17 +97,37 @@ enum {
   EPOLL_CTL_DEL = 2,
   EPOLL_CTL_MOD = 3,
   EFD_SEMAPHORE = 1,
+  EINTR = 4,
   SIGINT = 2,
   SIGABRT = 6,
   SIGKILL = 9,
   SIGSEGV = 11,
   SIGTERM = 15,
+  TTY_ISIG = 0000001,
   TTY_ICANON = 0000002,
   TTY_ECHO = 0000010,
+  SA_SIGINFO = 4,
+  SA_RESETHAND = 0x80000000u,
+  NSIG = 65,
   ROBUST_LIST_LIMIT = 16,
   FUTEX_OWNER_DIED = 0x40000000u,
   CELL_S_IFMT = 0170000,
   CELL_S_IFIFO = 0010000,
+};
+
+struct k_sigaction64 {
+  uint64_t handler;
+  uint64_t flags;
+  uint64_t restorer;
+  uint32_t mask[2];
+};
+
+struct signal_frame64 {
+  uint64_t magic;
+  uint64_t signal;
+  struct trap_frame saved;
+  uint8_t siginfo[128];
+  uint8_t ucontext[1024];
 };
 
 struct epoll_event64 {
@@ -457,6 +480,7 @@ static void copy_domain_metadata(struct domain *dst, const struct domain *src) {
   dst->egid = src->egid;
   dst->pgrp_id = src->pgrp_id;
   dst->session_id = src->session_id;
+  kmemcpy(dst->signal_actions, src->signal_actions, sizeof(dst->signal_actions));
   dst->start_ticks = scheduler_ticks;
   dst->cpu_ticks = 0;
 }
@@ -993,22 +1017,148 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   cell_schedule(frame);
 }
 
-void cell_signal_current(int signal, struct trap_frame *frame) {
-  if (current_thread == NULL) { return; }
-  struct domain *domain = current_thread->domain;
+static bool domain_access_allowed(const struct vma *vma, enum vmm_access access) {
+  if (vma == NULL || vma->type != VMA_ANON) { return false; }
+  if (access == VMM_ACCESS_READ) { return (vma->prot & VMM_USER_READ) != 0; }
+  if (access == VMM_ACCESS_WRITE) { return (vma->prot & VMM_USER_WRITE) != 0; }
+  if (access == VMM_ACCESS_EXEC) { return (vma->prot & VMM_USER_EXEC) != 0; }
+  return false;
+}
+
+static bool ensure_domain_user_range(struct domain *domain, uint64_t va, size_t len, enum vmm_access access) {
+  if (domain == NULL || len == 0) { return true; }
+  uint64_t end = va + len - 1;
+  if (end < va) { return false; }
+  uint64_t page = va & ~(uint64_t)(PAGE_SIZE - 1);
+  uint64_t last = end & ~(uint64_t)(PAGE_SIZE - 1);
+  for (;;) {
+    if (!vmm_is_mapped(&domain->as, page)) {
+      const struct vma *vma = vma_lookup(&domain->vmas, page);
+      if (!domain_access_allowed(vma, access) || !vmm_alloc_page(&domain->as, page, vma->prot)) { return false; }
+    }
+    if (access == VMM_ACCESS_WRITE && !vmm_user_range_accessible(&domain->as, page, 1, VMM_ACCESS_WRITE) &&
+        !vmm_handle_cow_fault(&domain->as, page)) {
+      return false;
+    }
+    if (!vmm_user_range_accessible(&domain->as, page, 1, access)) { return false; }
+    if (page == last) { return true; }
+    page += PAGE_SIZE;
+  }
+}
+
+static void terminate_domain_by_signal(struct domain *domain, int signal) {
+  if (domain == NULL || domain->zombie) { return; }
   domain->exit_status = 128 + signal;
   domain->term_signal = signal;
   domain->zombie = true;
   for (size_t i = 0; i < MAX_THREADS; ++i) {
-    if (&threads[i] != current_thread && threads[i].domain == domain) {
-      threads[i].state = THREAD_UNUSED;
-      threads[i].domain = NULL;
-      if (domain->refcount > 0) { --domain->refcount; }
+    if (threads[i].domain == domain) { threads[i].state = THREAD_ZOMBIE; }
+  }
+  wake_parent_of(domain);
+}
+
+static bool deliver_signal_to_thread(struct thread *thread, int signal) {
+  if (thread == NULL || thread->domain == NULL || signal <= 0 || signal >= (int)NSIG) { return false; }
+  struct domain *domain = thread->domain;
+  struct signal_action *action = &domain->signal_actions[signal];
+  if (action->handler == 0 || signal == SIGKILL) {
+    terminate_domain_by_signal(domain, signal);
+    return true;
+  }
+  if (action->handler == 1) { return true; }
+  if (action->restorer == 0) {
+    terminate_domain_by_signal(domain, signal);
+    return true;
+  }
+
+  if (thread->state == THREAD_BLOCKED) {
+    thread->tf.x[0] = (uint64_t)(-(int64_t)EINTR);
+    thread->state = THREAD_RUNNABLE;
+    thread->wait_reason = WAIT_NONE;
+    thread->wait_target = -1;
+    thread->stdin_buf = 0;
+    thread->stdin_len = 0;
+    thread->pipe_buf = 0;
+    thread->pipe_len = 0;
+  }
+
+  struct signal_frame64 frame;
+  kmemset(&frame, 0, sizeof(frame));
+  frame.magic = 0x5350475349474652ull; // "SPGSIGFR"
+  frame.signal = (uint64_t)signal;
+  frame.saved = thread->tf;
+  frame.saved.x[0] = (uint64_t)(-(int64_t)EINTR);
+
+  uint64_t frame_addr = (thread->tf.sp_el0 - sizeof(frame)) & ~15ull;
+  if (!ensure_domain_user_range(domain, frame_addr, sizeof(frame), VMM_ACCESS_WRITE) ||
+      !vmm_copy_to_user(&domain->as, frame_addr, &frame, sizeof(frame))) {
+    terminate_domain_by_signal(domain, SIGSEGV);
+    return true;
+  }
+
+  uint64_t siginfo_addr = frame_addr + offsetof(struct signal_frame64, siginfo);
+  uint64_t ucontext_addr = frame_addr + offsetof(struct signal_frame64, ucontext);
+  thread->tf.x[0] = (uint64_t)signal;
+  thread->tf.x[1] = (action->flags & SA_SIGINFO) != 0 ? siginfo_addr : 0;
+  thread->tf.x[2] = (action->flags & SA_SIGINFO) != 0 ? ucontext_addr : 0;
+  thread->tf.x[30] = action->restorer;
+  thread->tf.sp_el0 = frame_addr;
+  thread->tf.elr_el1 = action->handler;
+  if ((action->flags & SA_RESETHAND) != 0) { action->handler = 0; }
+  return true;
+}
+
+void cell_signal_current(int signal, struct trap_frame *frame) {
+  if (current_thread == NULL) { return; }
+  current_thread->tf = *frame;
+  (void)deliver_signal_to_thread(current_thread, signal);
+  *frame = current_thread->tf;
+  if (current_thread->state == THREAD_ZOMBIE) { cell_schedule(frame); }
+}
+
+int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t sigset_size) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || signal <= 0 || signal >= (int)NSIG || sigset_size != 8) { return -EINVAL; }
+  if (old_addr != 0) {
+    struct k_sigaction64 old = {
+      .handler = domain->signal_actions[signal].handler,
+      .flags = domain->signal_actions[signal].flags,
+      .restorer = domain->signal_actions[signal].restorer,
+    };
+    old.mask[0] = (uint32_t)(domain->signal_actions[signal].mask & 0xffffffffu);
+    old.mask[1] = (uint32_t)(domain->signal_actions[signal].mask >> 32);
+    if (!ensure_domain_user_range(domain, old_addr, sizeof(old), VMM_ACCESS_WRITE) ||
+        !vmm_copy_to_user(&domain->as, old_addr, &old, sizeof(old))) {
+      return -EFAULT;
     }
   }
-  current_thread->state = THREAD_ZOMBIE;
-  wake_parent_of(domain);
-  cell_schedule(frame);
+  if (act_addr != 0) {
+    struct k_sigaction64 act;
+    if (!ensure_domain_user_range(domain, act_addr, sizeof(act), VMM_ACCESS_READ) ||
+        !vmm_copy_from_user(&domain->as, &act, act_addr, sizeof(act))) {
+      return -EFAULT;
+    }
+    domain->signal_actions[signal].handler = act.handler;
+    domain->signal_actions[signal].flags = act.flags;
+    domain->signal_actions[signal].restorer = act.restorer;
+    domain->signal_actions[signal].mask = ((uint64_t)act.mask[1] << 32) | act.mask[0];
+  }
+  return 0;
+}
+
+int cell_rt_sigreturn(struct trap_frame *frame) {
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return -EFAULT; }
+  struct signal_frame64 sigframe;
+  uint64_t frame_addr = frame->sp_el0;
+  if (!ensure_domain_user_range(domain, frame_addr, sizeof(sigframe), VMM_ACCESS_READ) ||
+      !vmm_copy_from_user(&domain->as, &sigframe, frame_addr, sizeof(sigframe)) ||
+      sigframe.magic != 0x5350475349474652ull) {
+    cell_signal_current(SIGSEGV, frame);
+    return -EFAULT;
+  }
+  *frame = sigframe.saved;
+  return 0;
 }
 
 int cell_fork_current(struct trap_frame *frame) {
@@ -1170,13 +1320,7 @@ int cell_kill(int pid, int signal) {
           ++delivered;
           continue;
         }
-        domains[i].exit_status = 128 + signal;
-        domains[i].term_signal = signal;
-        domains[i].zombie = true;
-        for (size_t t = 0; t < MAX_THREADS; ++t) {
-          if (threads[t].domain == &domains[i]) { threads[t].state = THREAD_ZOMBIE; }
-        }
-        wake_parent_of(&domains[i]);
+        (void)deliver_signal_to_thread(thread_for_domain(&domains[i]), signal);
         ++delivered;
       }
     }
@@ -1186,13 +1330,7 @@ int cell_kill(int pid, int signal) {
   if (domain == NULL || domain->zombie) { return -ESRCH; }
   if (signal == 0) { return 0; }
   if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) { return 0; }
-  domain->exit_status = 128 + signal;
-  domain->term_signal = signal;
-  domain->zombie = true;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
-    if (threads[i].domain == domain) { threads[i].state = THREAD_ZOMBIE; }
-  }
-  wake_parent_of(domain);
+  (void)deliver_signal_to_thread(thread_for_domain(domain), signal);
   return 0;
 }
 
@@ -1208,14 +1346,7 @@ int cell_tkill(int tid, int signal) {
   }
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     if (threads[i].state == THREAD_UNUSED || threads[i].tid != tid || threads[i].domain == NULL) { continue; }
-    struct domain *domain = threads[i].domain;
-    domain->exit_status = 128 + signal;
-    domain->term_signal = signal;
-    domain->zombie = true;
-    for (size_t j = 0; j < MAX_THREADS; ++j) {
-      if (threads[j].domain == domain) { threads[j].state = THREAD_ZOMBIE; }
-    }
-    wake_parent_of(domain);
+    (void)deliver_signal_to_thread(&threads[i], signal);
     return 0;
   }
   return -ESRCH;
@@ -1242,6 +1373,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   }
   domain->as = *as;
   domain->vmas = *vmas;
+  kmemset(domain->signal_actions, 0, sizeof(domain->signal_actions));
   set_domain_identity(domain, path, argv, argc);
   vmm_install_user(&domain->as);
   vmm_destroy(&old_as);
@@ -2077,6 +2209,8 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   return -22;
 }
 
+static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame);
+
 static int64_t read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                            struct trap_frame *frame) {
   if (len == 0) { return 0; }
@@ -2096,6 +2230,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_CONSOLE:
   case RAMFS_DEV_TTY: {
     int64_t n = read_stdin_to_user(domain, buf, len);
+    if (n == -EINTR) { return deliver_tty_signal_or_eintr(frame); }
     if (n != 0) { return n; }
     if (frame == NULL) { return 0; }
     cell_save_current(frame);
@@ -2325,6 +2460,10 @@ static bool tty_canonical(void) {
   return (tty_lflag & TTY_ICANON) != 0;
 }
 
+static bool tty_isig(void) {
+  return (tty_lflag & TTY_ISIG) != 0;
+}
+
 static bool tty_echo(void) {
   return (tty_lflag & TTY_ECHO) != 0;
 }
@@ -2426,6 +2565,14 @@ static bool tty_ready_pop(char *out) {
   return true;
 }
 
+static void tty_clear_pending_input(void) {
+  tty_line_len = 0;
+  tty_line_cursor = 0;
+  tty_ready_head = 0;
+  tty_ready_len = 0;
+  tty_prompt_active = false;
+}
+
 static void tty_line_commit(void) {
   for (size_t i = 0; i < tty_line_len; ++i) {
     tty_ready_push(tty_line[i]);
@@ -2463,6 +2610,16 @@ static bool tty_try_escape(void) {
 static void tty_process_input(void) {
   char c;
   while (tty_ready_len == 0 && pl011_getc(&c)) {
+    if (tty_isig() && c == 3) {
+      if (tty_echo()) {
+        pl011_putc('^');
+        pl011_putc('C');
+        pl011_putc('\n');
+      }
+      tty_clear_pending_input();
+      tty_pending_signal = SIGINT;
+      return;
+    }
     if (!tty_canonical()) {
       if ((uint8_t)c == 0x08 || (uint8_t)c == 0x7f) { c = (char)tty_erase; }
       tty_ready_push(c);
@@ -2484,9 +2641,7 @@ static void tty_process_input(void) {
         pl011_putc('C');
         pl011_putc('\n');
       }
-      tty_line_len = 0;
-      tty_line_cursor = 0;
-      tty_prompt_active = false;
+      tty_clear_pending_input();
       tty_ready_push('\n');
       return;
     }
@@ -2519,11 +2674,13 @@ static void tty_process_input(void) {
 
 static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t len) {
   if (tty_canonical()) { tty_begin_canonical_read(); }
+  if (tty_pending_signal != 0) { return -EINTR; }
   uint64_t n = 0;
   while (n < len) {
     char c;
     if (!tty_ready_pop(&c)) {
       tty_process_input();
+      if (tty_pending_signal != 0) { return -EINTR; }
       if (!tty_ready_pop(&c)) { break; }
     }
     if (!vmm_copy_to_user(&domain->as, buf + n, &c, 1)) { return -14; }
@@ -2534,9 +2691,21 @@ static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t 
 }
 
 static bool tty_stdin_readable(void) {
-  if (tty_ready_len != 0) { return true; }
+  if (tty_ready_len != 0 || tty_pending_signal != 0) { return true; }
   tty_process_input();
-  return tty_ready_len != 0;
+  return tty_ready_len != 0 || tty_pending_signal != 0;
+}
+
+static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame) {
+  int signal = tty_pending_signal;
+  tty_pending_signal = 0;
+  if (signal == 0) { return -EINTR; }
+  if (frame == NULL || current_thread == NULL) { return -EINTR; }
+  current_thread->tf = *frame;
+  current_thread->tf.x[0] = (uint64_t)(-(int64_t)EINTR);
+  (void)deliver_signal_to_thread(current_thread, signal);
+  *frame = current_thread->tf;
+  return CELL_SWITCHED;
 }
 
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
@@ -2562,6 +2731,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   if (file->type == OPEN_STDIN) {
     if (len == 0) { return 0; }
     int64_t n = read_stdin_to_user(domain, buf, len);
+    if (n == -EINTR) { return deliver_tty_signal_or_eintr(frame); }
     if (n != 0) { return n; }
     if (frame == NULL) { return 0; }
     cell_save_current(frame);
@@ -2914,6 +3084,12 @@ void cell_wake_stdin(void) {
     struct thread *thread = &threads[i];
     if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_STDIN) { continue; }
     int64_t n = read_stdin_to_user(thread->domain, thread->stdin_buf, thread->stdin_len);
+    if (n == -EINTR && tty_pending_signal != 0) {
+      int signal = tty_pending_signal;
+      tty_pending_signal = 0;
+      (void)deliver_signal_to_thread(thread, signal);
+      continue;
+    }
     if (n <= 0) { continue; }
     thread->tf.x[0] = (uint64_t)n;
     thread->state = THREAD_RUNNABLE;

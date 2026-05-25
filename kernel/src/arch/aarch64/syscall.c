@@ -77,6 +77,7 @@ enum {
   SYS_SIGALTSTACK = 132,
   SYS_RT_SIGACTION = 134,
   SYS_RT_SIGPROCMASK = 135,
+  SYS_RT_SIGRETURN = 139,
   SYS_SETGID = 144,
   SYS_SETUID = 146,
   SYS_SET_PGID = 154,
@@ -2020,8 +2021,9 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_TKILL] = &&l_tkill,
     [SYS_TGKILL] = &&l_tgkill,
     [SYS_SIGALTSTACK] = &&l_sigaltstack,
-    [SYS_RT_SIGACTION] = &&l_zero,
+    [SYS_RT_SIGACTION] = &&l_rt_sigaction,
     [SYS_RT_SIGPROCMASK] = &&l_zero,
+    [SYS_RT_SIGRETURN] = &&l_rt_sigreturn,
     [SYS_SETGID] = &&l_setgid,
     [SYS_SETUID] = &&l_setuid,
     [SYS_SET_PGID] = &&l_setpgid,
@@ -2196,6 +2198,10 @@ l_tgkill:
     return SYSCALL_SWITCHED;
   }
   return cell_kill((int)a1, (int)a2);
+l_rt_sigaction:
+  return cell_rt_sigaction((int)a0, a1, a2, a3);
+l_rt_sigreturn:
+  return cell_rt_sigreturn(f) == 0 ? SYSCALL_SWITCHED : -(int64_t)EFAULT;
 l_sigaltstack:
   return sys_sigaltstack(a0, a1);
 l_spore_snapshot:
