@@ -1,0 +1,17 @@
+#!/usr/bin/env msh
+echo "something: shebang ok"
+
+if [ -d /tmp ]; then
+  echo "something: if ok"
+else
+  echo "something: if failed"
+fi
+
+rm -f /tmp/something.once
+while [ ! -e /tmp/something.once ]; do
+  echo "something: while ok"
+  touch /tmp/something.once
+done
+
+rm -f /tmp/something.once
+echo "something: done"

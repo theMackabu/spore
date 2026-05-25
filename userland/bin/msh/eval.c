@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -130,13 +131,33 @@ static int apply_redirs(const struct redirs *redir) {
 
 static void exec_search(char **argv) {
   char path[160];
+  char *script_argv[ARG_CAP + 1];
+  const char *name = basename(argv[0]);
+  size_t name_len = strlen(name);
+  bool msh_script = name_len > 4 && strcmp(name + name_len - 4, ".msh") == 0;
+
+  if (msh_script) {
+    script_argv[0] = "/bin/msh";
+    script_argv[1] = argv[0];
+    int i = 1;
+    for (; argv[i] != NULL && i + 1 < ARG_CAP; ++i) {
+      script_argv[i + 1] = argv[i];
+    }
+    script_argv[i + 1] = NULL;
+  }
+
   if (strchr(argv[0], '/') != NULL) {
     execve(argv[0], argv, environ);
+    if (msh_script && access(argv[0], R_OK) == 0) { execve("/bin/msh", script_argv, environ); }
     return;
   }
 
   snprintf(path, sizeof(path), "./%s", argv[0]);
   execve(path, argv, environ);
+  if (msh_script && access(path, R_OK) == 0) {
+    script_argv[1] = path;
+    execve("/bin/msh", script_argv, environ);
+  }
 
   const char *path_env = getenv("PATH");
   if (path_env == NULL || path_env[0] == '\0') { path_env = "/bin"; }
@@ -150,6 +171,10 @@ static void exec_search(char **argv) {
       snprintf(path, sizeof(path), "%.*s/%s", (int)len, p, argv[0]);
     }
     execve(path, argv, environ);
+    if (msh_script && access(path, R_OK) == 0) {
+      script_argv[1] = path;
+      execve("/bin/msh", script_argv, environ);
+    }
     if (end == NULL) { break; }
     p = end + 1;
   }
@@ -255,6 +280,78 @@ static bool all_assignments(struct command *cmd) {
   return true;
 }
 
+static int test_integer_compare(const char *a, const char *op, const char *b) {
+  char *a_end = NULL;
+  char *b_end = NULL;
+  long av = strtol(a, &a_end, 10);
+  long bv = strtol(b, &b_end, 10);
+  if (a_end == a || *a_end != '\0' || b_end == b || *b_end != '\0') { return 2; }
+  if (streq(op, "-eq")) { return av == bv ? 0 : 1; }
+  if (streq(op, "-ne")) { return av != bv ? 0 : 1; }
+  if (streq(op, "-lt")) { return av < bv ? 0 : 1; }
+  if (streq(op, "-le")) { return av <= bv ? 0 : 1; }
+  if (streq(op, "-gt")) { return av > bv ? 0 : 1; }
+  if (streq(op, "-ge")) { return av >= bv ? 0 : 1; }
+  return 2;
+}
+
+static int test_unary(const char *op, const char *arg) {
+  if (streq(op, "-n")) { return arg[0] != '\0' ? 0 : 1; }
+  if (streq(op, "-z")) { return arg[0] == '\0' ? 0 : 1; }
+  if (streq(op, "-e")) { return access(arg, F_OK) == 0 ? 0 : 1; }
+  if (streq(op, "-r")) { return access(arg, R_OK) == 0 ? 0 : 1; }
+  if (streq(op, "-w")) { return access(arg, W_OK) == 0 ? 0 : 1; }
+  if (streq(op, "-x")) { return access(arg, X_OK) == 0 ? 0 : 1; }
+  if (streq(op, "-f") || streq(op, "-d")) {
+    struct stat st;
+    if (stat(arg, &st) != 0) { return 1; }
+    return streq(op, "-f") ? (S_ISREG(st.st_mode) ? 0 : 1) : (S_ISDIR(st.st_mode) ? 0 : 1);
+  }
+  return 2;
+}
+
+static int run_test_builtin(struct command *cmd) {
+  int first = 1;
+  int last = cmd->argc;
+  if (streq(cmd->argv[0], "[")) {
+    if (cmd->argc < 2 || !streq(cmd->argv[cmd->argc - 1], "]")) {
+      eprintf("[: missing ]\n");
+      return 2;
+    }
+    --last;
+  }
+
+  int argc = last - first;
+  char **argv = &cmd->argv[first];
+  bool negate = false;
+  if (argc > 0 && streq(argv[0], "!")) {
+    negate = true;
+    ++argv;
+    --argc;
+  }
+
+  int rc = 2;
+  if (argc == 0) {
+    rc = 1;
+  } else if (argc == 1) {
+    rc = argv[0][0] != '\0' ? 0 : 1;
+  } else if (argc == 2) {
+    rc = test_unary(argv[0], argv[1]);
+  } else if (argc == 3) {
+    if (streq(argv[1], "=") || streq(argv[1], "==")) {
+      rc = streq(argv[0], argv[2]) ? 0 : 1;
+    } else if (streq(argv[1], "!=")) {
+      rc = !streq(argv[0], argv[2]) ? 0 : 1;
+    } else {
+      rc = test_integer_compare(argv[0], argv[1], argv[2]);
+    }
+  }
+
+  if (rc == 2) { eprintf("%s: bad expression\n", cmd->argv[0]); }
+  if (negate && rc != 2) { rc = rc == 0 ? 1 : 0; }
+  return rc;
+}
+
 static void trace_command(const struct command *cmd) {
   if (!xtrace || cmd->argc == 0) { return; }
   const char *ps4 = getenv("PS4");
@@ -300,11 +397,12 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   }
   if (streq(cmd->argv[0], "exit")) { exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : 0); }
   if (streq(cmd->argv[0], "help")) {
-    puts("builtins: . source cd pwd exit help export unset set select jobs wait fg kill confine runc");
-    puts("syntax: NAME=value words quotes $VAR $? ; && || & < > >>");
+    puts("builtins: . source cd pwd exit help export unset set select jobs wait fg kill test [ confine runc");
+    puts("syntax: NAME=value words quotes $VAR $? ; && || & < > >> if/then/else/fi while/do/done");
     puts("prompts: PS1 primary, PS2 continuation, PS3 select, PS4 trace");
     return 0;
   }
+  if (streq(cmd->argv[0], "test") || streq(cmd->argv[0], "[")) { return run_test_builtin(cmd); }
   if (streq(cmd->argv[0], ".") || streq(cmd->argv[0], "source")) {
     if (cmd->argc < 2) { return usage(cmd->argv[0], "FILE"); }
     return sh_source_file(cmd->argv[1], last_status, true);

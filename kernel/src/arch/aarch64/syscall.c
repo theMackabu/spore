@@ -1431,6 +1431,8 @@ static int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr) {
   if (!copy_resolved_path(path_addr, path, sizeof(path))) {
     return path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
+  struct vfs_node node;
+  if (!vfs_lstat(path, &node)) { return -(int64_t)ENOENT; }
   return vfs_unlink(path) ? 0 : -(int64_t)ENOTEMPTY;
 }
 

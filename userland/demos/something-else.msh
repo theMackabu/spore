@@ -1,0 +1,11 @@
+echo "something-else: start"
+
+if test "spore" = "spore"; then
+  echo "something-else: string test ok"
+fi
+
+while false; do
+  echo "something-else: should not print"
+done
+
+echo "something-else: done"
