@@ -1,6 +1,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,16 @@ static bool exists(const char *path) {
 static bool is_dir(const char *path) {
   struct stat st;
   return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static uint64_t file_size(const char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0) { die(path); }
+  return (uint64_t)st.st_size;
+}
+
+static uint64_t align_up_u64(uint64_t value, uint64_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
 }
 
 static void path_join(char *out, size_t cap, const char *a, const char *b) {
@@ -84,6 +95,13 @@ static void write_text_file(const char *path, const char *text) {
   FILE *out = fopen(path, "wb");
   if (out == NULL) { die(path); }
   if (fputs(text, out) == EOF) { die("fputs"); }
+  fclose(out);
+}
+
+static void create_sparse_file(const char *path, uint64_t bytes) {
+  FILE *out = fopen(path, "wb");
+  if (out == NULL) { die(path); }
+  if (ftruncate(fileno(out), (off_t)bytes) != 0) { die("ftruncate"); }
   fclose(out);
 }
 
@@ -266,7 +284,8 @@ static void copy_into_rootfs(const char *src, const char *rootfs, const char *ds
     ensure_dir(parent);
   }
   copy_file(src, out);
-  bool executable = strcmp(dst, "/init") == 0 || strncmp(dst, "/bin/", 5) == 0 || strncmp(dst, "/demos/", 7) == 0;
+  bool executable = strcmp(dst, "/init") == 0 || strncmp(dst, "/bin/", 5) == 0 || strncmp(dst, "/usr/bin/", 9) == 0 ||
+                    strncmp(dst, "/usr/local/bin/", 15) == 0 || strncmp(dst, "/demos/", 7) == 0;
   chmod(out, executable ? 0755 : 0644);
 }
 
@@ -500,10 +519,10 @@ int main(int argc, char **argv) {
   install_musl_runtime(source_root, rootfs_dir);
   install_default_accounts(rootfs_dir);
 
-  char of_arg[MAX_PATH + 4];
-  snprintf(of_arg, sizeof(of_arg), "of=%s", output_image);
-  char *const dd_argv[] = {"dd", "if=/dev/zero", of_arg, "bs=1M", "count=16", NULL};
-  run_argv(dd_argv, true);
+  uint64_t esp_payload = file_size(boot_efi) + file_size(kernel_elf) + file_size(modules_txt);
+  uint64_t esp_size = align_up_u64(esp_payload * 2u + 2u * 1024u * 1024u, 1024u * 1024u);
+  if (esp_size < 9u * 1024u * 1024u) { esp_size = 9u * 1024u * 1024u; }
+  create_sparse_file(output_image, esp_size);
   char *const mkfs_argv[] = {"mkfs.fat", "-F", "16", (char *)output_image, NULL};
   run_argv(mkfs_argv, true);
   char *const mmd_argv[] = {"mmd",         "-i",      (char *)output_image, "::/EFI",

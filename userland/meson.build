@@ -24,6 +24,7 @@ userland_image_data = []
 
 subdir('etc')
 userland_image_data += files('usr/local/htoprc')
+subdir('lib/ncurses')
 subdir('lib/spore')
 
 subdir('bin/init')
@@ -38,6 +39,8 @@ subdir('bin/stat')
 subdir('bin/uname')
 subdir('bin/edit')
 subdir('bin/pico')
+subdir('bin/nano')
+subdir('bin/vim')
 subdir('bin/head')
 subdir('bin/tail')
 subdir('bin/wc')

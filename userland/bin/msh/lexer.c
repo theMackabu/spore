@@ -58,6 +58,18 @@ static bool token_add(struct token *tokens, size_t *count, enum token_type type,
   return true;
 }
 
+static bool expand_tilde(char *word, size_t cap) {
+  if (word[0] != '~' || (word[1] != '\0' && word[1] != '/')) { return true; }
+  const char *home = getenv("HOME");
+  if (home == NULL || home[0] == '\0') { home = "/"; }
+  const char *suffix = word[1] == '/' ? word + 1 : "";
+  char expanded[WORD_CAP];
+  int n = snprintf(expanded, sizeof(expanded), "%s%s", home, suffix);
+  if (n < 0 || (size_t)n >= cap) { return false; }
+  snprintf(word, cap, "%s", expanded);
+  return true;
+}
+
 int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status) {
   const char *p = line;
   *count = 0;
@@ -100,8 +112,9 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
 
     char word[WORD_CAP] = {0};
     size_t len = 0;
-    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r' && *p != ';' && *p != '&' &&
-           *p != '<' && *p != '>' && !(*p == '&' && p[1] == '&') && !(*p == '|' && p[1] == '|')) {
+    bool tilde_eligible = false;
+    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r' && *p != ';' && *p != '&' && *p != '<' &&
+           *p != '>' && !(*p == '&' && p[1] == '&') && !(*p == '|' && p[1] == '|')) {
       if (*p == '\'') {
         ++p;
         while (*p != '\0' && *p != '\'') {
@@ -135,10 +148,12 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
           p = next;
           if (!append_text(word, &len, var_value(name, last_status))) { return -1; }
         }
-      } else if (!append_char(word, &len, *p++)) {
-        return -1;
+      } else {
+        if (len == 0 && *p == '~') { tilde_eligible = true; }
+        if (!append_char(word, &len, *p++)) { return -1; }
       }
     }
+    if (tilde_eligible && !expand_tilde(word, sizeof(word))) { return -1; }
     if (!token_add(tokens, count, TOK_WORD, word)) { return -1; }
   }
   return token_add(tokens, count, TOK_END, NULL) ? 0 : -1;

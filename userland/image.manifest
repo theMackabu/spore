@@ -1,9 +1,11 @@
 # source baked-path
 dir /home
 dir /root
+
 userland/bin/init /init
 userland/bin/msh /bin/msh
 symlink msh /bin/sh
+
 userland/bin/shutdown /bin/shutdown
 userland/bin/ls /bin/ls
 userland/bin/cat /bin/cat
@@ -27,7 +29,6 @@ userland/bin/sed-lite /bin/sed-lite
 userland/bin/tar /bin/tar
 userland/bin/ps /bin/ps
 userland/bin/top /bin/top
-userland/bin/htop /bin/htop
 userland/bin/df /bin/df
 userland/bin/free /bin/free
 userland/bin/dirname /bin/dirname
@@ -41,7 +42,7 @@ userland/bin/hostid /bin/hostid
 userland/bin/id /bin/id
 userland/bin/who /bin/who
 userland/bin/tee /bin/tee
-userland/bin/env /bin/env
+userland/bin/env /usr/bin/env
 userland/bin/printenv /bin/printenv
 userland/bin/printf /bin/printf
 userland/bin/tty /bin/tty
@@ -89,10 +90,23 @@ userland/demos/memhog /demos/memhog
 userland/demos/escalate /demos/escalate
 userland/demos/signal-crash /demos/signal-crash
 
-userland/bin/fastfetch /bin/fastfetch
-userland/bin/htop/terminfo/x/xterm-256color /usr/share/terminfo/x/xterm-256color
+userland/bin/fastfetch /usr/local/bin/fastfetch
+userland/bin/htop /usr/local/bin/htop
+userland/bin/nano /usr/local/bin/nano
+userland/bin/vim /usr/local/bin/vim
+
+symlink vim /usr/local/bin/vi
+userland/lib/ncurses/libncurses.so.6.4 /lib/libncurses.so.6.4
+symlink libncurses.so.6.4 /lib/libncurses.so.6
+symlink libncurses.so.6 /lib/libncurses.so
+userland/lib/ncurses/terminfo/x/xterm-256color /usr/share/terminfo/x/xterm-256color
+
+dir /lib
 dir /usr
+dir /usr/bin
 dir /usr/local
+dir /usr/local/bin
+
 userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd
 userland/etc/profile /etc/profile

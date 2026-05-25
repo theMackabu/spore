@@ -1,4 +1,4 @@
-export PATH='/bin:.'
+export PATH='/bin:/usr/bin:/usr/local/bin:.'
 export SHELL='/bin/msh'
 export TERM='xterm-256color'
 export PS1='\e[32m\u@\h\e[0m:\e[34m\w\e[0m\$ '

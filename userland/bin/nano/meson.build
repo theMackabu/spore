@@ -1,5 +1,5 @@
-userland_htop = custom_target('userland-htop',
-  output: 'htop',
+userland_nano = custom_target('userland-nano',
+  output: 'nano',
   depends: userland_ncurses,
   command: [
     files('build.sh'),
@@ -7,4 +7,4 @@ userland_htop = custom_target('userland-htop',
     meson.current_build_dir(),
     '@OUTPUT@',
   ])
-userland_image_targets += userland_htop
+userland_image_targets += userland_nano

@@ -18,8 +18,10 @@ static void print_motd(void) {
 int main(void) {
   char *const argv[] = {"/bin/msh", NULL};
   char *const envp[] = {
-    "PATH=/bin:.",    "HOME=/home/spore",    "USER=spore",      "LOGNAME=spore",
-    "SHELL=/bin/msh", "TERM=xterm-256color", "PWD=/home/spore", NULL,
+    "HOME=/home/spore",
+    "USER=spore",
+    "LOGNAME=spore",
+    NULL,
   };
   print_motd();
   for (;;) {
