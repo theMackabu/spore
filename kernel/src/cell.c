@@ -61,6 +61,9 @@ static bool tty_prompt_active;
 static volatile bool scheduler_waiting_for_interrupt;
 static int tty_foreground_pgrp;
 
+extern void arch_fp_save(struct fp_state *state);
+extern void arch_fp_restore(const struct fp_state *state);
+
 static size_t domain_resident_pages(const struct domain *domain);
 static void wake_poll_waiters(void);
 static void wake_pipe_waiters(void);
@@ -913,11 +916,13 @@ int cell_apply_policy(const char *manifest) {
 void cell_save_current(const struct trap_frame *frame) {
   if (current_thread == NULL) { return; }
   current_thread->tf = *frame;
+  arch_fp_save(&current_thread->fp);
   __asm__ volatile("mrs %0, tpidr_el0" : "=r"(current_thread->tpidr_el0));
 }
 
 static void restore_thread(struct thread *thread, struct trap_frame *frame, struct domain *old_domain) {
   if (old_domain != thread->domain) { vmm_install_user(&thread->domain->as); }
+  arch_fp_restore(&thread->fp);
   __asm__ volatile("msr tpidr_el0, %0" : : "r"(thread->tpidr_el0));
   *frame = thread->tf;
 }
@@ -925,6 +930,7 @@ static void restore_thread(struct thread *thread, struct trap_frame *frame, stru
 void cell_restore_current(struct trap_frame *frame) {
   if (current_thread == NULL) { return; }
   vmm_install_user(&current_thread->domain->as);
+  arch_fp_restore(&current_thread->fp);
   __asm__ volatile("msr tpidr_el0, %0" : : "r"(current_thread->tpidr_el0));
   *frame = current_thread->tf;
 }
@@ -1199,6 +1205,7 @@ int cell_fork_current(struct trap_frame *frame) {
   child_domain->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   child_thread->tf = current_thread->tf;
+  child_thread->fp = current_thread->fp;
   child_thread->tf.x[0] = 0;
   child_thread->tpidr_el0 = current_thread->tpidr_el0;
   current_thread->tf.x[0] = (uint64_t)child_domain->id;
@@ -1225,6 +1232,7 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   cell_save_current(frame);
   thread->state = THREAD_RUNNABLE;
   thread->tf = current_thread->tf;
+  thread->fp = current_thread->fp;
   thread->tf.x[0] = 0;
   thread->tf.sp_el0 = newsp;
   thread->tpidr_el0 = ((flags & 0x00080000ull) != 0) ? tls : current_thread->tpidr_el0;
@@ -1400,6 +1408,8 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   frame->sp_el0 = sp;
   frame->spsr_el1 = 0x340;
   current_thread->tf = *frame;
+  kmemset(&current_thread->fp, 0, sizeof(current_thread->fp));
+  arch_fp_restore(&current_thread->fp);
   current_thread->tpidr_el0 = 0;
   __asm__ volatile("msr tpidr_el0, %0" : : "r"(0ull));
   wake_vfork_parent_of(domain->id);
@@ -3792,6 +3802,11 @@ bool cell_add_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags) {
   return domain != NULL && vma_insert(&domain->vmas, start, end, prot, flags, VMA_ANON);
 }
 
+bool cell_vma_overlaps(uint64_t start, uint64_t end) {
+  struct domain *domain = current_domain();
+  return domain == NULL || vma_overlaps(&domain->vmas, start, end);
+}
+
 bool cell_remove_vma(uint64_t start, uint64_t end) {
   struct domain *domain = current_domain();
   if (domain == NULL) { return false; }
@@ -3927,6 +3942,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   child_thread->state = THREAD_RUNNABLE;
   cell_save_current(frame);
   child_thread->tf = *frame;
+  child_thread->fp = current_thread->fp;
   child_thread->tf.elr_el1 = entry;
   child_thread->tf.x[0] = arg;
   child_thread->tf.x[1] = (uint64_t)child_domain->id;

@@ -136,6 +136,12 @@ struct signal_action {
   uint64_t mask;
 };
 
+struct fp_state {
+  uint8_t q[32][16];
+  uint64_t fpcr;
+  uint64_t fpsr;
+} __attribute__((aligned(16)));
+
 struct domain {
   int id;
   int parent_id;
@@ -172,6 +178,7 @@ struct thread {
   struct domain *domain;
   enum thread_state state;
   struct trap_frame tf;
+  struct fp_state fp;
   uint64_t tpidr_el0;
   enum wait_reason wait_reason;
   int wait_target;
@@ -325,6 +332,7 @@ void cell_fd_set_dir_offset(int fd, uint64_t offset);
 bool cell_handle_cow_fault(uint64_t far);
 bool cell_handle_translation_fault(uint64_t far, enum vmm_access access);
 bool cell_ensure_user_range(uint64_t va, size_t len, enum vmm_access access);
+bool cell_vma_overlaps(uint64_t start, uint64_t end);
 bool cell_add_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags);
 bool cell_remove_vma(uint64_t start, uint64_t end);
 bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);

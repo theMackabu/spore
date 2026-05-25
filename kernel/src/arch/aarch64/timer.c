@@ -101,6 +101,10 @@ void timer_init(uint64_t hhdm_offset) {
   __asm__ volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
   cntkctl |= 3ull; // EL0PCTEN | EL0VCTEN: userland may read generic counters.
   __asm__ volatile("msr cntkctl_el1, %0" : : "r"(cntkctl) : "memory");
+  uint64_t cpacr;
+  __asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+  cpacr |= 3ull << 20; // FPEN: EL0/EL1 may use FP/SIMD; scheduler saves it per thread.
+  __asm__ volatile("msr cpacr_el1, %0\nisb" : : "r"(cpacr) : "memory");
   uint64_t sctlr;
   __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
   sctlr |= 1ull << 15; // UCT: userland may read CTR_EL0 like Linux permits.

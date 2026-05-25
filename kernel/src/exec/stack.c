@@ -51,10 +51,10 @@ bool build_initial_stack(struct user_address_space *as, const struct loaded_elf 
 bool build_initial_stack_args(struct user_address_space *as, const struct loaded_elf *elf, const char *const argv[],
                               uint64_t argc, const char *const envp[], uint64_t envc, uint64_t *stack_pointer) {
   uint64_t cursor = USER_STACK_TOP;
-  uint64_t argv_va[16];
-  uint64_t envp_va[16];
+  uint64_t argv_va[64];
+  uint64_t envp_va[64];
 
-  if (argc > 16 || envc > 16) { return false; }
+  if (argc > 64 || envc > 64) { return false; }
 
   for (uint64_t i = 0; i < argc; ++i) {
     size_t len = kstrlen(argv[i]) + 1;

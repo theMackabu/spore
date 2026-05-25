@@ -78,6 +78,7 @@ enum {
   SYS_RT_SIGACTION = 134,
   SYS_RT_SIGPROCMASK = 135,
   SYS_RT_SIGRETURN = 139,
+  SYS_TIMES = 153,
   SYS_SETGID = 144,
   SYS_SETUID = 146,
   SYS_SET_PGID = 154,
@@ -85,7 +86,11 @@ enum {
   SYS_GET_SID = 156,
   SYS_SETSID = 157,
   SYS_UNAME = 160,
+  SYS_GETRLIMIT = 163,
+  SYS_SETRLIMIT = 164,
+  SYS_GETRUSAGE = 165,
   SYS_UMASK = 166,
+  SYS_GETTIMEOFDAY = 169,
   SYS_GETPID = 172,
   SYS_GETPPID = 173,
   SYS_GETUID = 174,
@@ -116,7 +121,9 @@ enum {
   SYS_PRLIMIT64 = 261,
   SYS_RENAMEAT2 = 276,
   SYS_GETRANDOM = 278,
+  SYS_MEMBARRIER = 283,
   SYS_STATX = 291,
+  SYS_RSEQ = 293,
   SYS_CLONE3 = 435,
   SYS_FACCESSAT2 = 439,
   SYS_SPORE_SNAPSHOT = 0x4000,
@@ -132,6 +139,7 @@ enum {
   MAP_PRIVATE = 0x02,
   MAP_FIXED = 0x10,
   MAP_ANONYMOUS = 0x20,
+  MAP_FIXED_NOREPLACE = 0x100000,
   MREMAP_MAYMOVE = 1,
   MREMAP_FIXED = 2,
   CLONE_VM = 0x00000100,
@@ -225,8 +233,8 @@ enum {
   MAX_IOVCNT = 1024,
   MAX_POLL_FDS = 64,
   MAX_EXEC_ARGS = 8,
-  MAX_EXEC_ENVS = 8,
-  MAX_EXEC_STRING = 128,
+  MAX_EXEC_ENVS = 64,
+  MAX_EXEC_STRING = 256,
   EXT2_SUPER_MAGIC = 0xef53,
   TMPFS_MAGIC = 0x01021994,
   PROC_SUPER_MAGIC = 0x9fa0,
@@ -256,6 +264,23 @@ struct iovec64 {
 struct timespec64 {
   int64_t tv_sec;
   int64_t tv_nsec;
+};
+
+struct timeval64 {
+  int64_t tv_sec;
+  int64_t tv_usec;
+};
+
+struct timezone32 {
+  int32_t tz_minuteswest;
+  int32_t tz_dsttime;
+};
+
+struct tms64 {
+  int64_t tms_utime;
+  int64_t tms_stime;
+  int64_t tms_cutime;
+  int64_t tms_cstime;
 };
 
 struct pollfd64 {
@@ -944,6 +969,7 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t fla
   uint64_t end = align_up(raw_end, PAGE_SIZE);
   if (end < raw_end) { return -(int64_t)EINVAL; }
   if (!cell_mmap_allowed((end - base) / PAGE_SIZE)) { return -(int64_t)ENOMEM; }
+  if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
   if ((flags & MAP_FIXED) != 0) { (void)cell_remove_vma(base, end); }
   if (!cell_add_vma(base, end, prot_to_vmm(prot), (uint32_t)flags)) { return -(int64_t)EINVAL; }
   if (!anon) {
@@ -1041,6 +1067,46 @@ static int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
   if (tp == 0) { return 0; }
   struct timespec64 ts = {.tv_sec = 0, .tv_nsec = 10000000};
   return user_writable(tp, sizeof(ts)) && vmm_copy_to_user(active_as(), tp, &ts, sizeof(ts)) ? 0 : -(int64_t)EFAULT;
+}
+
+static int64_t sys_gettimeofday(uint64_t tv_addr, uint64_t tz_addr) {
+  uint64_t cnt;
+  uint64_t freq;
+  __asm__ volatile("mrs %0, cntvct_el0" : "=r"(cnt));
+  __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+  uint64_t elapsed_cnt = cnt >= realtime_base_cnt ? cnt - realtime_base_cnt : cnt;
+  if (realtime_freq != 0) { freq = realtime_freq; }
+  if (tv_addr != 0) {
+    struct timeval64 tv = {
+      .tv_sec = (int64_t)(realtime_base_sec + elapsed_cnt / freq),
+      .tv_usec = (int64_t)(((elapsed_cnt % freq) * 1000000ull) / freq),
+    };
+    if (!user_writable(tv_addr, sizeof(tv)) || !vmm_copy_to_user(active_as(), tv_addr, &tv, sizeof(tv))) {
+      return -(int64_t)EFAULT;
+    }
+  }
+  if (tz_addr != 0) {
+    struct timezone32 tz = {.tz_minuteswest = 0, .tz_dsttime = 0};
+    if (!user_writable(tz_addr, sizeof(tz)) || !vmm_copy_to_user(active_as(), tz_addr, &tz, sizeof(tz))) {
+      return -(int64_t)EFAULT;
+    }
+  }
+  return 0;
+}
+
+static int64_t sys_times(uint64_t buf_addr) {
+  uint64_t cnt;
+  uint64_t freq;
+  __asm__ volatile("mrs %0, cntvct_el0" : "=r"(cnt));
+  __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+  int64_t ticks = (int64_t)((cnt * 100ull) / freq);
+  if (buf_addr != 0) {
+    struct tms64 tms = {.tms_utime = ticks, .tms_stime = 0, .tms_cutime = 0, .tms_cstime = 0};
+    if (!user_writable(buf_addr, sizeof(tms)) || !vmm_copy_to_user(active_as(), buf_addr, &tms, sizeof(tms))) {
+      return -(int64_t)EFAULT;
+    }
+  }
+  return ticks;
 }
 
 static int64_t sys_sigaltstack(uint64_t new_addr, uint64_t old_addr) {
@@ -2024,6 +2090,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_RT_SIGACTION] = &&l_rt_sigaction,
     [SYS_RT_SIGPROCMASK] = &&l_zero,
     [SYS_RT_SIGRETURN] = &&l_rt_sigreturn,
+    [SYS_TIMES] = &&l_times,
     [SYS_SETGID] = &&l_setgid,
     [SYS_SETUID] = &&l_setuid,
     [SYS_SET_PGID] = &&l_setpgid,
@@ -2031,7 +2098,11 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_GET_SID] = &&l_getsid,
     [SYS_SETSID] = &&l_setsid,
     [SYS_UNAME] = &&l_uname,
+    [SYS_GETRLIMIT] = &&l_getrlimit,
+    [SYS_SETRLIMIT] = &&l_setrlimit,
+    [SYS_GETRUSAGE] = &&l_getrusage,
     [SYS_UMASK] = &&l_umask,
+    [SYS_GETTIMEOFDAY] = &&l_gettimeofday,
     [SYS_GETPID] = &&l_getpid,
     [SYS_GETPPID] = &&l_getppid,
     [SYS_GETUID] = &&l_getuid,
@@ -2062,7 +2133,9 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_PRLIMIT64] = &&l_prlimit64,
     [SYS_RENAMEAT2] = &&l_renameat2,
     [SYS_GETRANDOM] = &&l_getrandom,
+    [SYS_MEMBARRIER] = &&l_membarrier,
     [SYS_STATX] = &&l_statx,
+    [SYS_RSEQ] = &&l_rseq,
     [SYS_CLONE3] = &&l_enosys,
     [SYS_FACCESSAT2] = &&l_faccessat2,
   };
@@ -2204,6 +2277,8 @@ l_rt_sigreturn:
   return cell_rt_sigreturn(f) == 0 ? SYSCALL_SWITCHED : -(int64_t)EFAULT;
 l_sigaltstack:
   return sys_sigaltstack(a0, a1);
+l_times:
+  return sys_times(a0);
 l_spore_snapshot:
   return snapshot_create_current();
 l_spore_spawn:
@@ -2338,6 +2413,12 @@ l_fcntl:
   return -(int64_t)EINVAL;
 l_getcwd:
   return sys_getcwd(a0, a1);
+l_getrlimit:
+  return sys_prlimit64(0, a0, 0, a1);
+l_setrlimit:
+  return sys_prlimit64(0, a0, a1, 0);
+l_getrusage:
+  return a1 == 0 ? -(int64_t)EFAULT : zero_user(a1, 144);
 l_prlimit64:
   return sys_prlimit64(a0, a1, a2, a3);
 l_sysinfo:
@@ -2398,6 +2479,12 @@ l_clock_gettime:
   return sys_clock_gettime(a0, a1);
 l_clock_getres:
   return sys_clock_getres(a0, a1);
+l_gettimeofday:
+  return sys_gettimeofday(a0, a1);
+l_membarrier:
+  return a0 == 0 ? 0 : -(int64_t)EINVAL;
+l_rseq:
+  return -(int64_t)ENOSYS;
 l_enosys:
   return -(int64_t)ENOSYS;
 l_unknown:

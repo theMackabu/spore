@@ -59,13 +59,19 @@ const struct vma *vma_lookup(const struct vma_list *list, uint64_t va) {
   return NULL;
 }
 
+bool vma_overlaps(const struct vma_list *list, uint64_t start, uint64_t end) {
+  if (start >= end) { return true; }
+  for (size_t i = 0; i < MAX_VMAS; ++i) {
+    const struct vma *vma = &list->entries[i];
+    if (vma->used && overlaps(start, end, vma->start, vma->end)) { return true; }
+  }
+  return false;
+}
+
 bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
                 enum vma_type type) {
   if (start >= end) { return false; }
-  for (size_t i = 0; i < MAX_VMAS; ++i) {
-    const struct vma *vma = &list->entries[i];
-    if (vma->used && overlaps(start, end, vma->start, vma->end)) { return false; }
-  }
+  if (vma_overlaps(list, start, end)) { return false; }
   if (!add_raw(list, start, end, prot, flags, type)) { return false; }
   merge_adjacent(list);
   return true;
