@@ -240,7 +240,7 @@ static int run_external(struct command *cmd) {
       _exit(126);
     }
     exec_search(cmd->argv);
-    fprintf(stderr, "%s: not found\n", cmd->argv[0]);
+    perror(cmd->argv[0]);
     _exit(127);
   }
   if (cmd->background) {

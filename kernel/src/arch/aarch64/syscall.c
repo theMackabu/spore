@@ -234,7 +234,7 @@ enum {
   MAX_POLL_FDS = 64,
   MAX_EXEC_ARGS = 8,
   MAX_EXEC_ENVS = 64,
-  MAX_EXEC_STRING = 256,
+  MAX_EXEC_STRING = 8192,
   EXT2_SUPER_MAGIC = 0xef53,
   TMPFS_MAGIC = 0x01021994,
   PROC_SUPER_MAGIC = 0x9fa0,
@@ -1263,8 +1263,10 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   char path[128];
   if (!copy_exec_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
 
-  char argv_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
-  char env_store[MAX_EXEC_ENVS][MAX_EXEC_STRING];
+  // Large argv/env scratch is static because the v2 run-to-completion kernel
+  // never re-enters sys_execve concurrently on this single CPU.
+  static char argv_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
+  static char env_store[MAX_EXEC_ENVS][MAX_EXEC_STRING];
   const char *argv[MAX_EXEC_ARGS];
   const char *envp[MAX_EXEC_ENVS];
   uint64_t argc = 0;
@@ -1288,7 +1290,7 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   if (!node_access_allowed(&exec_node, X_OK)) { return -(int64_t)EACCES; }
   struct elf_reader exec_reader;
   if (!make_elf_reader(&exec_node, &exec_reader)) { return -(int64_t)ENOENT; }
-  char shebang_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
+  static char shebang_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
   char shebang_interp[128];
   char shebang_arg[128];
   bool shebang_has_arg = false;
