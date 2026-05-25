@@ -1810,6 +1810,18 @@ static void system_poweroff(void) {
   }
 }
 
+static void system_reboot(void) {
+  __asm__ volatile("mov x0, #0x0009\n"
+                   "movk x0, #0x8400, lsl #16\n"
+                   "hvc #0\n"
+                   :
+                   :
+                   : "x0", "memory");
+  for (;;) {
+    __asm__ volatile("wfe");
+  }
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-label-as-value"
 static int64_t dispatch(struct trap_frame *f) {
@@ -2045,8 +2057,13 @@ l_spore_shutdown:
     kprintf("[kernel] shutdown denied uid=%d euid=%d\n", (int)cell_current_uid(), (int)cell_current_euid());
     return -(int64_t)EPERM;
   }
-  kprintf("[kernel] shutdown\n");
-  system_poweroff();
+  if (a0 == 1) {
+    kprintf("[kernel] reboot\n");
+    system_reboot();
+  } else {
+    kprintf("[kernel] shutdown\n");
+    system_poweroff();
+  }
   return 0;
 l_spore_procinfo: {
   size_t max = a1 / sizeof(struct proc_info);

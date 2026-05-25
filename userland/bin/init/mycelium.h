@@ -13,11 +13,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -123,6 +125,7 @@ struct unit {
   uint64_t cpu_budget_ticks;
   uint64_t memory_pages;
   bool persistent;
+  bool boot_reported;
   time_t next_fire;
   char log_mem[LOG_MEM];
   size_t log_len;
@@ -135,6 +138,12 @@ extern bool shutting_down;
 extern const char *start_stack[UNIT_CAP];
 extern int start_depth;
 extern bool defer_console_start;
+extern bool boot_status_enabled;
+
+#define MYC_RESET "\033[0m"
+#define MYC_GREEN "\033[1;32m"
+#define MYC_CYAN "\033[1;36m"
+#define MYC_BLUE "\033[1;34m"
 
 const char *state_name(enum unit_state state);
 const char *type_name(enum unit_type type);
@@ -152,6 +161,12 @@ void list_add_words(struct string_list *list, const char *value);
 bool list_has(const struct string_list *list, const char *name);
 int split_args(char *cmd, char **argv, int cap);
 void load_environment_file(const char *path);
+void boot_banner(void);
+void boot_statusf(const char *fmt, ...);
+void boot_infof(const char *fmt, ...);
+void boot_run_login_banner(void);
+void announce_unit_started(struct unit *unit);
+void append_done_line(char *out, size_t cap, const char *fmt, ...);
 
 struct unit *unit_by_name(const char *name);
 struct unit *unit_for_pid(pid_t pid);

@@ -1,5 +1,5 @@
 project('spore', 'c',
-  version: '0.4.3',
+  version: '0.4.4',
   default_options: [
     'c_std=c23',
     'warning_level=3',

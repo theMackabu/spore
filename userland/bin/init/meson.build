@@ -2,6 +2,7 @@ userland_init = custom_target('userland-init',
   input: files(
     'main.c',
     'common.c',
+    'ui.c',
     'units.c',
     'service.c',
     'control.c',

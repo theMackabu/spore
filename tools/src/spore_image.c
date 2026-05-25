@@ -342,7 +342,8 @@ static void copy_into_rootfs(const char *src, const char *rootfs, const char *ds
   copy_file(src, out);
   bool executable = strncmp(dst, "/bin/", 5) == 0 || strncmp(dst, "/sbin/", 6) == 0 ||
                     strncmp(dst, "/usr/bin/", 9) == 0 || strncmp(dst, "/usr/local/bin/", 15) == 0 ||
-                    strncmp(dst, "/lib/mycelium/", 14) == 0 || strncmp(dst, "/home/spore/demos/", 18) == 0;
+                    strncmp(dst, "/lib/mycelium/", 14) == 0 || strncmp(dst, "/home/spore/demos/", 18) == 0 ||
+                    strncmp(dst, "/etc/update-motd.d/", 19) == 0;
   chmod(out, executable ? 0755 : 0644);
 }
 

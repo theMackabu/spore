@@ -7,6 +7,7 @@ userland_os_release = configure_file(
 
 userland_image_data += files(
   'motd',
+  'update-motd.d/90-last-login',
   'environment',
   'profile',
   'dashrc',

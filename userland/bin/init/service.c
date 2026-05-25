@@ -209,6 +209,7 @@ int start_unit_name(const char *name, char *err, size_t err_cap) {
   if (unit->type == UNIT_TARGET) {
     unit->state = STATE_ACTIVE;
     unit->active_since = time(NULL);
+    announce_unit_started(unit);
     goto out;
   }
   if (unit->type == UNIT_TIMER) {
@@ -222,10 +223,12 @@ int start_unit_name(const char *name, char *err, size_t err_cap) {
       copy_text(unit->unit_to_activate, sizeof(unit->unit_to_activate), base);
     }
     arm_timer(unit);
+    announce_unit_started(unit);
     goto out;
   }
   if (unit->type != UNIT_SERVICE) {
     unit->state = STATE_ACTIVE;
+    announce_unit_started(unit);
     goto out;
   }
 
@@ -240,11 +243,13 @@ int start_unit_name(const char *name, char *err, size_t err_cap) {
     unit->status = rc << 8;
     unit->state = rc == 0 ? STATE_ACTIVE : STATE_FAILED;
     unit->active_since = time(NULL);
+    if (rc == 0) { announce_unit_started(unit); }
     if (unit->exec_start_post[0] != '\0') { (void)run_oneshot_command(unit, unit->exec_start_post); }
     result = rc == 0 ? 0 : -1;
     goto out;
   }
   result = spawn_service(unit);
+  if (result == 0) { announce_unit_started(unit); }
 out:
   if (start_depth > 0) { --start_depth; }
   return result;

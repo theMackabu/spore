@@ -6,18 +6,7 @@ bool shutting_down;
 const char *start_stack[UNIT_CAP];
 int start_depth;
 bool defer_console_start = true;
-
-void print_motd(void) {
-  int fd = open("/etc/motd", O_RDONLY);
-  if (fd < 0) { return; }
-  char buf[128];
-  for (;;) {
-    ssize_t n = read(fd, buf, sizeof(buf));
-    if (n <= 0) { break; }
-    (void)write(STDOUT_FILENO, buf, (size_t)n);
-  }
-  close(fd);
-}
+bool boot_status_enabled;
 
 static void manager_maintenance(void) {
   reap_children();
@@ -85,19 +74,26 @@ int main(void) {
   append_log_file("/var/log/cron", "");
   append_log_file("/var/log/boot.log", "");
   append_log_file("/var/log/kern.log", "");
-  boot_log_append("mycelium: boot log opened\n");
+  boot_banner();
+  boot_statusf("Opened system log files.");
   sync_kernel_log(true);
   load_units();
+  boot_statusf("Loaded mycelium unit files.");
   setup_control_socket();
+  if (control_fd >= 0) { boot_statusf("Started mycelium control socket."); }
 
   char err[160] = {0};
+  boot_status_enabled = true;
   (void)start_unit_name("multi-user.target", err, sizeof(err));
-  puts("spore: mycelium starting, reached multi-user.target");
-  boot_log_append("spore: mycelium starting, reached multi-user.target\n");
-  print_motd();
+  boot_infof("spore: mycelium starting, reached multi-user.target");
+  boot_statusf("Started interactive Spore console.");
+  struct unit *console = unit_by_name("console.service");
+  if (console != NULL) { console->boot_reported = true; }
+  boot_run_login_banner();
   fflush(stdout);
   defer_console_start = false;
   (void)start_unit_name("console.service", err, sizeof(err));
+  boot_status_enabled = false;
 
   for (;;) {
     manager_maintenance();

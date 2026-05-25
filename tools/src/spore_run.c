@@ -494,11 +494,18 @@ static void write_serial_output(const char *chunk, size_t n, struct startup_seri
   ssize_t prompt_at = find_shell_prompt(startup->buf, startup->len);
   if (prompt_at < 0) { return; }
 
-  ssize_t handoff_at = find_after_last_marker(startup->buf, startup->len, "spore: mycelium starting");
+  const char *boot_ui_marker = "\033[1;36m       .-.";
+  ssize_t handoff_at = find_after_last_marker(startup->buf, startup->len, boot_ui_marker);
   if (handoff_at >= 0) {
-    handoff_at -= (ssize_t)strlen("spore: mycelium starting");
+    handoff_at -= (ssize_t)strlen(boot_ui_marker);
   } else {
-    handoff_at = prompt_at;
+    const char *mycelium_marker = "spore: mycelium starting";
+    handoff_at = find_after_last_marker(startup->buf, startup->len, mycelium_marker);
+    if (handoff_at >= 0) {
+      handoff_at -= (ssize_t)strlen(mycelium_marker);
+    } else {
+      handoff_at = prompt_at;
+    }
   }
   while ((size_t)handoff_at < startup->len && (startup->buf[handoff_at] == '\r' || startup->buf[handoff_at] == '\n')) {
     ++handoff_at;

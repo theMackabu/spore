@@ -1,0 +1,3 @@
+#!/bin/msh
+printf "Last login: "
+date

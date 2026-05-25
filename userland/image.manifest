@@ -7,6 +7,7 @@ dir /lib/mycelium
 dir /run/mycelium
 dir /var/log
 dir /var/lib/mycelium
+dir /etc/update-motd.d
 
 userland/bin/init /lib/mycelium/init
 symlink /lib/mycelium/init /sbin/init
@@ -126,6 +127,7 @@ userland/lib/ncurses/terminfo/s/spore /usr/share/terminfo/s/spore
 
 userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd
+userland/etc/update-motd.d/90-last-login /etc/update-motd.d/90-last-login
 userland/etc/environment /etc/environment
 userland/etc/profile /etc/profile
 userland/etc/dashrc /etc/dashrc
