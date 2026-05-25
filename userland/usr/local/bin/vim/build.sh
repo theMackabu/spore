@@ -12,7 +12,7 @@ out=$3
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 cleaner="$build/elf-clean-runpath"
-nc_inst="$build/../../lib/ncurses/ncurses-install"
+nc_inst="$build/../../../../lib/ncurses/ncurses-install"
 vim_src="$root/userland/third_party/vim"
 vim_work="$build/vim-src"
 

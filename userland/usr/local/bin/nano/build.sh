@@ -12,7 +12,7 @@ out=$3
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 cleaner="$build/elf-clean-runpath"
-nc_inst="$build/../../lib/ncurses/ncurses-install"
+nc_inst="$build/../../../../lib/ncurses/ncurses-install"
 nano_src="$root/userland/third_party/nano"
 nano_work="$build/nano-src"
 nano_build="$build/nano-build"

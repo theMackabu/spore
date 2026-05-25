@@ -42,7 +42,7 @@ userland/bin/hostid /bin/hostid
 userland/bin/id /bin/id
 userland/bin/who /bin/who
 userland/bin/tee /bin/tee
-userland/bin/env /usr/bin/env
+userland/usr/bin/env /usr/bin/env
 userland/bin/printenv /bin/printenv
 userland/bin/printf /bin/printf
 userland/bin/tty /bin/tty
@@ -90,26 +90,25 @@ userland/demos/memhog /demos/memhog
 userland/demos/escalate /demos/escalate
 userland/demos/signal-crash /demos/signal-crash
 
-userland/bin/fastfetch /usr/local/bin/fastfetch
-userland/bin/htop /usr/local/bin/htop
-userland/bin/nano /usr/local/bin/nano
-userland/bin/vim /usr/local/bin/vim
+userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
+userland/usr/local/bin/htop /usr/local/bin/htop
+userland/usr/local/bin/nano /usr/local/bin/nano
+userland/usr/local/bin/vim /usr/local/bin/vim
 
 symlink vim /usr/local/bin/vi
+dir /usr/local/share/vim/vim92
+
+userland/usr/local/share/vim/vim92/defaults.vim /usr/local/share/vim/vim92/defaults.vim
 userland/lib/ncurses/libncurses.so.6.4 /lib/libncurses.so.6.4
+
 symlink libncurses.so.6.4 /lib/libncurses.so.6
 symlink libncurses.so.6 /lib/libncurses.so
 userland/lib/ncurses/terminfo/x/xterm-256color /usr/share/terminfo/x/xterm-256color
-
-dir /lib
-dir /usr
-dir /usr/bin
-dir /usr/local
-dir /usr/local/bin
 
 userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd
 userland/etc/profile /etc/profile
 userland/etc/os-release /etc/os-release
+
 userland/etc/fastfetch/config.jsonc /etc/fastfetch/config.jsonc
 userland/etc/fastfetch/spore.logo /etc/fastfetch/spore.logo
