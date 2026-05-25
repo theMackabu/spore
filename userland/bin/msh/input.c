@@ -1,10 +1,28 @@
 #include "msh.h"
 
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+
+enum {
+  COMPLETE_CAP = 96,
+  COMPLETE_NAME_CAP = 160,
+  COMPLETE_PATH_CAP = 256,
+};
+
+struct completion {
+  char text[COMPLETE_NAME_CAP];
+  bool dir;
+};
+
+static const char *builtins[] = {
+  ".",   "cd",   "confine", "exit", "export", "fg",   "help",  "jobs", "kill",
+  "pwd", "runc", "select",  "set",  "source", "test", "unset", "wait",
+};
 
 static bool path_has_prefix_dir(const char *path, const char *prefix) {
   size_t n = strlen(prefix);
@@ -184,6 +202,212 @@ static void replace_line(char *buf, size_t cap, size_t *len, size_t *cursor, con
   *cursor = *len;
 }
 
+static bool is_word_break(char c) {
+  return c == ' ' || c == '\t' || c == '|' || c == ';' || c == '&' || c == '<' || c == '>';
+}
+
+static bool starts_with(const char *s, const char *prefix) {
+  size_t n = strlen(prefix);
+  return strncmp(s, prefix, n) == 0;
+}
+
+static bool completion_exists(const struct completion *items, size_t count, const char *text) {
+  for (size_t i = 0; i < count; ++i) {
+    if (streq(items[i].text, text)) { return true; }
+  }
+  return false;
+}
+
+static void add_completion(struct completion *items, size_t *count, const char *text, bool dir) {
+  if (*count >= COMPLETE_CAP || text[0] == '\0' || completion_exists(items, *count, text)) { return; }
+  snprintf(items[*count].text, sizeof(items[*count].text), "%s", text);
+  items[*count].dir = dir;
+  ++*count;
+}
+
+static bool command_position(const char *buf, size_t word_start) {
+  size_t i = word_start;
+  while (i > 0 && (buf[i - 1] == ' ' || buf[i - 1] == '\t')) {
+    --i;
+  }
+  if (i == 0) { return true; }
+  char prev = buf[i - 1];
+  return prev == '|' || prev == ';' || prev == '&';
+}
+
+static void split_completion_word(const char *word, char *dir, size_t dir_cap, char *prefix, size_t prefix_cap,
+                                  char *insert_dir, size_t insert_dir_cap) {
+  const char *slash = strrchr(word, '/');
+  const char *home = getenv("HOME");
+  if (home == NULL || home[0] == '\0') { home = "/"; }
+
+  if (slash == NULL) {
+    snprintf(dir, dir_cap, ".");
+    snprintf(insert_dir, insert_dir_cap, "");
+    snprintf(prefix, prefix_cap, "%s", word);
+    return;
+  }
+
+  size_t dir_len = (size_t)(slash - word);
+  if (dir_len == 0) {
+    snprintf(dir, dir_cap, "/");
+    snprintf(insert_dir, insert_dir_cap, "/");
+  } else if (word[0] == '~' && (word[1] == '/' || word[1] == '\0')) {
+    snprintf(dir, dir_cap, "%s%.*s", home, (int)(dir_len - 1), word + 1);
+    snprintf(insert_dir, insert_dir_cap, "%.*s/", (int)dir_len, word);
+  } else {
+    snprintf(dir, dir_cap, "%.*s", (int)dir_len, word);
+    snprintf(insert_dir, insert_dir_cap, "%.*s/", (int)dir_len, word);
+  }
+  snprintf(prefix, prefix_cap, "%s", slash + 1);
+}
+
+static void join_completion_stat_path(char *out, size_t cap, const char *dir, const char *name) {
+  if (streq(dir, "/")) {
+    snprintf(out, cap, "/%s", name);
+  } else {
+    snprintf(out, cap, "%s/%s", dir, name);
+  }
+}
+
+static void collect_path_matches(const char *word, struct completion *items, size_t *count) {
+  char dir[COMPLETE_PATH_CAP];
+  char prefix[COMPLETE_NAME_CAP];
+  char insert_dir[COMPLETE_PATH_CAP];
+  split_completion_word(word, dir, sizeof(dir), prefix, sizeof(prefix), insert_dir, sizeof(insert_dir));
+
+  DIR *d = opendir(dir);
+  if (d == NULL) { return; }
+  struct dirent *ent;
+  while ((ent = readdir(d)) != NULL) {
+    if (!starts_with(ent->d_name, prefix)) { continue; }
+    if (ent->d_name[0] == '.' && prefix[0] != '.') { continue; }
+    char stat_path[COMPLETE_PATH_CAP];
+    join_completion_stat_path(stat_path, sizeof(stat_path), dir, ent->d_name);
+    struct stat st;
+    bool is_dir = stat(stat_path, &st) == 0 && S_ISDIR(st.st_mode);
+    char text[COMPLETE_NAME_CAP];
+    snprintf(text, sizeof(text), "%s%s", insert_dir, ent->d_name);
+    add_completion(items, count, text, is_dir);
+  }
+  closedir(d);
+}
+
+static void collect_command_matches(const char *word, struct completion *items, size_t *count) {
+  for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); ++i) {
+    if (starts_with(builtins[i], word)) { add_completion(items, count, builtins[i], false); }
+  }
+
+  const char *path = getenv("PATH");
+  if (path == NULL || path[0] == '\0') { path = "/bin"; }
+  const char *p = path;
+  while (*p != '\0') {
+    const char *end = strchr(p, ':');
+    size_t len = end == NULL ? strlen(p) : (size_t)(end - p);
+    char dir[COMPLETE_PATH_CAP];
+    if (len == 0) {
+      snprintf(dir, sizeof(dir), ".");
+    } else {
+      snprintf(dir, sizeof(dir), "%.*s", (int)len, p);
+    }
+    DIR *d = opendir(dir);
+    if (d != NULL) {
+      struct dirent *ent;
+      while ((ent = readdir(d)) != NULL) {
+        if (!starts_with(ent->d_name, word)) { continue; }
+        char stat_path[COMPLETE_PATH_CAP];
+        join_completion_stat_path(stat_path, sizeof(stat_path), dir, ent->d_name);
+        if (access(stat_path, X_OK) == 0) { add_completion(items, count, ent->d_name, false); }
+      }
+      closedir(d);
+    }
+    if (end == NULL) { break; }
+    p = end + 1;
+  }
+}
+
+static int compare_completion(const void *lhs, const void *rhs) {
+  const struct completion *a = lhs;
+  const struct completion *b = rhs;
+  return strcmp(a->text, b->text);
+}
+
+static size_t common_prefix_len(const struct completion *items, size_t count) {
+  if (count == 0) { return 0; }
+  size_t n = strlen(items[0].text);
+  for (size_t i = 1; i < count; ++i) {
+    size_t j = 0;
+    while (j < n && items[i].text[j] != '\0' && items[i].text[j] == items[0].text[j]) {
+      ++j;
+    }
+    n = j;
+  }
+  return n;
+}
+
+static void replace_word(char *buf, size_t cap, size_t *len, size_t *cursor, size_t start, size_t end,
+                         const char *text) {
+  size_t text_len = strlen(text);
+  if (*len - (end - start) + text_len >= cap) { return; }
+  memmove(buf + start + text_len, buf + end, *len - end + 1);
+  memcpy(buf + start, text, text_len);
+  *len = *len - (end - start) + text_len;
+  *cursor = start + text_len;
+}
+
+static void list_completions(const struct completion *items, size_t count) {
+  putchar('\n');
+  for (size_t i = 0; i < count; ++i) {
+    fputs(items[i].text, stdout);
+    if (items[i].dir) { putchar('/'); }
+    putchar(i + 1 == count ? '\n' : ' ');
+  }
+}
+
+static void complete_line(const char *prompt, char *buf, size_t cap, size_t *len, size_t *cursor) {
+  size_t start = *cursor;
+  while (start > 0 && !is_word_break(buf[start - 1])) {
+    --start;
+  }
+
+  char word[COMPLETE_NAME_CAP];
+  size_t word_len = *cursor - start;
+  if (word_len >= sizeof(word)) { word_len = sizeof(word) - 1; }
+  memcpy(word, buf + start, word_len);
+  word[word_len] = '\0';
+
+  struct completion items[COMPLETE_CAP];
+  size_t count = 0;
+  if (command_position(buf, start) && strchr(word, '/') == NULL) { collect_command_matches(word, items, &count); }
+  collect_path_matches(word, items, &count);
+  if (count == 0) {
+    putchar('\a');
+    fflush(stdout);
+    return;
+  }
+  qsort(items, count, sizeof(items[0]), compare_completion);
+
+  size_t common = common_prefix_len(items, count);
+  if (count == 1) {
+    char replacement[COMPLETE_NAME_CAP];
+    snprintf(replacement, sizeof(replacement), "%s%s", items[0].text, items[0].dir ? "/" : " ");
+    replace_word(buf, cap, len, cursor, start, *cursor, replacement);
+    redraw_input(prompt, buf, *len, *cursor);
+    return;
+  }
+
+  if (common > word_len) {
+    char replacement[COMPLETE_NAME_CAP];
+    snprintf(replacement, sizeof(replacement), "%.*s", (int)common, items[0].text);
+    replace_word(buf, cap, len, cursor, start, *cursor, replacement);
+    redraw_input(prompt, buf, *len, *cursor);
+    return;
+  }
+
+  list_completions(items, count);
+  redraw_input(prompt, buf, *len, *cursor);
+}
+
 static int read_prompt_line(const char *prompt, char *buf, size_t cap, bool use_history) {
   if (cap == 0) { return -1; }
   struct termios saved;
@@ -222,6 +446,10 @@ static int read_prompt_line(const char *prompt, char *buf, size_t cap, bool use_
     if (c == '\b' || c == 0x7f) {
       erase_before_cursor(buf, &len, &cursor);
       redraw_input(prompt, buf, len, cursor);
+      continue;
+    }
+    if (c == '\t') {
+      complete_line(prompt, buf, cap, &len, &cursor);
       continue;
     }
     if (c == 0x1b) {

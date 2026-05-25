@@ -21,6 +21,7 @@ struct ls_options {
   bool human;
   bool reverse;
   bool sort_time;
+  bool color;
 };
 
 struct file_info {
@@ -54,6 +55,25 @@ static bool hidden_name(const char *name) {
 static unsigned long long blocks_for(const struct stat *st) {
   if (st->st_blocks > 0) { return (unsigned long long)st->st_blocks; }
   return ((unsigned long long)st->st_size + 511ull) / 512ull;
+}
+
+static const char *entry_color(mode_t mode) {
+  if (S_ISDIR(mode)) { return "\033[01;34m"; }
+  if (S_ISLNK(mode)) { return "\033[01;36m"; }
+  if (S_ISFIFO(mode)) { return "\033[33m"; }
+  if (S_ISSOCK(mode)) { return "\033[01;35m"; }
+  if (S_ISBLK(mode) || S_ISCHR(mode)) { return "\033[01;33m"; }
+  if (S_ISREG(mode) && (mode & 0111) != 0) { return "\033[01;32m"; }
+  return "";
+}
+
+static void print_name_colored(const struct file_info *entry, const struct ls_options *options) {
+  const char *color = options->color ? entry_color(entry->st.st_mode) : "";
+  if (color[0] != '\0') {
+    printf("%s%s\033[0m", color, entry->name);
+  } else {
+    fputs(entry->name, stdout);
+  }
 }
 
 static void format_mode(mode_t mode, char out[11]) {
@@ -195,8 +215,9 @@ static void print_long_entry(const struct file_info *entry, const struct ls_opti
   format_mode(entry->st.st_mode, mode);
   format_size((unsigned long long)entry->st.st_size, options->human, size, sizeof(size));
   format_time(entry->st.st_mtime, when, sizeof(when));
-  printf("%s %3lu %5u %5u %6s %s %s", mode, (unsigned long)entry->st.st_nlink, (unsigned)entry->st.st_uid,
-         (unsigned)entry->st.st_gid, size, when, entry->name);
+  printf("%s %3lu %5u %5u %6s %s ", mode, (unsigned long)entry->st.st_nlink, (unsigned)entry->st.st_uid,
+         (unsigned)entry->st.st_gid, size, when);
+  print_name_colored(entry, options);
   if (S_ISLNK(entry->st.st_mode)) {
     char target[PATH_CAP];
     ssize_t n = readlink(entry->path, target, sizeof(target) - 1);
@@ -246,10 +267,13 @@ static void display_entries(const struct file_info *entries, size_t count, const
       size_t index = col * rows + row;
       if (index >= count) { continue; }
       bool last = index + rows >= count;
-      if (last) {
-        printf("%s", entries[index].name);
-      } else {
-        printf("%-*s", (int)column_width, entries[index].name);
+      print_name_colored(&entries[index], options);
+      if (!last) {
+        size_t name_len = strlen(entries[index].name);
+        size_t pad = column_width > name_len ? column_width - name_len : 1;
+        for (size_t i = 0; i < pad; ++i) {
+          putchar(' ');
+        }
       }
     }
     putchar('\n');
@@ -282,7 +306,7 @@ static int list_one(const char *path, const struct ls_options *options) {
 }
 
 int main(int argc, char **argv) {
-  struct ls_options options = {0};
+  struct ls_options options = {.color = isatty(STDOUT_FILENO)};
   const char *paths[64];
   int path_count = 0;
 
