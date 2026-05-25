@@ -131,6 +131,38 @@ static int apply_redirs(const struct redirs *redir) {
   return 0;
 }
 
+static int run_builtin_with_redirs(struct command *cmd, int last_status, bool *handled) {
+  if (cmd->redir.in == NULL && cmd->redir.out == NULL) { return run_builtin(cmd, last_status, handled); }
+
+  int saved_in = dup(STDIN_FILENO);
+  int saved_out = dup(STDOUT_FILENO);
+  if (saved_in < 0 || saved_out < 0) {
+    if (saved_in >= 0) { close(saved_in); }
+    if (saved_out >= 0) { close(saved_out); }
+    perror("dup");
+    *handled = true;
+    return 1;
+  }
+
+  if (apply_redirs(&cmd->redir) != 0) {
+    perror("redir");
+    dup2(saved_in, STDIN_FILENO);
+    dup2(saved_out, STDOUT_FILENO);
+    close(saved_in);
+    close(saved_out);
+    *handled = true;
+    return 1;
+  }
+
+  int status = run_builtin(cmd, last_status, handled);
+  fflush(stdout);
+  dup2(saved_in, STDIN_FILENO);
+  dup2(saved_out, STDOUT_FILENO);
+  close(saved_in);
+  close(saved_out);
+  return status;
+}
+
 static void exec_search(char **argv) {
   char path[160];
   char *script_argv[ARG_CAP + 1];
@@ -479,6 +511,7 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
     return 0;
   }
   if (streq(cmd->argv[0], "exit")) { exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : 0); }
+  if (streq(cmd->argv[0], ":")) { return 0; }
   if (streq(cmd->argv[0], "help")) {
     puts("builtins: . source cd pwd exit help export unset set select jobs wait fg kill test [ confine runc");
     puts("syntax: NAME=value words quotes $VAR $? ; && || & < > >> if/then/else/fi while/do/done");
@@ -931,7 +964,7 @@ int sh_execute_line(char *line, int last_status) {
         status = run_pipeline(stages, stage_count, background, status);
       } else {
         bool handled = false;
-        int builtin_status = run_builtin(&stages[0], status, &handled);
+        int builtin_status = run_builtin_with_redirs(&stages[0], status, &handled);
         status = handled ? builtin_status : run_external(&stages[0]);
       }
     }

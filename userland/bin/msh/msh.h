@@ -9,10 +9,10 @@ extern char **environ;
 #define SYS_SPORE_APPLY_POLICY 0x4005
 
 enum {
-  LINE_CAP = 1024,
-  WORD_CAP = 256,
-  TOKEN_CAP = 96,
-  ARG_CAP = 32,
+  LINE_CAP = 8192,
+  WORD_CAP = 4096,
+  TOKEN_CAP = 256,
+  ARG_CAP = 128,
   HISTORY_CAP = 16,
 };
 
