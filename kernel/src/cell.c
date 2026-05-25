@@ -2890,6 +2890,9 @@ int cell_fd_socket_unix(void) {
   struct open_file *file = alloc_open_file();
   if (file == NULL) { return -12; }
   file->type = OPEN_UNIX_STREAM;
+  file->unix_owner_pid = domain->id;
+  file->unix_owner_uid = domain->euid;
+  file->unix_owner_gid = domain->egid;
   domain->fds[fd] = file;
   return fd;
 }
@@ -2998,10 +3001,19 @@ int cell_fd_unix_connect(int fd, const char *path) {
   pipes[s2c].writers = 1;
   client->unix_rx_pipe = (uint8_t)s2c;
   client->unix_tx_pipe = (uint8_t)c2s;
+  client->unix_peer_pid = listener->unix_owner_pid;
+  client->unix_peer_uid = listener->unix_owner_uid;
+  client->unix_peer_gid = listener->unix_owner_gid;
   copy_cstr(client->unix_path, sizeof(client->unix_path), path);
   server->type = OPEN_UNIX_STREAM;
   server->unix_rx_pipe = (uint8_t)c2s;
   server->unix_tx_pipe = (uint8_t)s2c;
+  server->unix_owner_pid = listener->unix_owner_pid;
+  server->unix_owner_uid = listener->unix_owner_uid;
+  server->unix_owner_gid = listener->unix_owner_gid;
+  server->unix_peer_pid = domain->id;
+  server->unix_peer_uid = domain->euid;
+  server->unix_peer_gid = domain->egid;
   server->node = listener->node;
   copy_cstr(server->unix_path, sizeof(server->unix_path), path);
   for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
@@ -3015,6 +3027,15 @@ int cell_fd_unix_connect(int fd, const char *path) {
   pipes[c2s].used = false;
   pipes[s2c].used = false;
   return -EAGAIN;
+}
+
+bool cell_fd_unix_peer_cred(int fd, struct cell_peer_cred *out) {
+  struct open_file *file = unix_file_for_fd(current_domain(), fd);
+  if (file == NULL || out == NULL || file->type != OPEN_UNIX_STREAM || file->unix_peer_pid <= 0) { return false; }
+  out->pid = file->unix_peer_pid;
+  out->uid = file->unix_peer_uid;
+  out->gid = file->unix_peer_gid;
+  return true;
 }
 
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {

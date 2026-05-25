@@ -78,6 +78,12 @@ struct open_file {
   bool pipe_write_end;
   uint8_t unix_rx_pipe;
   uint8_t unix_tx_pipe;
+  int unix_owner_pid;
+  uint32_t unix_owner_uid;
+  uint32_t unix_owner_gid;
+  int unix_peer_pid;
+  uint32_t unix_peer_uid;
+  uint32_t unix_peer_gid;
   char unix_path[108];
   struct vfs_node node;
   uint8_t socket_proto;
@@ -191,6 +197,12 @@ struct proc_info {
   char cwd[64];
 };
 
+struct cell_peer_cred {
+  int pid;
+  uint32_t uid;
+  uint32_t gid;
+};
+
 void cell_system_init(uint64_t hhdm_offset);
 bool cell_create_init(struct user_address_space *as, uint64_t entry, uint64_t sp);
 struct user_address_space *cell_current_as(void);
@@ -262,6 +274,7 @@ int cell_fd_unix_bind(int fd, const char *path);
 int cell_fd_unix_listen(int fd, int backlog);
 int cell_fd_unix_accept(int fd, struct trap_frame *frame);
 int cell_fd_unix_connect(int fd, const char *path);
+bool cell_fd_unix_peer_cred(int fd, struct cell_peer_cred *out);
 void cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
 void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);

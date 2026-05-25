@@ -289,16 +289,16 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
   int proc = add_node(fs, root, "proc", true, true);
   int tmp = add_node(fs, root, "tmp", true, true);
   int run = add_node(fs, root, "run", true, true);
-  
+
   set_mount(fs, dev, RAMFS_MOUNT_DEV);
   set_mount(fs, proc, RAMFS_MOUNT_PROC);
   set_mount(fs, tmp, RAMFS_MOUNT_TMP);
   set_mount(fs, run, RAMFS_MOUNT_RUN);
-  
+
   (void)add_node(fs, dev, "fs", true, true);
   (void)add_node(fs, dev, "blk", true, true);
   (void)add_node(fs, proc, "net", true, true);
-  
+
   (void)add_device(fs, "/dev/null", RAMFS_DEV_NULL);
   (void)add_device(fs, "/dev/zero", RAMFS_DEV_ZERO);
   (void)add_device(fs, "/dev/full", RAMFS_DEV_FULL);

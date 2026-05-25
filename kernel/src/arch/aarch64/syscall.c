@@ -95,6 +95,7 @@ enum {
   SYS_SENDTO = 206,
   SYS_RECVFROM = 207,
   SYS_SETSOCKOPT = 208,
+  SYS_GETSOCKOPT = 209,
   SYS_BRK = 214,
   SYS_MUNMAP = 215,
   SYS_MREMAP = 216,
@@ -190,6 +191,9 @@ enum {
   AF_INET = 2,
   SOCK_STREAM = 1,
   SOCK_DGRAM = 2,
+  SOL_SOCKET = 1,
+  SO_ERROR = 4,
+  SO_PEERCRED = 17,
   IPPROTO_ICMP = 1,
   IPPROTO_UDP = 17,
   EROFS = 30,
@@ -206,7 +210,9 @@ enum {
   ENAMETOOLONG = 36,
   ENOTEMPTY = 39,
   EAFNOSUPPORT = 97,
+  ENOPROTOOPT = 92,
   EPROTONOSUPPORT = 93,
+  ENOTCONN = 107,
   MAX_IOVCNT = 1024,
   MAX_POLL_FDS = 64,
   MAX_EXEC_ARGS = 8,
@@ -345,6 +351,12 @@ struct sockaddr_in64 {
 struct sockaddr_un64 {
   uint16_t sun_family;
   char sun_path[108];
+};
+
+struct ucred64 {
+  int32_t pid;
+  uint32_t uid;
+  uint32_t gid;
 };
 
 struct termios64 {
@@ -1672,6 +1684,45 @@ static int64_t sys_getsockname(uint64_t fd, uint64_t addr, uint64_t addrlen) {
   return vmm_copy_to_user(active_as(), addr, &sa, sizeof(sa)) ? 0 : -(int64_t)EFAULT;
 }
 
+static int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t optval, uint64_t optlen_addr) {
+  if (level != SOL_SOCKET || optval == 0 || optlen_addr == 0 || !user_writable(optlen_addr, sizeof(uint32_t))) {
+    return -(int64_t)EINVAL;
+  }
+
+  uint32_t optlen = 0;
+  if (!vmm_copy_from_user(active_as(), &optlen, optlen_addr, sizeof(optlen))) { return -(int64_t)EFAULT; }
+
+  if (optname == SO_ERROR) {
+    if (optlen < sizeof(int32_t) || !user_writable(optval, sizeof(int32_t))) { return -(int64_t)EINVAL; }
+    int32_t zero = 0;
+    uint32_t out_len = sizeof(zero);
+    if (!vmm_copy_to_user(active_as(), optval, &zero, sizeof(zero)) ||
+        !vmm_copy_to_user(active_as(), optlen_addr, &out_len, sizeof(out_len))) {
+      return -(int64_t)EFAULT;
+    }
+    return 0;
+  }
+
+  if (optname == SO_PEERCRED) {
+    if (optlen < sizeof(struct ucred64) || !user_writable(optval, sizeof(struct ucred64))) { return -(int64_t)EINVAL; }
+    struct cell_peer_cred peer;
+    if (!cell_fd_unix_peer_cred((int)fd, &peer)) { return -(int64_t)ENOTCONN; }
+    struct ucred64 out = {
+      .pid = peer.pid,
+      .uid = peer.uid,
+      .gid = peer.gid,
+    };
+    uint32_t out_len = sizeof(out);
+    if (!vmm_copy_to_user(active_as(), optval, &out, sizeof(out)) ||
+        !vmm_copy_to_user(active_as(), optlen_addr, &out_len, sizeof(out_len))) {
+      return -(int64_t)EFAULT;
+    }
+    return 0;
+  }
+
+  return -(int64_t)ENOPROTOOPT;
+}
+
 static int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len) {
   uint8_t one = 1;
   if (len == 0 || !user_writable(mask, 1)) { return -(int64_t)EINVAL; }
@@ -1839,6 +1890,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_SENDTO] = &&l_sendto,
     [SYS_RECVFROM] = &&l_recvfrom,
     [SYS_SETSOCKOPT] = &&l_zero,
+    [SYS_GETSOCKOPT] = &&l_getsockopt,
     [SYS_BRK] = &&l_brk,
     [SYS_MUNMAP] = &&l_munmap,
     [SYS_MREMAP] = &&l_mremap,
@@ -2067,6 +2119,8 @@ l_recvfrom:
   return sys_recvfrom(f, a0, a1, a2, a3, a4, a5);
 l_getsockname:
   return sys_getsockname(a0, a1, a2);
+l_getsockopt:
+  return sys_getsockopt(a0, a1, a2, a3, a4);
 l_openat:
   return sys_openat(a0, a1, a2);
 l_close:

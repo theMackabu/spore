@@ -1,5 +1,31 @@
 #include "mycelium.h"
 
+struct control_peer {
+  pid_t pid;
+  uid_t uid;
+  gid_t gid;
+};
+
+static bool peer_credentials(int fd, struct control_peer *peer) {
+  struct ucred cred;
+  socklen_t len = sizeof(cred);
+  if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0) { return false; }
+  peer->pid = cred.pid;
+  peer->uid = cred.uid;
+  peer->gid = cred.gid;
+  return true;
+}
+
+static bool command_requires_root(const char *verb) {
+  return streq(verb, "start") || streq(verb, "stop") || streq(verb, "restart") || streq(verb, "reload") ||
+         streq(verb, "daemon-reload") || streq(verb, "enable") || streq(verb, "disable") || streq(verb, "isolate") ||
+         streq(verb, "poweroff") || streq(verb, "reboot");
+}
+
+static bool peer_is_root(const struct control_peer *peer) {
+  return peer != NULL && peer->uid == 0;
+}
+
 void write_unit_status(char *out, size_t cap, struct unit *unit) {
   if (unit == NULL) {
     append_response(out, cap, "not-found\n");
@@ -79,13 +105,17 @@ void stop_all_reverse(char *out, size_t cap) {
   append_response(out, cap, " powering off\n");
 }
 
-void handle_command(const char *cmdline, char *out, size_t cap) {
+void handle_command(const char *cmdline, const struct control_peer *peer, char *out, size_t cap) {
   char copy[256];
   copy_text(copy, sizeof(copy), cmdline);
   char *argv[ARG_CAP];
   int argc = split_args(copy, argv, ARG_CAP);
   if (argc == 0) {
     append_response(out, cap, "empty command\n");
+    return;
+  }
+  if (command_requires_root(argv[0]) && !peer_is_root(peer)) {
+    append_response(out, cap, "%s: permission denied (try sudo myc %s)\n", argv[0], argv[0]);
     return;
   }
   if (streq(argv[0], "status")) {
@@ -120,19 +150,31 @@ void handle_command(const char *cmdline, char *out, size_t cap) {
       }
     }
   } else if (streq(argv[0], "stop")) {
-    stop_unit(unit_by_name(argc > 1 ? argv[1] : ""));
-    append_response(out, cap, "%s stopped\n", argc > 1 ? argv[1] : "");
+    struct unit *unit = unit_by_name(argc > 1 ? argv[1] : "");
+    if (unit == NULL) {
+      append_response(out, cap, "stop: unit not found\n");
+    } else {
+      stop_unit(unit);
+      append_response(out, cap, "%s stopped\n", unit->name);
+    }
   } else if (streq(argv[0], "restart")) {
-    if (argc > 1) {
-      stop_unit(unit_by_name(argv[1]));
+    struct unit *unit = unit_by_name(argc > 1 ? argv[1] : "");
+    if (unit == NULL) {
+      append_response(out, cap, "restart: unit not found\n");
+    } else {
+      stop_unit(unit);
       char err[160] = {0};
-      (void)start_unit_name(argv[1], err, sizeof(err));
-      append_response(out, cap, "%s restarted\n", argv[1]);
+      (void)start_unit_name(unit->name, err, sizeof(err));
+      append_response(out, cap, "%s restarted\n", unit->name);
     }
   } else if (streq(argv[0], "reload")) {
     struct unit *unit = unit_by_name(argc > 1 ? argv[1] : "");
-    if (unit != NULL && unit->exec_reload[0] != '\0') { (void)run_oneshot_command(unit, unit->exec_reload); }
-    append_response(out, cap, "%s reloaded\n", argc > 1 ? argv[1] : "");
+    if (unit == NULL) {
+      append_response(out, cap, "reload: unit not found\n");
+    } else {
+      if (unit->exec_reload[0] != '\0') { (void)run_oneshot_command(unit, unit->exec_reload); }
+      append_response(out, cap, "%s reloaded\n", unit->name);
+    }
   } else if (streq(argv[0], "daemon-reload")) {
     load_units();
     append_response(out, cap, "daemon reloaded\n");
@@ -177,6 +219,8 @@ void handle_command(const char *cmdline, char *out, size_t cap) {
 void handle_control_client(void) {
   int fd = accept(control_fd, NULL, NULL);
   if (fd < 0) { return; }
+  struct control_peer peer = {0};
+  bool have_peer = peer_credentials(fd, &peer);
   char cmd[256];
   size_t len = 0;
   while (len + 1 < sizeof(cmd)) {
@@ -188,7 +232,7 @@ void handle_control_client(void) {
   cmd[len] = '\0';
   char out[4096] = {0};
   reap_children();
-  handle_command(cmd, out, sizeof(out));
+  handle_command(cmd, have_peer ? &peer : NULL, out, sizeof(out));
   if (out[0] != '\0') { (void)write(fd, out, strlen(out)); }
   close(fd);
 }
