@@ -1745,7 +1745,7 @@ static int64_t write_console_from_user(struct domain *domain, uint64_t buf, uint
     if (c == '\r' || c == '\n') {
       tty_output_line_len = 0;
       tty_output_line[0] = '\0';
-    } else if ((uint8_t)c >= 0x20 || c == '\t') {
+    } else if ((uint8_t)c >= 0x20 || c == '\t' || c == '\033') {
       if (tty_output_line_len + 1 < sizeof(tty_output_line)) {
         tty_output_line[tty_output_line_len++] = c;
         tty_output_line[tty_output_line_len] = '\0';
