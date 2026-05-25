@@ -4,6 +4,7 @@ build/
 /.nova
 /goal.md
 
+.DS_Store
 *.o
 *.iso
 *.img

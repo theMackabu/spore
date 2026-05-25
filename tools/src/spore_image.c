@@ -135,6 +135,62 @@ static void run_debugfs_script(const char *image, const char *script) {
   unlink(script_path);
 }
 
+static void run_debugfs_script_file(const char *image, const char *script_path) {
+  char *const argv[] = {"debugfs", "-w", "-f", (char *)script_path, (char *)image, NULL};
+  run_argv(argv, true);
+}
+
+static void require_debugfs_path_safe(const char *path) {
+  for (const char *p = path; *p != '\0'; ++p) {
+    if (*p == '\n' || *p == '\r' || *p == '\t' || *p == ' ') { die_msg("debugfs path contains whitespace"); }
+  }
+}
+
+static void write_chown_tree_commands(FILE *script, const char *host_path, const char *image_path, uint32_t uid,
+                                      uint32_t gid) {
+  require_debugfs_path_safe(image_path);
+  fprintf(script, "set_inode_field %s uid %u\n", image_path, uid);
+  fprintf(script, "set_inode_field %s gid %u\n", image_path, gid);
+
+  struct stat st;
+  if (lstat(host_path, &st) != 0) { die(host_path); }
+  if (!S_ISDIR(st.st_mode)) { return; }
+
+  DIR *dir = opendir(host_path);
+  if (dir == NULL) { die(host_path); }
+  for (struct dirent *entry = readdir(dir); entry != NULL; entry = readdir(dir)) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) { continue; }
+
+    char child_host[MAX_PATH];
+    path_join(child_host, sizeof(child_host), host_path, entry->d_name);
+
+    char child_image[MAX_PATH];
+    int n = snprintf(child_image, sizeof(child_image), "%s/%s", image_path, entry->d_name);
+    if (n < 0 || (size_t)n >= sizeof(child_image)) { die_msg("path too long"); }
+    write_chown_tree_commands(script, child_host, child_image, uid, gid);
+  }
+  closedir(dir);
+}
+
+static void chown_tree_ext2(const char *image, const char *rootfs, const char *image_path, uint32_t uid, uint32_t gid) {
+  char host_path[MAX_PATH];
+  int n = snprintf(host_path, sizeof(host_path), "%s%s", rootfs, image_path);
+  if (n < 0 || (size_t)n >= sizeof(host_path)) { die_msg("path too long"); }
+  if (!exists(host_path)) { return; }
+
+  char script_path[MAX_PATH];
+  n = snprintf(script_path, sizeof(script_path), "%s.chown.debugfs", image);
+  if (n < 0 || (size_t)n >= sizeof(script_path)) { die_msg("path too long"); }
+
+  FILE *script = fopen(script_path, "wb");
+  if (script == NULL) { die(script_path); }
+  write_chown_tree_commands(script, host_path, image_path, uid, gid);
+  fclose(script);
+
+  run_debugfs_script_file(image, script_path);
+  unlink(script_path);
+}
+
 static const char *basename_of(const char *path) {
   const char *slash = strrchr(path, '/');
   return slash == NULL ? path : slash + 1;
@@ -402,34 +458,7 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   unlink(output_root);
   run_argv(mkfs_argv, false);
 
-  run_debugfs_script(output_root, "set_inode_field /home/spore uid 1000\n"
-                                  "set_inode_field /home/spore gid 1000\n"
-                                  "set_inode_field /home/spore/.profile uid 1000\n"
-                                  "set_inode_field /home/spore/.profile gid 1000\n"
-                                  "set_inode_field /home/spore/.mshrc uid 1000\n"
-                                  "set_inode_field /home/spore/.mshrc gid 1000\n");
-  char demos_path[MAX_PATH];
-  path_join(demos_path, sizeof(demos_path), rootfs_dir, "home/spore/demos");
-  if (exists(demos_path)) {
-    run_debugfs_script(output_root, "set_inode_field /home/spore/demos uid 1000\n"
-                                    "set_inode_field /home/spore/demos gid 1000\n"
-                                    "set_inode_field /home/spore/demos/escalate uid 1000\n"
-                                    "set_inode_field /home/spore/demos/escalate gid 1000\n"
-                                    "set_inode_field /home/spore/demos/memhog uid 1000\n"
-                                    "set_inode_field /home/spore/demos/memhog gid 1000\n"
-                                    "set_inode_field /home/spore/demos/peeker uid 1000\n"
-                                    "set_inode_field /home/spore/demos/peeker gid 1000\n"
-                                    "set_inode_field /home/spore/demos/signal-crash uid 1000\n"
-                                    "set_inode_field /home/spore/demos/signal-crash gid 1000\n"
-                                    "set_inode_field /home/spore/demos/something uid 1000\n"
-                                    "set_inode_field /home/spore/demos/something gid 1000\n"
-                                    "set_inode_field /home/spore/demos/something-else.msh uid 1000\n"
-                                    "set_inode_field /home/spore/demos/something-else.msh gid 1000\n"
-                                    "set_inode_field /home/spore/demos/spinner uid 1000\n"
-                                    "set_inode_field /home/spore/demos/spinner gid 1000\n"
-                                    "set_inode_field /home/spore/demos/writer uid 1000\n"
-                                    "set_inode_field /home/spore/demos/writer gid 1000\n");
-  }
+  chown_tree_ext2(output_root, rootfs_dir, "/home/spore", 1000, 1000);
   char sudo_path[MAX_PATH];
   path_join(sudo_path, sizeof(sudo_path), rootfs_dir, "bin/sudo");
   if (exists(sudo_path)) {

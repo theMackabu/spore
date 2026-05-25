@@ -7,6 +7,7 @@ userland_os_release = configure_file(
 
 userland_image_data += files(
   'motd',
+  'environment',
   'profile',
   'dashrc',
   'mycelium/boot.target',

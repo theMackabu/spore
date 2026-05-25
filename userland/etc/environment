@@ -1,0 +1,3 @@
+PATH=/bin:/sbin:/usr/bin:/usr/local/bin:.
+TERM=spore
+ENV=/etc/dashrc

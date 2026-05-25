@@ -125,6 +125,7 @@ userland/lib/ncurses/terminfo/s/spore /usr/share/terminfo/s/spore
 
 userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd
+userland/etc/environment /etc/environment
 userland/etc/profile /etc/profile
 userland/etc/dashrc /etc/dashrc
 userland/etc/os-release /etc/os-release

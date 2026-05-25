@@ -137,7 +137,7 @@ static const char *shell_commands[] = {
   "cat /tmp/coreutils.tee\n",
   "hexdump /tmp/coreutils\n",
   "xxd /tmp/coreutils\n",
-  "sudo edit /etc/motd\nd 1\na\nhello from ext2\n.\nw\nq\n",
+  "sudo edit /etc/motd\nd 1\na\nshell-check motd\n.\nw\nq\n",
   "cat /etc/motd\n",
   "echo hi > /tmp/f\n",
   "cat /tmp/f\n",

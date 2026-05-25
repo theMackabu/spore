@@ -6,6 +6,7 @@ Type=simple
 ExecStart=/bin/msh
 Restart=always
 RestartSec=1s
+RestartImmediately=yes
 User=spore
 StandardOutput=console
 StandardError=console
