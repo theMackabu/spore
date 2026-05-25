@@ -22,9 +22,12 @@ static void append_plain_status_log(const char *kind, const char *text) {
 }
 
 static unsigned console_cols(void) {
+  const unsigned status_col_cap = 96;
   struct winsize ws;
-  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col >= 40) { return ws.ws_col; }
-  return 96;
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col >= 40) {
+    return ws.ws_col > status_col_cap ? status_col_cap : ws.ws_col;
+  }
+  return status_col_cap;
 }
 
 static void print_ok_line(const char *text) {
