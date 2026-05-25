@@ -746,6 +746,35 @@ static uint64_t timespec_to_scheduler_ticks(const struct timespec64 *timeout) {
   return ticks == 0 ? 1 : ticks;
 }
 
+static int64_t sys_nanosleep(struct trap_frame *frame, uint64_t req_addr, uint64_t rem_addr) {
+  (void)rem_addr;
+  struct timespec64 req;
+  if (!user_readable(req_addr, sizeof(req)) || !vmm_copy_from_user(active_as(), &req, req_addr, sizeof(req))) {
+    return -(int64_t)EFAULT;
+  }
+  if (req.tv_sec < 0 || req.tv_nsec < 0 || req.tv_nsec >= 1000000000) { return -(int64_t)EINVAL; }
+  if (req.tv_sec == 0 && req.tv_nsec == 0) { return 0; }
+  return cell_sleep_current(timespec_to_scheduler_ticks(&req), frame);
+}
+
+static int64_t sys_clock_nanosleep(struct trap_frame *frame, uint64_t clock_id, uint64_t flags, uint64_t req_addr,
+                                   uint64_t rem_addr) {
+  enum {
+    CLOCK_REALTIME = 0,
+    CLOCK_MONOTONIC = 1,
+  };
+  (void)rem_addr;
+  if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) { return -(int64_t)EINVAL; }
+  if (flags != 0) { return -(int64_t)EINVAL; }
+  struct timespec64 req;
+  if (!user_readable(req_addr, sizeof(req)) || !vmm_copy_from_user(active_as(), &req, req_addr, sizeof(req))) {
+    return -(int64_t)EFAULT;
+  }
+  if (req.tv_sec < 0 || req.tv_nsec < 0 || req.tv_nsec >= 1000000000) { return -(int64_t)EINVAL; }
+  if (req.tv_sec == 0 && req.tv_nsec == 0) { return 0; }
+  return cell_sleep_current(timespec_to_scheduler_ticks(&req), frame);
+}
+
 static int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
                          uint64_t sigsetsize) {
   (void)sigmask;
@@ -1667,9 +1696,9 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_SET_TID_ADDRESS] = &&l_set_tid_address,
     [SYS_FUTEX] = &&l_futex,
     [SYS_SET_ROBUST_LIST] = &&l_set_robust_list,
-    [SYS_NANOSLEEP] = &&l_zero,
+    [SYS_NANOSLEEP] = &&l_nanosleep,
     [SYS_CLOCK_GETTIME] = &&l_clock_gettime,
-    [SYS_CLOCK_NANOSLEEP] = &&l_zero,
+    [SYS_CLOCK_NANOSLEEP] = &&l_clock_nanosleep,
     [SYS_SCHED_GETAFFINITY] = &&l_sched_getaffinity,
     [SYS_SCHED_YIELD] = &&l_sched_yield,
     [SYS_KILL] = &&l_kill,
@@ -1764,6 +1793,10 @@ l_pselect6:
   return sys_pselect6(f, a0, a1, a2, a3, a4);
 l_ppoll:
   return sys_ppoll(f, a0, a1, a2, a3, a4);
+l_nanosleep:
+  return sys_nanosleep(f, a0, a1);
+l_clock_nanosleep:
+  return sys_clock_nanosleep(f, a0, a1, a2, a3);
 l_exit:
   kprintf("[kernel] exit(%d)\n", (int)a0);
   cell_exit_thread_current((int)a0, f);

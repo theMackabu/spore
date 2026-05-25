@@ -36,10 +36,11 @@ static size_t tty_output_line_len;
 static char tty_prompt[256];
 static size_t tty_prompt_len;
 static bool tty_prompt_active;
-static bool scheduler_waiting_for_interrupt;
+static volatile bool scheduler_waiting_for_interrupt;
 
 static size_t domain_resident_pages(const struct domain *domain);
 static void wake_poll_waiters(void);
+static void wake_sleep_waiters(void);
 
 enum {
   CELL_O_ACCMODE = 3,
@@ -1026,6 +1027,7 @@ void cell_set_boot_epoch(uint64_t epoch_sec) {
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   ++scheduler_ticks;
   if (scheduler_waiting_for_interrupt) { ++scheduler_idle_ticks; }
+  wake_sleep_waiters();
   net_poll();
   wake_poll_waiters();
   struct domain *domain = current_domain();
@@ -1084,6 +1086,8 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "futex";
   case WAIT_POLL:
     return "poll";
+  case WAIT_SLEEP:
+    return "sleep";
   }
   return "?";
 }
@@ -2324,6 +2328,29 @@ static void wake_poll_waiters(void) {
       clear_poll_wait(thread);
     }
   }
+}
+
+static void wake_sleep_waiters(void) {
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    struct thread *thread = &threads[i];
+    if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SLEEP) { continue; }
+    if (scheduler_ticks < thread->sleep_deadline_tick) { continue; }
+    thread->tf.x[0] = 0;
+    thread->state = THREAD_RUNNABLE;
+    thread->wait_reason = WAIT_NONE;
+    thread->sleep_deadline_tick = 0;
+  }
+}
+
+int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame) {
+  if (current_thread == NULL || current_domain() == NULL) { return -EINVAL; }
+  if (timeout_ticks == 0) { return 0; }
+  cell_save_current(frame);
+  current_thread->state = THREAD_BLOCKED;
+  current_thread->wait_reason = WAIT_SLEEP;
+  current_thread->sleep_deadline_tick = scheduler_ticks + timeout_ticks;
+  cell_schedule(frame);
+  return CELL_SWITCHED;
 }
 
 int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks,

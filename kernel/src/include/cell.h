@@ -45,6 +45,7 @@ enum wait_reason {
   WAIT_THREAD,
   WAIT_FUTEX,
   WAIT_POLL,
+  WAIT_SLEEP,
 };
 
 enum cell_state {
@@ -138,6 +139,7 @@ struct thread {
   uint8_t poll_kind;
   bool poll_has_deadline;
   uint64_t poll_deadline_tick;
+  uint64_t sleep_deadline_tick;
   uint64_t poll_fds;
   uint64_t poll_nfds;
   uint64_t poll_readfds;
@@ -224,6 +226,7 @@ int cell_fd_poll_events(int fd, int events);
 int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks, struct trap_frame *frame);
 int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds, bool has_timeout,
                           uint64_t timeout_ticks, struct trap_frame *frame);
+int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame);
 int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags);
