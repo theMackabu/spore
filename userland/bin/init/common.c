@@ -78,6 +78,43 @@ void append_response(char *out, size_t cap, const char *fmt, ...) {
   va_end(ap);
 }
 
+void append_log_file(const char *path, const char *text) {
+  FILE *f = fopen(path, "a");
+  if (f == NULL) { return; }
+  fputs(text, f);
+  fclose(f);
+}
+
+void system_log_append(const char *text) {
+  append_log_file("/var/log/syslog", text);
+  append_log_file("/var/log/messages", text);
+}
+
+void boot_log_append(const char *text) {
+  append_log_file("/var/log/boot.log", text);
+  system_log_append(text);
+}
+
+void sync_kernel_log(bool boot_snapshot) {
+  static size_t seen;
+  char buf[32768];
+  int fd = open("/proc/kmsg", O_RDONLY);
+  if (fd < 0) { return; }
+  ssize_t got = read(fd, buf, sizeof(buf) - 1);
+  close(fd);
+  if (got <= 0) { return; }
+  buf[got] = '\0';
+
+  size_t have = (size_t)got;
+  size_t start = have < seen ? 0 : seen;
+  if (start >= have) { return; }
+  const char *delta = buf + start;
+  append_log_file("/var/log/kern.log", delta);
+  append_log_file("/var/log/messages", delta);
+  if (boot_snapshot) { append_log_file("/var/log/boot.log", delta); }
+  seen = have;
+}
+
 int parse_seconds(const char *s) {
   char *end = NULL;
   long value = strtol(s, &end, 10);

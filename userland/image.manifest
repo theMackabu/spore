@@ -5,7 +5,7 @@ dir /etc/mycelium
 dir /sbin
 dir /lib/mycelium
 dir /run/mycelium
-dir /var/log/mycelium
+dir /var/log
 dir /var/lib/mycelium
 
 userland/bin/init /lib/mycelium/init
@@ -53,6 +53,7 @@ userland/bin/hostid /bin/hostid
 userland/bin/id /bin/id
 userland/bin/who /bin/who
 userland/bin/tee /bin/tee
+userland/bin/logger /bin/logger
 userland/usr/bin/env /usr/bin/env
 userland/bin/printenv /bin/printenv
 userland/bin/printf /bin/printf

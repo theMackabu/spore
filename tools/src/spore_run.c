@@ -161,7 +161,7 @@ static const char *shell_commands[] = {
 };
 
 static void usage(void) {
-  fputs("usage: spore-run [--mode plain|filter|shell|stdin] [--timings] [--tmux-log-pane] --image IMAGE "
+  fputs("usage: spore-run [--mode plain|filter|shell|stdin] [--timings] --image IMAGE "
         "[--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--vars VARS_FD]\n",
         stderr);
   exit(2);
@@ -287,47 +287,6 @@ static void ensure_vars_file(const char *qemu, const char *vars) {
   copy_file_or_die(tmpl, vars);
 }
 
-static FILE *open_tmux_log_pane(char *pane_id, size_t pane_id_cap) {
-  pane_id[0] = '\0';
-  if (getenv("TMUX") == NULL) {
-    fputs("spore-run: --tmux-log-pane requested outside tmux; using stderr for logs\n", stderr);
-    return stderr;
-  }
-
-  FILE *pipe = popen("tmux split-window -h -d -P -F '#{pane_id} #{pane_tty}' 'cat'", "r");
-  if (pipe == NULL) {
-    perror("tmux split-window");
-    return stderr;
-  }
-
-  char id[64];
-  char tty[PATH_CAP];
-  if (fscanf(pipe, "%63s %1023s", id, tty) != 2) {
-    pclose(pipe);
-    fputs("spore-run: could not read tmux pane tty; using stderr for logs\n", stderr);
-    return stderr;
-  }
-  pclose(pipe);
-
-  FILE *out = fopen(tty, "w");
-  if (out == NULL) {
-    perror(tty);
-    return stderr;
-  }
-  setvbuf(out, NULL, _IONBF, 0);
-  snprintf(pane_id, pane_id_cap, "%s", id);
-  return out;
-}
-
-static void close_tmux_log_pane(FILE *out, const char *pane_id) {
-  if (out != NULL && out != stderr) { fclose(out); }
-  if (pane_id != NULL && pane_id[0] != '\0') {
-    char cmd[128];
-    snprintf(cmd, sizeof(cmd), "tmux kill-pane -t '%s' >/dev/null 2>&1", pane_id);
-    (void)system(cmd);
-  }
-}
-
 static bool enter_raw_terminal(struct termios *saved) {
   if (!isatty(STDIN_FILENO)) { return false; }
   if (tcgetattr(STDIN_FILENO, saved) != 0) { return false; }
@@ -340,10 +299,8 @@ static void restore_terminal(bool raw_enabled, const struct termios *saved) {
   if (raw_enabled) { (void)tcsetattr(STDIN_FILENO, TCSANOW, saved); }
 }
 
-static int finish_harness(int status, bool raw_terminal, const struct termios *saved_termios, FILE *log_stream,
-                          const char *tmux_pane_id) {
+static int finish_harness(int status, bool raw_terminal, const struct termios *saved_termios) {
   restore_terminal(raw_terminal, saved_termios);
-  close_tmux_log_pane(log_stream, tmux_pane_id);
   return status;
 }
 
@@ -444,33 +401,11 @@ static double now_seconds(void) {
   return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
 }
 
-struct csi_filter {
-  int state;
-};
-
 struct startup_serial {
   char buf[STARTUP_SERIAL_CAP];
   size_t len;
   bool done;
 };
-
-static void write_sanitized_to(struct csi_filter *filter, const char *data, size_t len, FILE *out) {
-  for (size_t i = 0; i < len; ++i) {
-    unsigned char c = (unsigned char)data[i];
-    if (filter->state == 0) {
-      if (c == 0x1b) {
-        filter->state = 1;
-      } else {
-        fwrite(&data[i], 1, 1, out);
-      }
-    } else if (filter->state == 1) {
-      filter->state = c == '[' ? 2 : 0;
-    } else {
-      if (c >= 0x40 && c <= 0x7e) { filter->state = 0; }
-    }
-  }
-  fflush(out);
-}
 
 static void write_raw_to(const char *data, size_t len, FILE *out) {
   fwrite(data, 1, len, out);
@@ -549,8 +484,7 @@ static ssize_t find_after_last_marker(const char *data, size_t len, const char *
   return found;
 }
 
-static void write_serial_output(struct csi_filter *serial_csi, const char *chunk, size_t n, bool tmux_log_pane,
-                                struct startup_serial *startup, FILE *log_stream) {
+static void write_serial_output(const char *chunk, size_t n, struct startup_serial *startup) {
   if (startup->done) {
     write_raw_to(chunk, n, stdout);
     return;
@@ -560,14 +494,16 @@ static void write_serial_output(struct csi_filter *serial_csi, const char *chunk
   ssize_t prompt_at = find_shell_prompt(startup->buf, startup->len);
   if (prompt_at < 0) { return; }
 
-  ssize_t handoff_at = find_after_last_marker(startup->buf, startup->len, "spore-boot: exited boot services");
-  if (handoff_at < 0) { handoff_at = prompt_at; }
+  ssize_t handoff_at = find_after_last_marker(startup->buf, startup->len, "spore: mycelium starting");
+  if (handoff_at >= 0) {
+    handoff_at -= (ssize_t)strlen("spore: mycelium starting");
+  } else {
+    handoff_at = prompt_at;
+  }
   while ((size_t)handoff_at < startup->len && (startup->buf[handoff_at] == '\r' || startup->buf[handoff_at] == '\n')) {
     ++handoff_at;
   }
 
-  FILE *startup_out = tmux_log_pane ? log_stream : stdout;
-  if (handoff_at > 0) { write_sanitized_to(serial_csi, startup->buf, (size_t)handoff_at, startup_out); }
   write_raw_to(startup->buf + handoff_at, startup->len - (size_t)handoff_at, stdout);
   startup->done = true;
   startup->len = 0;
@@ -650,7 +586,7 @@ static void record_output(char *buf, size_t *len, const char *chunk, size_t n, s
   }
 }
 
-static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tmux_log_pane, int log_pipe[2]) {
+static int run_harness(char **qemu_argv, const char *mode, bool timings, int log_pipe[2]) {
   int in_pipe[2];
   int serial_pipe[2];
   if (pipe(in_pipe) != 0 || pipe(serial_pipe) != 0) {
@@ -697,10 +633,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
   double first_output_at = -1.0;
   bool timing_summary_printed = false;
   struct startup_serial startup_serial = {0};
-  char tmux_pane_id[64] = {0};
-  FILE *log_stream = tmux_log_pane ? open_tmux_log_pane(tmux_pane_id, sizeof(tmux_pane_id)) : stderr;
-  struct csi_filter serial_csi = {0};
-  struct csi_filter log_csi = {0};
+  FILE *log_stream = stderr;
   struct boot_milestone milestones[] = {
     {"UEFI firmware", "edk2 first banner", false, 0.0},
     {"BdsDxe: starting", "edk2 starts boot option", false, 0.0},
@@ -720,16 +653,10 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
       char chunk[4096];
       ssize_t n;
       while ((n = read(serial_pipe[0], chunk, sizeof(chunk))) > 0) {
-        if (plain || strcmp(mode, "shell") == 0) {
-          write_serial_output(&serial_csi, chunk, (size_t)n, tmux_log_pane, &startup_serial, log_stream);
-        }
+        if (plain || strcmp(mode, "shell") == 0) { write_serial_output(chunk, (size_t)n, &startup_serial); }
         append(buf, &len, chunk, (size_t)n);
       }
       while ((n = read(log_pipe[0], chunk, sizeof(chunk))) > 0) {
-        if (plain || strcmp(mode, "shell") == 0) {
-          FILE *out = tmux_log_pane ? log_stream : stdout;
-          write_sanitized_to(&log_csi, chunk, (size_t)n, out);
-        }
         append(buf, &len, chunk, (size_t)n);
       }
       if (strcmp(mode, "filter") == 0 || strcmp(mode, "stdin") == 0) {
@@ -742,7 +669,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
         (void)kill(echo_pid, SIGTERM);
         (void)waitpid(echo_pid, NULL, 0);
       }
-      return finish_harness(rc, raw_terminal, &saved_termios, tmux_log_pane ? log_stream : NULL, tmux_pane_id);
+      return finish_harness(rc, raw_terminal, &saved_termios);
     }
     if (!plain && now_seconds() > deadline) {
       kill(pid, SIGTERM);
@@ -751,7 +678,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
         (void)kill(echo_pid, SIGTERM);
         (void)waitpid(echo_pid, NULL, 0);
       }
-      return finish_harness(124, raw_terminal, &saved_termios, tmux_log_pane ? log_stream : NULL, tmux_pane_id);
+      return finish_harness(124, raw_terminal, &saved_termios);
     }
     if (resize_pending) {
       resize_pending = 0;
@@ -777,9 +704,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
         if (n > 0) {
           record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
                         start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
-          if (plain || strcmp(mode, "shell") == 0) {
-            write_serial_output(&serial_csi, chunk, (size_t)n, tmux_log_pane, &startup_serial, log_stream);
-          }
+          if (plain || strcmp(mode, "shell") == 0) { write_serial_output(chunk, (size_t)n, &startup_serial); }
         }
       }
       if (FD_ISSET(log_pipe[0], &rfds)) {
@@ -787,10 +712,6 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool tm
         if (n > 0) {
           record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
                         start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
-          if (plain || strcmp(mode, "shell") == 0) {
-            FILE *out = tmux_log_pane ? log_stream : stdout;
-            write_sanitized_to(&log_csi, chunk, (size_t)n, out);
-          }
         }
       }
       if (len > 0) {
@@ -824,14 +745,11 @@ int main(int argc, char **argv) {
   const char *cpu = "host";
   const char *vars = NULL;
   bool timings = false;
-  bool tmux_log_pane = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
       mode = argv[++i];
     } else if (strcmp(argv[i], "--timings") == 0) {
       timings = true;
-    } else if (strcmp(argv[i], "--tmux-log-pane") == 0) {
-      tmux_log_pane = true;
     } else if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
       image = argv[++i];
     } else if (strcmp(argv[i], "--root") == 0 && i + 1 < argc) {
@@ -867,7 +785,7 @@ int main(int argc, char **argv) {
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
       strcmp(mode, "stdin") == 0) {
-    return run_harness(qemu_argv, mode, timings, tmux_log_pane, log_pipe);
+    return run_harness(qemu_argv, mode, timings, log_pipe);
   }
   usage();
   return 2;

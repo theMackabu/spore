@@ -6,7 +6,6 @@
 #include "exec/stack.h"
 #include "ext2.h"
 #include "kprintf.h"
-#include "mem.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "net.h"
@@ -23,11 +22,31 @@
 #include <stdint.h>
 
 static const struct spore_boot_info *boot;
+static char kernel_log[16384];
+static uint64_t kernel_log_head;
+static uint64_t kernel_log_len;
+static bool kernel_log_handoff;
+
+static void klog_store(char c) {
+  kernel_log[kernel_log_head] = c;
+  kernel_log_head = (kernel_log_head + 1u) % sizeof(kernel_log);
+  if (kernel_log_len < sizeof(kernel_log)) { ++kernel_log_len; }
+}
+
+uint64_t klog_copy(char *dst, uint64_t cap) {
+  uint64_t n = kernel_log_len < cap ? kernel_log_len : cap;
+  uint64_t start = (kernel_log_head + sizeof(kernel_log) - kernel_log_len) % sizeof(kernel_log);
+  for (uint64_t i = 0; i < n; ++i) {
+    dst[i] = kernel_log[(start + i) % sizeof(kernel_log)];
+  }
+  return n;
+}
 
 void kputc(char c) {
+  klog_store(c);
   if (virtio_console_ready()) {
     virtio_console_putc(c);
-  } else {
+  } else if (!kernel_log_handoff) {
     pl011_putc(c);
   }
 }
@@ -317,6 +336,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   pmm_init(boot->hhdm_offset, memmap, boot->memmap_count);
   syscall_set_boot_time(boot->realtime_epoch_sec);
   cell_set_boot_epoch(boot->realtime_epoch_sec);
+  kernel_log_handoff = true;
   (void)virtio_console_init(boot->hhdm_offset);
   kprintf("[kernel] booted at EL%u\n", (unsigned)current_el());
   exceptions_init();

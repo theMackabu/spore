@@ -6,7 +6,7 @@ QEMU ?= qemu-system-aarch64
 EDK2_VARS ?= $(BUILD_DIR)/edk2-vars.fd
 RUN_ROOT ?= $(BUILD_DIR)/run-root.ext2
 TEST_RUN_ROOT ?= $(BUILD_DIR)/test-run-root.ext2
-RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --timings --tmux-log-pane --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$(RUN_ROOT)" --qemu "$(QEMU)"
+RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$(RUN_ROOT)" --qemu "$(QEMU)"
 
 .DEFAULT_GOAL := all
 
@@ -54,11 +54,7 @@ test: build
 	$(MESON) test -C "$(BUILD_DIR)"
 
 run: runner run-root
-	@if [ -n "$$TMUX" ]; then \
-		$(RUN_CMD); \
-	else \
-		tmux new-session '$(RUN_CMD)'; \
-	fi
+	$(RUN_CMD)
 
 run-tests: runner test-run-root
 	@root="$$(mktemp "$(BUILD_DIR)/run-tests-root.XXXXXX.ext2")"; \

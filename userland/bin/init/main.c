@@ -78,14 +78,22 @@ static void supervisor_poll_once(void) {
 int main(void) {
   load_environment_file("/etc/environment");
   ensure_dir("/run/mycelium");
-  ensure_dir("/var/log/mycelium");
+  ensure_dir("/var/log");
   ensure_dir("/var/lib/mycelium");
+  append_log_file("/var/log/syslog", "");
+  append_log_file("/var/log/messages", "");
+  append_log_file("/var/log/cron", "");
+  append_log_file("/var/log/boot.log", "");
+  append_log_file("/var/log/kern.log", "");
+  boot_log_append("mycelium: boot log opened\n");
+  sync_kernel_log(true);
   load_units();
   setup_control_socket();
 
   char err[160] = {0};
   (void)start_unit_name("multi-user.target", err, sizeof(err));
   puts("spore: mycelium starting, reached multi-user.target");
+  boot_log_append("spore: mycelium starting, reached multi-user.target\n");
   print_motd();
   fflush(stdout);
   defer_console_start = false;
@@ -93,6 +101,7 @@ int main(void) {
 
   for (;;) {
     manager_maintenance();
+    sync_kernel_log(false);
     supervisor_poll_once();
   }
 }

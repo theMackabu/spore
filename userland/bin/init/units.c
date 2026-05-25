@@ -261,12 +261,10 @@ void journal_append(struct unit *unit, const char *fmt, ...) {
   unit->log_len += n;
   unit->log_mem[unit->log_len] = '\0';
 
-  ensure_dir("/var/log/mycelium");
-  char path[160];
-  snprintf(path, sizeof(path), "/var/log/mycelium/%s.log", unit->name);
-  FILE *f = fopen(path, "a");
-  if (f != NULL) {
-    fputs(line, f);
-    fclose(f);
-  }
+  system_log_append(line);
+  if (unit->type == UNIT_TIMER || strstr(unit->name, "cron") != NULL) { append_log_file("/var/log/cron", line); }
+
+  char path[128];
+  snprintf(path, sizeof(path), "/var/log/%s.log", unit->name);
+  append_log_file(path, line);
 }

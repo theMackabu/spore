@@ -1751,6 +1751,10 @@ static size_t devices_text(char *dst, size_t cap) {
   return len;
 }
 
+static size_t kmsg_text(char *dst, size_t cap) {
+  return (size_t)klog_copy(dst, cap);
+}
+
 static size_t fs_root_text(char *dst, size_t cap) {
   size_t len = 0;
   proc_append_str(dst, cap, &len, "ext2 root filesystem mounted at /\n");
@@ -1999,6 +2003,7 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_MOUNTS:
   case RAMFS_DEV_STAT:
   case RAMFS_DEV_NET_DEV:
+  case RAMFS_DEV_KMSG:
   case RAMFS_DEV_FILESYSTEMS:
   case RAMFS_DEV_PARTITIONS:
   case RAMFS_DEV_DEVICES:
@@ -2080,6 +2085,8 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     return read_generated_device(file, domain, buf, len, stat_text);
   case RAMFS_DEV_NET_DEV:
     return read_generated_device(file, domain, buf, len, net_dev_text);
+  case RAMFS_DEV_KMSG:
+    return read_generated_device(file, domain, buf, len, kmsg_text);
   case RAMFS_DEV_FILESYSTEMS:
     return read_generated_device(file, domain, buf, len, filesystems_text);
   case RAMFS_DEV_PARTITIONS:
