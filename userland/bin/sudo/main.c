@@ -8,19 +8,20 @@
 int main(int argc, char **argv) {
   if (argc < 2) { return usage("sudo", "COMMAND [ARG...]"); }
 
+  uid_t real_uid = getuid();
   struct user_entry self;
-  if (!user_by_uid((unsigned)getuid(), &self)) {
+  if (!user_by_uid((unsigned)real_uid, &self)) {
     eprintf("sudo: current user is unknown\n");
     return EXIT_FAILURE;
   }
 
   bool nopasswd = false;
-  if (geteuid() != 0 && !sudo_user_allowed(self.name, &nopasswd)) {
+  if (real_uid != 0 && !sudo_user_allowed(self.name, &nopasswd)) {
     eprintf("sudo: %s is not in the sudoers file\n", self.name);
     return EXIT_FAILURE;
   }
 
-  if (geteuid() != 0 && !nopasswd) {
+  if (real_uid != 0 && !nopasswd) {
     char input[80];
     printf("[sudo] password for %s: ", self.name);
     fflush(stdout);

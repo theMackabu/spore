@@ -3,8 +3,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+
+static bool stdin_is_terminal(void) {
+  struct stat st;
+  if (fstat(STDIN_FILENO, &st) == 0) { return S_ISCHR(st.st_mode); }
+  return isatty(STDIN_FILENO);
+}
 
 static int terminal_rows(void) {
   struct winsize ws;
@@ -55,9 +62,10 @@ static int more_stream(FILE *f, bool interactive) {
 }
 
 int main(int argc, char **argv) {
-  bool interactive = isatty(STDOUT_FILENO) && isatty(STDIN_FILENO);
+  bool input_is_terminal = stdin_is_terminal();
+  bool interactive = isatty(STDOUT_FILENO) && input_is_terminal;
   if (argc == 2 && streq(argv[1], "--help")) { return usage("more", "[FILE...]"); }
-  if (argc == 1 && isatty(STDIN_FILENO)) {
+  if (argc == 1 && input_is_terminal) {
     fputs("Missing filename (\"more --help\" for help)\n", stderr);
     return EXIT_FAILURE;
   }

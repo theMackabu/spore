@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -39,6 +40,12 @@ static int load_stream(FILE *f, struct line_vec *out) {
     if (push_line(out, buf) != 0) { return -1; }
   }
   return ferror(f) ? -1 : 0;
+}
+
+static bool stdin_is_terminal(void) {
+  struct stat st;
+  if (fstat(STDIN_FILENO, &st) == 0) { return S_ISCHR(st.st_mode); }
+  return isatty(STDIN_FILENO);
 }
 
 static int terminal_rows(void) {
@@ -81,7 +88,7 @@ static void draw_page(const struct line_vec *lines, const char *name, size_t top
 }
 
 static int browse(struct line_vec *lines, const char *name) {
-  if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+  if (!stdin_is_terminal() || !isatty(STDOUT_FILENO)) {
     for (size_t i = 0; i < lines->len; ++i) {
       fputs(lines->items[i], stdout);
     }
@@ -124,7 +131,7 @@ static int browse(struct line_vec *lines, const char *name) {
 int main(int argc, char **argv) {
   if (argc == 2 && streq(argv[1], "--help")) { return usage("less", "[FILE]"); }
   if (argc > 2) { return usage("less", "[FILE]"); }
-  if (argc == 1 && isatty(STDIN_FILENO)) {
+  if (argc == 1 && stdin_is_terminal()) {
     fputs("Missing filename (\"less --help\" for help)\n", stderr);
     return EXIT_FAILURE;
   }

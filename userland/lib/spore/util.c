@@ -1,8 +1,8 @@
-#include <spore.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <spore.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -448,21 +448,67 @@ bool remove_shadow_user(const char *name) {
   return rewrite_shadow(name, "", true);
 }
 
+static bool group_contains_user(const char *group_name, const char *user_name) {
+  struct user_entry user;
+  if (!user_by_name(user_name, &user)) { return false; }
+
+  FILE *f = fopen("/etc/group", "r");
+  if (f == NULL) { return false; }
+  char line[256];
+  while (fgets(line, sizeof(line), f) != NULL) {
+    char *nl = strchr(line, '\n');
+    if (nl != NULL) { *nl = '\0'; }
+    char *p = line;
+    char *name = NULL;
+    char *password = NULL;
+    char *gid_s = NULL;
+    char *members = NULL;
+    if (!next_field(&p, &name) || !next_field(&p, &password) || !next_field(&p, &gid_s)) { continue; }
+    (void)password;
+    if (!next_field(&p, &members)) { members = ""; }
+    if (strcmp(name, group_name) != 0) { continue; }
+
+    unsigned gid = 0;
+    if (parse_uint(gid_s, &gid) && user.gid == gid) {
+      fclose(f);
+      return true;
+    }
+
+    for (char *m = members; m != NULL;) {
+      char *next = strchr(m, ',');
+      if (next != NULL) { *next++ = '\0'; }
+      if (strcmp(m, user_name) == 0) {
+        fclose(f);
+        return true;
+      }
+      m = next;
+    }
+  }
+  fclose(f);
+  return false;
+}
+
 bool sudo_user_allowed(const char *name, bool *nopasswd) {
   FILE *f = fopen("/etc/sudoers", "r");
   if (f == NULL) { return false; }
   char line[256];
   bool allowed = false;
   bool no_password = false;
-  size_t name_len = strlen(name);
   while (fgets(line, sizeof(line), f) != NULL) {
     char *p = line;
     while (*p == ' ' || *p == '\t') {
       ++p;
     }
     if (*p == '\0' || *p == '\n' || *p == '#') { continue; }
-    if ((strncmp(p, name, name_len) == 0 && (p[name_len] == ' ' || p[name_len] == '\t')) ||
-        (strncmp(p, "%sudo", 5) == 0 && strcmp(name, "spore") == 0)) {
+    char *subject = p;
+    while (*p != '\0' && *p != '\n' && *p != ' ' && *p != '\t') {
+      ++p;
+    }
+    char saved = *p;
+    *p = '\0';
+    bool subject_matches = subject[0] == '%' ? group_contains_user(subject + 1, name) : strcmp(subject, name) == 0;
+    *p = saved;
+    if (subject_matches) {
       allowed = true;
       if (strstr(p, "NOPASSWD") != NULL) { no_password = true; }
     }
