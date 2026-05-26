@@ -8,6 +8,7 @@ dir /home
 dir /root
 dir /etc/mycelium
 dir /sbin
+dir /libexec
 dir /libexec/spore-test
 dir /lib/mycelium
 dir /run/mycelium
@@ -19,6 +20,7 @@ userland/bin/init /lib/mycelium/init
 symlink /lib/mycelium/init /sbin/init
 userland/bin/myc /lib/mycelium/myc
 symlink /lib/mycelium/myc /sbin/myc
+userland/libexec/trustd /libexec/trustd
 userland/bin/msh /bin/msh
 userland/bin/dash /bin/dash
 symlink msh /bin/sh
@@ -162,6 +164,7 @@ userland/etc/mycelium/multi-user.target /etc/mycelium/multi-user.target
 userland/etc/mycelium/shutdown.target /etc/mycelium/shutdown.target
 userland/etc/mycelium/console.service /etc/mycelium/console.service
 userland/etc/mycelium/hostname.service /etc/mycelium/hostname.service
+userland/etc/mycelium/trustd.service /etc/mycelium/trustd.service
 userland/etc/mycelium/network.service /etc/mycelium/network.service
 userland/etc/mycelium/network.target /etc/mycelium/network.target
 

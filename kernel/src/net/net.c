@@ -201,7 +201,7 @@ bool net_udp_send(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const v
 }
 
 bool net_tcp_send_segment(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint8_t flags, const void *payload, size_t len) {
+                          uint16_t window, uint8_t flags, const void *payload, size_t len) {
   if (!cell_egress_allowed(NET_IP_TCP, dst_ip, dst_port)) {
     kprintf("[spore] net: tx denied proto=tcp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
@@ -214,7 +214,7 @@ bool net_tcp_send_segment(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
   store_be32(packet + 8, ack);
   packet[12] = (uint8_t)(5u << 4);
   packet[13] = flags;
-  store_be16(packet + 14, 65535);
+  store_be16(packet + 14, window);
   store_be16(packet + 16, 0);
   store_be16(packet + 18, 0);
   if (len != 0) { kmemcpy(packet + TCP_HEADER_LEN, payload, len); }

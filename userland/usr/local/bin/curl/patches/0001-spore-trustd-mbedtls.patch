@@ -1,0 +1,182 @@
+--- a/lib/vtls/mbedtls.c
++++ b/lib/vtls/mbedtls.c
+@@ -69,6 +69,12 @@
+ #include "curlx/strdup.h"
+ #include "curl_sha256.h"
+ 
++#include <errno.h>
++#include <stdint.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
+ /* ALPN for http2 */
+ #if defined(USE_HTTP2) && defined(MBEDTLS_SSL_ALPN)
+ #define HAS_ALPN_MBEDTLS
+@@ -91,7 +97,110 @@
+   BIT(initialized); /* mbedtls_ssl_context is initialized */
+   BIT(sent_shutdown);
+   BIT(send_blocked);
++  BIT(spore_trustd);
+ };
++
++static int spore_write_full(int fd, const void *buf, size_t len)
++{
++  const unsigned char *p = (const unsigned char *)buf;
++  while(len) {
++    ssize_t n = write(fd, p, len);
++    if(n < 0 && errno == EINTR)
++      continue;
++    if(n <= 0)
++      return -1;
++    p += (size_t)n;
++    len -= (size_t)n;
++  }
++  return 0;
++}
++
++static int spore_read_full(int fd, void *buf, size_t len)
++{
++  unsigned char *p = (unsigned char *)buf;
++  while(len) {
++    ssize_t n = read(fd, p, len);
++    if(n < 0 && errno == EINTR)
++      continue;
++    if(n <= 0)
++      return -1;
++    p += (size_t)n;
++    len -= (size_t)n;
++  }
++  return 0;
++}
++
++static int spore_trustd_connect(void)
++{
++  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
++  struct sockaddr_un addr;
++  if(fd < 0)
++    return -1;
++  memset(&addr, 0, sizeof(addr));
++  addr.sun_family = AF_UNIX;
++  strcpy(addr.sun_path, "/run/trustd.sock");
++  if(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
++    close(fd);
++    return -1;
++  }
++  return fd;
++}
++
++static bool spore_trustd_available(void)
++{
++  int fd = spore_trustd_connect();
++  if(fd < 0)
++    return FALSE;
++  close(fd);
++  return TRUE;
++}
++
++static int spore_trustd_verify(const char *hostname,
++                               const mbedtls_x509_crt *chain,
++                               uint32_t *verify_flags)
++{
++  uint32_t magic = 0x31525453u;
++  uint32_t host_len;
++  uint32_t cert_count = 0;
++  uint32_t reply_magic = 0;
++  int32_t rc = -1;
++  int fd = spore_trustd_connect();
++  const mbedtls_x509_crt *cur;
++
++  if(fd < 0 || !hostname || !chain)
++    goto out;
++  host_len = (uint32_t)strlen(hostname);
++  for(cur = chain; cur; cur = cur->next)
++    ++cert_count;
++  if(host_len == 0 || host_len > 255 || cert_count == 0 || cert_count > 12)
++    goto out;
++
++  if(spore_write_full(fd, &magic, sizeof(magic)) != 0 ||
++     spore_write_full(fd, &host_len, sizeof(host_len)) != 0 ||
++     spore_write_full(fd, hostname, host_len) != 0 ||
++     spore_write_full(fd, &cert_count, sizeof(cert_count)) != 0)
++    goto out;
++
++  for(cur = chain; cur; cur = cur->next) {
++    uint32_t cert_len = (uint32_t)cur->raw.len;
++    if(cert_len == 0 || cert_len > 65536)
++      goto out;
++    if(spore_write_full(fd, &cert_len, sizeof(cert_len)) != 0 ||
++       spore_write_full(fd, cur->raw.p, cert_len) != 0)
++      goto out;
++  }
++
++  if(spore_read_full(fd, &reply_magic, sizeof(reply_magic)) != 0 ||
++     spore_read_full(fd, &rc, sizeof(rc)) != 0 ||
++     spore_read_full(fd, verify_flags, sizeof(*verify_flags)) != 0 ||
++     reply_magic != 0x54525350u)
++    rc = -1;
++
++out:
++  if(fd >= 0)
++    close(fd);
++  return rc;
++}
+ 
+ /** A context for random number generation (RNG).
+  */
+@@ -493,6 +602,14 @@
+ 
+   mbedtls_x509_crt_init(&backend->cacert);
+ 
++  if(verifypeer && !ca_info_blob && ssl_cafile &&
++     !strcmp(ssl_cafile, "/etc/ssl/certs/ca-certificates.crt") &&
++     spore_trustd_available()) {
++    backend->spore_trustd = TRUE;
++    infof(data, "mbedTLS: using Spore trustd CA cache");
++    return CURLE_OK;
++  }
++
+   if(ca_info_blob && verifypeer) {
+ #ifdef MBEDTLS_PEM_PARSE_C
+     /* if DER or a null-terminated PEM process using
+@@ -836,7 +953,10 @@
+    * disabled we clear the corresponding error flags in the verify callback
+    * function. That is also where we log verification errors. */
+   mbedtls_ssl_conf_verify(&backend->config, mbed_verify_cb, cf);
+-  mbedtls_ssl_conf_authmode(&backend->config, MBEDTLS_SSL_VERIFY_REQUIRED);
++  mbedtls_ssl_conf_authmode(&backend->config,
++                            backend->spore_trustd ?
++                            MBEDTLS_SSL_VERIFY_OPTIONAL :
++                            MBEDTLS_SSL_VERIFY_REQUIRED);
+ 
+   mbedtls_ssl_init(&backend->ssl);
+   backend->initialized = TRUE;
+@@ -1025,6 +1145,8 @@
+   struct ssl_connect_data *connssl = cf->ctx;
+   struct mbed_ssl_backend_data *backend =
+     (struct mbed_ssl_backend_data *)connssl->backend;
++  struct ssl_primary_config *conn_config =
++    Curl_ssl_cf_get_primary_config(cf);
+ #ifdef HAVE_PINNED_PUBKEY
+ #ifndef CURL_DISABLE_PROXY
+   const char * const pinnedpubkey = Curl_ssl_cf_is_proxy(cf) ?
+@@ -1068,6 +1188,19 @@
+           mbedtls_ssl_get_version(&backend->ssl), cipher_str);
+   }
+ 
++  if(backend->spore_trustd && conn_config->verifypeer) {
++    uint32_t flags = 0;
++    const char *hostname = connssl->peer.sni ?
++      connssl->peer.sni : connssl->peer.dest->hostname;
++    const mbedtls_x509_crt *peercert =
++      mbedtls_ssl_get_peer_cert(&backend->ssl);
++    if(!peercert || spore_trustd_verify(hostname, peercert, &flags) != 0) {
++      failf(data, "Spore trustd: certificate verification failed (0x%08x)",
++            flags);
++      return CURLE_PEER_FAILED_VERIFICATION;
++    }
++  }
++
+ #ifdef HAVE_PINNED_PUBKEY
+   if(pinnedpubkey) {
+     int size;

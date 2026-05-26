@@ -10,8 +10,8 @@ root=$1
 build=$2
 out=$3
 
-# Static musl TLS backend for curl. Programs/tests stay off here; HTTPS
-# validation is exercised through the guest curl binary and the baked CA bundle.
+# Static musl TLS backend for curl. Build for handshake/runtime speed rather than
+# minimum size; HTTPS was visibly CPU-bound with MinSizeRel crypto.
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 src="$root/userland/third_party/mbedtls"
@@ -44,7 +44,8 @@ mkdir -p "$work" "$inst"
     -DCMAKE_AR=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ar \
     -DCMAKE_RANLIB=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ranlib \
     -DCMAKE_INSTALL_PREFIX="$inst" \
-    -DCMAKE_BUILD_TYPE=MinSizeRel \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG -march=armv8-a+crypto -DMBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_ONLY" \
     -DENABLE_PROGRAMS=OFF \
     -DENABLE_TESTING=OFF \
     -DMBEDTLS_FATAL_WARNINGS=OFF \

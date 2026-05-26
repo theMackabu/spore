@@ -2577,6 +2577,11 @@ static int64_t eventfd_read_to_domain(struct domain *domain, struct open_file *f
   return sizeof(value);
 }
 
+static uint16_t tcp_window(const struct open_file *file) {
+  uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
+  return room > UINT16_MAX ? UINT16_MAX : (uint16_t)room;
+}
+
 static int64_t tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
   if (domain == NULL || file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
   if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
@@ -2585,7 +2590,7 @@ static int64_t tcp_write_from_domain(struct domain *domain, struct open_file *fi
   uint8_t tmp[1400];
   if (!vmm_copy_from_user(&domain->as, tmp, buf, (size_t)chunk)) { return -EFAULT; }
   if (!net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
-                            file->tcp_ack, 0x18, tmp, (size_t)chunk)) {
+                            file->tcp_ack, tcp_window(file), 0x18, tmp, (size_t)chunk)) {
     return -EIO;
   }
   file->tcp_seq += (uint32_t)chunk;
@@ -3790,7 +3795,7 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
     file->tcp_error = 0;
     file->tcp_fin = false;
     file->tcp_state = TCP_SYN_SENT;
-    if (!net_tcp_send_segment(file->tcp_local_port, ip, port, file->tcp_seq, 0, 0x02, NULL, 0)) {
+    if (!net_tcp_send_segment(file->tcp_local_port, ip, port, file->tcp_seq, 0, tcp_window(file), 0x02, NULL, 0)) {
       file->tcp_state = TCP_CLOSED;
       return -EIO;
     }
@@ -3857,9 +3862,14 @@ static int64_t tcp_read_to_domain(struct domain *domain, struct open_file *file,
   uint64_t n = file->tcp_rx_len < len ? file->tcp_rx_len : len;
   if (!vmm_copy_to_user(&domain->as, buf, file->tcp_rx, (size_t)n)) { return -EFAULT; }
   if (n < file->tcp_rx_len) {
-    for (uint64_t i = 0; i < file->tcp_rx_len - n; ++i) { file->tcp_rx[i] = file->tcp_rx[n + i]; }
+    uint32_t remaining = file->tcp_rx_len - (uint32_t)n;
+    for (uint32_t i = 0; i < remaining; ++i) { file->tcp_rx[i] = file->tcp_rx[n + i]; }
   }
-  file->tcp_rx_len -= (uint16_t)n;
+  file->tcp_rx_len -= (uint32_t)n;
+  if (file->tcp_state == TCP_ESTABLISHED || file->tcp_state == TCP_FIN_WAIT) {
+    (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
+                               file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
+  }
   return (int64_t)n;
 }
 
@@ -4021,7 +4031,7 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
         file->tcp_ack = seq + 1;
         file->tcp_state = TCP_ESTABLISHED;
         (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
-                                   file->tcp_ack, 0x10, NULL, 0);
+                                   file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
         wake_socket_waiters(file);
         return;
       }
@@ -4032,21 +4042,24 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
         return;
       }
       if (len != 0) {
-        uint64_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
+        uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
         uint64_t n = len < room ? len : room;
         if (n != 0) {
           kmemcpy(file->tcp_rx + file->tcp_rx_len, payload, (size_t)n);
-          file->tcp_rx_len += (uint16_t)n;
+          file->tcp_rx_len += (uint32_t)n;
           file->tcp_ack = seq + (uint32_t)n;
           (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
-                                     file->tcp_ack, 0x10, NULL, 0);
+                                     file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
+        } else {
+          (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
+                                     file->tcp_ack, 0, 0x10, NULL, 0);
         }
       }
       if ((flags & 0x01) != 0) {
         file->tcp_fin = true;
         file->tcp_ack = seq + (uint32_t)len + 1;
         (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
-                                   file->tcp_ack, 0x10, NULL, 0);
+                                   file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
       }
       wake_socket_waiters(file);
       return;

@@ -18,6 +18,7 @@ enum {
   MAX_SNAPSHOTS = 8,
   MAX_FDS = 32,
   MAX_OPEN_FILES = 64,
+  CELL_TCP_RX_CAP = 32768,
   CELL_MAX_POLL_FDS = 64,
   CELL_SWITCHED = -0x40000000,
 };
@@ -125,11 +126,11 @@ struct open_file {
   uint32_t tcp_ack;
   uint16_t tcp_local_port;
   uint16_t tcp_remote_port;
-  uint16_t tcp_rx_len;
+  uint32_t tcp_rx_len;
   uint8_t tcp_state;
   uint8_t tcp_error;
   bool tcp_fin;
-  uint8_t tcp_rx[4096];
+  uint8_t tcp_rx[CELL_TCP_RX_CAP];
   struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
   uint64_t eventfd_value;
   bool eventfd_semaphore;

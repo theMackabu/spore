@@ -12,12 +12,14 @@ project_build=$3
 out=$4
 
 # Spore curl is HTTP(S)-only, static-musl, and uses mbedTLS plus the baked
-# Mozilla CA bundle at /etc/ssl/certs/ca-certificates.crt. IPv6 stays disabled
-# until the kernel/network stack grows AF_INET6.
+# Mozilla CA bundle at /etc/ssl/certs/ca-certificates.crt. Build for network/TLS
+# runtime speed; the image can afford a slightly larger curl.
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 curl_src="$root/userland/third_party/curl"
+curl_work_src="$build/curl-src"
 curl_build="$build/curl-build"
+patch_dir="$root/userland/usr/local/bin/curl/patches"
 mbedtls_inst="$project_build/userland/lib/mbedtls/mbedtls-install"
 stamp="$build/.curl.stamp"
 stamp_new="$build/.curl.stamp.new"
@@ -26,6 +28,11 @@ mkdir -p "$build"
 {
   git -C "$curl_src" rev-parse HEAD
   test -f "$mbedtls_inst/lib/libmbedtls.a" && cksum "$mbedtls_inst/lib/libmbedtls.a"
+  if [ -d "$patch_dir" ]; then
+    find "$patch_dir" -type f -name '*.patch' -print | sort | while IFS= read -r patch_file; do
+      cksum "$patch_file"
+    done
+  fi
   cksum "$0"
   aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
 } >"$stamp_new"
@@ -35,12 +42,20 @@ if [ -f "$out" ] && [ -f "$stamp" ] && cmp -s "$stamp_new" "$stamp"; then
   exit 0
 fi
 
-rm -rf "$curl_build"
+rm -rf "$curl_build" "$curl_work_src"
 mkdir -p "$curl_build"
+cp -R "$curl_src" "$curl_work_src"
+rm -rf "$curl_work_src/.git"
+if [ -d "$patch_dir" ]; then
+  for patch_file in "$patch_dir"/*.patch; do
+    [ -e "$patch_file" ] || continue
+    patch -d "$curl_work_src" -p1 <"$patch_file" >/dev/null
+  done
+fi
 
 (
   cd "$curl_build"
-  cmake "$curl_src" \
+  cmake "$curl_work_src" \
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
     -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \
@@ -53,7 +68,8 @@ mkdir -p "$curl_build"
     -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
     -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
-    -DCMAKE_BUILD_TYPE=MinSizeRel \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG -march=armv8-a+crypto" \
     -DBUILD_CURL_EXE=ON \
     -DBUILD_LIBCURL_DOCS=OFF \
     -DBUILD_MISC_DOCS=OFF \
