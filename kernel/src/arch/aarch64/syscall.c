@@ -611,14 +611,7 @@ static bool normalize_path(const char *base, const char *path, char *out, size_t
   return true;
 }
 
-static bool copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
-  path_policy_denied = false;
-  char raw[128];
-  char virtual_path[128];
-  if (!copy_string_from_user(path_addr, raw, sizeof(raw)) ||
-      !normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
-    return false;
-  }
+static bool resolve_virtual_path(const char *virtual_path, char *out, size_t cap) {
   const char *chroot = cell_current_chroot();
   if (streq(chroot, "/")) {
     if (kstrlen(virtual_path) >= cap) { return false; }
@@ -638,6 +631,17 @@ static bool copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
     return false;
   }
   return true;
+}
+
+static bool copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
+  path_policy_denied = false;
+  char raw[128];
+  char virtual_path[128];
+  if (!copy_string_from_user(path_addr, raw, sizeof(raw)) ||
+      !normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
+    return false;
+  }
+  return resolve_virtual_path(virtual_path, out, cap);
 }
 
 static bool append_char(char *out, size_t cap, size_t *pos, char c) {
@@ -669,49 +673,36 @@ static bool append_u64(char *out, size_t cap, size_t *pos, uint64_t value) {
 }
 
 static int64_t copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
+  path_policy_denied = false;
   char raw[128];
   if (!copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
   if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
     return copy_resolved_path(path_addr, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
   }
 
-  struct vfs_node base;
-  if (!cell_fd_stat((int)dirfd, &base)) { return -(int64_t)EBADF; }
-  if (!base.is_dir) { return -(int64_t)ENOTDIR; }
-
-  char combined[128];
-  size_t pos = 0;
-  combined[0] = '\0';
-  if (base.backend == VFS_PROC) {
-    if (!append_str(combined, sizeof(combined), &pos, "/proc")) { return -(int64_t)ENAMETOOLONG; }
-    if (base.proc_pid > 0) {
-      if (!append_char(combined, sizeof(combined), &pos, '/') ||
-          !append_u64(combined, sizeof(combined), &pos, (uint64_t)base.proc_pid)) {
-        return -(int64_t)ENAMETOOLONG;
-      }
-    }
-  } else if (base.backend == VFS_RAMFS && base.ramfs.mount == RAMFS_MOUNT_PROC && streq(base.ramfs.name, "proc")) {
-    if (!append_str(combined, sizeof(combined), &pos, "/proc")) { return -(int64_t)ENAMETOOLONG; }
-  } else if (base.backend == VFS_RAMFS && base.ramfs.mount == RAMFS_MOUNT_DEV && streq(base.ramfs.name, "dev")) {
-    if (!append_str(combined, sizeof(combined), &pos, "/dev")) { return -(int64_t)ENAMETOOLONG; }
-  } else if (base.backend == VFS_RAMFS && base.ramfs.mount == RAMFS_MOUNT_TMP && streq(base.ramfs.name, "tmp")) {
-    if (!append_str(combined, sizeof(combined), &pos, "/tmp")) { return -(int64_t)ENAMETOOLONG; }
-  } else {
-    return -(int64_t)EINVAL;
-  }
-
-  if (raw[0] != '\0') {
-    if (!append_char(combined, sizeof(combined), &pos, '/') || !append_str(combined, sizeof(combined), &pos, raw)) {
-      return -(int64_t)ENAMETOOLONG;
-    }
-  }
-  if (!normalize_path("/", combined, out, cap)) { return -(int64_t)ENAMETOOLONG; }
-  return 0;
+  if (!cell_fd_is_dir((int)dirfd)) { return cell_fd_path((int)dirfd, out, cap) ? -(int64_t)ENOTDIR : -(int64_t)EBADF; }
+  char base[128];
+  char virtual_path[128];
+  if (!cell_fd_path((int)dirfd, base, sizeof(base))) { return -(int64_t)EBADF; }
+  if (!normalize_path(base, raw, virtual_path, sizeof(virtual_path))) { return -(int64_t)ENAMETOOLONG; }
+  return resolve_virtual_path(virtual_path, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
 }
 
 static bool copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
   char raw[128];
   return copy_string_from_user(path_addr, raw, sizeof(raw)) && normalize_path(cell_current_cwd(), raw, out, cap);
+}
+
+static int64_t copy_virtual_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
+  char raw[128];
+  if (!copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
+  if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
+    return normalize_path(cell_current_cwd(), raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
+  }
+  if (!cell_fd_is_dir((int)dirfd)) { return cell_fd_path((int)dirfd, out, cap) ? -(int64_t)ENOTDIR : -(int64_t)EBADF; }
+  char base[128];
+  if (!cell_fd_path((int)dirfd, base, sizeof(base))) { return -(int64_t)EBADF; }
+  return normalize_path(base, raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
 }
 
 static bool copy_exec_path(uint64_t path_addr, char *out, size_t cap) {
@@ -1511,7 +1502,10 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
 
 static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   char path[128];
+  char virtual_path[128];
   int64_t path_rc = copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
+  if (path_rc != 0) { return path_rc; }
+  path_rc = copy_virtual_path_at(dirfd, path_addr, virtual_path, sizeof(virtual_path));
   if (path_rc != 0) { return path_rc; }
   uint64_t access = 0;
   if ((flags & O_ACCMODE) == O_WRONLY) {
@@ -1534,7 +1528,7 @@ static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
     (void)vfs_truncate(&node, 0);
     (void)vfs_lookup(path, &node);
   }
-  return cell_fd_open_node(&node, (uint32_t)flags);
+  return cell_fd_open_node(&node, (uint32_t)flags, virtual_path);
 }
 
 static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
@@ -2680,7 +2674,14 @@ l_ftruncate:
 l_chdir:
   return sys_chdir(a0);
 l_fchdir:
-  return cell_fd_is_dir((int)a0) ? 0 : -(int64_t)ENOTDIR;
+  {
+    struct vfs_node node;
+    if (!cell_fd_stat((int)a0, &node)) { return -(int64_t)EBADF; }
+    if (!node.is_dir) { return -(int64_t)ENOTDIR; }
+    char path[128];
+    if (!cell_fd_path((int)a0, path, sizeof(path))) { return -(int64_t)EBADF; }
+    return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
+  }
 l_fsync:
   return 0;
 l_getrandom:

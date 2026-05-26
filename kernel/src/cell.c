@@ -3323,7 +3323,15 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
   return next;
 }
 
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags) {
+static void copy_open_path(struct open_file *file, const char *path) {
+  if (file == NULL || path == NULL) { return; }
+  size_t len = kstrlen(path);
+  if (len >= sizeof(file->path)) { len = sizeof(file->path) - 1; }
+  kmemcpy(file->path, path, len);
+  file->path[len] = '\0';
+}
+
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path) {
   struct domain *domain = current_domain();
   if (domain == NULL) { return -12; }
   if ((node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
@@ -3339,6 +3347,7 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags) {
     file->type = OPEN_PIPE;
     file->flags = flags;
     file->node = *node;
+    copy_open_path(file, path);
     file->pipe_id = (uint8_t)pipe_id;
     file->pipe_write_end = write_end;
     if (write_end) {
@@ -3365,6 +3374,7 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags) {
   file->type = OPEN_RAMFS;
   file->flags = flags;
   file->node = *node;
+  copy_open_path(file, path);
   if ((flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
   domain->fds[fd] = file;
   return fd;
@@ -4137,6 +4147,19 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
 bool cell_fd_is_dir(int fd) {
   struct vfs_node node;
   return cell_fd_stat(fd, &node) && node.is_dir;
+}
+
+bool cell_fd_path(int fd, char *out, size_t cap) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || out == NULL || cap == 0 || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) {
+    return false;
+  }
+  struct open_file *file = domain->fds[fd];
+  if (file->path[0] == '\0') { return false; }
+  size_t len = kstrlen(file->path);
+  if (len >= cap) { return false; }
+  kmemcpy(out, file->path, len + 1);
+  return true;
 }
 
 bool cell_fd_next_dirent(int fd, struct vfs_dirent *out) {

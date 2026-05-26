@@ -109,6 +109,7 @@ struct open_file {
   uint32_t unix_peer_uid;
   uint32_t unix_peer_gid;
   char unix_path[108];
+  char path[128];
   struct vfs_node node;
   uint8_t socket_proto;
   uint32_t udp_remote_ip;
@@ -328,7 +329,7 @@ int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, ui
 int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame);
 int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags);
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path);
 int cell_fd_socket_inet(uint8_t proto);
 int cell_fd_socket_unix(void);
 bool cell_fd_udp_bind(int fd, uint16_t port);
@@ -362,6 +363,7 @@ int cell_fd_set_fd_flags(int fd, int flags);
 int cell_fd_close(int fd);
 bool cell_fd_stat(int fd, struct vfs_node *out);
 bool cell_fd_is_dir(int fd);
+bool cell_fd_path(int fd, char *out, size_t cap);
 bool cell_fd_next_dirent(int fd, struct vfs_dirent *out);
 void cell_fd_rewind_one_dirent(int fd);
 uint64_t cell_fd_dir_offset(int fd);
