@@ -18,6 +18,11 @@ struct ramfs_backing_page {
 };
 
 static struct ramfs_backing_page backing_pages[RAMFS_MAX_BACKING_PAGES];
+static uint64_t ramfs_now_sec;
+
+void ramfs_set_now(uint64_t epoch_sec) {
+  ramfs_now_sec = epoch_sec;
+}
 
 static bool streq(const char *a, const char *b) {
   while (*a != '\0' && *b != '\0') {
@@ -50,6 +55,9 @@ static int alloc_node(struct ramfs *fs) {
       fs->nodes[i].parent = -1;
       fs->nodes[i].first_page = -1;
       fs->nodes[i].ino = fs->next_ino++;
+      fs->nodes[i].atime = ramfs_now_sec;
+      fs->nodes[i].ctime = ramfs_now_sec;
+      fs->nodes[i].mtime = ramfs_now_sec;
       return i;
     }
   }
@@ -200,6 +208,8 @@ static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir,
   fs->nodes[index].mode = is_dir ? 0777u : 0666u;
   fs->nodes[index].uid = 0;
   fs->nodes[index].gid = 0;
+  fs->nodes[parent].mtime = ramfs_now_sec;
+  fs->nodes[parent].ctime = ramfs_now_sec;
   copy_name(fs->nodes[index].name, name);
   return index;
 }
@@ -362,6 +372,9 @@ bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
     .mode = node->mode,
     .uid = node->uid,
     .gid = node->gid,
+    .atime = node->atime,
+    .ctime = node->ctime,
+    .mtime = node->mtime,
   };
   return true;
 }
@@ -468,12 +481,15 @@ bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
     }
   }
   fs->nodes[index].size = size;
+  fs->nodes[index].mtime = ramfs_now_sec;
+  fs->nodes[index].ctime = ramfs_now_sec;
   return true;
 }
 
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
   fs->nodes[index].mode = mode & 07777u;
+  fs->nodes[index].ctime = ramfs_now_sec;
   return true;
 }
 
@@ -481,6 +497,7 @@ bool ramfs_chown_node(struct ramfs *fs, int index, uint32_t uid, uint32_t gid) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
   fs->nodes[index].uid = uid;
   fs->nodes[index].gid = gid;
+  fs->nodes[index].ctime = ramfs_now_sec;
   return true;
 }
 
@@ -507,6 +524,9 @@ bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path) {
   if (dst < 0) { return false; }
   fs->nodes[dst].size = fs->nodes[src].size;
   fs->nodes[dst].mode = fs->nodes[src].mode;
+  fs->nodes[dst].atime = fs->nodes[src].atime;
+  fs->nodes[dst].mtime = fs->nodes[src].mtime;
+  fs->nodes[dst].ctime = ramfs_now_sec;
   if (fs->nodes[src].writable) {
     for (int slot = fs->nodes[src].first_page; slot >= 0; slot = backing_pages[slot].next) {
       int dst_slot = get_backing_page(fs, dst, backing_pages[slot].file_page, true);
@@ -535,6 +555,7 @@ bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path) 
   }
   fs->nodes[index].parent = parent;
   copy_name(fs->nodes[index].name, name);
+  fs->nodes[index].ctime = ramfs_now_sec;
   return true;
 }
 
@@ -589,5 +610,7 @@ int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, 
     done += chunk;
   }
   if (off + len > fs->nodes[index].size) { fs->nodes[index].size = off + len; }
+  fs->nodes[index].mtime = ramfs_now_sec;
+  fs->nodes[index].ctime = ramfs_now_sec;
   return (int64_t)len;
 }

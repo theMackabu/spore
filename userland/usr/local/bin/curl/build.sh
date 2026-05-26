@@ -11,6 +11,10 @@ build=$2
 project_build=$3
 out=$4
 
+# Spore curl is HTTP(S)-only, static-musl, and uses mbedTLS plus the baked
+# Mozilla CA bundle at /etc/ssl/certs/ca-certificates.crt. IPv6 stays disabled
+# until the kernel/network stack grows AF_INET6.
+
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 curl_src="$root/userland/third_party/curl"
 curl_build="$build/curl-build"

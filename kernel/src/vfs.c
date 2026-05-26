@@ -31,6 +31,7 @@ bool cell_proc_exists(int pid);
 int cell_proc_pid_at(size_t index);
 uint32_t cell_proc_uid(int pid);
 uint32_t cell_proc_gid(int pid);
+uint64_t cell_realtime_seconds(void);
 
 enum {
   BOOT_IMAGE_BYTES = 16 * 1024 * 1024,
@@ -116,6 +117,12 @@ static uint64_t ramfs_device_rdev(enum ramfs_device device) {
   }
 }
 
+static void update_time_sources(void) {
+  uint64_t now = cell_realtime_seconds();
+  ramfs_set_now(now);
+  ext2_set_now((uint32_t)now);
+}
+
 static void from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
   uint16_t perms = node->mode == 0 ? (node->is_dir ? 0777u : 0666u) : (uint16_t)(node->mode & 07777u);
   uint16_t type = (uint16_t)(node->mode & 0170000u);
@@ -142,6 +149,9 @@ static void from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
     .gid = node->gid,
     .dev_id = ramfs_mount_dev_id(node->mount),
     .rdev = ramfs_device_rdev(node->device),
+    .atime = node->atime,
+    .ctime = node->ctime,
+    .mtime = node->mtime,
     .size = node->size,
     .ramfs = *node,
   };
@@ -160,6 +170,9 @@ static void from_ext2(const struct ext2_node *node, struct vfs_node *out) {
     .gid = node->gid,
     .dev_id = VFS_DEV_EXT2_ROOT,
     .rdev = 0,
+    .atime = node->atime,
+    .ctime = node->ctime,
+    .mtime = node->mtime,
     .size = node->size,
     .ext2 = *node,
   };
@@ -169,6 +182,7 @@ void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset) {
   (void)hhdm_offset;
   root_ramfs = ramfs;
   root_ext2 = ext2;
+  update_time_sources();
 }
 
 static bool streq(const char *a, const char *b) {
@@ -291,6 +305,7 @@ static bool proc_kind_for_name(const char *name, enum ramfs_device *device) {
 }
 
 static bool proc_pid_file_node(int pid, enum ramfs_device device, struct vfs_node *out) {
+  uint64_t now = cell_realtime_seconds();
   *out = (struct vfs_node){
     .backend = VFS_PROC,
     .ino = 110000u + (uint64_t)pid * 16u + (uint64_t)device,
@@ -302,6 +317,9 @@ static bool proc_pid_file_node(int pid, enum ramfs_device device, struct vfs_nod
     .uid = cell_proc_uid(pid),
     .gid = cell_proc_gid(pid),
     .dev_id = VFS_DEV_PROC,
+    .atime = now,
+    .ctime = now,
+    .mtime = now,
     .proc_pid = pid,
   };
   return true;
@@ -331,6 +349,7 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
   int pid = 0;
   if (!parse_uint_component(&p, &pid) || !cell_proc_exists(pid)) { return false; }
   if (*p == '\0') {
+    uint64_t now = cell_realtime_seconds();
     *out = (struct vfs_node){
       .backend = VFS_PROC,
       .ino = 100000u + (uint64_t)pid,
@@ -342,6 +361,9 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
       .uid = cell_proc_uid(pid),
       .gid = cell_proc_gid(pid),
       .dev_id = VFS_DEV_PROC,
+      .atime = now,
+      .ctime = now,
+      .mtime = now,
       .proc_pid = pid,
     };
     return true;
@@ -349,6 +371,7 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
   if (*p != '/') { return false; }
   ++p;
   if (streq(p, "task")) {
+    uint64_t now = cell_realtime_seconds();
     *out = (struct vfs_node){
       .backend = VFS_PROC,
       .ino = 120000u + (uint64_t)pid,
@@ -360,6 +383,9 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
       .uid = cell_proc_uid(pid),
       .gid = cell_proc_gid(pid),
       .dev_id = VFS_DEV_PROC,
+      .atime = now,
+      .ctime = now,
+      .mtime = now,
       .proc_pid = -pid,
     };
     return true;
@@ -369,6 +395,7 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
     int tid = 0;
     if (!parse_uint_component(&p, &tid) || tid != pid || !cell_proc_exists(tid)) { return false; }
     if (*p == '\0') {
+      uint64_t now = cell_realtime_seconds();
       *out = (struct vfs_node){
         .backend = VFS_PROC,
         .ino = 130000u + (uint64_t)pid,
@@ -380,6 +407,9 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
         .uid = cell_proc_uid(pid),
         .gid = cell_proc_gid(pid),
         .dev_id = VFS_DEV_PROC,
+        .atime = now,
+        .ctime = now,
+        .mtime = now,
         .proc_pid = pid,
       };
       return true;
@@ -430,6 +460,7 @@ bool vfs_lstat(const char *path, struct vfs_node *out) {
 }
 
 bool vfs_mkdir(const char *path) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(path)) {
     struct ext2_node node;
     return ext2_create(root_ext2, path, true, &node);
@@ -438,6 +469,7 @@ bool vfs_mkdir(const char *path) {
 }
 
 bool vfs_create(const char *path, struct vfs_node *out) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(path)) {
     struct ext2_node node;
     if (!ext2_create(root_ext2, path, false, &node)) { return false; }
@@ -452,6 +484,7 @@ bool vfs_create(const char *path, struct vfs_node *out) {
 }
 
 bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out) {
+  update_time_sources();
   struct ramfs_node node;
   if (root_ramfs == NULL || !ramfs_route(path) || !ramfs_mkfifo(root_ramfs, path, (uint16_t)mode, &node)) {
     return false;
@@ -461,6 +494,7 @@ bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out) {
 }
 
 bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
+  update_time_sources();
   struct ramfs_node node;
   if (root_ramfs == NULL || !ramfs_route(path) || !ramfs_mksock(root_ramfs, path, (uint16_t)mode, &node)) {
     return false;
@@ -470,6 +504,7 @@ bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
 }
 
 bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
+  update_time_sources();
   vfs_page_cache_invalidate(node);
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext = node->ext2;
@@ -480,6 +515,7 @@ bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
 }
 
 bool vfs_unlink(const char *path) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(path)) {
     return ext2_unlink(root_ext2, path);
   }
@@ -487,6 +523,7 @@ bool vfs_unlink(const char *path) {
 }
 
 bool vfs_link(const char *old_path, const char *new_path) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(old_path) && !ramfs_route(new_path)) {
     return ext2_link(root_ext2, old_path, new_path);
   }
@@ -495,6 +532,7 @@ bool vfs_link(const char *old_path, const char *new_path) {
 }
 
 bool vfs_symlink(const char *target, const char *link_path) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(link_path)) {
     return ext2_symlink(root_ext2, target, link_path);
   }
@@ -507,6 +545,7 @@ bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
 }
 
 bool vfs_chmod(const char *path, uint32_t mode) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(path)) { return ext2_chmod(root_ext2, path, mode); }
   struct ramfs_node node;
   return root_ramfs != NULL && ramfs_route(path) && ramfs_lookup_node(root_ramfs, path, &node) &&
@@ -514,11 +553,13 @@ bool vfs_chmod(const char *path, uint32_t mode) {
 }
 
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode) {
+  update_time_sources();
   if (node->backend == VFS_EXT2) { return ext2_chmod_node(root_ext2, &node->ext2, mode); }
   return node->backend == VFS_RAMFS && ramfs_chmod_node(node->ramfs.fs, node->ramfs.index, (uint16_t)mode);
 }
 
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(path)) { return ext2_chown(root_ext2, path, uid, gid); }
   struct ramfs_node node;
   return root_ramfs != NULL && ramfs_route(path) && ramfs_lookup_node(root_ramfs, path, &node) &&
@@ -526,11 +567,13 @@ bool vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
 }
 
 bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
+  update_time_sources();
   if (node->backend == VFS_EXT2) { return ext2_chown_node(root_ext2, &node->ext2, uid, gid); }
   return node->backend == VFS_RAMFS && ramfs_chown_node(node->ramfs.fs, node->ramfs.index, uid, gid);
 }
 
 bool vfs_rename(const char *old_path, const char *new_path) {
+  update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(old_path) && !ramfs_route(new_path)) {
     return ext2_rename(root_ext2, old_path, new_path);
   }
@@ -548,6 +591,7 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 }
 
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
+  update_time_sources();
   vfs_page_cache_invalidate(node);
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext = node->ext2;

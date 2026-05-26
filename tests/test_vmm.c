@@ -68,6 +68,21 @@ int main(void) {
   assert(strcmp((char *)&phys[rw_pa], "ok") == 0);
   assert(!vmm_user_range_accessible(&as, 0x401ff0, 0x40, VMM_ACCESS_READ));
 
+  uint64_t cross_a = pmm_alloc_zero_page();
+  uint64_t cross_b = pmm_alloc_zero_page();
+  assert(vmm_map_page(&as, 0x600000, cross_a, VMM_USER_READ | VMM_USER_WRITE));
+  assert(vmm_map_page(&as, 0x601000, cross_b, VMM_USER_READ | VMM_USER_WRITE));
+  char cross_in[64];
+  for (size_t i = 0; i < sizeof(cross_in); ++i) {
+    cross_in[i] = (char)('A' + (i % 26));
+  }
+  assert(vmm_copy_to_user(&as, 0x600ff0, cross_in, sizeof(cross_in)));
+  assert(memcmp(&phys[cross_a + 0xff0], cross_in, 16) == 0);
+  assert(memcmp(&phys[cross_b], cross_in + 16, sizeof(cross_in) - 16) == 0);
+  char cross_out[sizeof(cross_in)] = {0};
+  assert(vmm_copy_from_user(&as, cross_out, 0x600ff0, sizeof(cross_out)));
+  assert(memcmp(cross_out, cross_in, sizeof(cross_in)) == 0);
+
   struct user_address_space child;
   uint64_t cow_pa = pmm_alloc_zero_page();
   memcpy(&phys[cow_pa], "parent", 7);

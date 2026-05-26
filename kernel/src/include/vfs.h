@@ -26,6 +26,9 @@ struct vfs_node {
   uint32_t gid;
   uint64_t dev_id;
   uint64_t rdev;
+  uint64_t atime;
+  uint64_t ctime;
+  uint64_t mtime;
   int proc_pid;
   uint64_t size;
   struct ramfs_node ramfs;

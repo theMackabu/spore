@@ -44,6 +44,7 @@ static uint64_t scheduler_ticks;
 static uint64_t scheduler_idle_ticks;
 static uint64_t boot_epoch_sec;
 static bool pipe_waking;
+static bool poll_waking;
 static uint64_t proc_cache_tick = UINT64_MAX;
 static size_t proc_cache_rss[MAX_DOMAINS];
 static uint32_t tty_lflag = 0000001 | 0000002 | 0000010;
@@ -863,8 +864,8 @@ static void cap_allow(struct capability_set *caps, uint64_t nr) {
 
 static void cap_allow_common(struct capability_set *caps) {
   static const uint16_t common[] = {
-    17,  19,  23,  24,  25,  29,  57,  63,  64,  65,  66,  72,  73,  80,  93,  94,  96,  98,  99,  101,
-    103, 48,
+    17,  19,  23,  24,  25,  29,  57,  59,  63,  64,  65,  66,  72,  73,  80,  93,  94,  96,  98,  99,
+    101, 103, 48,
     113, 115, 123, 124, 134, 135, 144, 146, 160, 161, 172, 173, 174, 175, 176, 177, 178, 179, 198,
     200, 203, 204, 206, 207, 208, 209, 211, 212, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261,
     278, 439,
@@ -1553,6 +1554,10 @@ int cell_set_budget(int domain_id, uint64_t ticks) {
 
 void cell_set_boot_epoch(uint64_t epoch_sec) {
   boot_epoch_sec = epoch_sec;
+}
+
+uint64_t cell_realtime_seconds(void) {
+  return boot_epoch_sec + scheduler_ticks / 100;
 }
 
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
@@ -2572,10 +2577,26 @@ static int64_t eventfd_read_to_domain(struct domain *domain, struct open_file *f
   return sizeof(value);
 }
 
+static int64_t tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
+  if (domain == NULL || file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
+  if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
+  if (len == 0) { return 0; }
+  uint64_t chunk = len > 1400 ? 1400 : len;
+  uint8_t tmp[1400];
+  if (!vmm_copy_from_user(&domain->as, tmp, buf, (size_t)chunk)) { return -EFAULT; }
+  if (!net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
+                            file->tcp_ack, 0x18, tmp, (size_t)chunk)) {
+    return -EIO;
+  }
+  file->tcp_seq += (uint32_t)chunk;
+  return (int64_t)chunk;
+}
+
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) { return tcp_write_from_domain(domain, file, buf, len); }
   if (file->type == OPEN_EVENTFD) {
     int64_t wrote = eventfd_write_from_domain(domain, file, buf, len);
     return wrote == -EAGAIN && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL ? -EAGAIN : wrote;
@@ -2899,6 +2920,8 @@ static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame) {
   return CELL_SWITCHED;
 }
 
+static int64_t tcp_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
+
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
@@ -2917,6 +2940,22 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     int64_t got = pipe_read_id_to_domain(domain, file->unix_rx_pipe, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     block_on_pipe(fd, buf, len, false, frame);
+    return CELL_SWITCHED;
+  }
+  if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
+    net_poll();
+    int64_t got = tcp_read_to_domain(domain, file, buf, len);
+    if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
+    cell_save_current(frame);
+    current_thread->state = THREAD_BLOCKED;
+    current_thread->wait_reason = WAIT_SOCKET;
+    current_thread->wait_target = fd;
+    current_thread->pipe_buf = buf;
+    current_thread->pipe_len = len;
+    current_thread->socket_addr = 0;
+    current_thread->socket_addrlen = 0;
+    current_thread->pipe_write = false;
+    cell_schedule(frame);
     return CELL_SWITCHED;
   }
   if (file->type == OPEN_STDIN) {
@@ -3104,6 +3143,8 @@ static int64_t poll_wait_check(struct thread *thread, bool commit) {
 }
 
 static void wake_poll_waiters(void) {
+  if (poll_waking) { return; }
+  poll_waking = true;
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = &threads[i];
     if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_POLL || thread->domain == NULL) { continue; }
@@ -3118,6 +3159,7 @@ static void wake_poll_waiters(void) {
       clear_poll_wait(thread);
     }
   }
+  poll_waking = false;
   wake_epoll_waiters();
 }
 
@@ -3772,18 +3814,7 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
 int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len) {
   struct domain *domain = current_domain();
   struct open_file *file = tcp_socket_for_fd(domain, fd);
-  if (file == NULL) { return -9; }
-  if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
-  if (len == 0) { return 0; }
-  uint64_t chunk = len > 1400 ? 1400 : len;
-  uint8_t tmp[1400];
-  if (!vmm_copy_from_user(&domain->as, tmp, buf, (size_t)chunk)) { return -EFAULT; }
-  if (!net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
-                            file->tcp_ack, 0x18, tmp, (size_t)chunk)) {
-    return -EIO;
-  }
-  file->tcp_seq += (uint32_t)chunk;
-  return (int64_t)chunk;
+  return tcp_write_from_domain(domain, file, buf, len);
 }
 
 int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint64_t len) {
@@ -4375,6 +4406,10 @@ size_t cell_proc_info(struct proc_info *out, size_t max) {
     ++count;
   }
   return count;
+}
+
+uint64_t cell_uptime_ticks(void) {
+  return scheduler_ticks;
 }
 
 bool cell_proc_exists(int pid) {

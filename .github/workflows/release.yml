@@ -1,0 +1,181 @@
+name: release
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - meson.build
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      MUSL_TOOLCHAIN_URL: https://musl.cc/aarch64-linux-musl-cross.tgz
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Read Meson version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 - meson.build <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          text = pathlib.Path(sys.argv[1]).read_text()
+          match = re.search(r"project\s*\([^)]*version\s*:\s*['\"]([^'\"]+)['\"]", text, re.S)
+          if not match:
+              sys.exit("meson.build project() version not found")
+          print(match.group(1))
+          PY
+          )"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this is a version bump
+        id: release_gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          meson_version_from_file() {
+            python3 - "$1" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          text = pathlib.Path(sys.argv[1]).read_text()
+          match = re.search(r"project\s*\([^)]*version\s*:\s*['\"]([^'\"]+)['\"]", text, re.S)
+          print(match.group(1) if match else "")
+          PY
+          }
+
+          tag='${{ steps.version.outputs.tag }}'
+          version='${{ steps.version.outputs.version }}'
+          git fetch --force --tags origin '+refs/tags/*:refs/tags/*'
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists; no release to create."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ '${{ github.event_name }}' = 'push' ]; then
+            before='${{ github.event.before }}'
+            if [ -n "$before" ] && git cat-file -e "$before:meson.build" 2>/dev/null; then
+              git show "$before:meson.build" > "$RUNNER_TEMP/previous-meson.build"
+              previous="$(meson_version_from_file "$RUNNER_TEMP/previous-meson.build")"
+              if [ "$previous" = "$version" ]; then
+                echo "meson.build changed, but project version is still $version; no release to create."
+                echo "should_release=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install host dependencies
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake build-essential clang cmake curl dosfstools e2fsprogs \
+            file lld llvm make mtools ninja-build perl pkg-config python3-venv qemu-system-arm \
+            xz-utils zip
+
+      - name: Install Meson
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          "$RUNNER_TEMP/meson-venv/bin/pip" install meson==1.10.1
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install aarch64 musl cross toolchain
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/musl"
+          curl -L "$MUSL_TOOLCHAIN_URL" | tar -xz -C "$RUNNER_TEMP/musl" --strip-components=1
+          echo "$RUNNER_TEMP/musl/bin" >> "$GITHUB_PATH"
+
+          # The project intentionally uses the aarch64-unknown-linux-musl-* prefix.
+          for tool in gcc g++ cpp ar as ld ranlib strip objcopy objdump readelf nm size strings; do
+            src="$RUNNER_TEMP/musl/bin/aarch64-linux-musl-$tool"
+            dst="$RUNNER_TEMP/musl/bin/aarch64-unknown-linux-musl-$tool"
+            if [ -x "$src" ] && [ ! -e "$dst" ]; then
+              ln -s "aarch64-linux-musl-$tool" "$dst"
+            fi
+          done
+
+          # Some vendored build scripts currently point at the local Nix tool path.
+          # Provide the same absolute tool names in CI without changing the release build inputs.
+          sudo mkdir -p /run/current-system/sw/bin
+          for tool in ar ranlib strip; do
+            sudo ln -sf "$RUNNER_TEMP/musl/bin/aarch64-unknown-linux-musl-$tool" \
+              "/run/current-system/sw/bin/aarch64-unknown-linux-musl-$tool"
+          done
+
+      - name: Configure Meson
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: meson setup build
+
+      - name: Build release artifacts
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          meson compile -C build image.img test_image.img spore-run
+          meson test -C build --print-errorlogs
+
+      - name: Package artifacts
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='${{ steps.version.outputs.version }}'
+          mkdir -p dist
+          cp build/image.img "dist/spore-$version-image.img"
+          cp build/root.ext2 "dist/spore-$version-root.ext2"
+          cp build/test_image.img "dist/spore-$version-test-image.img"
+          cp build/test_root.ext2 "dist/spore-$version-test-root.ext2"
+          cp build/tools/spore-run "dist/spore-$version-spore-run-linux-x86_64"
+          chmod +x "dist/spore-$version-spore-run-linux-x86_64"
+          (cd dist && sha256sum * > SHA256SUMS)
+
+      - name: Create tag and GitHub release
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version='${{ steps.version.outputs.version }}'
+          tag='${{ steps.version.outputs.tag }}'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$tag" -m "Spore $version"
+          git push origin "$tag"
+          gh release create "$tag" dist/* \
+            --title "Spore $version" \
+            --notes "Automated release for Meson project version $version. Built from commit $GITHUB_SHA."

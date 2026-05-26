@@ -16,6 +16,15 @@ struct chacha_rng {
 
 static struct chacha_rng rng;
 
+/*
+ * Kernel CSPRNG for getrandom(2), /dev/{u,}random, and AT_RANDOM.
+ *
+ * On the QEMU virt target EDK2 exposes FEAT_RNG, so RNDR seeds and
+ * periodically refreshes this ChaCha20 stream. If RNDR is unavailable we still
+ * mix timer/address jitter, but that fallback is not the intended TLS-grade
+ * entropy source.
+ */
+
 static uint32_t rotl32(uint32_t v, unsigned n) {
   return (v << n) | (v >> (32u - n));
 }
@@ -169,4 +178,3 @@ void random_bytes(void *dst, size_t len) {
   rng.pos = sizeof(rng.buf);
   kmemset(rekey, 0, sizeof(rekey));
 }
-

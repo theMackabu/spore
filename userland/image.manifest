@@ -60,6 +60,11 @@ userland/bin/whoami /bin/whoami
 userland/bin/hostname /bin/hostname
 userland/bin/dhcpc /bin/dhcpc
 userland/bin/nslookup /bin/nslookup
+userland/bin/ssh /bin/ssh
+userland/bin/ssh/dbclient /bin/dbclient
+userland/bin/ssh/dropbearkey /bin/dropbearkey
+userland/bin/ssh/dropbearconvert /bin/dropbearconvert
+symlink dropbearkey /bin/ssh-keygen
 userland/bin/hostid /bin/hostid
 userland/bin/id /bin/id
 userland/bin/who /bin/who

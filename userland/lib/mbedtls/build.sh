@@ -10,6 +10,9 @@ root=$1
 build=$2
 out=$3
 
+# Static musl TLS backend for curl. Programs/tests stay off here; HTTPS
+# validation is exercised through the guest curl binary and the baked CA bundle.
+
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 src="$root/userland/third_party/mbedtls"
 work="$build/mbedtls-build"

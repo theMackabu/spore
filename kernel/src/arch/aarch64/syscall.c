@@ -349,6 +349,22 @@ struct utsname64 {
   char domainname[65];
 };
 
+struct sysinfo64 {
+  int64_t uptime;
+  uint64_t loads[3];
+  uint64_t totalram;
+  uint64_t freeram;
+  uint64_t sharedram;
+  uint64_t bufferram;
+  uint64_t totalswap;
+  uint64_t freeswap;
+  uint16_t procs;
+  uint16_t pad;
+  uint64_t totalhigh;
+  uint64_t freehigh;
+  uint32_t mem_unit;
+};
+
 struct stat64_aarch64 {
   uint64_t st_dev;
   uint64_t st_ino;
@@ -949,8 +965,15 @@ static int64_t sys_brk(uint64_t requested) {
   uint64_t old_end = align_up(active_as()->brk_current, PAGE_SIZE);
   uint64_t new_end = align_up(requested, PAGE_SIZE);
   if (new_end < requested) { return (int64_t)active_as()->brk_current; }
-  for (uint64_t va = old_end; va < new_end; va += PAGE_SIZE) {
-    if (!vmm_alloc_page(active_as(), va, VMM_USER_READ | VMM_USER_WRITE)) { return (int64_t)active_as()->brk_current; }
+  if (new_end < old_end) {
+    if (!cell_remove_vma(new_end, old_end)) { return (int64_t)active_as()->brk_current; }
+    active_as()->brk_current = requested;
+    return (int64_t)requested;
+  }
+  if (new_end > old_end) {
+    if (!cell_add_vma(old_end, new_end, VMM_USER_READ | VMM_USER_WRITE, 0)) {
+      return (int64_t)active_as()->brk_current;
+    }
   }
   active_as()->brk_current = requested;
   return (int64_t)requested;
@@ -1289,6 +1312,20 @@ static int64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
   return 0;
 }
 
+static int64_t sys_sysinfo(uint64_t info_addr) {
+  if (info_addr == 0 || !user_writable(info_addr, sizeof(struct sysinfo64))) { return -(int64_t)EFAULT; }
+  struct sysinfo64 info;
+  kmemset(&info, 0, sizeof(info));
+  uint64_t total_pages = pmm_total_pages();
+  uint64_t free_pages = pmm_free_pages();
+  info.uptime = (int64_t)(cell_uptime_ticks() / 100);
+  info.totalram = total_pages;
+  info.freeram = free_pages;
+  info.procs = (uint16_t)cell_proc_info(NULL, 0);
+  info.mem_unit = PAGE_SIZE;
+  return vmm_copy_to_user(active_as(), info_addr, &info, sizeof(info)) ? 0 : -(int64_t)EFAULT;
+}
+
 static int64_t sys_spore_net_config(uint64_t op, uint64_t cfg_addr) {
   if (cfg_addr == 0) { return -(int64_t)EFAULT; }
   if (op == 0) {
@@ -1551,6 +1588,13 @@ static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   st->st_size = (int64_t)node->size;
   st->st_blksize = PAGE_SIZE;
   st->st_blocks = (int64_t)((node->size + 511) / 512);
+  uint64_t now = cell_realtime_seconds();
+  uint64_t atime = node->atime == 0 ? now : node->atime;
+  uint64_t mtime = node->mtime == 0 ? now : node->mtime;
+  uint64_t ctime = node->ctime == 0 ? now : node->ctime;
+  st->st_atime_sec = (int64_t)atime;
+  st->st_mtime_sec = (int64_t)mtime;
+  st->st_ctime_sec = (int64_t)ctime;
 }
 
 static uint32_t dev_major(uint64_t dev) {
@@ -1611,6 +1655,14 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
   st->stx_rdev_minor = dev_minor(node->rdev);
   st->stx_dev_major = dev_major(node->dev_id);
   st->stx_dev_minor = dev_minor(node->dev_id);
+  uint64_t now = cell_realtime_seconds();
+  uint64_t atime = node->atime == 0 ? now : node->atime;
+  uint64_t mtime = node->mtime == 0 ? now : node->mtime;
+  uint64_t ctime = node->ctime == 0 ? now : node->ctime;
+  st->stx_atime.tv_sec = (int64_t)atime;
+  st->stx_mtime.tv_sec = (int64_t)mtime;
+  st->stx_ctime.tv_sec = (int64_t)ctime;
+  st->stx_btime.tv_sec = (int64_t)ctime;
 }
 
 static int64_t sys_fstat(uint64_t fd, uint64_t stat_addr) {
@@ -2632,7 +2684,7 @@ l_getrusage:
 l_prlimit64:
   return sys_prlimit64(a0, a1, a2, a3);
 l_sysinfo:
-  return zero_user(a0 == 0 ? a2 : a0, 128);
+  return sys_sysinfo(a0);
 l_uname:
   return sys_uname(a0);
 l_sethostname:

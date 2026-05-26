@@ -323,27 +323,60 @@ bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va,
 }
 
 bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len) {
+  if (len == 0) { return true; }
+  uint64_t end;
+  if (!checked_add(dst, len - 1, &end)) { return false; }
   struct user_address_space *mutable_as = (struct user_address_space *)as;
-  for (size_t i = 0; i < len; ++i) {
-    if (user_to_phys_checked(as, dst + i, VMM_ACCESS_WRITE) == 0 && !vmm_handle_cow_fault(mutable_as, dst + i)) {
+  uint64_t page = dst & ~(uint64_t)(PAGE_SIZE - 1);
+  uint64_t last = end & ~(uint64_t)(PAGE_SIZE - 1);
+  while (len != 0) {
+    if (user_to_phys_checked(as, page, VMM_ACCESS_WRITE) == 0 && !vmm_handle_cow_fault(mutable_as, page)) {
       return false;
     }
+    if (page == last) { break; }
+    page += PAGE_SIZE;
   }
-  if (!vmm_user_range_accessible(as, dst, len, VMM_ACCESS_WRITE)) { return false; }
+
   const uint8_t *s = src;
-  for (size_t i = 0; i < len; ++i) {
-    uint64_t pa = user_to_phys_checked(as, dst + i, VMM_ACCESS_WRITE);
-    *(uint8_t *)(uintptr_t)(as->hhdm_offset + pa) = s[i];
+  size_t done = 0;
+  while (done < len) {
+    uint64_t va = dst + done;
+    uint64_t page_off = va & (PAGE_SIZE - 1);
+    size_t chunk = PAGE_SIZE - page_off;
+    if (chunk > len - done) { chunk = len - done; }
+
+    uint64_t pa = user_to_phys_checked(as, va, VMM_ACCESS_WRITE);
+    if (pa == 0) {
+      if (!vmm_handle_cow_fault(mutable_as, va)) { return false; }
+      pa = user_to_phys_checked(as, va, VMM_ACCESS_WRITE);
+      if (pa == 0) { return false; }
+    }
+    kmemcpy((void *)(uintptr_t)(as->hhdm_offset + pa), s + done, chunk);
+    done += chunk;
   }
   return true;
 }
 
 bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t src, size_t len) {
+  if (len == 0) { return true; }
+  uint64_t end;
+  if (!checked_add(src, len - 1, &end)) { return false; }
   if (!vmm_user_range_accessible(as, src, len, VMM_ACCESS_READ)) { return false; }
+
   uint8_t *d = dst;
-  for (size_t i = 0; i < len; ++i) {
-    uint64_t pa = user_to_phys_checked(as, src + i, VMM_ACCESS_READ);
-    d[i] = *(uint8_t *)(uintptr_t)(as->hhdm_offset + pa);
+  size_t done = 0;
+  while (done < len) {
+    uint64_t va = src + done;
+    uint64_t page_off = va & (PAGE_SIZE - 1);
+    size_t chunk = PAGE_SIZE - page_off;
+    if (chunk > len - done) { chunk = len - done; }
+
+    uint64_t pa = user_to_phys_checked(as, va, VMM_ACCESS_READ);
+    if (pa == 0) {
+      return false;
+    }
+    kmemcpy(d + done, (const void *)(uintptr_t)(as->hhdm_offset + pa), chunk);
+    done += chunk;
   }
   return true;
 }

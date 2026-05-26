@@ -28,3 +28,6 @@
 [submodule "userland/third_party/mbedtls"]
 	path = userland/third_party/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls
+[submodule "userland/third_party/dropbear"]
+	path = userland/third_party/dropbear
+	url = https://github.com/mkj/dropbear.git

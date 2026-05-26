@@ -92,6 +92,15 @@ struct block_cache_entry {
 
 static struct block_cache_entry block_cache[BLOCK_CACHE_ENTRIES];
 static uint64_t block_cache_clock;
+static uint32_t ext2_now_sec;
+
+void ext2_set_now(uint32_t epoch_sec) {
+  ext2_now_sec = epoch_sec;
+}
+
+static uint32_t now_sec(void) {
+  return ext2_now_sec;
+}
 
 static uint32_t div_round_up(uint32_t a, uint32_t b) {
   return (a + b - 1) / b;
@@ -232,6 +241,9 @@ static bool read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) 
   out->uid = inode.uid;
   out->gid = inode.gid;
   out->size = inode.size;
+  out->atime = inode.atime;
+  out->ctime = inode.ctime;
+  out->mtime = inode.mtime;
   out->sectors_count = inode.sectors_count;
   for (size_t i = 0; i < 15; ++i) {
     out->blocks[i] = inode.block[i];
@@ -257,6 +269,9 @@ static bool write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   inode.uid = node->uid;
   inode.gid = node->gid;
   inode.size = node->size;
+  inode.atime = node->atime;
+  inode.ctime = node->ctime;
+  inode.mtime = node->mtime;
   inode.links_count = node->links_count;
   inode.sectors_count = ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)
                           ? 0
@@ -599,10 +614,11 @@ int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off
     done += chunk;
     off += chunk;
   }
-  if (off > node->size) {
-    node->size = (uint32_t)off;
-    if (!write_inode(fs, node)) { return -1; }
-  }
+  if (off > node->size) { node->size = (uint32_t)off; }
+  uint32_t now = now_sec();
+  node->mtime = now;
+  node->ctime = now;
+  if (!write_inode(fs, node)) { return -1; }
   return (int64_t)done;
 }
 
@@ -610,6 +626,9 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
   if (fs->write == NULL) { return false; }
   if (size != 0) {
     node->size = (uint32_t)size;
+    uint32_t now = now_sec();
+    node->mtime = now;
+    node->ctime = now;
     return write_inode(fs, node);
   }
   for (size_t i = 0; i < 12; ++i) {
@@ -631,6 +650,9 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
     node->blocks[12] = 0;
   }
   node->size = 0;
+  uint32_t now = now_sec();
+  node->mtime = now;
+  node->ctime = now;
   return write_inode(fs, node);
 }
 
@@ -790,7 +812,10 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
         block[off + 4] = (uint8_t)used;
         block[off + 5] = (uint8_t)(used >> 8);
         write_dir_record(block + off + used, ino, (uint16_t)(rec_len - used), name_len, type, name);
-        return write_block(fs, disk_block, block);
+        uint32_t now = now_sec();
+        dir->mtime = now;
+        dir->ctime = now;
+        return write_block(fs, disk_block, block) && write_inode(fs, dir);
       }
       off += rec_len;
     }
@@ -801,6 +826,9 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
   kmemset(block, 0, fs->block_size);
   write_dir_record(block, ino, (uint16_t)fs->block_size, name_len, type, name);
   dir->size += fs->block_size;
+  uint32_t now = now_sec();
+  dir->mtime = now;
+  dir->ctime = now;
   return write_block(fs, new_block, block) && write_inode(fs, dir);
 }
 
@@ -821,7 +849,10 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
       if (ino != 0 && name_equals((const char *)block + off + 8, name_len, name)) {
         if (ino_out != NULL) { *ino_out = ino; }
         block[off] = block[off + 1] = block[off + 2] = block[off + 3] = 0;
-        return write_block(fs, disk_block, block);
+        uint32_t now = now_sec();
+        dir->mtime = now;
+        dir->ctime = now;
+        return write_block(fs, disk_block, block) && write_inode(fs, dir);
       }
       off += rec_len;
     }
@@ -917,6 +948,10 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_nod
     .uid = 0,
     .gid = 0,
   };
+  uint32_t now = now_sec();
+  node.atime = now;
+  node.ctime = now;
+  node.mtime = now;
   if (dir) {
     uint32_t block = 0;
     uint8_t buf[4096];
@@ -954,6 +989,7 @@ bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path) {
     return false;
   }
   ++node.links_count;
+  node.ctime = now_sec();
   return write_inode(fs, &node);
 }
 
@@ -979,6 +1015,10 @@ bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path)
     .uid = 0,
     .gid = 0,
   };
+  uint32_t now = now_sec();
+  node.atime = now;
+  node.ctime = now;
+  node.mtime = now;
   int64_t wrote = ext2_write_file(fs, &node, 0, target, kstrlen(target));
   if (wrote < 0 || (uint64_t)wrote != kstrlen(target) || !add_dirent(fs, &parent, name, ino, EXT2_FT_SYMLINK)) {
     (void)ext2_truncate(fs, &node, 0);
@@ -997,6 +1037,7 @@ bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
   if (node == NULL) { return false; }
   struct ext2_node copy = *node;
   copy.mode = (uint16_t)((copy.mode & 0170000u) | (mode & 07777u));
+  copy.ctime = now_sec();
   return write_inode(fs, &copy);
 }
 
@@ -1010,6 +1051,7 @@ bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
   struct ext2_node copy = *node;
   copy.uid = (uint16_t)uid;
   copy.gid = (uint16_t)gid;
+  copy.ctime = now_sec();
   return write_inode(fs, &copy);
 }
 
@@ -1036,6 +1078,7 @@ bool ext2_unlink(struct ext2_fs *fs, const char *path) {
   if (!remove_dirent(fs, &parent, name, NULL)) { return false; }
   if (node.links_count > 1) {
     --node.links_count;
+    node.ctime = now_sec();
     return write_inode(fs, &node);
   }
   (void)ext2_truncate(fs, &node, 0);
@@ -1064,5 +1107,7 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
   if (!add_dirent(fs, &new_parent, new_name, node.ino, ext2_is_dir(&node) ? EXT2_FT_DIR : EXT2_FT_REG_FILE)) {
     return false;
   }
+  node.ctime = now_sec();
+  (void)write_inode(fs, &node);
   return remove_dirent(fs, &old_parent, old_name, NULL);
 }

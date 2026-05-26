@@ -42,8 +42,29 @@ static void set_free(uint64_t page) {
   refcounts[page] = 0;
 }
 
-static bool is_free(uint64_t page) {
-  return (bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD))) == 0;
+static uint64_t alloc_page_in_range(uint64_t start_page, uint64_t end_page) {
+  if (end_page > PMM_MAX_PAGES) { end_page = PMM_MAX_PAGES; }
+  if (start_page >= end_page) { return 0; }
+
+  uint64_t first_word = start_page / BITS_PER_WORD;
+  uint64_t last_word = (end_page - 1) / BITS_PER_WORD;
+  for (uint64_t word_index = first_word; word_index <= last_word; ++word_index) {
+    uint64_t free_bits = ~bitmap[word_index];
+    if (word_index == first_word) {
+      uint64_t below = start_page % BITS_PER_WORD;
+      if (below != 0) { free_bits &= UINT64_MAX << below; }
+    }
+    if (word_index == last_word) {
+      uint64_t above = end_page % BITS_PER_WORD;
+      if (above != 0) { free_bits &= (1ull << above) - 1; }
+    }
+    if (free_bits == 0) { continue; }
+    uint64_t page = word_index * BITS_PER_WORD + (uint64_t)__builtin_ctzll(free_bits);
+    set_used(page);
+    next_free_page = page + 1;
+    return page * PAGE_SIZE;
+  }
+  return 0;
 }
 
 void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uint32_t memmap_count) {
@@ -79,18 +100,8 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
 uint64_t pmm_alloc_page(void) {
   const uint64_t first = 0x100000 / PAGE_SIZE;
   if (next_free_page < first || next_free_page >= PMM_MAX_PAGES) { next_free_page = first; }
-  for (uint64_t pass = 0; pass < 2; ++pass) {
-    uint64_t start = pass == 0 ? next_free_page : first;
-    uint64_t end = pass == 0 ? PMM_MAX_PAGES : next_free_page;
-    for (uint64_t page = start; page < end; ++page) {
-      if (is_free(page)) {
-        set_used(page);
-        next_free_page = page + 1;
-        return page * PAGE_SIZE;
-      }
-    }
-  }
-  return 0;
+  uint64_t pa = alloc_page_in_range(next_free_page, PMM_MAX_PAGES);
+  return pa != 0 ? pa : alloc_page_in_range(first, next_free_page);
 }
 
 uint64_t pmm_alloc_zero_page(void) {

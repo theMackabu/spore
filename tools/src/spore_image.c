@@ -433,10 +433,18 @@ static void write_rootfs_text(const char *rootfs, const char *path, const char *
 static void install_default_accounts(const char *rootfs) {
   char root_home[MAX_PATH];
   char spore_home[MAX_PATH];
+  char root_ssh[MAX_PATH];
+  char spore_ssh[MAX_PATH];
   path_join(root_home, sizeof(root_home), rootfs, "root");
   path_join(spore_home, sizeof(spore_home), rootfs, "home/spore");
+  path_join(root_ssh, sizeof(root_ssh), rootfs, "root/.ssh");
+  path_join(spore_ssh, sizeof(spore_ssh), rootfs, "home/spore/.ssh");
   ensure_dir(root_home);
   ensure_dir(spore_home);
+  ensure_dir(root_ssh);
+  ensure_dir(spore_ssh);
+  chmod(root_ssh, 0700);
+  chmod(spore_ssh, 0700);
 
   write_rootfs_text(rootfs, "/etc/passwd",
                     "root:x:0:0:root:/root:/bin/msh\n"

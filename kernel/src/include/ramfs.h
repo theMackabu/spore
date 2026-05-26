@@ -73,6 +73,9 @@ struct ramfs_mem_node {
   const void *ro_data;
   uint64_t size;
   uint64_t ino;
+  uint64_t atime;
+  uint64_t ctime;
+  uint64_t mtime;
 };
 
 struct ramfs {
@@ -100,6 +103,9 @@ struct ramfs_node {
   uint16_t mode;
   uint32_t uid;
   uint32_t gid;
+  uint64_t atime;
+  uint64_t ctime;
+  uint64_t mtime;
 };
 
 struct ramfs_dirent {
@@ -111,6 +117,7 @@ struct ramfs_dirent {
 };
 
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);
+void ramfs_set_now(uint64_t epoch_sec);
 bool ramfs_lookup(const struct ramfs *fs, const char *path, struct ramfs_file *out);
 bool ramfs_lookup_node(const struct ramfs *fs, const char *path, struct ramfs_node *out);
 bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out);
