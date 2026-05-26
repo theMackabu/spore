@@ -1,8 +1,14 @@
 # source baked-path
+#
+# Placement follows the invoker:
+# - /bin is for human-interactive tools in PATH.
+# - /libexec/spore-test is for regression instruments invoked by test harnesses.
+# - /home/spore/demos is for curiosity/demo fixtures.
 dir /home
 dir /root
 dir /etc/mycelium
 dir /sbin
+dir /libexec/spore-test
 dir /lib/mycelium
 dir /run/mycelium
 dir /var/log
@@ -96,13 +102,14 @@ userland/bin/pwd /bin/pwd
 userland/bin/hello /bin/hello
 userland/bin/true /bin/true
 userland/bin/false /bin/false
-userland/bin/pthread-demo /bin/pthread-demo
 userland/bin/ping /bin/ping
-userland/bin/udp-echo /bin/udp-echo
-userland/bin/udp-send /bin/udp-send
-userland/bin/udp-recv /bin/udp-recv
-userland/bin/uds-server /bin/uds-server
-userland/bin/uds-client /bin/uds-client
+
+userland/libexec/spore-test/pthread-demo /libexec/spore-test/pthread-demo
+userland/libexec/spore-test/udp-echo /libexec/spore-test/udp-echo
+userland/libexec/spore-test/udp-send /libexec/spore-test/udp-send
+userland/libexec/spore-test/udp-recv /libexec/spore-test/udp-recv
+userland/libexec/spore-test/uds-server /libexec/spore-test/uds-server
+userland/libexec/spore-test/uds-client /libexec/spore-test/uds-client
 
 userland/demos/spinner /home/spore/demos/spinner
 userland/demos/peeker /home/spore/demos/peeker

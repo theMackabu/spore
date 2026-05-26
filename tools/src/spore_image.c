@@ -394,8 +394,8 @@ static void copy_into_rootfs(const char *src, const char *rootfs, const char *ds
   copy_file(src, out);
   bool executable = strncmp(dst, "/bin/", 5) == 0 || strncmp(dst, "/sbin/", 6) == 0 ||
                     strncmp(dst, "/usr/bin/", 9) == 0 || strncmp(dst, "/usr/local/bin/", 15) == 0 ||
-                    strncmp(dst, "/lib/mycelium/", 14) == 0 || strncmp(dst, "/home/spore/demos/", 18) == 0 ||
-                    strncmp(dst, "/etc/update-motd.d/", 19) == 0;
+                    strncmp(dst, "/libexec/", 9) == 0 || strncmp(dst, "/lib/mycelium/", 14) == 0 ||
+                    strncmp(dst, "/home/spore/demos/", 18) == 0 || strncmp(dst, "/etc/update-motd.d/", 19) == 0;
   chmod(out, executable ? 0755 : 0644);
 }
 
@@ -494,8 +494,8 @@ static void install_musl_devel(const char *rootfs) {
   char gcc_include[MAX_PATH];
   command_output(gcc_include, sizeof(gcc_include), "aarch64-unknown-linux-musl-gcc -print-file-name=include");
   char musl_include_guess[MAX_PATH];
-  int n = snprintf(musl_include_guess, sizeof(musl_include_guess), "%s/../../../../../aarch64-unknown-linux-musl/sys-include",
-                   gcc_include);
+  int n = snprintf(musl_include_guess, sizeof(musl_include_guess),
+                   "%s/../../../../../aarch64-unknown-linux-musl/sys-include", gcc_include);
   if (n < 0 || (size_t)n >= sizeof(musl_include_guess)) { die_msg("path too long"); }
   char musl_include[MAX_PATH];
   if (realpath(musl_include_guess, musl_include) == NULL) { die("realpath musl include"); }
