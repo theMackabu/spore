@@ -1646,7 +1646,16 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
     elf.runtime_entry = interp.entry;
     elf.at_base = interp.load_base;
   }
-  if (!build_initial_stack_args(&new_as, &elf, argv, argc, envp, envc, &user_sp)) {
+  struct exec_stack_credentials creds = {
+    .uid = cell_current_uid(),
+    .euid = cell_current_euid(),
+    .gid = cell_current_gid(),
+    .egid = cell_current_egid(),
+  };
+  if ((exec_node.mode & 04000u) != 0) { creds.euid = exec_node.uid; }
+  if ((exec_node.mode & 02000u) != 0) { creds.egid = exec_node.gid; }
+
+  if (!build_initial_stack_args(&new_as, &elf, argv, argc, envp, envc, &creds, &user_sp)) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
     return -(int64_t)EINVAL;

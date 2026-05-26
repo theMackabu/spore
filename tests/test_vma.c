@@ -35,6 +35,29 @@ int main(void) {
   assert(vma_protect(&list, 0x1000, 0x5000, 3));
   assert(vma_count(&list) == 1);
 
+  struct vma_list heap;
+  vma_list_init(&heap);
+  uint64_t brk_base = 0x800000;
+  uint64_t brk_current = brk_base;
+  assert(vma_insert(&heap, brk_current, brk_base + 0x3000, 3, 0x22, VMA_ANON));
+  brk_current = brk_base + 0x3000;
+  assert(vma_count(&heap) == 1);
+  assert(vma_lookup(&heap, brk_base) != NULL);
+  assert(vma_lookup(&heap, brk_base + 0x2fff) != NULL);
+
+  assert(vma_remove(&heap, brk_base + 0x1000, brk_current));
+  brk_current = brk_base + 0x1000;
+  assert(vma_count(&heap) == 1);
+  assert(vma_lookup(&heap, brk_base + 0x0fff) != NULL);
+  assert(vma_lookup(&heap, brk_base + 0x1000) == NULL);
+
+  assert(vma_insert(&heap, brk_current, brk_base + 0x5000, 3, 0x22, VMA_ANON));
+  brk_current = brk_base + 0x5000;
+  assert(vma_count(&heap) == 1);
+  assert(vma_lookup(&heap, brk_base + 0x4fff) != NULL);
+  assert(vma_lookup(&heap, brk_current) == NULL);
+  vma_list_destroy(&heap);
+
   struct vma_list many;
   vma_list_init(&many);
   size_t target = (VMA_CHUNK_BYTES / sizeof(struct vma)) + 5;

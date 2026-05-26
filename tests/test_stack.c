@@ -57,9 +57,16 @@ int main(void) {
     .phent = 56,
     .phnum = 9,
   };
+  const char *argv[] = {"/bin/msh"};
+  const struct exec_stack_credentials creds = {
+    .uid = 1000,
+    .euid = 0,
+    .gid = 1000,
+    .egid = 20,
+  };
   uint64_t sp = 0;
 
-  assert(build_initial_stack(&as, &elf, &sp));
+  assert(build_initial_stack_args(&as, &elf, argv, 1, NULL, 0, &creds, &sp));
   assert((sp % 16) == 0);
   size_t mapped_count = 0;
   for (size_t i = 0; i < sizeof(mapped) / sizeof(mapped[0]); ++i) {
@@ -71,7 +78,7 @@ int main(void) {
   assert(read_u64(sp) == 1);
   uint64_t argv0 = read_u64(sp + 8);
   assert(read_u64(sp + 16) == 0);
-  assert(strcmp((const char *)&stack_mem[stack_offset(argv0)], "/sbin/init") == 0);
+  assert(strcmp((const char *)&stack_mem[stack_offset(argv0)], "/bin/msh") == 0);
   assert(read_u64(sp + 24) == 0);
 
   bool saw_phdr = false;
@@ -80,6 +87,10 @@ int main(void) {
   bool saw_platform = false;
   bool saw_hwcap = false;
   bool saw_execfn = false;
+  bool saw_uid = false;
+  bool saw_euid = false;
+  bool saw_gid = false;
+  bool saw_egid = false;
   for (uint64_t p = sp + 32;; p += 16) {
     uint64_t key = read_u64(p);
     uint64_t value = read_u64(p + 8);
@@ -90,6 +101,10 @@ int main(void) {
     if (key == 15 && strcmp((const char *)&stack_mem[stack_offset(value)], "aarch64") == 0) { saw_platform = true; }
     if (key == 16 && (value & 0x3) == 0x3) { saw_hwcap = true; }
     if (key == 31 && value == argv0) { saw_execfn = true; }
+    if (key == 11 && value == creds.uid) { saw_uid = true; }
+    if (key == 12 && value == creds.euid) { saw_euid = true; }
+    if (key == 13 && value == creds.gid) { saw_gid = true; }
+    if (key == 14 && value == creds.egid) { saw_egid = true; }
   }
   assert(saw_phdr);
   assert(saw_entry);
@@ -97,5 +112,9 @@ int main(void) {
   assert(saw_platform);
   assert(saw_hwcap);
   assert(saw_execfn);
+  assert(saw_uid);
+  assert(saw_euid);
+  assert(saw_gid);
+  assert(saw_egid);
   return 0;
 }

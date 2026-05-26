@@ -61,16 +61,18 @@ static bool stack_write_u64(struct user_address_space *as, uint64_t va, uint64_t
 
 bool build_initial_stack(struct user_address_space *as, const struct loaded_elf *elf, uint64_t *stack_pointer) {
   const char *argv[] = {"/sbin/init"};
-  return build_initial_stack_args(as, elf, argv, 1, NULL, 0, stack_pointer);
+  const struct exec_stack_credentials creds = {0};
+  return build_initial_stack_args(as, elf, argv, 1, NULL, 0, &creds, stack_pointer);
 }
 
 bool build_initial_stack_args(struct user_address_space *as, const struct loaded_elf *elf, const char *const argv[],
-                              uint64_t argc, const char *const envp[], uint64_t envc, uint64_t *stack_pointer) {
+                              uint64_t argc, const char *const envp[], uint64_t envc,
+                              const struct exec_stack_credentials *creds, uint64_t *stack_pointer) {
   uint64_t cursor = USER_STACK_TOP;
   uint64_t argv_va[64];
   uint64_t envp_va[64];
 
-  if (argc > 64 || envc > 64) { return false; }
+  if (creds == NULL || argc > 64 || envc > 64) return false;
 
   for (uint64_t i = 0; i < argc; ++i) {
     size_t len = kstrlen(argv[i]) + 1;
@@ -108,10 +110,10 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     {AT_PAGESZ, PAGE_SIZE},
     {AT_BASE, elf->at_base},
     {AT_ENTRY, elf->entry},
-    {AT_UID, 0},
-    {AT_EUID, 0},
-    {AT_GID, 0},
-    {AT_EGID, 0},
+    {AT_UID, creds->uid},
+    {AT_EUID, creds->euid},
+    {AT_GID, creds->gid},
+    {AT_EGID, creds->egid},
     {AT_PLATFORM, platform_va},
     {AT_HWCAP, hwcap},
     {AT_CLKTCK, 100},
