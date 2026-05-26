@@ -81,6 +81,11 @@ enum cell_fs_right {
   CELL_FS_EXEC = 1u << 2,
 };
 
+enum cell_cap_flag {
+  CAP_ENFORCE = 1u << 0,
+  CAP_EGRESS_ENFORCE = 1u << 1,
+};
+
 struct fs_rule {
   char path[128];
   uint8_t rights;
@@ -389,6 +394,8 @@ bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
 size_t cell_resident_pages(uint64_t start, uint64_t end);
 size_t cell_proc_info(struct proc_info *out, size_t max);
 uint64_t cell_uptime_ticks(void);
+uint64_t cell_idle_ticks(void);
+uint64_t cell_boot_epoch_seconds(void);
 uint32_t cell_tty_lflag(void);
 void cell_tty_set_lflag(uint32_t lflag);
 uint8_t cell_tty_erase_char(void);
