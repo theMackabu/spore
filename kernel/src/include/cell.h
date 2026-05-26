@@ -270,6 +270,8 @@ struct user_address_space *cell_current_as(void);
 int cell_current_pid(void);
 int cell_current_tid(void);
 int cell_current_ppid(void);
+const char *cell_current_name(void);
+void cell_set_current_name(const char *name);
 uint32_t cell_current_uid(void);
 uint32_t cell_current_euid(void);
 uint32_t cell_current_gid(void);

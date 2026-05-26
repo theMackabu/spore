@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <spore.h>
@@ -201,6 +202,153 @@ bool resolve_ipv4(const char *name, uint32_t *out) {
     if (net_config_get(&cfg) && cfg.dns_ip != 0) { server = cfg.dns_ip; }
   }
   return server != 0 && dns_query(server, name, out);
+}
+
+static int service_port(const char *service, const struct addrinfo *hints, uint16_t *out) {
+  if (service == NULL || service[0] == '\0') {
+    *out = 0;
+    return 0;
+  }
+  unsigned port = 0;
+  for (const char *p = service; *p != '\0'; ++p) {
+    if (*p < '0' || *p > '9') {
+      int socktype = hints == NULL ? 0 : hints->ai_socktype;
+      if ((strcmp(service, "http") == 0 || strcmp(service, "www") == 0) && (socktype == 0 || socktype == SOCK_STREAM)) {
+        *out = 80;
+        return 0;
+      }
+      if (strcmp(service, "https") == 0 && (socktype == 0 || socktype == SOCK_STREAM)) {
+        *out = 443;
+        return 0;
+      }
+      if (strcmp(service, "domain") == 0) {
+        *out = 53;
+        return 0;
+      }
+      return EAI_SERVICE;
+    }
+    port = port * 10u + (unsigned)(*p - '0');
+    if (port > 65535) { return EAI_SERVICE; }
+  }
+  *out = (uint16_t)port;
+  return 0;
+}
+
+static int addrinfo_family(const struct addrinfo *hints) {
+  if (hints == NULL || hints->ai_family == AF_UNSPEC || hints->ai_family == AF_INET) { return AF_INET; }
+  return hints->ai_family;
+}
+
+static int addrinfo_socktype(const struct addrinfo *hints) {
+  if (hints == NULL || hints->ai_socktype == 0) { return SOCK_STREAM; }
+  return hints->ai_socktype;
+}
+
+static int addrinfo_protocol(int socktype, const struct addrinfo *hints) {
+  if (hints != NULL && hints->ai_protocol != 0) { return hints->ai_protocol; }
+  if (socktype == SOCK_DGRAM) { return IPPROTO_UDP; }
+  if (socktype == SOCK_STREAM) { return IPPROTO_TCP; }
+  return 0;
+}
+
+int getaddrinfo(const char *restrict node, const char *restrict service, const struct addrinfo *restrict hints,
+                struct addrinfo **restrict res) {
+  if (res == NULL) { return EAI_FAIL; }
+  *res = NULL;
+
+  int family = addrinfo_family(hints);
+  if (family != AF_INET) { return EAI_FAMILY; }
+
+  int socktype = addrinfo_socktype(hints);
+  if (socktype != SOCK_STREAM && socktype != SOCK_DGRAM) { return EAI_SOCKTYPE; }
+
+  uint16_t port = 0;
+  int service_rc = service_port(service, hints, &port);
+  if (service_rc != 0) { return service_rc; }
+
+  uint32_t ip = 0;
+  if (node == NULL || node[0] == '\0') {
+    int flags = hints == NULL ? 0 : hints->ai_flags;
+    ip = (flags & AI_PASSIVE) != 0 ? INADDR_ANY : htonl(INADDR_LOOPBACK);
+  } else if (!resolve_ipv4(node, &ip)) {
+    return EAI_NONAME;
+  }
+
+  struct addrinfo *ai = calloc(1, sizeof(*ai));
+  struct sockaddr_in *sa = calloc(1, sizeof(*sa));
+  if (ai == NULL || sa == NULL) {
+    free(ai);
+    free(sa);
+    return EAI_MEMORY;
+  }
+
+  sa->sin_family = AF_INET;
+  sa->sin_port = htons(port);
+  sa->sin_addr.s_addr = ip;
+
+  ai->ai_family = AF_INET;
+  ai->ai_socktype = socktype;
+  ai->ai_protocol = addrinfo_protocol(socktype, hints);
+  ai->ai_addrlen = sizeof(*sa);
+  ai->ai_addr = (struct sockaddr *)sa;
+  *res = ai;
+  return 0;
+}
+
+void freeaddrinfo(struct addrinfo *ai) {
+  while (ai != NULL) {
+    struct addrinfo *next = ai->ai_next;
+    free(ai->ai_addr);
+    free(ai->ai_canonname);
+    free(ai);
+    ai = next;
+  }
+}
+
+int getnameinfo(const struct sockaddr *restrict sa, socklen_t sl, char *restrict node, socklen_t nodelen,
+                char *restrict service, socklen_t servicelen, int flags) {
+  if (sa == NULL || sl < sizeof(struct sockaddr_in) || sa->sa_family != AF_INET) { return EAI_FAMILY; }
+  const struct sockaddr_in *in = (const struct sockaddr_in *)sa;
+  if (node != NULL && nodelen != 0) {
+    if ((flags & NI_NUMERICHOST) == 0) {
+      char localhost[16];
+      format_ipv4(htonl(INADDR_LOOPBACK), localhost, sizeof(localhost));
+      if (in->sin_addr.s_addr == htonl(INADDR_LOOPBACK) && strlen("localhost") + 1 <= nodelen) {
+        strcpy(node, "localhost");
+      } else {
+        format_ipv4(in->sin_addr.s_addr, node, nodelen);
+      }
+    } else {
+      format_ipv4(in->sin_addr.s_addr, node, nodelen);
+    }
+  }
+  if (service != NULL && servicelen != 0) { snprintf(service, servicelen, "%u", (unsigned)ntohs(in->sin_port)); }
+  return 0;
+}
+
+const char *gai_strerror(int errcode) {
+  switch (errcode) {
+  case 0:
+    return "Success";
+  case EAI_AGAIN:
+    return "Temporary failure in name resolution";
+  case EAI_BADFLAGS:
+    return "Bad value for ai_flags";
+  case EAI_FAIL:
+    return "Non-recoverable failure in name resolution";
+  case EAI_FAMILY:
+    return "Address family not supported";
+  case EAI_MEMORY:
+    return "Memory allocation failure";
+  case EAI_NONAME:
+    return "Name does not resolve";
+  case EAI_SERVICE:
+    return "Service not available";
+  case EAI_SOCKTYPE:
+    return "Socket type not supported";
+  default:
+    return "Unknown getaddrinfo error";
+  }
 }
 
 static void copy_field(char *dst, size_t cap, const char *src) {

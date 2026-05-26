@@ -173,6 +173,10 @@ userland/etc/hosts /etc/hosts
 userland/etc/resolv.conf /etc/resolv.conf
 dir /etc/ssl/certs
 userland/etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+symlink certs/ca-certificates.crt /etc/ssl/cert.pem
+symlink certs/ca-certificates.crt /etc/ssl/ca-certificates.crt
+dir /usr/lib/ssl
+symlink /etc/ssl/certs/ca-certificates.crt /usr/lib/ssl/cert.pem
 
 userland/etc/fastfetch/config.jsonc /etc/fastfetch/config.jsonc
 userland/etc/fastfetch/spore.logo /etc/fastfetch/spore.logo
