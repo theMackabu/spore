@@ -237,7 +237,7 @@ struct cell_peer_cred {
 };
 
 void cell_system_init(uint64_t hhdm_offset);
-bool cell_create_init(struct user_address_space *as, uint64_t entry, uint64_t sp);
+bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp);
 struct user_address_space *cell_current_as(void);
 int cell_current_pid(void);
 int cell_current_tid(void);
@@ -336,6 +336,8 @@ bool cell_vma_overlaps(uint64_t start, uint64_t end);
 bool cell_vma_lookup_range(uint64_t start, uint64_t end, struct vma *out);
 bool cell_add_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags);
 bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, enum vma_type type);
+bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
+                       uint64_t file_start, uint64_t file_offset, uint64_t file_size);
 bool cell_remove_vma(uint64_t start, uint64_t end);
 bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
 size_t cell_resident_pages(uint64_t start, uint64_t end);

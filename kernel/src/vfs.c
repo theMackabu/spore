@@ -8,6 +8,25 @@
 static struct ramfs *root_ramfs;
 static struct ext2_fs *root_ext2;
 
+enum {
+  VFS_PAGE_SIZE = 4096,
+  VFS_PAGE_CACHE_ENTRIES = 64,
+  VFS_READAHEAD_PAGES = 2,
+};
+
+struct vfs_page_cache_entry {
+  bool valid;
+  enum vfs_backend backend;
+  uint64_t ino;
+  uint64_t dev_id;
+  uint64_t off;
+  uint64_t age;
+  uint8_t data[VFS_PAGE_SIZE];
+};
+
+static struct vfs_page_cache_entry page_cache[VFS_PAGE_CACHE_ENTRIES];
+static uint64_t page_cache_clock;
+
 bool cell_proc_exists(int pid);
 int cell_proc_pid_at(size_t index);
 uint32_t cell_proc_uid(int pid);
@@ -157,6 +176,82 @@ static bool streq(const char *a, const char *b) {
     if (*a++ != *b++) { return false; }
   }
   return *a == '\0' && *b == '\0';
+}
+
+static bool node_cacheable(const struct vfs_node *node) {
+  return node != NULL && !node->is_dir && node->device == RAMFS_DEV_NONE &&
+         (node->backend == VFS_RAMFS || node->backend == VFS_EXT2);
+}
+
+static bool cache_key_eq(const struct vfs_page_cache_entry *entry, const struct vfs_node *node, uint64_t off) {
+  return entry->valid && entry->backend == node->backend && entry->ino == node->ino && entry->dev_id == node->dev_id &&
+         entry->off == off;
+}
+
+static struct vfs_page_cache_entry *page_cache_find(const struct vfs_node *node, uint64_t off) {
+  for (size_t i = 0; i < VFS_PAGE_CACHE_ENTRIES; ++i) {
+    if (cache_key_eq(&page_cache[i], node, off)) {
+      page_cache[i].age = ++page_cache_clock;
+      return &page_cache[i];
+    }
+  }
+  return NULL;
+}
+
+static struct vfs_page_cache_entry *page_cache_victim(void) {
+  struct vfs_page_cache_entry *victim = &page_cache[0];
+  for (size_t i = 0; i < VFS_PAGE_CACHE_ENTRIES; ++i) {
+    if (!page_cache[i].valid) { return &page_cache[i]; }
+    if (page_cache[i].age < victim->age) { victim = &page_cache[i]; }
+  }
+  return victim;
+}
+
+static bool page_cache_load(const struct vfs_node *node, uint64_t off) {
+  if (!node_cacheable(node)) { return false; }
+  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
+  if (page_cache_find(node, off) != NULL) { return true; }
+  struct vfs_page_cache_entry *entry = page_cache_victim();
+  entry->valid = false;
+  entry->backend = node->backend;
+  entry->ino = node->ino;
+  entry->dev_id = node->dev_id;
+  entry->off = off;
+  entry->age = ++page_cache_clock;
+  kmemset(entry->data, 0, sizeof(entry->data));
+  uint64_t readable = 0;
+  if (off < node->size) {
+    readable = node->size - off;
+    if (readable > VFS_PAGE_SIZE) { readable = VFS_PAGE_SIZE; }
+  }
+  if (readable != 0 && vfs_read(node, off, entry->data, readable) != readable) { return false; }
+  entry->valid = true;
+  return true;
+}
+
+bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst) {
+  if (dst == NULL || !node_cacheable(node)) { return false; }
+  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
+  if (!page_cache_load(node, off)) { return false; }
+  for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
+    uint64_t ahead = off + i * VFS_PAGE_SIZE;
+    if (ahead >= node->size) { break; }
+    (void)page_cache_load(node, ahead);
+  }
+  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
+  if (entry == NULL) { return false; }
+  kmemcpy(dst, entry->data, VFS_PAGE_SIZE);
+  return true;
+}
+
+void vfs_page_cache_invalidate(const struct vfs_node *node) {
+  if (node == NULL) { return; }
+  for (size_t i = 0; i < VFS_PAGE_CACHE_ENTRIES; ++i) {
+    if (page_cache[i].valid && page_cache[i].backend == node->backend && page_cache[i].ino == node->ino &&
+        page_cache[i].dev_id == node->dev_id) {
+      page_cache[i].valid = false;
+    }
+  }
 }
 
 static bool parse_uint_component(const char **p, int *out) {
@@ -375,6 +470,7 @@ bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
 }
 
 bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
+  vfs_page_cache_invalidate(node);
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext = node->ext2;
     return ext2_truncate(root_ext2, &ext, size);
@@ -452,6 +548,7 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 }
 
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
+  vfs_page_cache_invalidate(node);
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext = node->ext2;
     return ext2_write_file(root_ext2, &ext, off, src, len);

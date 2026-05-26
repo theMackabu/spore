@@ -175,6 +175,7 @@ static bool make_elf_reader(const struct vfs_node *node, struct elf_reader *read
   *reader = (struct elf_reader){
     .read_at = vfs_elf_read_at,
     .ctx = (void *)node,
+    .node = node,
     .size = node->size,
   };
   return true;
@@ -317,8 +318,8 @@ static void map_device_pages(void) {
                    : "memory");
 }
 
-void finish_enter_el0(struct user_address_space *as, uint64_t entry, uint64_t user_sp) {
-  if (!cell_create_init(as, entry, user_sp)) {
+void finish_enter_el0(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t user_sp) {
+  if (!cell_create_init(as, vmas, entry, user_sp)) {
     kprintf("[kernel] failed to create init cell\n");
     for (;;) {
       __asm__ volatile("wfe");
@@ -379,9 +380,11 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   bool has_interp = elf_find_interp_aarch64(&init_reader, interp_path, sizeof(interp_path));
 
   struct user_address_space as;
+  struct vma_list vmas;
   struct loaded_elf elf;
   uint64_t user_sp;
-  if (!vmm_user_init(&as, boot->hhdm_offset) || !elf_load_aarch64(&as, &init_reader, 0, &elf)) {
+  vma_list_init(&vmas);
+  if (!vmm_user_init(&as, boot->hhdm_offset) || !elf_load_aarch64(&as, &vmas, &init_reader, 0, &elf)) {
     kprintf("[kernel] failed to prepare /sbin/init\n");
     for (;;) {
       __asm__ volatile("wfe");
@@ -392,7 +395,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
     struct elf_reader interp_reader;
     struct loaded_elf interp;
     if (!vfs_lookup(interp_path, &interp_node) || !make_elf_reader(&interp_node, &interp_reader) ||
-        !elf_load_aarch64(&as, &interp_reader, 0x0000006000000000ull, &interp)) {
+        !elf_load_aarch64(&as, &vmas, &interp_reader, 0x0000006000000000ull, &interp)) {
       kprintf("[kernel] failed to load %s\n", interp_path);
       for (;;) {
         __asm__ volatile("wfe");
@@ -409,7 +412,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   }
 
   uint64_t kernel_sp = (uint64_t)(uintptr_t)(kernel_stack + sizeof(kernel_stack));
-  switch_stack_and_finish(kernel_sp, &as, elf.runtime_entry, user_sp);
+  switch_stack_and_finish(kernel_sp, &as, &vmas, elf.runtime_entry, user_sp);
 
   for (;;) {
     __asm__ volatile("wfe");

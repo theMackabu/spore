@@ -1,5 +1,7 @@
 #pragma once
 
+#include "vfs.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -12,6 +14,7 @@ enum {
 enum vma_type {
   VMA_ANON,
   VMA_STACK,
+  VMA_FILE,
 };
 
 struct vma {
@@ -21,6 +24,10 @@ struct vma {
   uint32_t prot;
   uint32_t flags;
   enum vma_type type;
+  struct vfs_node file_node;
+  uint64_t file_start;
+  uint64_t file_offset;
+  uint64_t file_size;
 };
 
 struct vma_list {
@@ -36,6 +43,8 @@ const struct vma *vma_lookup(const struct vma_list *list, uint64_t va);
 const struct vma *vma_lookup_range(const struct vma_list *list, uint64_t start, uint64_t end);
 bool vma_overlaps(const struct vma_list *list, uint64_t start, uint64_t end);
 bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, enum vma_type type);
+bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
+                     const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size);
 bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end);
 bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot);
 bool vma_clone(struct vma_list *dst, const struct vma_list *src);

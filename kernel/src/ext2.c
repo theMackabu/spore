@@ -18,6 +18,7 @@ enum {
   EXT2_INCOMPAT_FILETYPE = 0x2,
   BLOCK_CACHE_ENTRIES = 32,
   SYMLINK_DEPTH_MAX = 8,
+  EXT2_DIRECT_READ_MAX = 128 * 1024,
 };
 
 struct ext2_super {
@@ -407,6 +408,24 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
     if (chunk > len - done) { chunk = len - done; }
     uint32_t disk_block = 0;
     if (!file_block(fs, node, file_block_index, &disk_block)) { return false; }
+    if (within == 0 && chunk == fs->block_size && disk_block != 0) {
+      uint32_t run_blocks = 1;
+      uint32_t run_bytes = fs->block_size;
+      while (done + run_bytes + fs->block_size <= len && run_bytes + fs->block_size <= EXT2_DIRECT_READ_MAX) {
+        uint32_t next_block = 0;
+        if (!file_block(fs, node, file_block_index + run_blocks, &next_block) ||
+            next_block != disk_block + run_blocks) {
+          break;
+        }
+        ++run_blocks;
+        run_bytes += fs->block_size;
+      }
+      if (run_blocks > 1 && fs->read(fs->ctx, (uint64_t)disk_block * fs->block_size, out + done, run_bytes)) {
+        done += run_bytes;
+        off += run_bytes;
+        continue;
+      }
+    }
     if (disk_block == 0) {
       kmemset(block, 0, fs->block_size);
     } else if (!read_block(fs, disk_block, block)) {

@@ -28,6 +28,7 @@ test_elf = executable('test_elf',
   files(
     'test_elf.c',
     '../kernel/src/elf/loader.c',
+    '../kernel/src/mm/vma.c',
     '../kernel/src/lib/mem.c',
   ),
   include_directories: test_include,

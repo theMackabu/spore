@@ -1,7 +1,6 @@
 #include "elf/loader.h"
 
 #include "mem.h"
-#include "mm/pmm.h"
 
 enum {
   EI_NIDENT = 16,
@@ -13,6 +12,7 @@ enum {
   PF_X = 1,
   PF_W = 2,
   PF_R = 4,
+  PAGE_SIZE = 4096,
 };
 
 struct elf64_ehdr {
@@ -67,17 +67,6 @@ static uint32_t phdr_to_vmm_flags(uint32_t flags) {
   return out;
 }
 
-static void finalize_segment_permissions(struct user_address_space *as, uint64_t start, uint64_t end, uint32_t flags) {
-#if defined(__STDC_HOSTED__) && __STDC_HOSTED__
-  (void)as;
-  (void)start;
-  (void)end;
-  (void)flags;
-#else
-  vmm_protect_range(as, start, end, flags);
-#endif
-}
-
 static bool valid_ehdr(const struct elf64_ehdr *ehdr, uint64_t image_size) {
   const unsigned char magic[4] = {0x7f, 'E', 'L', 'F'};
   return image_size >= sizeof(*ehdr) && kmemcmp(ehdr->e_ident, magic, sizeof(magic)) == 0 && ehdr->e_ident[4] == 2 &&
@@ -110,10 +99,12 @@ bool elf_find_interp_aarch64(const struct elf_reader *reader, char *out, size_t 
   return false;
 }
 
-bool elf_load_aarch64(struct user_address_space *as, const struct elf_reader *reader, uint64_t load_base,
-                      struct loaded_elf *out) {
+bool elf_load_aarch64(struct user_address_space *as, struct vma_list *vmas, const struct elf_reader *reader,
+                      uint64_t load_base, struct loaded_elf *out) {
   struct elf64_ehdr ehdr;
-  if (!read_ehdr(reader, &ehdr)) { return false; }
+  if (as == NULL || vmas == NULL || reader == NULL || reader->node == NULL || !read_ehdr(reader, &ehdr)) {
+    return false;
+  }
 
   uint64_t high = 0;
   uint64_t phdr_va = 0;
@@ -133,22 +124,9 @@ bool elf_load_aarch64(struct user_address_space *as, const struct elf_reader *re
     uint64_t start = align_down(seg_vaddr, PAGE_SIZE);
     uint64_t end = align_up(seg_vaddr + ph.p_memsz, PAGE_SIZE);
     uint32_t flags = phdr_to_vmm_flags(ph.p_flags);
-    for (uint64_t va = start; va < end; va += PAGE_SIZE) {
-      uint64_t pa = pmm_alloc_zero_page();
-      if (pa == 0 || !vmm_map_page(as, va, pa, flags | VMM_USER_WRITE)) { return false; }
-
-      uint64_t seg_page_start = va > seg_vaddr ? va : seg_vaddr;
-      uint64_t seg_file_end = seg_vaddr + ph.p_filesz;
-      if (seg_page_start < seg_file_end) {
-        uint64_t seg_page_end = va + PAGE_SIZE;
-        uint64_t copy_end = seg_page_end < seg_file_end ? seg_page_end : seg_file_end;
-        uint64_t page_file_start = ph.p_offset + (seg_page_start - seg_vaddr);
-        uint64_t page_file_len = copy_end - seg_page_start;
-        void *dst = (void *)(uintptr_t)(as->hhdm_offset + pa + (seg_page_start - va));
-        if (!read_exact(reader, page_file_start, dst, (size_t)page_file_len)) { return false; }
-      }
+    if (!vma_insert_file(vmas, start, end, flags, 0, reader->node, seg_vaddr, ph.p_offset, ph.p_filesz)) {
+      return false;
     }
-    finalize_segment_permissions(as, start, end, flags);
 
     if (seg_vaddr + ph.p_memsz > high) { high = seg_vaddr + ph.p_memsz; }
     if (ehdr.e_phoff >= ph.p_offset &&

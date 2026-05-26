@@ -16,6 +16,7 @@ static struct domain domains[MAX_DOMAINS];
 static struct thread threads[MAX_THREADS];
 static struct snapshot snapshots[MAX_SNAPSHOTS];
 static struct open_file open_files[MAX_OPEN_FILES];
+static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64_t page);
 struct pipe_obj {
   bool used;
   bool had_writer;
@@ -646,7 +647,7 @@ void cell_system_init(uint64_t hhdm_offset) {
   // these tables intentionally have no locks until a later SMP/preemptive goal.
 }
 
-bool cell_create_init(struct user_address_space *as, uint64_t entry, uint64_t sp) {
+bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp) {
   struct domain *domain = alloc_domain();
   if (domain == NULL) { return false; }
   struct thread *thread = alloc_thread(domain);
@@ -662,7 +663,8 @@ bool cell_create_init(struct user_address_space *as, uint64_t entry, uint64_t sp
   set_domain_identity(domain, "/sbin/init", init_argv, 1);
   domain->as = *as;
   domain->as.asid = 0;
-  vma_list_init(&domain->vmas);
+  domain->vmas = *vmas;
+  vma_list_init(vmas);
   if (!vma_insert(&domain->vmas, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP, VMM_USER_READ | VMM_USER_WRITE, 0,
                   VMA_STACK)) {
     thread->state = THREAD_UNUSED;
@@ -1028,7 +1030,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
 }
 
 static bool domain_access_allowed(const struct vma *vma, enum vmm_access access) {
-  if (vma == NULL || (vma->type != VMA_ANON && vma->type != VMA_STACK)) { return false; }
+  if (vma == NULL || (vma->type != VMA_ANON && vma->type != VMA_STACK && vma->type != VMA_FILE)) { return false; }
   if (access == VMM_ACCESS_READ) { return (vma->prot & VMM_USER_READ) != 0; }
   if (access == VMM_ACCESS_WRITE) { return (vma->prot & VMM_USER_WRITE) != 0; }
   if (access == VMM_ACCESS_EXEC) { return (vma->prot & VMM_USER_EXEC) != 0; }
@@ -1044,7 +1046,12 @@ static bool ensure_domain_user_range(struct domain *domain, uint64_t va, size_t 
   for (;;) {
     if (!vmm_is_mapped(&domain->as, page)) {
       const struct vma *vma = vma_lookup(&domain->vmas, page);
-      if (!domain_access_allowed(vma, access) || !vmm_alloc_page(&domain->as, page, vma->prot)) { return false; }
+      if (!domain_access_allowed(vma, access)) { return false; }
+      if (vma->type == VMA_FILE) {
+        if (!fault_file_page(domain, vma, page)) { return false; }
+      } else if (!vmm_alloc_page(&domain->as, page, vma->prot)) {
+        return false;
+      }
     }
     if (access == VMM_ACCESS_WRITE && !vmm_user_range_accessible(&domain->as, page, 1, VMM_ACCESS_WRITE) &&
         !vmm_handle_cow_fault(&domain->as, page)) {
@@ -3784,12 +3791,46 @@ static bool access_allowed(const struct vma *vma, enum vmm_access access) {
   return false;
 }
 
+static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64_t page) {
+  uint64_t pa = pmm_alloc_zero_page();
+  if (pa == 0) { return false; }
+  uint8_t *dst = (uint8_t *)(uintptr_t)(domain->as.hhdm_offset + pa);
+  uint64_t page_end = page + PAGE_SIZE;
+  uint64_t file_end = vma->file_start + vma->file_size;
+  uint64_t copy_start = page > vma->file_start ? page : vma->file_start;
+  uint64_t copy_end = page_end < file_end ? page_end : file_end;
+  if (copy_start < copy_end) {
+    static uint8_t cached_page[PAGE_SIZE];
+    uint64_t copied = 0;
+    while (copied < copy_end - copy_start) {
+      uint64_t read_off = vma->file_offset + (copy_start - vma->file_start) + copied;
+      uint64_t file_page = read_off & ~(uint64_t)(PAGE_SIZE - 1);
+      uint64_t page_off = read_off - file_page;
+      uint64_t chunk = PAGE_SIZE - page_off;
+      if (chunk > copy_end - copy_start - copied) { chunk = copy_end - copy_start - copied; }
+      if (!vfs_read_page_cached(&vma->file_node, file_page, cached_page)) {
+        pmm_free_page(pa);
+        return false;
+      }
+      kmemcpy(dst + (copy_start - page) + copied, cached_page + page_off, chunk);
+      copied += chunk;
+    }
+  }
+  if (!vmm_map_page(&domain->as, page, pa, vma->prot)) {
+    pmm_free_page(pa);
+    return false;
+  }
+  return true;
+}
+
 bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
   struct domain *domain = current_domain();
   if (domain == NULL) { return false; }
   uint64_t va = far & ~(uint64_t)(PAGE_SIZE - 1);
   const struct vma *vma = vma_lookup(&domain->vmas, va);
-  if (vma == NULL || (vma->type != VMA_ANON && vma->type != VMA_STACK) || !access_allowed(vma, access)) { return false; }
+  if (vma == NULL || !access_allowed(vma, access)) { return false; }
+  if (vma->type == VMA_FILE) { return fault_file_page(domain, vma, va); }
+  if (vma->type != VMA_ANON && vma->type != VMA_STACK) { return false; }
   return vmm_alloc_page(&domain->as, va, vma->prot);
 }
 
@@ -3819,6 +3860,13 @@ bool cell_add_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags) {
 bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, enum vma_type type) {
   struct domain *domain = current_domain();
   return domain != NULL && vma_insert(&domain->vmas, start, end, prot, flags, type);
+}
+
+bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
+                       uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
+  struct domain *domain = current_domain();
+  return domain != NULL && vma_insert_file(&domain->vmas, start, end, prot, flags, node, file_start, file_offset,
+                                           file_size);
 }
 
 bool cell_vma_overlaps(uint64_t start, uint64_t end) {

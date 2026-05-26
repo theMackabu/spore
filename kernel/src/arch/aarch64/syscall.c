@@ -785,6 +785,7 @@ static bool make_elf_reader(const struct vfs_node *node, struct elf_reader *read
   *reader = (struct elf_reader){
     .read_at = vfs_elf_read_at,
     .ctx = (void *)node,
+    .node = node,
     .size = node->size,
   };
   return true;
@@ -935,31 +936,6 @@ static int64_t sys_brk(uint64_t requested) {
   return (int64_t)requested;
 }
 
-static int64_t map_file_private(uint64_t base, uint64_t len, uint64_t prot, int fd, uint64_t off) {
-  uint64_t end = align_up(base + len, PAGE_SIZE);
-  uint32_t final_flags = prot_to_vmm(prot);
-  uint32_t load_flags = final_flags | VMM_USER_WRITE;
-  uint8_t tmp[256];
-
-  for (uint64_t va = base; va < end; va += PAGE_SIZE) {
-    if (!vmm_alloc_page(active_as(), va, load_flags)) { return -(int64_t)ENOMEM; }
-  }
-
-  uint64_t done = 0;
-  while (done < len) {
-    uint64_t chunk = len - done;
-    if (chunk > sizeof(tmp)) { chunk = sizeof(tmp); }
-    int64_t got = cell_fd_pread_kernel(fd, off + done, tmp, chunk);
-    if (got < 0) { return got; }
-    if (got == 0) { break; }
-    if (!vmm_copy_to_user(active_as(), base + done, tmp, (size_t)got)) { return -(int64_t)EFAULT; }
-    done += (uint64_t)got;
-    if ((uint64_t)got < chunk) { break; }
-  }
-  vmm_protect_range(active_as(), base, end, final_flags);
-  return 0;
-}
-
 static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t off) {
   bool anon = (flags & MAP_ANONYMOUS) != 0;
   if (len == 0 || (flags & MAP_PRIVATE) == 0 || (!anon && (int64_t)fd < 0)) { return -(int64_t)EINVAL; }
@@ -971,12 +947,13 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t fla
   if (!cell_mmap_allowed((end - base) / PAGE_SIZE)) { return -(int64_t)ENOMEM; }
   if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
   if ((flags & MAP_FIXED) != 0) { (void)cell_remove_vma(base, end); }
-  if (!cell_add_vma(base, end, prot_to_vmm(prot), (uint32_t)flags)) { return -(int64_t)EINVAL; }
-  if (!anon) {
-    int64_t rc = map_file_private(base, len, prot, (int)fd, off);
-    if (rc < 0) {
-      (void)cell_remove_vma(base, end);
-      return rc;
+  if (anon) {
+    if (!cell_add_vma(base, end, prot_to_vmm(prot), (uint32_t)flags)) { return -(int64_t)EINVAL; }
+  } else {
+    struct vfs_node node;
+    if (!cell_fd_stat((int)fd, &node) || node.is_dir || node.device != RAMFS_DEV_NONE) { return -(int64_t)EINVAL; }
+    if (!cell_add_file_vma(base, end, prot_to_vmm(prot), (uint32_t)flags, &node, base, off, len)) {
+      return -(int64_t)EINVAL;
     }
   }
   if (addr == 0) { active_as()->mmap_base = end; }
@@ -1411,7 +1388,7 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
   uint64_t hhdm_offset = active_as()->hhdm_offset;
   vma_list_init(&new_vmas);
   if (!vmm_user_init(&new_as, hhdm_offset)) { return -12; }
-  if (!elf_load_aarch64(&new_as, &exec_reader, 0, &elf)) {
+  if (!elf_load_aarch64(&new_as, &new_vmas, &exec_reader, 0, &elf)) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
     return -(int64_t)EINVAL;
@@ -1421,7 +1398,7 @@ static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t
     struct elf_reader interp_reader;
     struct loaded_elf interp;
     if (!vfs_lookup(interp_path, &interp_node) || !make_elf_reader(&interp_node, &interp_reader) ||
-        !elf_load_aarch64(&new_as, &interp_reader, INTERP_LOAD_BASE, &interp)) {
+        !elf_load_aarch64(&new_as, &new_vmas, &interp_reader, INTERP_LOAD_BASE, &interp)) {
       vmm_destroy(&new_as);
       vma_list_destroy(&new_vmas);
       return -(int64_t)ENOENT;
@@ -2581,6 +2558,9 @@ void handle_lower_sync(struct trap_frame *frame) {
     uint64_t iss = frame->esr_el1 & 0x1ffffff;
     uint64_t dfsc = iss & 0x3f;
     bool write = (iss & (1u << 6)) != 0;
+    if (ec == 0x20 && dfsc >= 0x04 && dfsc <= 0x07 && cell_handle_translation_fault(far, VMM_ACCESS_EXEC)) {
+      return;
+    }
     if (ec == 0x24 && dfsc >= 0x04 && dfsc <= 0x07 &&
         cell_handle_translation_fault(far, write ? VMM_ACCESS_WRITE : VMM_ACCESS_READ)) {
       return;

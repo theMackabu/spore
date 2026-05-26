@@ -1,4 +1,5 @@
 #include "elf/loader.h"
+#include "vfs.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -45,16 +46,8 @@ struct elf64_phdr {
   uint64_t p_align;
 };
 
-struct mapping {
-  uint64_t va;
-  uint64_t pa;
-  uint32_t flags;
-};
-
 static uint8_t phys[(PAGE_COUNT + 1) * PAGE_SIZE];
 static uint64_t next_pa = PAGE_SIZE;
-static struct mapping mappings[PAGE_COUNT];
-static size_t mapping_count;
 
 uint64_t pmm_alloc_zero_page(void) {
   assert(next_pa < sizeof(phys));
@@ -62,20 +55,6 @@ uint64_t pmm_alloc_zero_page(void) {
   memset(&phys[pa], 0, PAGE_SIZE);
   next_pa += PAGE_SIZE;
   return pa;
-}
-
-bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags) {
-  (void)as;
-  assert(mapping_count < PAGE_COUNT);
-  mappings[mapping_count++] = (struct mapping){.va = va, .pa = pa, .flags = flags};
-  return true;
-}
-
-static uint64_t phys_for(uint64_t va) {
-  for (size_t i = 0; i < mapping_count; ++i) {
-    if (mappings[i].va == (va & ~(uint64_t)(PAGE_SIZE - 1))) { return mappings[i].pa + (va & (PAGE_SIZE - 1)); }
-  }
-  return 0;
 }
 
 struct memory_reader {
@@ -133,9 +112,20 @@ int main(void) {
 
   struct user_address_space as = {.hhdm_offset = (uint64_t)(uintptr_t)phys};
   struct loaded_elf loaded = {0};
+  struct vma_list vmas;
+  vma_list_init(&vmas);
+  struct vfs_node node = {
+    .backend = VFS_EXT2,
+    .ino = 42,
+    .is_dir = false,
+    .device = RAMFS_DEV_NONE,
+    .mode = 0100755,
+    .dev_id = 1,
+    .size = sizeof(image),
+  };
   struct memory_reader mem = {.data = image, .size = sizeof(image)};
-  struct elf_reader reader = {.read_at = memory_read_at, .ctx = &mem, .size = sizeof(image)};
-  assert(elf_load_aarch64(&as, &reader, 0, &loaded));
+  struct elf_reader reader = {.read_at = memory_read_at, .ctx = &mem, .node = &node, .size = sizeof(image)};
+  assert(elf_load_aarch64(&as, &vmas, &reader, 0, &loaded));
 
   assert(loaded.entry == 0x401000);
   assert(loaded.phdr == 0x400040);
@@ -144,11 +134,15 @@ int main(void) {
   assert(loaded.brk_base == 0x402000);
   assert(as.brk_base == loaded.brk_base);
 
-  uint64_t data_pa = phys_for(0x401000);
-  assert(data_pa != 0);
-  assert(memcmp(&phys[data_pa], "abc\0\0\0\0\0", 8) == 0);
+  assert(vma_count(&vmas) == 2);
+  const struct vma *text = vma_lookup(&vmas, 0x400000);
+  const struct vma *data = vma_lookup(&vmas, 0x401000);
+  assert(text != NULL && text->type == VMA_FILE && text->file_offset == 0 && text->file_size == 0x100);
+  assert(data != NULL && data->type == VMA_FILE && data->file_offset == 0x200 && data->file_size == 3);
+  assert((data->prot & VMM_USER_WRITE) != 0);
 
   image[18] = 0;
-  assert(!elf_load_aarch64(&as, &reader, 0, &loaded));
+  assert(!elf_load_aarch64(&as, &vmas, &reader, 0, &loaded));
+  vma_list_destroy(&vmas);
   return 0;
 }

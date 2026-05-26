@@ -136,13 +136,14 @@ enter_el0:
 .global switch_stack_and_finish
 .type switch_stack_and_finish, %function
 switch_stack_and_finish:
-    mov x4, #1
-    msr spsel, x4
+    mov x5, #1
+    msr spsel, x5
     isb
     mov sp, x0
     mov x0, x1
     mov x1, x2
     mov x2, x3
+    mov x3, x4
     bl finish_enter_el0
 1:
     wfe

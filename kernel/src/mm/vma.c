@@ -17,7 +17,11 @@ static bool overlaps(uint64_t a_start, uint64_t a_end, uint64_t b_start, uint64_
 }
 
 static bool compatible(const struct vma *a, const struct vma *b) {
-  return a->prot == b->prot && a->flags == b->flags && a->type == b->type;
+  if (a->prot != b->prot || a->flags != b->flags || a->type != b->type) { return false; }
+  if (a->type != VMA_FILE) { return true; }
+  return a->file_node.backend == b->file_node.backend && a->file_node.ino == b->file_node.ino &&
+         a->file_node.dev_id == b->file_node.dev_id && a->file_start == b->file_start &&
+         a->file_offset == b->file_offset && a->file_size == b->file_size;
 }
 
 void vma_set_hhdm_offset(uint64_t hhdm_offset) {
@@ -70,26 +74,38 @@ static struct vma *vma_at_mut(struct vma_list *list, size_t index) {
   return (struct vma *)(uintptr_t)vma_at(list, index);
 }
 
-static bool add_raw(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
-                    enum vma_type type) {
-  if (start >= end) { return false; }
+static struct vma *alloc_slot(struct vma_list *list) {
   for (;;) {
     for (size_t i = 0; i < vma_capacity(list); ++i) {
       struct vma *slot = vma_at_mut(list, i);
-      if (!slot->used) {
-        *slot = (struct vma){
-          .used = true,
-          .start = start,
-          .end = end,
-          .prot = prot,
-          .flags = flags,
-          .type = type,
-        };
-        return true;
-      }
+      if (!slot->used) { return slot; }
     }
-    if (!ensure_chunk(list)) { return false; }
+    if (!ensure_chunk(list)) { return NULL; }
   }
+}
+
+static bool add_raw_vma(struct vma_list *list, const struct vma *src) {
+  if (src == NULL || src->start >= src->end) { return false; }
+  struct vma *slot = alloc_slot(list);
+  if (slot == NULL) { return false; }
+  *slot = *src;
+  slot->used = true;
+  return true;
+}
+
+static bool add_raw(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
+                    enum vma_type type) {
+  if (start >= end) { return false; }
+  struct vma *slot = alloc_slot(list);
+  if (slot == NULL) { return false; }
+  kmemset(slot, 0, sizeof(*slot));
+  slot->used = true;
+  slot->start = start;
+  slot->end = end;
+  slot->prot = prot;
+  slot->flags = flags;
+  slot->type = type;
+  return true;
 }
 
 static void merge_adjacent(struct vma_list *list) {
@@ -163,6 +179,27 @@ bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t pr
   return true;
 }
 
+bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
+                     const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
+  if (start >= end || node == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
+  if (vma_overlaps(list, start, end)) { return false; }
+  struct vma *slot = alloc_slot(list);
+  if (slot == NULL) { return false; }
+  kmemset(slot, 0, sizeof(*slot));
+  slot->used = true;
+  slot->start = start;
+  slot->end = end;
+  slot->prot = prot;
+  slot->flags = flags;
+  slot->type = VMA_FILE;
+  slot->file_node = *node;
+  slot->file_start = file_start;
+  slot->file_offset = file_offset;
+  slot->file_size = file_size;
+  merge_adjacent(list);
+  return true;
+}
+
 bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end) {
   if (start >= end) { return false; }
 
@@ -172,19 +209,27 @@ bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end) {
     const struct vma *vma = vma_at(list, i);
     if (!vma->used) { continue; }
     if (!overlaps(start, end, vma->start, vma->end)) {
-      if (!add_raw(&next, vma->start, vma->end, vma->prot, vma->flags, vma->type)) {
+      if (!add_raw_vma(&next, vma)) {
         vma_list_destroy(&next);
         return false;
       }
       continue;
     }
-    if (vma->start < start && !add_raw(&next, vma->start, start, vma->prot, vma->flags, vma->type)) {
-      vma_list_destroy(&next);
-      return false;
+    struct vma part = *vma;
+    if (vma->start < start) {
+      part.end = start;
+      if (!add_raw_vma(&next, &part)) {
+        vma_list_destroy(&next);
+        return false;
+      }
     }
-    if (end < vma->end && !add_raw(&next, end, vma->end, vma->prot, vma->flags, vma->type)) {
-      vma_list_destroy(&next);
-      return false;
+    if (end < vma->end) {
+      part = *vma;
+      part.start = end;
+      if (!add_raw_vma(&next, &part)) {
+        vma_list_destroy(&next);
+        return false;
+      }
     }
   }
   merge_adjacent(&next);
@@ -202,25 +247,37 @@ bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t p
     const struct vma *vma = vma_at(list, i);
     if (!vma->used) { continue; }
     if (!overlaps(start, end, vma->start, vma->end)) {
-      if (!add_raw(&next, vma->start, vma->end, vma->prot, vma->flags, vma->type)) {
+      if (!add_raw_vma(&next, vma)) {
         vma_list_destroy(&next);
         return false;
       }
       continue;
     }
-    if (vma->start < start && !add_raw(&next, vma->start, start, vma->prot, vma->flags, vma->type)) {
-      vma_list_destroy(&next);
-      return false;
+    struct vma part = *vma;
+    if (vma->start < start) {
+      part.end = start;
+      if (!add_raw_vma(&next, &part)) {
+        vma_list_destroy(&next);
+        return false;
+      }
     }
     uint64_t mid_start = vma->start > start ? vma->start : start;
     uint64_t mid_end = vma->end < end ? vma->end : end;
-    if (!add_raw(&next, mid_start, mid_end, prot, vma->flags, vma->type)) {
+    part = *vma;
+    part.start = mid_start;
+    part.end = mid_end;
+    part.prot = prot;
+    if (!add_raw_vma(&next, &part)) {
       vma_list_destroy(&next);
       return false;
     }
-    if (end < vma->end && !add_raw(&next, end, vma->end, vma->prot, vma->flags, vma->type)) {
-      vma_list_destroy(&next);
-      return false;
+    if (end < vma->end) {
+      part = *vma;
+      part.start = end;
+      if (!add_raw_vma(&next, &part)) {
+        vma_list_destroy(&next);
+        return false;
+      }
     }
   }
   merge_adjacent(&next);
@@ -234,7 +291,7 @@ bool vma_clone(struct vma_list *dst, const struct vma_list *src) {
   for (size_t i = 0; i < vma_capacity(src); ++i) {
     const struct vma *vma = vma_at(src, i);
     if (!vma->used) { continue; }
-    if (!add_raw(dst, vma->start, vma->end, vma->prot, vma->flags, vma->type)) {
+    if (!add_raw_vma(dst, vma)) {
       vma_list_destroy(dst);
       return false;
     }

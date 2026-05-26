@@ -76,6 +76,8 @@ bool vfs_unlink(const char *path);
 bool vfs_rename(const char *old_path, const char *new_path);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
+bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst);
+void vfs_page_cache_invalidate(const struct vfs_node *node);
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out);
 bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);

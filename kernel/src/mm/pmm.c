@@ -12,6 +12,7 @@ static uint64_t bitmap[PMM_BITMAP_WORDS];
 static uint16_t refcounts[PMM_MAX_PAGES];
 static uint64_t total_page_count;
 static uint64_t free_page_count;
+static uint64_t next_free_page;
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
   return value & ~(align - 1);
@@ -55,6 +56,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   }
   total_page_count = 0;
   free_page_count = 0;
+  next_free_page = 0x100000 / PAGE_SIZE;
 
   for (uint32_t i = 0; i < memmap_count; ++i) {
     const struct spore_memmap_entry *entry = &memmap[i];
@@ -75,10 +77,17 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
 }
 
 uint64_t pmm_alloc_page(void) {
-  for (uint64_t page = 0x100000 / PAGE_SIZE; page < PMM_MAX_PAGES; ++page) {
-    if (is_free(page)) {
-      set_used(page);
-      return page * PAGE_SIZE;
+  const uint64_t first = 0x100000 / PAGE_SIZE;
+  if (next_free_page < first || next_free_page >= PMM_MAX_PAGES) { next_free_page = first; }
+  for (uint64_t pass = 0; pass < 2; ++pass) {
+    uint64_t start = pass == 0 ? next_free_page : first;
+    uint64_t end = pass == 0 ? PMM_MAX_PAGES : next_free_page;
+    for (uint64_t page = start; page < end; ++page) {
+      if (is_free(page)) {
+        set_used(page);
+        next_free_page = page + 1;
+        return page * PAGE_SIZE;
+      }
     }
   }
   return 0;
@@ -98,7 +107,10 @@ void pmm_free_page(uint64_t pa) {
   uint64_t page = pa / PAGE_SIZE;
   if (refcounts[page] == 0) { return; }
   --refcounts[page];
-  if (refcounts[page] == 0) { set_free(page); }
+  if (refcounts[page] == 0) {
+    set_free(page);
+    if (page < next_free_page) { next_free_page = page; }
+  }
 }
 
 bool pmm_share_page(uint64_t pa) {
