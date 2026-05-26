@@ -56,6 +56,11 @@ static int more_stream(FILE *f, bool interactive) {
 
 int main(int argc, char **argv) {
   bool interactive = isatty(STDOUT_FILENO) && isatty(STDIN_FILENO);
+  if (argc == 2 && streq(argv[1], "--help")) { return usage("more", "[FILE...]"); }
+  if (argc == 1 && isatty(STDIN_FILENO)) {
+    fputs("Missing filename (\"more --help\" for help)\n", stderr);
+    return EXIT_FAILURE;
+  }
   if (argc == 1) { return more_stream(stdin, interactive); }
 
   int rc = EXIT_SUCCESS;

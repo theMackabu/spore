@@ -122,7 +122,12 @@ static int browse(struct line_vec *lines, const char *name) {
 }
 
 int main(int argc, char **argv) {
+  if (argc == 2 && streq(argv[1], "--help")) { return usage("less", "[FILE]"); }
   if (argc > 2) { return usage("less", "[FILE]"); }
+  if (argc == 1 && isatty(STDIN_FILENO)) {
+    fputs("Missing filename (\"less --help\" for help)\n", stderr);
+    return EXIT_FAILURE;
+  }
 
   struct line_vec lines = {0};
   const char *name = argc == 2 ? argv[1] : "stdin";
