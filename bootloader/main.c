@@ -290,7 +290,7 @@ static EFI_STATUS load_modules(struct spore_boot_module *modules, uint32_t *coun
 }
 
 static EFI_STATUS load_kernel(struct loaded_file *kernel_file, uint64_t *kernel_phys_base, uint64_t *kernel_virt_base,
-                              uint64_t *entry) {
+                              uint64_t *kernel_span, uint64_t *entry) {
   EFI_STATUS status = read_file(u"\\boot\\kernel.elf", kernel_file);
   if (EFI_ERROR(status)) { return status; }
   if (kernel_file->size < sizeof(struct elf64_ehdr)) { return EFI_LOAD_ERROR; }
@@ -327,6 +327,7 @@ static EFI_STATUS load_kernel(struct loaded_file *kernel_file, uint64_t *kernel_
   }
   *kernel_phys_base = (uint64_t)(uintptr_t)load;
   *kernel_virt_base = min_vaddr;
+  *kernel_span = max_vaddr - min_vaddr;
   *entry = eh->e_entry;
   return EFI_SUCCESS;
 }
@@ -411,7 +412,7 @@ static void install_ttbr1(uint64_t root_pa) {
                    : "memory");
 }
 
-static int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint64_t entry,
+static int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint64_t kernel_span, uint64_t entry,
                              uint64_t *ttbr1_out) {
   (void)entry;
   uint64_t *root_table = new_page_table();
@@ -447,22 +448,12 @@ static int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_bas
     }
   }
 
-  uint64_t *kernel_l1 = new_page_table();
-  uint64_t *kernel_l2 = new_page_table();
-  uint64_t *kernel_l3[2] = {new_page_table(), new_page_table()};
-  if (kernel_l1 == NULL || kernel_l2 == NULL || kernel_l3[0] == NULL || kernel_l3[1] == NULL) {
-    uefi_puts(u"spore-boot: kernel table alloc failed\r\n");
-    return 0;
-  }
-  root_table[pt_index(kernel_virt_base, 39)] = table_desc(kernel_l1);
-  kernel_l1[pt_index(kernel_virt_base, 30)] = table_desc(kernel_l2);
-  for (uint64_t i = 0; i < 2; ++i) {
-    kernel_l2[pt_index(kernel_virt_base + i * 0x200000ull, 21)] = table_desc(kernel_l3[i]);
-    for (uint64_t off = 0; off < 0x200000ull; off += PAGE_SIZE) {
-      uint64_t total = i * 0x200000ull + off;
-      uint64_t attrs = total < 0x100000ull ? kernel_rx : kernel_rw_nx;
-      kernel_l3[i][pt_index(kernel_virt_base + total, 12)] =
-        ((kernel_phys_base + total) & 0x0000fffffffff000ull) | attrs | 0x3ull;
+  uint64_t kernel_map = align_up(kernel_span, PAGE_SIZE);
+  for (uint64_t off = 0; off < kernel_map; off += PAGE_SIZE) {
+    uint64_t attrs = off < 0x100000ull ? kernel_rx : kernel_rw_nx;
+    if (!map_page(root_table, kernel_virt_base + off, kernel_phys_base + off, attrs)) {
+      uefi_puts(u"spore-boot: kernel map failed\r\n");
+      return 0;
     }
   }
   *ttbr1_out = (uint64_t)(uintptr_t)root_table;
@@ -536,8 +527,9 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   struct loaded_file kernel_file;
   uint64_t kernel_phys_base = 0;
   uint64_t kernel_virt_base = 0;
+  uint64_t kernel_span = 0;
   uint64_t entry = 0;
-  status = load_kernel(&kernel_file, &kernel_phys_base, &kernel_virt_base, &entry);
+  status = load_kernel(&kernel_file, &kernel_phys_base, &kernel_virt_base, &kernel_span, &entry);
   if (EFI_ERROR(status)) {
     uefi_puts(u"spore-boot: kernel load failed\r\n");
     return status;
@@ -564,7 +556,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   }
 
   uint64_t ttbr1 = 0;
-  if (!build_page_tables(kernel_phys_base, kernel_virt_base, entry, &ttbr1)) {
+  if (!build_page_tables(kernel_phys_base, kernel_virt_base, kernel_span, entry, &ttbr1)) {
     uefi_puts(u"spore-boot: page tables failed\r\n");
     return EFI_LOAD_ERROR;
   }

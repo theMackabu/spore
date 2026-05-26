@@ -52,6 +52,11 @@ static const char *shell_commands[] = {
   "hostname -I\n",
   "ping -c 1 127.0.0.1\n",
   "nslookup localhost\n",
+  "nslookup example.com\n",
+  "curl http://example.test:8080/\n",
+  "confine net:none curl http://example.test:8080/\n",
+  "confine net:tcp:10.0.2.2:8080 curl http://example.test:8080/\n",
+  "confine net:dns nslookup example.com\n",
   "myc list-timers\n",
   "/bin/dash -c 'echo dash-ok; echo $((1 + 2)); cd /tmp && pwd'\n",
   "/bin/dash\n",
@@ -353,6 +358,32 @@ static pid_t start_udp_echo_server(void) {
   }
 }
 
+static pid_t start_http_server(void) {
+  pid_t pid = fork();
+  if (pid != 0) { return pid; }
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) { _exit(1); }
+  int one = 1;
+  (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(8080);
+  if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, 8) != 0) { _exit(1); }
+  for (;;) {
+    int client = accept(fd, NULL, NULL);
+    if (client < 0) { continue; }
+    char buf[1024];
+    (void)read(client, buf, sizeof(buf));
+    const char body[] = "hello from host http\n";
+    const char header[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n\r\n";
+    (void)write(client, header, sizeof(header) - 1);
+    (void)write(client, body, sizeof(body) - 1);
+    close(client);
+  }
+}
+
 static void build_qemu_args(char **argv, int *argc, const char *qemu, const char *image, const char *root,
                             const char *accel, const char *cpu, const char *vars, char *firmware_arg,
                             size_t firmware_cap, char *vars_arg, size_t vars_cap, char *image_drive_arg,
@@ -649,6 +680,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   close(serial_pipe[1]);
   close(log_pipe[1]);
   pid_t echo_pid = start_udp_echo_server();
+  pid_t http_pid = start_http_server();
   resize_pending = 1;
   (void)signal(SIGWINCH, on_sigwinch);
 
@@ -705,6 +737,10 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
         (void)kill(echo_pid, SIGTERM);
         (void)waitpid(echo_pid, NULL, 0);
       }
+      if (http_pid > 0) {
+        (void)kill(http_pid, SIGTERM);
+        (void)waitpid(http_pid, NULL, 0);
+      }
       return finish_harness(rc, raw_terminal, &saved_termios);
     }
     if (!plain && now_seconds() > deadline) {
@@ -713,6 +749,10 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
       if (echo_pid > 0) {
         (void)kill(echo_pid, SIGTERM);
         (void)waitpid(echo_pid, NULL, 0);
+      }
+      if (http_pid > 0) {
+        (void)kill(http_pid, SIGTERM);
+        (void)waitpid(http_pid, NULL, 0);
       }
       return finish_harness(124, raw_terminal, &saved_termios);
     }

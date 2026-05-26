@@ -863,9 +863,11 @@ static void cap_allow(struct capability_set *caps, uint64_t nr) {
 
 static void cap_allow_common(struct capability_set *caps) {
   static const uint16_t common[] = {
-    17,  23,  24,  25,  29,  57,  63,  64,  65,  66,  80,  93,  94,  96,  98,  99,  101, 48,
+    17,  19,  23,  24,  25,  29,  57,  63,  64,  65,  66,  72,  73,  80,  93,  94,  96,  98,  99,  101,
+    103, 48,
     113, 115, 123, 124, 134, 135, 144, 146, 160, 161, 172, 173, 174, 175, 176, 177, 178, 179, 198,
-    200, 203, 204, 206, 207, 208, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261, 278, 439,
+    200, 203, 204, 206, 207, 208, 209, 211, 212, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261,
+    278, 439,
   };
   for (size_t i = 0; i < sizeof(common) / sizeof(common[0]); ++i) {
     cap_allow(caps, common[i]);
@@ -961,6 +963,7 @@ int cell_apply_policy(const char *manifest) {
   } else if (str_eq(manifest, "mem:1")) {
     caps.memory_page_cap = 1;
   } else if (str_eq(manifest, "net:none")) {
+    cap_allow_files(&caps);
     caps.flags |= CAP_EGRESS_ENFORCE;
     caps.egress_prefix = 32;
   } else if (str_eq(manifest, "net:dns")) {
@@ -974,6 +977,7 @@ int cell_apply_policy(const char *manifest) {
     uint8_t prefix = 32;
     uint16_t port = 0;
     if (!parse_ipv4_port(manifest + 8, &ip, &prefix, &port)) { return -2; }
+    cap_allow_files(&caps);
     caps.flags |= CAP_EGRESS_ENFORCE;
     caps.egress_proto = IPPROTO_UDP;
     caps.egress_prefix = prefix;
@@ -984,6 +988,7 @@ int cell_apply_policy(const char *manifest) {
     uint8_t prefix = 32;
     uint16_t port = 0;
     if (!parse_ipv4_port(manifest + 8, &ip, &prefix, &port)) { return -2; }
+    cap_allow_files(&caps);
     caps.flags |= CAP_EGRESS_ENFORCE;
     caps.egress_proto = IPPROTO_TCP;
     caps.egress_prefix = prefix;
@@ -1177,6 +1182,8 @@ static bool deliver_signal_to_thread(struct thread *thread, int signal) {
     thread->stdin_len = 0;
     thread->pipe_buf = 0;
     thread->pipe_len = 0;
+    thread->socket_addr = 0;
+    thread->socket_addrlen = 0;
   }
 
   struct signal_frame64 frame;
@@ -3160,6 +3167,8 @@ static void clear_pipe_wait(struct thread *thread) {
   thread->wait_target = -1;
   thread->pipe_buf = 0;
   thread->pipe_len = 0;
+  thread->socket_addr = 0;
+  thread->socket_addrlen = 0;
   thread->pipe_write = false;
 }
 
@@ -3805,7 +3814,35 @@ static int64_t tcp_read_to_domain(struct domain *domain, struct open_file *file,
   return (int64_t)n;
 }
 
-int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
+struct sockaddr_in_cell {
+  uint16_t sin_family;
+  uint16_t sin_port;
+  uint32_t sin_addr;
+  uint8_t sin_zero[8];
+};
+
+static uint16_t net_bswap16(uint16_t v) {
+  return (uint16_t)((v << 8) | (v >> 8));
+}
+
+static bool copy_udp_source_to_domain(struct domain *domain, const struct open_file *file, uint64_t addr,
+                                      uint64_t addrlen) {
+  if (addr == 0 && addrlen == 0) { return true; }
+  if (addrlen != 0) {
+    uint32_t len = sizeof(struct sockaddr_in_cell);
+    if (!vmm_copy_to_user(&domain->as, addrlen, &len, sizeof(len))) { return false; }
+  }
+  if (addr == 0) { return true; }
+  struct sockaddr_in_cell sa;
+  kmemset(&sa, 0, sizeof(sa));
+  sa.sin_family = 2;
+  sa.sin_port = net_bswap16(file->udp_rx_port);
+  sa.sin_addr = file->udp_rx_ip;
+  return vmm_copy_to_user(&domain->as, addr, &sa, sizeof(sa));
+}
+
+int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame, uint64_t addr,
+                            uint64_t addrlen) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
@@ -3826,6 +3863,8 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_fram
     current_thread->wait_target = fd;
     current_thread->pipe_buf = buf;
     current_thread->pipe_len = len;
+    current_thread->socket_addr = 0;
+    current_thread->socket_addrlen = 0;
     current_thread->pipe_write = false;
     cell_schedule(frame);
     return CELL_SWITCHED;
@@ -3838,12 +3877,15 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_fram
     current_thread->wait_target = fd;
     current_thread->pipe_buf = buf;
     current_thread->pipe_len = len;
+    current_thread->socket_addr = addr;
+    current_thread->socket_addrlen = addrlen;
     current_thread->pipe_write = false;
     cell_schedule(frame);
     return CELL_SWITCHED;
   }
   uint64_t n = file->udp_rx_len < len ? file->udp_rx_len : len;
   if (!vmm_copy_to_user(&domain->as, buf, file->udp_rx, (size_t)n)) { return -EFAULT; }
+  if (!copy_udp_source_to_domain(domain, file, addr, addrlen)) { return -EFAULT; }
   file->udp_rx_len = 0;
   return (int64_t)n;
 }
@@ -3878,6 +3920,8 @@ static void wake_socket_waiters(struct open_file *file) {
         uint64_t n = file->udp_rx_len < thread->pipe_len ? file->udp_rx_len : thread->pipe_len;
         if (!vmm_copy_to_user(&thread->domain->as, thread->pipe_buf, file->udp_rx, (size_t)n)) {
           thread->tf.x[0] = (uint64_t)(-(int64_t)EFAULT);
+        } else if (!copy_udp_source_to_domain(thread->domain, file, thread->socket_addr, thread->socket_addrlen)) {
+          thread->tf.x[0] = (uint64_t)(-(int64_t)EFAULT);
         } else {
           file->udp_rx_len = 0;
           thread->tf.x[0] = (uint64_t)n;
@@ -3888,6 +3932,8 @@ static void wake_socket_waiters(struct open_file *file) {
       thread->wait_target = -1;
       thread->pipe_buf = 0;
       thread->pipe_len = 0;
+      thread->socket_addr = 0;
+      thread->socket_addrlen = 0;
     }
   }
   wake_poll_waiters();

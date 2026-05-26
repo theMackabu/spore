@@ -210,6 +210,8 @@ struct thread {
   uint64_t stdin_len;
   uint64_t pipe_buf;
   uint64_t pipe_len;
+  uint64_t socket_addr;
+  uint64_t socket_addrlen;
   bool pipe_write;
   uint8_t poll_kind;
   bool poll_has_deadline;
@@ -334,7 +336,8 @@ bool cell_fd_udp_connect(int fd, uint32_t ip, uint16_t port);
 int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint64_t len);
 int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *frame);
 int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len);
-int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
+int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame, uint64_t addr,
+                            uint64_t addrlen);
 int cell_fd_unix_bind(int fd, const char *path);
 int cell_fd_unix_listen(int fd, int backlog);
 int cell_fd_unix_accept(int fd, struct trap_frame *frame);

@@ -67,6 +67,7 @@ enum {
   SYS_FUTEX = 98,
   SYS_SET_ROBUST_LIST = 99,
   SYS_NANOSLEEP = 101,
+  SYS_SETITIMER = 103,
   SYS_CLOCK_GETTIME = 113,
   SYS_CLOCK_GETRES = 114,
   SYS_CLOCK_NANOSLEEP = 115,
@@ -111,6 +112,8 @@ enum {
   SYS_RECVFROM = 207,
   SYS_SETSOCKOPT = 208,
   SYS_GETSOCKOPT = 209,
+  SYS_SENDMSG = 211,
+  SYS_RECVMSG = 212,
   SYS_BRK = 214,
   SYS_MUNMAP = 215,
   SYS_MREMAP = 216,
@@ -275,6 +278,20 @@ struct net_config64 {
 struct iovec64 {
   uint64_t base;
   uint64_t len;
+};
+
+struct msghdr64 {
+  uint64_t name;
+  uint32_t namelen;
+  uint32_t pad1;
+  uint64_t iov;
+  int32_t iovlen;
+  int32_t pad2;
+  uint64_t control;
+  uint32_t controllen;
+  uint32_t pad3;
+  int32_t flags;
+  int32_t pad4;
 };
 
 struct timespec64 {
@@ -2006,11 +2023,37 @@ static int64_t sys_sendto(struct trap_frame *frame, uint64_t fd, uint64_t buf, u
 static int64_t sys_recvfrom(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len, uint64_t flags,
                             uint64_t addr, uint64_t addrlen) {
   (void)flags;
-  (void)addr;
-  (void)addrlen;
   if (!user_writable(buf, len)) { return -(int64_t)EFAULT; }
-  int64_t rc = cell_fd_socket_recv((int)fd, buf, len, frame);
+  int64_t rc = cell_fd_socket_recv((int)fd, buf, len, frame, addr, addrlen);
   return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
+}
+
+static bool copy_first_iov(uint64_t iov_addr, int32_t iovlen, struct iovec64 *out) {
+  if (iovlen <= 0 || iovlen > MAX_IOVCNT || iov_addr == 0 || !user_readable(iov_addr, sizeof(*out))) { return false; }
+  return vmm_copy_from_user(active_as(), out, iov_addr, sizeof(*out));
+}
+
+static int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, uint64_t flags) {
+  if (msg_addr == 0 || !user_readable(msg_addr, sizeof(struct msghdr64))) { return -(int64_t)EFAULT; }
+  struct msghdr64 msg;
+  if (!vmm_copy_from_user(active_as(), &msg, msg_addr, sizeof(msg))) { return -(int64_t)EFAULT; }
+  struct iovec64 iov;
+  if (!copy_first_iov(msg.iov, msg.iovlen, &iov)) { return -(int64_t)EINVAL; }
+  return sys_sendto(frame, fd, iov.base, iov.len, flags, msg.name, msg.namelen);
+}
+
+static int64_t sys_recvmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, uint64_t flags) {
+  if (msg_addr == 0 || !user_readable(msg_addr, sizeof(struct msghdr64))) { return -(int64_t)EFAULT; }
+  struct msghdr64 msg;
+  if (!vmm_copy_from_user(active_as(), &msg, msg_addr, sizeof(msg))) { return -(int64_t)EFAULT; }
+  struct iovec64 iov;
+  if (!copy_first_iov(msg.iov, msg.iovlen, &iov)) { return -(int64_t)EINVAL; }
+  int64_t rc = sys_recvfrom(frame, fd, iov.base, iov.len, flags, msg.name, msg_addr + 8);
+  if (rc >= 0) {
+    msg.flags = 0;
+    (void)vmm_copy_to_user(active_as(), msg_addr, &msg, sizeof(msg));
+  }
+  return rc;
 }
 
 static int64_t sys_getsockname(uint64_t fd, uint64_t addr, uint64_t addrlen) {
@@ -2226,6 +2269,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_FUTEX] = &&l_futex,
     [SYS_SET_ROBUST_LIST] = &&l_set_robust_list,
     [SYS_NANOSLEEP] = &&l_nanosleep,
+    [SYS_SETITIMER] = &&l_zero,
     [SYS_CLOCK_GETTIME] = &&l_clock_gettime,
     [SYS_CLOCK_GETRES] = &&l_clock_getres,
     [SYS_CLOCK_NANOSLEEP] = &&l_clock_nanosleep,
@@ -2270,6 +2314,8 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_RECVFROM] = &&l_recvfrom,
     [SYS_SETSOCKOPT] = &&l_zero,
     [SYS_GETSOCKOPT] = &&l_getsockopt,
+    [SYS_SENDMSG] = &&l_sendmsg,
+    [SYS_RECVMSG] = &&l_recvmsg,
     [SYS_BRK] = &&l_brk,
     [SYS_MUNMAP] = &&l_munmap,
     [SYS_MREMAP] = &&l_mremap,
@@ -2531,6 +2577,10 @@ l_sendto:
   return sys_sendto(f, a0, a1, a2, a3, a4, a5);
 l_recvfrom:
   return sys_recvfrom(f, a0, a1, a2, a3, a4, a5);
+l_sendmsg:
+  return sys_sendmsg(f, a0, a1, a2);
+l_recvmsg:
+  return sys_recvmsg(f, a0, a1, a2);
 l_getsockname:
   return sys_getsockname(a0, a1, a2);
 l_getsockopt:
