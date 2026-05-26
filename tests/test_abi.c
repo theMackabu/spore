@@ -31,6 +31,35 @@ struct linux_dirent64_header {
   uint8_t d_type;
 } __attribute__((packed));
 
+struct timeval64_aarch64 {
+  int64_t tv_sec;
+  int64_t tv_usec;
+};
+
+struct rusage64_aarch64 {
+  struct timeval64_aarch64 ru_utime;
+  struct timeval64_aarch64 ru_stime;
+  int64_t ru_maxrss;
+  int64_t ru_ixrss;
+  int64_t ru_idrss;
+  int64_t ru_isrss;
+  int64_t ru_minflt;
+  int64_t ru_majflt;
+  int64_t ru_nswap;
+  int64_t ru_inblock;
+  int64_t ru_oublock;
+  int64_t ru_msgsnd;
+  int64_t ru_msgrcv;
+  int64_t ru_nsignals;
+  int64_t ru_nvcsw;
+  int64_t ru_nivcsw;
+};
+
+struct epoll_event64_aarch64 {
+  uint32_t events;
+  uint64_t data;
+};
+
 int main(void) {
   assert(offsetof(struct stat64_aarch64, st_ino) == 8);
   assert(offsetof(struct stat64_aarch64, st_mode) == 16);
@@ -43,5 +72,13 @@ int main(void) {
   assert(offsetof(struct linux_dirent64_header, d_reclen) == 16);
   assert(offsetof(struct linux_dirent64_header, d_type) == 18);
   assert(sizeof(struct linux_dirent64_header) == 19);
+
+  assert(offsetof(struct epoll_event64_aarch64, data) == 8);
+  assert(sizeof(struct epoll_event64_aarch64) == 16);
+
+  assert(offsetof(struct rusage64_aarch64, ru_stime) == 16);
+  assert(offsetof(struct rusage64_aarch64, ru_maxrss) == 32);
+  assert(offsetof(struct rusage64_aarch64, ru_nvcsw) == 128);
+  assert(sizeof(struct rusage64_aarch64) == 144);
   return 0;
 }

@@ -16,9 +16,24 @@ enum {
   AT_EUID = 12,
   AT_GID = 13,
   AT_EGID = 14,
+  AT_PLATFORM = 15,
+  AT_HWCAP = 16,
   AT_CLKTCK = 17,
   AT_SECURE = 23,
   AT_RANDOM = 25,
+  AT_HWCAP2 = 26,
+  AT_EXECFN = 31,
+};
+
+enum {
+  AARCH64_HWCAP_FP = 1u << 0,
+  AARCH64_HWCAP_ASIMD = 1u << 1,
+  AARCH64_HWCAP_AES = 1u << 3,
+  AARCH64_HWCAP_PMULL = 1u << 4,
+  AARCH64_HWCAP_SHA1 = 1u << 5,
+  AARCH64_HWCAP_SHA2 = 1u << 6,
+  AARCH64_HWCAP_CRC32 = 1u << 7,
+  AARCH64_HWCAP_ATOMICS = 1u << 8,
 };
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
@@ -71,6 +86,11 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     if (!stack_copy_to_user(as, envp_va[i], envp[i], len)) { return false; }
   }
 
+  static const char platform[] = "aarch64";
+  cursor -= sizeof(platform);
+  uint64_t platform_va = cursor;
+  if (!stack_copy_to_user(as, platform_va, platform, sizeof(platform))) { return false; }
+
   cursor = align_down(cursor - 16, 16);
   uint64_t random_va = cursor;
   uint8_t random[16];
@@ -78,6 +98,9 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   if (!stack_copy_to_user(as, random_va, random, sizeof(random))) { return false; }
   kmemset(random, 0, sizeof(random));
 
+  const uint64_t hwcap = AARCH64_HWCAP_FP | AARCH64_HWCAP_ASIMD | AARCH64_HWCAP_AES | AARCH64_HWCAP_PMULL |
+                         AARCH64_HWCAP_SHA1 | AARCH64_HWCAP_SHA2 | AARCH64_HWCAP_CRC32 |
+                         AARCH64_HWCAP_ATOMICS;
   const uint64_t aux[][2] = {
     {AT_PHDR, elf->phdr},
     {AT_PHENT, elf->phent},
@@ -89,9 +112,13 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     {AT_EUID, 0},
     {AT_GID, 0},
     {AT_EGID, 0},
+    {AT_PLATFORM, platform_va},
+    {AT_HWCAP, hwcap},
     {AT_CLKTCK, 100},
     {AT_SECURE, 0},
     {AT_RANDOM, random_va},
+    {AT_HWCAP2, 0},
+    {AT_EXECFN, argc > 0 ? argv_va[0] : 0},
     {AT_NULL, 0},
   };
 

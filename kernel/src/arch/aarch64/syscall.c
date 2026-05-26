@@ -323,6 +323,25 @@ struct timeval64 {
   int64_t tv_usec;
 };
 
+struct rusage64 {
+  struct timeval64 ru_utime;
+  struct timeval64 ru_stime;
+  int64_t ru_maxrss;
+  int64_t ru_ixrss;
+  int64_t ru_idrss;
+  int64_t ru_isrss;
+  int64_t ru_minflt;
+  int64_t ru_majflt;
+  int64_t ru_nswap;
+  int64_t ru_inblock;
+  int64_t ru_oublock;
+  int64_t ru_msgsnd;
+  int64_t ru_msgrcv;
+  int64_t ru_nsignals;
+  int64_t ru_nvcsw;
+  int64_t ru_nivcsw;
+};
+
 struct timezone32 {
   int32_t tz_minuteswest;
   int32_t tz_dsttime;
@@ -1181,7 +1200,14 @@ static int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
   };
   if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) { return -(int64_t)EINVAL; }
   if (tp == 0) { return 0; }
-  struct timespec64 ts = {.tv_sec = 0, .tv_nsec = 10000000};
+  uint64_t freq;
+  __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+  int64_t nsec = 10000000;
+  if (freq != 0) {
+    uint64_t rounded = (1000000000ull + freq - 1) / freq;
+    nsec = (int64_t)(rounded == 0 ? 1 : rounded);
+  }
+  struct timespec64 ts = {.tv_sec = 0, .tv_nsec = nsec};
   return user_writable(tp, sizeof(ts)) && vmm_copy_to_user(active_as(), tp, &ts, sizeof(ts)) ? 0 : -(int64_t)EFAULT;
 }
 
@@ -1223,6 +1249,37 @@ static int64_t sys_times(uint64_t buf_addr) {
     }
   }
   return ticks;
+}
+
+static void ticks_to_timeval(uint64_t ticks, struct timeval64 *tv) {
+  tv->tv_sec = (int64_t)(ticks / 100);
+  tv->tv_usec = (int64_t)((ticks % 100) * 10000);
+}
+
+static int64_t sys_getrusage(int who, uint64_t usage_addr) {
+  enum {
+    RUSAGE_SELF = 0,
+    RUSAGE_CHILDREN = -1,
+    RUSAGE_THREAD = 1,
+  };
+  if (usage_addr == 0 || !user_writable(usage_addr, sizeof(struct rusage64))) { return -(int64_t)EFAULT; }
+  if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN && who != RUSAGE_THREAD) { return -(int64_t)EINVAL; }
+
+  struct rusage64 usage;
+  kmemset(&usage, 0, sizeof(usage));
+  if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+    struct proc_info procs[MAX_DOMAINS];
+    size_t count = cell_proc_info(procs, MAX_DOMAINS);
+    int pid = cell_current_pid();
+    for (size_t i = 0; i < count && i < MAX_DOMAINS; ++i) {
+      if ((int)procs[i].pid != pid) { continue; }
+      ticks_to_timeval(procs[i].cpu_ticks, &usage.ru_utime);
+      usage.ru_maxrss = (int64_t)((procs[i].resident_pages * PAGE_SIZE) / 1024);
+      usage.ru_minflt = (int64_t)procs[i].resident_pages;
+      break;
+    }
+  }
+  return vmm_copy_to_user(active_as(), usage_addr, &usage, sizeof(usage)) ? 0 : -(int64_t)EFAULT;
 }
 
 static int64_t sys_sigaltstack(uint64_t new_addr, uint64_t old_addr) {
@@ -2789,7 +2846,7 @@ l_getrlimit:
 l_setrlimit:
   return sys_prlimit64(0, a0, a1, 0);
 l_getrusage:
-  return a1 == 0 ? -(int64_t)EFAULT : zero_user(a1, 144);
+  return sys_getrusage((int)a0, a1);
 l_prlimit64:
   return sys_prlimit64(a0, a1, a2, a3);
 l_sysinfo:
@@ -2870,10 +2927,8 @@ l_rseq:
 l_probe_enosys:
   return -(int64_t)ENOSYS;
 l_enosys:
-  kprintf("[kernel] syscall %d ENOSYS pid=%d name=%s\n", (int)nr, cell_current_pid(), cell_current_name());
   return -(int64_t)ENOSYS;
 l_unknown:
-  kprintf("[kernel] syscall %d ENOSYS pid=%d name=%s\n", (int)nr, cell_current_pid(), cell_current_name());
   return -(int64_t)ENOSYS;
 }
 #pragma clang diagnostic pop

@@ -77,6 +77,9 @@ int main(void) {
   bool saw_phdr = false;
   bool saw_entry = false;
   bool saw_random = false;
+  bool saw_platform = false;
+  bool saw_hwcap = false;
+  bool saw_execfn = false;
   for (uint64_t p = sp + 32;; p += 16) {
     uint64_t key = read_u64(p);
     uint64_t value = read_u64(p + 8);
@@ -84,9 +87,15 @@ int main(void) {
     if (key == 3 && value == elf.phdr) { saw_phdr = true; }
     if (key == 9 && value == elf.entry) { saw_entry = true; }
     if (key == 25 && value >= TEST_STACK_TOP - TEST_STACK_SIZE && value < TEST_STACK_TOP) { saw_random = true; }
+    if (key == 15 && strcmp((const char *)&stack_mem[stack_offset(value)], "aarch64") == 0) { saw_platform = true; }
+    if (key == 16 && (value & 0x3) == 0x3) { saw_hwcap = true; }
+    if (key == 31 && value == argv0) { saw_execfn = true; }
   }
   assert(saw_phdr);
   assert(saw_entry);
   assert(saw_random);
+  assert(saw_platform);
+  assert(saw_hwcap);
+  assert(saw_execfn);
   return 0;
 }
