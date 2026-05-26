@@ -72,6 +72,18 @@ enum open_file_type {
 };
 
 enum { CELL_EPOLL_WATCH_CAP = 16 };
+enum { CELL_FS_RULE_CAP = 8 };
+
+enum cell_fs_right {
+  CELL_FS_READ = 1u << 0,
+  CELL_FS_WRITE = 1u << 1,
+  CELL_FS_EXEC = 1u << 2,
+};
+
+struct fs_rule {
+  char path[128];
+  uint8_t rights;
+};
 
 struct epoll_watch {
   bool used;
@@ -118,6 +130,8 @@ struct capability_set {
   uint64_t flags;
   uint64_t memory_page_cap;
   uint64_t max_domains;
+  struct fs_rule fs_rules[CELL_FS_RULE_CAP];
+  uint8_t fs_rule_count;
   uint32_t egress_ip;
   uint16_t egress_port;
   uint8_t egress_proto;
@@ -254,6 +268,7 @@ bool cell_set_cwd(const char *path);
 const char *cell_current_fs_root(void);
 const char *cell_current_chroot(void);
 bool cell_set_chroot(const char *path);
+bool cell_fs_path_allowed(const char *path, uint8_t rights);
 bool cell_syscall_allowed(uint64_t nr);
 bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port);
 int cell_apply_policy(const char *manifest);

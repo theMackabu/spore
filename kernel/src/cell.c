@@ -308,6 +308,24 @@ static bool caps_subset(const struct capability_set *requested, const struct cap
       (requested->memory_page_cap == 0 || requested->memory_page_cap > parent->memory_page_cap)) {
     return false;
   }
+  if (parent->fs_rule_count != 0) {
+    for (uint8_t i = 0; i < requested->fs_rule_count; ++i) {
+      bool covered = false;
+      for (uint8_t j = 0; j < parent->fs_rule_count; ++j) {
+        size_t parent_len = kstrlen(parent->fs_rules[j].path);
+        bool path_covered = str_eq(parent->fs_rules[j].path, "/") ||
+                            (starts_with(requested->fs_rules[i].path, parent->fs_rules[j].path) &&
+                             (requested->fs_rules[i].path[parent_len] == '\0' ||
+                              requested->fs_rules[i].path[parent_len] == '/'));
+        bool rights_covered = (requested->fs_rules[i].rights & ~parent->fs_rules[j].rights) == 0;
+        if (path_covered && rights_covered) {
+          covered = true;
+          break;
+        }
+      }
+      if (!covered) { return false; }
+    }
+  }
   return true;
 }
 
@@ -835,7 +853,7 @@ static void cap_allow(struct capability_set *caps, uint64_t nr) {
 static void cap_allow_common(struct capability_set *caps) {
   static const uint16_t common[] = {
     17,  23,  24,  25,  29,  57,  63,  64,  65,  66,  80,  93,  94,  96,  98,  99,  101, 48,
-    113, 115, 123, 124, 134, 135, 144, 146, 160, 172, 173, 174, 175, 176, 177, 178, 179, 198,
+    113, 115, 123, 124, 134, 135, 144, 146, 160, 161, 172, 173, 174, 175, 176, 177, 178, 179, 198,
     200, 203, 204, 206, 207, 208, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261, 278, 439,
   };
   for (size_t i = 0; i < sizeof(common) / sizeof(common[0]); ++i) {
@@ -848,6 +866,30 @@ static void cap_allow_files(struct capability_set *caps) {
   for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
     cap_allow(caps, files[i]);
   }
+}
+
+static bool cap_add_fs_rule(struct capability_set *caps, const char *path, uint8_t rights) {
+  if (caps == NULL || path == NULL || path[0] != '/' || caps->fs_rule_count >= CELL_FS_RULE_CAP) { return false; }
+  struct fs_rule *rule = &caps->fs_rules[caps->fs_rule_count++];
+  copy_cstr(rule->path, sizeof(rule->path), path);
+  rule->rights = rights;
+  return true;
+}
+
+static bool path_matches_rule(const char *path, const struct fs_rule *rule) {
+  if (str_eq(rule->path, "/")) { return true; }
+  size_t len = kstrlen(rule->path);
+  return starts_with(path, rule->path) && (path[len] == '\0' || path[len] == '/');
+}
+
+bool cell_fs_path_allowed(const char *path, uint8_t rights) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || (domain->caps.flags & CAP_ENFORCE) == 0 || domain->caps.fs_rule_count == 0) { return true; }
+  for (uint8_t i = 0; i < domain->caps.fs_rule_count; ++i) {
+    const struct fs_rule *rule = &domain->caps.fs_rules[i];
+    if (path_matches_rule(path, rule) && (rights == 0 || (rule->rights & rights) == rights)) { return true; }
+  }
+  return false;
 }
 
 bool cell_syscall_allowed(uint64_t nr) {
@@ -887,8 +929,19 @@ int cell_apply_policy(const char *manifest) {
   if (str_eq(manifest, "compute-only")) {
     domain->budget.max_ticks = 20;
     domain->budget.remaining_ticks = 20;
-  } else if (str_eq(manifest, "fs:/tmp")) {
+  } else if (starts_with(manifest, "fs:/tmp")) {
     cap_allow_files(&caps);
+    if (!cap_add_fs_rule(&caps, "/tmp", CELL_FS_READ | CELL_FS_WRITE | CELL_FS_EXEC) ||
+        !cap_add_fs_rule(&caps, "/lib", CELL_FS_READ | CELL_FS_EXEC) ||
+        !cap_add_fs_rule(&caps, "/usr/local/lib", CELL_FS_READ | CELL_FS_EXEC)) {
+      return -2;
+    }
+    if (starts_with(manifest, "fs:/tmp;exec:")) {
+      const char *exec_path = manifest + sizeof("fs:/tmp;exec:") - 1;
+      if (!cap_add_fs_rule(&caps, exec_path, CELL_FS_READ | CELL_FS_EXEC)) { return -2; }
+    } else if (!str_eq(manifest, "fs:/tmp")) {
+      return -2;
+    }
     domain->fs_root[0] = '/';
     domain->fs_root[1] = 't';
     domain->fs_root[2] = 'm';
@@ -899,6 +952,12 @@ int cell_apply_policy(const char *manifest) {
   } else if (str_eq(manifest, "net:none")) {
     caps.flags |= CAP_EGRESS_ENFORCE;
     caps.egress_prefix = 32;
+  } else if (str_eq(manifest, "net:dns")) {
+    cap_allow_files(&caps);
+    caps.flags |= CAP_EGRESS_ENFORCE;
+    caps.egress_proto = IPPROTO_UDP;
+    caps.egress_prefix = 0;
+    caps.egress_port = 53;
   } else if (starts_with(manifest, "net:udp:")) {
     uint32_t ip = 0;
     uint8_t prefix = 32;
@@ -3562,11 +3621,6 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
   if (effective_ip == 0 || (file->socket_proto == IPPROTO_UDP && effective_port == 0)) { return -EINVAL; }
   if (file->socket_proto == IPPROTO_UDP && !cell_egress_allowed(IPPROTO_UDP, effective_ip, effective_port)) {
     return -EPERM;
-  }
-  if (!file->udp_connected) {
-    file->udp_remote_ip = effective_ip;
-    file->udp_remote_port = effective_port;
-    file->udp_connected = true;
   }
   uint8_t tmp[1472];
   if (len > sizeof(tmp)) { return -EMSGSIZE; }

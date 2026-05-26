@@ -50,6 +50,8 @@ userland/bin/date /bin/date
 userland/bin/uptime /bin/uptime
 userland/bin/whoami /bin/whoami
 userland/bin/hostname /bin/hostname
+userland/bin/dhcpc /bin/dhcpc
+userland/bin/nslookup /bin/nslookup
 userland/bin/hostid /bin/hostid
 userland/bin/id /bin/id
 userland/bin/who /bin/who
@@ -143,6 +145,13 @@ userland/etc/mycelium/boot.target /etc/mycelium/boot.target
 userland/etc/mycelium/multi-user.target /etc/mycelium/multi-user.target
 userland/etc/mycelium/shutdown.target /etc/mycelium/shutdown.target
 userland/etc/mycelium/console.service /etc/mycelium/console.service
+userland/etc/mycelium/hostname.service /etc/mycelium/hostname.service
+userland/etc/mycelium/network.service /etc/mycelium/network.service
+userland/etc/mycelium/network.target /etc/mycelium/network.target
+
+userland/etc/hostname /etc/hostname
+userland/etc/hosts /etc/hosts
+userland/etc/resolv.conf /etc/resolv.conf
 
 userland/etc/fastfetch/config.jsonc /etc/fastfetch/config.jsonc
 userland/etc/fastfetch/spore.logo /etc/fastfetch/spore.logo

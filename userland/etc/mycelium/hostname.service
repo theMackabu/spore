@@ -1,0 +1,12 @@
+[Unit]
+Description=apply persisted hostname
+Before=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/hostname -F /etc/hostname
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -8,6 +8,7 @@
 #include "mem.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "net.h"
 #include "pl011.h"
 #include "ramfs.h"
 #include "spore_version.h"
@@ -86,6 +87,7 @@ enum {
   SYS_GET_SID = 156,
   SYS_SETSID = 157,
   SYS_UNAME = 160,
+  SYS_SETHOSTNAME = 161,
   SYS_GETRLIMIT = 163,
   SYS_SETRLIMIT = 164,
   SYS_GETRUSAGE = 165,
@@ -136,6 +138,7 @@ enum {
   SYS_SPORE_PROCINFO = 0x4007,
   SYS_SPORE_FSINFO = 0x4008,
   SYS_SPORE_MOUNTINFO = 0x4009,
+  SYS_SPORE_NET_CONFIG = 0x400a,
   MAP_PRIVATE = 0x02,
   MAP_FIXED = 0x10,
   MAP_ANONYMOUS = 0x20,
@@ -251,6 +254,14 @@ enum {
   STATX_SIZE = 0x00000200,
   STATX_BLOCKS = 0x00000400,
   STATX_BASIC_STATS = 0x000007ff,
+};
+
+struct net_config64 {
+  uint32_t local_ip;
+  uint32_t gateway_ip;
+  uint32_t netmask;
+  uint32_t dns_ip;
+  uint32_t configured;
 };
 
 #define SYSCALL_SWITCHED ((int64_t)CELL_SWITCHED)
@@ -600,13 +611,9 @@ static bool copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
     kmemcpy(out, chroot, root_len);
     kmemcpy(out + root_len, virtual_path, path_len + 1);
   }
-  const char *root = cell_current_fs_root();
-  if (!streq(root, "/")) {
-    size_t root_len = kstrlen(root);
-    if (kmemcmp(out, root, root_len) != 0 || (out[root_len] != '\0' && out[root_len] != '/')) {
-      path_policy_denied = true;
-      return false;
-    }
+  if (!cell_fs_path_allowed(out, 0)) {
+    path_policy_denied = true;
+    return false;
   }
   return true;
 }
@@ -1239,16 +1246,60 @@ static void uts_copy(char dst[65], const char *src) {
   dst[i] = '\0';
 }
 
+static char kernel_hostname[65] = SPORE_UTS_NODENAME;
+
 static int64_t sys_uname(uint64_t buf) {
   struct utsname64 u;
   kmemset(&u, 0, sizeof(u));
   uts_copy(u.sysname, SPORE_UTS_SYSNAME);
-  uts_copy(u.nodename, SPORE_UTS_NODENAME);
+  uts_copy(u.nodename, kernel_hostname);
   uts_copy(u.release, SPORE_UTS_RELEASE);
   uts_copy(u.version, SPORE_UTS_VERSION);
   uts_copy(u.machine, SPORE_UTS_MACHINE);
   uts_copy(u.domainname, SPORE_UTS_DOMAINNAME);
   return user_writable(buf, sizeof(u)) && vmm_copy_to_user(active_as(), buf, &u, sizeof(u)) ? 0 : -(int64_t)EFAULT;
+}
+
+static int64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
+  if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
+  if (len == 0 || len >= sizeof(kernel_hostname) || !user_readable(name_addr, len)) { return -(int64_t)EINVAL; }
+  if (!vmm_copy_from_user(active_as(), kernel_hostname, name_addr, (size_t)len)) { return -(int64_t)EFAULT; }
+  kernel_hostname[len] = '\0';
+  return 0;
+}
+
+static int64_t sys_spore_net_config(uint64_t op, uint64_t cfg_addr) {
+  if (cfg_addr == 0) { return -(int64_t)EFAULT; }
+  if (op == 0) {
+    struct net_config cfg;
+    net_get_config(&cfg);
+    struct net_config64 out = {
+      .local_ip = cfg.local_ip,
+      .gateway_ip = cfg.gateway_ip,
+      .netmask = cfg.netmask,
+      .dns_ip = cfg.dns_ip,
+      .configured = cfg.configured,
+    };
+    return user_writable(cfg_addr, sizeof(out)) && vmm_copy_to_user(active_as(), cfg_addr, &out, sizeof(out)) ? 0
+                                                                                                             : -(int64_t)EFAULT;
+  }
+  if (op == 1) {
+    if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
+    struct net_config64 in;
+    if (!user_readable(cfg_addr, sizeof(in)) || !vmm_copy_from_user(active_as(), &in, cfg_addr, sizeof(in))) {
+      return -(int64_t)EFAULT;
+    }
+    struct net_config cfg = {
+      .local_ip = in.local_ip,
+      .gateway_ip = in.gateway_ip,
+      .netmask = in.netmask,
+      .dns_ip = in.dns_ip,
+      .configured = in.configured != 0 ? 1u : 0u,
+    };
+    net_set_config(&cfg);
+    return 0;
+  }
+  return -(int64_t)EINVAL;
 }
 
 static int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
@@ -1306,9 +1357,18 @@ static bool node_access_allowed(const struct vfs_node *node, uint64_t mask) {
   return true;
 }
 
+static uint8_t fs_rights_from_access(uint64_t access) {
+  uint8_t rights = 0;
+  if ((access & R_OK) != 0) { rights |= CELL_FS_READ; }
+  if ((access & W_OK) != 0) { rights |= CELL_FS_WRITE; }
+  if ((access & X_OK) != 0) { rights |= CELL_FS_EXEC; }
+  return rights;
+}
+
 static int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
   char path[128];
   if (!copy_exec_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
+  if (!cell_fs_path_allowed(path, CELL_FS_EXEC)) { return -(int64_t)EPERM; }
 
   // Large argv/env scratch is static because the v2 run-to-completion kernel
   // never re-enters sys_execve concurrently on this single CPU.
@@ -1431,12 +1491,6 @@ static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   char path[128];
   int64_t path_rc = copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
-  struct vfs_node node;
-  if (!vfs_lookup(path, &node)) {
-    if ((flags & O_CREAT) == 0 || !vfs_create(path, &node)) { return -(int64_t)ENOENT; }
-    (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
-    (void)vfs_lookup(path, &node);
-  }
   uint64_t access = 0;
   if ((flags & O_ACCMODE) == O_WRONLY) {
     access = W_OK;
@@ -1446,6 +1500,13 @@ static int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
     access = R_OK;
   }
   if ((flags & O_TRUNC) != 0) { access |= W_OK; }
+  if (!cell_fs_path_allowed(path, fs_rights_from_access(access))) { return -(int64_t)EPERM; }
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node)) {
+    if ((flags & O_CREAT) == 0 || !vfs_create(path, &node)) { return -(int64_t)ENOENT; }
+    (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
+    (void)vfs_lookup(path, &node);
+  }
   if (!node_access_allowed(&node, access)) { return -(int64_t)EACCES; }
   if ((flags & O_TRUNC) != 0 && !node.is_dir) {
     (void)vfs_truncate(&node, 0);
@@ -1634,6 +1695,7 @@ static int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, 
   if (path_rc != 0) { return path_rc; }
   bool nofollow = (flags & AT_SYMLINK_NOFOLLOW) != 0;
   if (!(nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node))) { return -(int64_t)ENOENT; }
+  if (!cell_fs_path_allowed(path, fs_rights_from_access(mode))) { return -(int64_t)EPERM; }
   return node_access_allowed(&node, mode) ? 0 : -(int64_t)EACCES;
 }
 
@@ -2155,6 +2217,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_GET_SID] = &&l_getsid,
     [SYS_SETSID] = &&l_setsid,
     [SYS_UNAME] = &&l_uname,
+    [SYS_SETHOSTNAME] = &&l_sethostname,
     [SYS_GETRLIMIT] = &&l_getrlimit,
     [SYS_SETRLIMIT] = &&l_setrlimit,
     [SYS_GETRUSAGE] = &&l_getrusage,
@@ -2207,6 +2270,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_SPORE_PROCINFO - SYS_SPORE_SNAPSHOT] = &&l_spore_procinfo,
     [SYS_SPORE_FSINFO - SYS_SPORE_SNAPSHOT] = &&l_spore_fsinfo,
     [SYS_SPORE_MOUNTINFO - SYS_SPORE_SNAPSHOT] = &&l_spore_mountinfo,
+    [SYS_SPORE_NET_CONFIG - SYS_SPORE_SNAPSHOT] = &&l_spore_net_config,
   };
   uint64_t nr = f->x[8];
   uint64_t a0 = f->x[0];
@@ -2410,6 +2474,8 @@ l_spore_mountinfo: {
            ? (int64_t)count
            : -(int64_t)EFAULT;
 }
+l_spore_net_config:
+  return sys_spore_net_config(a0, a1);
 l_brk:
   return sys_brk(a0);
 l_mmap:
@@ -2482,6 +2548,8 @@ l_sysinfo:
   return zero_user(a0 == 0 ? a2 : a0, 128);
 l_uname:
   return sys_uname(a0);
+l_sethostname:
+  return sys_sethostname(a0, a1);
 l_umask:
   return 022;
 l_chroot:

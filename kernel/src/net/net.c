@@ -24,6 +24,8 @@ static const uint8_t broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 static uint32_t local_ip;
 static uint32_t gateway_ip;
 static uint32_t netmask;
+static uint32_t dns_ip;
+static bool net_configured;
 static uint8_t gateway_mac[6];
 static bool gateway_mac_valid;
 static uint16_t next_ip_id = 1;
@@ -72,8 +74,18 @@ static bool mac_is_for_us(const uint8_t *dst) {
 }
 
 static uint32_t route_next_hop(uint32_t dst_ip) {
-  (void)dst_ip;
+  if (dst_ip == gateway_ip || dst_ip == 0xffffffffu || (netmask != 0 && dst_ip == (local_ip | ~netmask))) {
+    return dst_ip;
+  }
   return gateway_ip;
+}
+
+static bool is_loopback(uint32_t ip) {
+  return (ip & 0xffu) == 127u;
+}
+
+static bool is_broadcast(uint32_t ip) {
+  return ip == 0xffffffffu || (netmask != 0 && ip == (local_ip | ~netmask));
 }
 
 static void send_arp(uint16_t op, const uint8_t *dst_mac, uint32_t target_ip, const uint8_t *target_mac) {
@@ -96,6 +108,10 @@ static void send_arp(uint16_t op, const uint8_t *dst_mac, uint32_t target_ip, co
 
 static bool resolve_mac(uint32_t dst_ip, uint8_t out[6]) {
   uint32_t next_hop = route_next_hop(dst_ip);
+  if (is_broadcast(dst_ip) || is_broadcast(next_hop)) {
+    kmemcpy(out, broadcast_mac, sizeof(broadcast_mac));
+    return true;
+  }
   if (gateway_mac_valid && next_hop == gateway_ip) {
     kmemcpy(out, gateway_mac, 6);
     return true;
@@ -142,6 +158,10 @@ static bool send_ipv4(uint8_t proto, uint32_t dst_ip, const void *payload, size_
 }
 
 bool net_udp_send(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload, size_t len) {
+  if (is_loopback(dst_ip)) {
+    cell_net_deliver_udp(dst_ip, src_port, dst_port, payload, len);
+    return true;
+  }
   if (!cell_egress_allowed(NET_IP_UDP, dst_ip, dst_port)) {
     kprintf("[spore] net: tx denied proto=udp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
@@ -157,6 +177,19 @@ bool net_udp_send(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const v
 }
 
 bool net_icmp_send_echo(uint32_t dst_ip, const void *payload, size_t len) {
+  if (is_loopback(dst_ip)) {
+    uint8_t reply[ICMP_HEADER_LEN + 1472];
+    if (len + ICMP_HEADER_LEN > sizeof(reply)) { return false; }
+    reply[0] = ICMP_ECHO_REPLY;
+    reply[1] = 0;
+    store_be16(reply + 2, 0);
+    store_be16(reply + 4, 1);
+    store_be16(reply + 6, 1);
+    kmemcpy(reply + ICMP_HEADER_LEN, payload, len);
+    store_be16(reply + 2, checksum(reply, ICMP_HEADER_LEN + len));
+    cell_net_deliver_icmp(dst_ip, reply, ICMP_HEADER_LEN + len);
+    return true;
+  }
   if (len + ICMP_HEADER_LEN > 1472) { return false; }
   uint8_t packet[ICMP_HEADER_LEN + 1472];
   packet[0] = ICMP_ECHO_REQUEST;
@@ -213,7 +246,7 @@ static void handle_ipv4(const uint8_t *ip, size_t len) {
   uint16_t total = load_be16(ip + 2);
   if (total < ihl || total > len || checksum(ip, ihl) != 0) { return; }
   uint32_t dst_ip = load_ip(ip + 16);
-  if (dst_ip != local_ip) { return; }
+  if (dst_ip != local_ip && dst_ip != 0xffffffffu && !is_broadcast(dst_ip)) { return; }
   uint32_t src_ip = load_ip(ip + 12);
   const uint8_t *payload = ip + ihl;
   size_t payload_len = total - ihl;
@@ -242,6 +275,32 @@ void net_init(void) {
   local_ip = net_ipv4(10, 0, 2, 15);
   gateway_ip = net_ipv4(10, 0, 2, 2);
   netmask = net_ipv4(255, 255, 255, 0);
+  dns_ip = net_ipv4(10, 0, 2, 3);
+  net_configured = false;
   gateway_mac_valid = false;
-  kprintf("[spore] net: ipv4 10.0.2.15 gateway 10.0.2.2\n");
+  kprintf("[spore] net: ipv4 fallback 10.0.2.15 gateway 10.0.2.2; waiting for network.service\n");
+}
+
+void net_get_config(struct net_config *out) {
+  if (out == NULL) { return; }
+  out->local_ip = local_ip;
+  out->gateway_ip = gateway_ip;
+  out->netmask = netmask;
+  out->dns_ip = dns_ip;
+  out->configured = net_configured ? 1u : 0u;
+}
+
+void net_set_config(const struct net_config *cfg) {
+  if (cfg == NULL) { return; }
+  local_ip = cfg->local_ip;
+  gateway_ip = cfg->gateway_ip;
+  netmask = cfg->netmask;
+  dns_ip = cfg->dns_ip;
+  net_configured = cfg->configured != 0;
+  gateway_mac_valid = false;
+  kprintf("[spore] net: ipv4 %u.%u.%u.%u gateway %u.%u.%u.%u dns %u.%u.%u.%u\n", (unsigned)(local_ip & 0xffu),
+          (unsigned)((local_ip >> 8) & 0xffu), (unsigned)((local_ip >> 16) & 0xffu),
+          (unsigned)((local_ip >> 24) & 0xffu), (unsigned)(gateway_ip & 0xffu), (unsigned)((gateway_ip >> 8) & 0xffu),
+          (unsigned)((gateway_ip >> 16) & 0xffu), (unsigned)((gateway_ip >> 24) & 0xffu), (unsigned)(dns_ip & 0xffu),
+          (unsigned)((dns_ip >> 8) & 0xffu), (unsigned)((dns_ip >> 16) & 0xffu), (unsigned)((dns_ip >> 24) & 0xffu));
 }

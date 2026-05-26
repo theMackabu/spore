@@ -105,6 +105,7 @@ static int interactive(void) {
     fprintf(stderr, "signal-crash: unknown signal: %s\n", line);
     return EXIT_FAILURE;
   }
+  if (!isatty(STDIN_FILENO)) { return run_one(sig); }
   crash_with(sig);
   return EXIT_FAILURE;
 }

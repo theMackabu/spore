@@ -1,0 +1,6 @@
+[Unit]
+Description=network is configured
+Requires=network.service
+
+[Install]
+WantedBy=multi-user.target

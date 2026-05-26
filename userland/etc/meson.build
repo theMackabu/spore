@@ -15,6 +15,12 @@ userland_image_data += files(
   'mycelium/multi-user.target',
   'mycelium/shutdown.target',
   'mycelium/console.service',
+  'mycelium/hostname.service',
+  'mycelium/network.service',
+  'mycelium/network.target',
+  'hostname',
+  'hosts',
+  'resolv.conf',
   'fastfetch/config.jsonc',
   'fastfetch/spore.logo',
 ) + userland_os_release

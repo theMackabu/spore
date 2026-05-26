@@ -25,6 +25,7 @@ struct job {
 static struct job jobs[JOB_CAP];
 
 static int run_builtin(struct command *cmd, int last_status, bool *handled);
+static void resolve_exec_rule_path(const char *cmd, char *out, size_t cap);
 
 static const char *command_name(char **argv) {
   return argv != NULL && argv[0] != NULL ? argv[0] : "?";
@@ -222,6 +223,44 @@ static int wait_status(pid_t pid) {
   return 128;
 }
 
+static void resolve_exec_rule_path(const char *cmd, char *out, size_t cap) {
+  if (cmd == NULL || cap == 0) { return; }
+  if (cmd[0] == '/') {
+    snprintf(out, cap, "%s", cmd);
+    return;
+  }
+  if (strchr(cmd, '/') != NULL) {
+    char cwd[128];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+      snprintf(out, cap, "%s/%s", cwd, cmd);
+    } else {
+      snprintf(out, cap, "%s", cmd);
+    }
+    return;
+  }
+  const char *path_env = getenv("PATH");
+  if (path_env == NULL || path_env[0] == '\0') { path_env = "/bin"; }
+  const char *p = path_env;
+  while (*p != '\0') {
+    const char *end = strchr(p, ':');
+    size_t len = end == NULL ? strlen(p) : (size_t)(end - p);
+    if (len == 0) {
+      char cwd[128];
+      if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        snprintf(out, cap, "%s/%s", cwd, cmd);
+      } else {
+        snprintf(out, cap, "./%s", cmd);
+      }
+    } else {
+      snprintf(out, cap, "%.*s/%s", (int)len, p, cmd);
+    }
+    if (access(out, X_OK) == 0) { return; }
+    if (end == NULL) { break; }
+    p = end + 1;
+  }
+  snprintf(out, cap, "%s", cmd);
+}
+
 static int status_code(int status) {
   if (WIFEXITED(status)) { return WEXITSTATUS(status); }
   if (WIFSIGNALED(status)) { return 128 + WTERMSIG(status); }
@@ -352,7 +391,15 @@ static int run_confined(const char *manifest, char **argv, const struct redirs *
       perror("redir");
       _exit(126);
     }
-    long rc = syscall(SYS_SPORE_APPLY_POLICY, manifest);
+    char policy[320];
+    const char *policy_arg = manifest;
+    if (streq(manifest, "fs:/tmp")) {
+      char exec_path[160];
+      resolve_exec_rule_path(argv[0], exec_path, sizeof(exec_path));
+      snprintf(policy, sizeof(policy), "fs:/tmp;exec:%s", exec_path);
+      policy_arg = policy;
+    }
+    long rc = syscall(SYS_SPORE_APPLY_POLICY, policy_arg);
     if (rc < 0) {
       puts("spore: spawn rejected: requested caps exceed parent");
       _exit(126);

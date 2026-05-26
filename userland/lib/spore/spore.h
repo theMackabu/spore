@@ -44,6 +44,15 @@ enum {
   SYS_spore_procinfo = 0x4007,
   SYS_spore_fsinfo = 0x4008,
   SYS_spore_mountinfo = 0x4009,
+  SYS_spore_net_config = 0x400a,
+};
+
+struct net_config {
+  uint32_t local_ip;
+  uint32_t gateway_ip;
+  uint32_t netmask;
+  uint32_t dns_ip;
+  uint32_t configured;
 };
 
 struct proc_info {
@@ -75,3 +84,9 @@ struct mount_info {
   uint64_t block_count;
   uint64_t free_blocks;
 };
+
+bool parse_ipv4(const char *s, uint32_t *out);
+void format_ipv4(uint32_t ip, char *out, size_t cap);
+bool resolve_ipv4(const char *name, uint32_t *out);
+bool net_config_get(struct net_config *out);
+bool net_config_set(const struct net_config *cfg);
