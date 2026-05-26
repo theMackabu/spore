@@ -300,6 +300,7 @@ int cell_wait4(int pid, uint64_t status_addr, struct trap_frame *frame);
 int cell_wait4_options(int pid, uint64_t status_addr, int options, struct trap_frame *frame);
 int cell_kill(int pid, int signal);
 int cell_tkill(int tid, int signal);
+int cell_tgkill(int pid, int tid, int signal);
 bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp,
                        struct trap_frame *frame, const char *path, const char *const argv[], uint64_t argc);
 bool cell_proc_exists(int pid);
@@ -337,6 +338,10 @@ int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int t
 int cell_fd_eventfd(uint64_t initval, int flags);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);
+int cell_fd_get_flags(int fd);
+int cell_fd_set_flags(int fd, int flags);
+int cell_fd_get_fd_flags(int fd);
+int cell_fd_set_fd_flags(int fd, int flags);
 int cell_fd_close(int fd);
 bool cell_fd_stat(int fd, struct vfs_node *out);
 bool cell_fd_is_dir(int fd);
@@ -364,7 +369,7 @@ void cell_tty_set_erase_char(uint8_t ch);
 int cell_set_budget(int domain_id, uint64_t ticks);
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el);
 void cell_set_boot_epoch(uint64_t epoch_sec);
-void cell_wake_stdin(void);
+void cell_wake_stdin(struct trap_frame *frame);
 int snapshot_create_current(void);
 int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame *frame);
 int snapshot_reap(int pid, uint64_t status_addr, struct trap_frame *frame);

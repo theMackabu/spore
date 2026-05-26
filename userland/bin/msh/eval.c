@@ -267,6 +267,13 @@ static int status_code(int status) {
   return 128;
 }
 
+static int wait_foreground(pid_t pgrp, pid_t pid) {
+  sh_job_enter_foreground(pgrp);
+  int status = wait_status(pid);
+  sh_job_leave_foreground();
+  return status;
+}
+
 static int run_external(struct command *cmd) {
   pid_t pid = fork();
   if (pid < 0) {
@@ -274,6 +281,7 @@ static int run_external(struct command *cmd) {
     return 1;
   }
   if (pid == 0) {
+    sh_job_child_setup(0);
     if (apply_redirs(&cmd->redir) != 0) {
       perror("redir");
       _exit(126);
@@ -282,11 +290,12 @@ static int run_external(struct command *cmd) {
     perror(cmd->argv[0]);
     _exit(127);
   }
+  sh_job_parent_setup(pid, pid);
   if (cmd->background) {
     remember_job(pid, cmd->argv);
     return 0;
   }
-  return wait_status(pid);
+  return wait_foreground(pid, pid);
 }
 
 static int run_pipeline(struct command *stages, size_t count, bool background, int last_status) {
@@ -324,6 +333,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
       return 1;
     }
     if (pid == 0) {
+      sh_job_child_setup(i == 0 ? 0 : pids[0]);
       if (i > 0 && dup2(pipes[i - 1][0], STDIN_FILENO) < 0) {
         perror("dup2");
         _exit(126);
@@ -348,6 +358,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
       _exit(127);
     }
     pids[i] = pid;
+    sh_job_parent_setup(pid, i == 0 ? pid : pids[0]);
   }
 
   for (int j = 0; j < created; ++j) {
@@ -360,6 +371,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
     return 0;
   }
 
+  sh_job_enter_foreground(pids[0]);
   int result = 0;
   for (size_t i = 0; i < count; ++i) {
     int status = 0;
@@ -373,6 +385,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
       result = status_code(status);
     }
   }
+  sh_job_leave_foreground();
   return result;
 }
 
@@ -387,6 +400,7 @@ static int run_confined(const char *manifest, char **argv, const struct redirs *
     return 1;
   }
   if (pid == 0) {
+    sh_job_child_setup(0);
     if (apply_redirs(redir) != 0) {
       perror("redir");
       _exit(126);
@@ -407,9 +421,10 @@ static int run_confined(const char *manifest, char **argv, const struct redirs *
     exec_search(argv);
     _exit(127);
   }
+  sh_job_parent_setup(pid, pid);
   bool cpu_demo = streq(manifest, "compute-only") && streq(basename(argv[0]), "spinner");
   if (cpu_demo) { printf("spore: '%s' confined: syscall-class=compute, cpu=200ms\n", argv[0]); }
-  int status = wait_status(pid);
+  int status = wait_foreground(pid, pid);
   if (cpu_demo) { puts("spore: 'spinner' exceeded CPU budget -> killed (shell alive)"); }
   return status;
 }

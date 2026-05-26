@@ -46,6 +46,10 @@ static const char *shell_commands[] = {
   "myc status network.service\n",
   "cat /etc/resolv.conf\n",
   "hostname\n",
+  "hostname -s\n",
+  "hostname -d\n",
+  "hostname -i\n",
+  "hostname -I\n",
   "ping -c 1 127.0.0.1\n",
   "nslookup localhost\n",
   "myc list-timers\n",
@@ -147,7 +151,7 @@ static const char *shell_commands[] = {
   "cat /tmp/f\n",
   "edit /tmp/edit-test\na\nfrom edit\n.\nw\nq\n",
   "cat /tmp/edit-test\n",
-  "pico /tmp/pico-test\nfrom pico\x0f\x18",
+  "pico /tmp/pico-test\n",
   "cat /tmp/pico-test\n",
   "mkdir /tmp/d && cd /tmp/d && touch x && ls\n",
   "/bin/hello\n",
@@ -653,6 +657,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   size_t sent = 0;
   bool stdin_sent = false;
   bool shell_size_sent = false;
+  bool pico_input_pending = false;
   bool plain = strcmp(mode, "plain") == 0;
   bool interactive = plain;
   struct termios saved_termios;
@@ -756,8 +761,16 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           write_serial_input(in_pipe[1], "z\n", 2);
           stdin_sent = true;
         }
+        if (strcmp(mode, "shell") == 0 && pico_input_pending && contains(buf, "Spore Pico")) {
+          static const char pico_input[] = "from pico\x0f\x18\x18";
+          write_serial_input(in_pipe[1], pico_input, sizeof(pico_input) - 1);
+          pico_input_pending = false;
+          buf[0] = '\0';
+          len = 0;
+        }
         if (strcmp(mode, "shell") == 0 && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) &&
             find_shell_prompt(buf, len) >= 0) {
+          if (strcmp(shell_commands[sent], "pico /tmp/pico-test\n") == 0) { pico_input_pending = true; }
           write_serial_input(in_pipe[1], shell_commands[sent], strlen(shell_commands[sent]));
           ++sent;
           buf[0] = '\0';

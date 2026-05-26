@@ -3,6 +3,7 @@
 #include <spore.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/types.h>
 
 extern char **environ;
 
@@ -66,3 +67,7 @@ struct token *sh_parser_take(struct parser *p);
 int sh_parse_command(struct parser *p, struct command *cmd);
 int sh_execute_line(char *line, int last_status);
 int sh_source_file(const char *path, int last_status, bool complain);
+void sh_job_child_setup(pid_t pgrp);
+void sh_job_parent_setup(pid_t pid, pid_t pgrp);
+void sh_job_enter_foreground(pid_t pgrp);
+void sh_job_leave_foreground(void);

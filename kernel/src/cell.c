@@ -138,7 +138,7 @@ struct signal_frame64 {
 struct epoll_event64 {
   uint32_t events;
   uint64_t data;
-} __attribute__((packed));
+};
 
 static struct pipe_obj *pipe_for_file(struct open_file *file) {
   if (file == NULL || file->type != OPEN_PIPE || file->pipe_id >= sizeof(pipes) / sizeof(pipes[0])) { return NULL; }
@@ -1452,6 +1452,26 @@ int cell_tkill(int tid, int signal) {
   return -ESRCH;
 }
 
+int cell_tgkill(int pid, int tid, int signal) {
+  struct domain *domain = find_domain(pid);
+  if (domain == NULL || domain->zombie) { return -ESRCH; }
+  if (signal == 0) {
+    for (size_t i = 0; i < MAX_THREADS; ++i) {
+      if (threads[i].state != THREAD_UNUSED && threads[i].tid == tid && threads[i].domain == domain) { return 0; }
+    }
+    return -ESRCH;
+  }
+  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
+    return 0;
+  }
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    if (threads[i].state == THREAD_UNUSED || threads[i].tid != tid || threads[i].domain != domain) { continue; }
+    (void)deliver_signal_to_thread(&threads[i], signal);
+    return 0;
+  }
+  return -ESRCH;
+}
+
 bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp,
                        struct trap_frame *frame, const char *path, const char *const argv[], uint64_t argc) {
   struct domain *domain = current_domain();
@@ -1538,6 +1558,7 @@ static uint8_t device_random_byte(void) {
 }
 
 static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t len);
+static void tty_process_input(void);
 
 static const char *thread_state_text(enum thread_state state) {
   switch (state) {
@@ -2337,6 +2358,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     int64_t n = read_stdin_to_user(domain, buf, len);
     if (n == -EINTR) { return deliver_tty_signal_or_eintr(frame); }
     if (n != 0) { return n; }
+    if ((file->flags & CELL_O_NONBLOCK) != 0) { return -EAGAIN; }
     if (frame == NULL) { return 0; }
     cell_save_current(frame);
     current_thread->state = THREAD_BLOCKED;
@@ -2777,6 +2799,34 @@ static void tty_process_input(void) {
   }
 }
 
+static struct thread *tty_signal_target_for_domain(struct domain *domain) {
+  struct thread *fallback = NULL;
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    if (threads[i].state == THREAD_UNUSED || threads[i].domain != domain) { continue; }
+    if (fallback == NULL) { fallback = &threads[i]; }
+    if (threads[i].state == THREAD_BLOCKED && threads[i].wait_reason == WAIT_STDIN) { return &threads[i]; }
+  }
+  return fallback;
+}
+
+static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
+  int signal = tty_pending_signal;
+  if (signal == 0) { return; }
+  tty_pending_signal = 0;
+  int pgrp = cell_tty_foreground_pgrp();
+  if (pgrp <= 0) { return; }
+  struct thread *interrupted = current_thread;
+  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+    if (!domains[i].used || domains[i].zombie || domains[i].pgrp_id != pgrp) { continue; }
+    struct thread *thread = tty_signal_target_for_domain(&domains[i]);
+    if (thread == interrupted && frame != NULL) {
+      cell_signal_current(signal, frame);
+    } else {
+      (void)deliver_signal_to_thread(thread, signal);
+    }
+  }
+}
+
 static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t len) {
   if (tty_canonical()) { tty_begin_canonical_read(); }
   if (tty_pending_signal != 0) { return -EINTR; }
@@ -2838,6 +2888,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     int64_t n = read_stdin_to_user(domain, buf, len);
     if (n == -EINTR) { return deliver_tty_signal_or_eintr(frame); }
     if (n != 0) { return n; }
+    if ((file->flags & CELL_O_NONBLOCK) != 0) { return -EAGAIN; }
     if (frame == NULL) { return 0; }
     cell_save_current(frame);
     current_thread->state = THREAD_BLOCKED;
@@ -3188,7 +3239,11 @@ int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len) {
   return (int64_t)vfs_read(&file->node, off, buf, len);
 }
 
-void cell_wake_stdin(void) {
+void cell_wake_stdin(struct trap_frame *frame) {
+  tty_process_input();
+  tty_deliver_pending_signal_to_foreground(frame);
+  wake_poll_waiters();
+  wake_epoll_waiters();
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = &threads[i];
     if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_STDIN) { continue; }
@@ -3750,6 +3805,39 @@ int cell_fd_dup3(int oldfd, int newfd, int flags) {
   domain->fds[newfd] = file;
   if ((flags & CELL_O_CLOEXEC) != 0) { file->flags |= CELL_O_CLOEXEC; }
   return newfd;
+}
+
+int cell_fd_get_flags(int fd) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
+  return (int)(domain->fds[fd]->flags & ~(uint32_t)CELL_O_CLOEXEC);
+}
+
+int cell_fd_set_flags(int fd, int flags) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
+  uint32_t mutable = (uint32_t)(CELL_O_NONBLOCK | CELL_O_APPEND);
+  uint32_t keep = domain->fds[fd]->flags & ~mutable;
+  uint32_t status = (uint32_t)flags & mutable;
+  domain->fds[fd]->flags = keep | status;
+  return 0;
+}
+
+int cell_fd_get_fd_flags(int fd) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
+  return (domain->fds[fd]->flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
+}
+
+int cell_fd_set_fd_flags(int fd, int flags) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
+  if ((flags & 1) != 0) {
+    domain->fds[fd]->flags |= CELL_O_CLOEXEC;
+  } else {
+    domain->fds[fd]->flags &= ~(uint32_t)CELL_O_CLOEXEC;
+  }
+  return 0;
 }
 
 int cell_fd_close(int fd) {

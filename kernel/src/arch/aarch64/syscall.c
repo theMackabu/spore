@@ -183,6 +183,9 @@ enum {
   F_SETFD = 2,
   F_GETFL = 3,
   F_SETFL = 4,
+  FD_CLOEXEC = 1,
+  O_NONBLOCK = 04000,
+  O_CLOEXEC = 02000000,
   TCGETS = 0x5401,
   TCSETS = 0x5402,
   TCSETSW = 0x5403,
@@ -191,6 +194,7 @@ enum {
   TIOCSWINSZ = 0x5414,
   TIOCGPGRP = 0x540F,
   TIOCSPGRP = 0x5410,
+  FIONBIO = 0x5421,
   POLLIN = 0x0001,
   POLLOUT = 0x0004,
   POLLERR = 0x0008,
@@ -303,7 +307,7 @@ struct pollfd64 {
 struct epoll_event64 {
   uint32_t events;
   uint64_t data;
-} __attribute__((packed));
+};
 
 struct stack_t64 {
   uint64_t ss_sp;
@@ -2082,6 +2086,20 @@ static int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     return user_writable(arg, sizeof(ws)) && vmm_copy_to_user(active_as(), arg, &ws, sizeof(ws)) ? 0 : -(int64_t)EFAULT;
   }
   if (request == TIOCSWINSZ) { return 0; }
+  if (request == FIONBIO) {
+    int on = 0;
+    if (!user_readable(arg, sizeof(on)) || !vmm_copy_from_user(active_as(), &on, arg, sizeof(on))) {
+      return -(int64_t)EFAULT;
+    }
+    int flags = cell_fd_get_flags((int)fd);
+    if (flags < 0) { return flags; }
+    if (on != 0) {
+      flags |= O_NONBLOCK;
+    } else {
+      flags &= ~O_NONBLOCK;
+    }
+    return cell_fd_set_flags((int)fd, flags);
+  }
   if (request == TCGETS) {
     struct termios64 tio = {
       .c_iflag = 0,
@@ -2386,12 +2404,12 @@ l_tkill:
   }
   return cell_tkill((int)a0, (int)a1);
 l_tgkill:
-  if ((int)a1 == cell_current_pid() &&
+  if ((int)a0 == cell_current_pid() && (int)a1 == cell_current_tid() &&
       ((int)a2 == 2 || (int)a2 == 6 || (int)a2 == 9 || (int)a2 == 11 || (int)a2 == 15)) {
     cell_signal_current((int)a2, f);
     return SYSCALL_SWITCHED;
   }
-  return cell_kill((int)a1, (int)a2);
+  return cell_tgkill((int)a0, (int)a1, (int)a2);
 l_rt_sigaction:
   return cell_rt_sigaction((int)a0, a1, a2, a3);
 l_rt_sigreturn:
@@ -2532,7 +2550,13 @@ l_dup3:
   return cell_fd_dup3((int)a0, (int)a1, (int)a2);
 l_fcntl:
   if (a1 == F_DUPFD) { return cell_fd_dup((int)a0, (int)a2); }
-  if (a1 == F_GETFD || a1 == F_SETFD || a1 == F_GETFL || a1 == F_SETFL) { return 0; }
+  if (a1 == F_GETFD) { return cell_fd_get_fd_flags((int)a0); }
+  if (a1 == F_SETFD) { return cell_fd_set_fd_flags((int)a0, (int)a2); }
+  if (a1 == F_GETFL) {
+    int flags = cell_fd_get_flags((int)a0);
+    return flags;
+  }
+  if (a1 == F_SETFL) { return cell_fd_set_flags((int)a0, (int)a2); }
   return -(int64_t)EINVAL;
 l_getcwd:
   return sys_getcwd(a0, a1);

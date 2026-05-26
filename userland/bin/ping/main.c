@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,13 @@
 #endif
 
 enum { DEFAULT_COUNT = 4, DEFAULT_SIZE = 56, MAX_PAYLOAD = 1400 };
+
+static volatile sig_atomic_t interrupted;
+
+static void on_sigint(int signal) {
+  (void)signal;
+  interrupted = 1;
+}
 
 static uint16_t be16(uint16_t x) {
   return (uint16_t)((x << 8) | (x >> 8));
@@ -64,7 +72,7 @@ static void sleep_seconds(double seconds) {
   struct timespec ts;
   ts.tv_sec = (time_t)seconds;
   ts.tv_nsec = (long)((seconds - (double)ts.tv_sec) * 1000000000.0);
-  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+  while (!interrupted && nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
 }
 
 int main(int argc, char **argv) {
@@ -139,6 +147,7 @@ int main(int argc, char **argv) {
   format_ipv4(ip, ip_s, sizeof(ip_s));
   const char *shown = numeric ? ip_s : target;
   if (!quiet) { printf("PING %s (%s): %ld data bytes\n", shown, ip_s, size); }
+  (void)signal(SIGINT, on_sigint);
 
   char payload[MAX_PAYLOAD];
   char buf[1600];
@@ -148,7 +157,7 @@ int main(int argc, char **argv) {
   double max_ms = 0.0;
   double sum_ms = 0.0;
 
-  for (long seq = 1; seq <= count; ++seq) {
+  for (long seq = 1; seq <= count && !interrupted; ++seq) {
     for (long i = 0; i < size; ++i) {
       payload[i] = (char)('a' + (i % 26));
     }
@@ -164,6 +173,7 @@ int main(int argc, char **argv) {
     int timeout_ms = (int)(timeout * 1000.0);
     if (timeout_ms < 1) { timeout_ms = 1; }
     int prc = poll(&pfd, 1, timeout_ms);
+    if (prc < 0 && errno == EINTR && interrupted) { break; }
     if (prc > 0 && (pfd.revents & POLLIN) != 0) {
       ssize_t n = recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL);
       double elapsed = monotonic_ms() - start;
@@ -187,5 +197,6 @@ int main(int argc, char **argv) {
   printf("%ld packets transmitted, %ld packets received, %ld%% packet loss\n", transmitted, received, loss);
   if (received > 0) { printf("round-trip min/avg/max = %.3f/%.3f/%.3f ms\n", min_ms, sum_ms / received, max_ms); }
   close(fd);
+  if (interrupted) { return 130; }
   return received == 0 ? 1 : 0;
 }

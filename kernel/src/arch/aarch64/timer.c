@@ -151,12 +151,13 @@ void handle_irq(struct trap_frame *frame, uint64_t from_lower_el) {
                      :
                      : "r"((uint64_t)timer_interval), "r"(1ull)
                      : "memory");
+    if (pl011_poll_rx()) { cell_wake_stdin(frame); }
     irq_eoi(iar);
     cell_timer_tick(frame, from_lower_el != 0);
     return;
   }
   if (intid == PL011_INTID) {
-    if (pl011_handle_irq()) { cell_wake_stdin(); }
+    if (pl011_handle_irq()) { cell_wake_stdin(frame); }
     irq_eoi(iar);
     return;
   }
