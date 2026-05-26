@@ -83,7 +83,14 @@ test_image_img = meson.project_build_root() / 'test_image.img'
 test_root_ext2 = meson.project_build_root() / 'test_root.ext2'
 
 boot_efi = custom_target('BOOTAA64.EFI',
-  input: files('../bootloader/main.c'),
+  input: files(
+    '../bootloader/main.c',
+    '../bootloader/util.c',
+    '../bootloader/files.c',
+    '../bootloader/elf.c',
+    '../bootloader/paging.c',
+    '../bootloader/handoff.c',
+  ),
   output: 'BOOTAA64.EFI',
   command: [
     'clang',
