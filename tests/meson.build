@@ -16,6 +16,7 @@ test('pmm', test_pmm)
 test_stack = executable('test_stack',
   files(
     'test_stack.c',
+    'random_stub.c',
     '../kernel/src/exec/stack.c',
     '../kernel/src/lib/mem.c',
   ),
