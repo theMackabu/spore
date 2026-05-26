@@ -11,6 +11,7 @@
 #include "net.h"
 #include "pl011.h"
 #include "ramfs.h"
+#include "random.h"
 #include "spore_version.h"
 #include "vfs.h"
 
@@ -480,7 +481,6 @@ struct mount_info64 {
 
 static struct user_address_space *current_as;
 static struct ramfs *sys_ramfs;
-static uint64_t rng_state = 0x73706f72652d7630ull;
 static bool path_policy_denied;
 static uint64_t realtime_base_sec;
 static uint64_t realtime_base_cnt;
@@ -1092,11 +1092,19 @@ static int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len,
 
 static int64_t sys_getrandom(uint64_t buf, uint64_t len) {
   if (!user_writable(buf, len)) { return -(int64_t)EFAULT; }
-  for (uint64_t i = 0; i < len; ++i) {
-    rng_state = rng_state * 6364136223846793005ull + 1;
-    uint8_t byte = (uint8_t)(rng_state >> 32);
-    if (!vmm_copy_to_user(active_as(), buf + i, &byte, 1)) { return -(int64_t)EFAULT; }
+  uint8_t tmp[128];
+  uint64_t done = 0;
+  while (done < len) {
+    uint64_t chunk = len - done;
+    if (chunk > sizeof(tmp)) { chunk = sizeof(tmp); }
+    random_bytes(tmp, (size_t)chunk);
+    if (!vmm_copy_to_user(active_as(), buf + done, tmp, (size_t)chunk)) {
+      kmemset(tmp, 0, sizeof(tmp));
+      return -(int64_t)EFAULT;
+    }
+    done += chunk;
   }
+  kmemset(tmp, 0, sizeof(tmp));
   return (int64_t)len;
 }
 

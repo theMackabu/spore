@@ -25,3 +25,6 @@
 [submodule "userland/third_party/jq"]
 	path = userland/third_party/jq
 	url = https://github.com/jqlang/jq.git
+[submodule "userland/third_party/mbedtls"]
+	path = userland/third_party/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls

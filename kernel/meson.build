@@ -50,6 +50,7 @@ kernel_sources = files(
   'src/mm/vmm.c',
   'src/net/net.c',
   'src/ramfs.c',
+  'src/random.c',
   'src/vfs.c',
 )
 

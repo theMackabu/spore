@@ -6,6 +6,7 @@
 #include "mm/pmm.h"
 #include "net.h"
 #include "pl011.h"
+#include "random.h"
 #include "vfs.h"
 #include "virtio_blk.h"
 #include "virtio_net.h"
@@ -39,7 +40,6 @@ static int next_domain_id = 1;
 static int next_thread_id = 1;
 static int next_snapshot_id;
 static uint16_t next_tcp_port = 49152;
-static uint64_t device_rng_state = 0x9e3779b97f4a7c15ull;
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_idle_ticks;
 static uint64_t boot_epoch_sec;
@@ -1580,11 +1580,6 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   if (from_lower_el) { cell_schedule(frame); }
 }
 
-static uint8_t device_random_byte(void) {
-  device_rng_state = device_rng_state * 6364136223846793005ull + 1442695040888963407ull;
-  return (uint8_t)(device_rng_state >> 32);
-}
-
 static int64_t read_stdin_to_user(struct domain *domain, uint64_t buf, uint64_t len);
 static void tty_process_input(void);
 
@@ -2374,13 +2369,26 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_ZERO:
   case RAMFS_DEV_FULL:
   case RAMFS_DEV_RANDOM:
-  case RAMFS_DEV_URANDOM:
-    for (uint64_t i = 0; i < len; ++i) {
-      uint8_t byte =
-        file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM ? device_random_byte() : 0;
-      if (!vmm_copy_to_user(&domain->as, buf + i, &byte, 1)) { return -14; }
+  case RAMFS_DEV_URANDOM: {
+    uint8_t tmp[128];
+    uint64_t done = 0;
+    while (done < len) {
+      uint64_t chunk = len - done;
+      if (chunk > sizeof(tmp)) { chunk = sizeof(tmp); }
+      if (file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM) {
+        random_bytes(tmp, (size_t)chunk);
+      } else {
+        kmemset(tmp, 0, (size_t)chunk);
+      }
+      if (!vmm_copy_to_user(&domain->as, buf + done, tmp, (size_t)chunk)) {
+        kmemset(tmp, 0, sizeof(tmp));
+        return -14;
+      }
+      done += chunk;
     }
+    kmemset(tmp, 0, sizeof(tmp));
     return (int64_t)len;
+  }
   case RAMFS_DEV_CONSOLE:
   case RAMFS_DEV_TTY: {
     int64_t n = read_stdin_to_user(domain, buf, len);

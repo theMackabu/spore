@@ -11,6 +11,7 @@
 #include "net.h"
 #include "pl011.h"
 #include "ramfs.h"
+#include "random.h"
 #include "vfs.h"
 #include "virtio_blk.h"
 #include "virtio_console.h"
@@ -352,6 +353,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   pmm_init(boot->hhdm_offset, memmap, boot->memmap_count);
   syscall_set_boot_time(boot->realtime_epoch_sec);
   cell_set_boot_epoch(boot->realtime_epoch_sec);
+  random_init(boot->realtime_epoch_sec ^ boot->hhdm_offset ^ boot->memmap_phys ^ boot->modules_phys);
   kernel_log_handoff = true;
   (void)virtio_console_init(boot->hhdm_offset);
   kprintf("[kernel] booted at EL%u\n", (unsigned)current_el());

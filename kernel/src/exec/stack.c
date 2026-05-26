@@ -2,6 +2,7 @@
 
 #include "mem.h"
 #include "mm/pmm.h"
+#include "random.h"
 
 enum {
   AT_NULL = 0,
@@ -72,10 +73,10 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
 
   cursor = align_down(cursor - 16, 16);
   uint64_t random_va = cursor;
-  const uint8_t random[16] = {
-    0x73, 0x70, 0x6f, 0x72, 0x65, 0x2d, 0x76, 0x30, 0x2d, 0x72, 0x61, 0x6e, 0x64, 0x6f, 0x6d, 0x21,
-  };
+  uint8_t random[16];
+  random_bytes(random, sizeof(random));
   if (!stack_copy_to_user(as, random_va, random, sizeof(random))) { return false; }
+  kmemset(random, 0, sizeof(random));
 
   const uint64_t aux[][2] = {
     {AT_PHDR, elf->phdr},

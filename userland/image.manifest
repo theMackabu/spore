@@ -163,6 +163,8 @@ userland/etc/mycelium/network.target /etc/mycelium/network.target
 userland/etc/hostname /etc/hostname
 userland/etc/hosts /etc/hosts
 userland/etc/resolv.conf /etc/resolv.conf
+dir /etc/ssl/certs
+userland/etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 userland/etc/fastfetch/config.jsonc /etc/fastfetch/config.jsonc
 userland/etc/fastfetch/spore.logo /etc/fastfetch/spore.logo
