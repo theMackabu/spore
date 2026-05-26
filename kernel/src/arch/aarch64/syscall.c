@@ -2932,12 +2932,16 @@ l_gettimeofday:
 l_membarrier:
   return a0 == 0 ? 0 : -(int64_t)EINVAL;
 l_rseq:
+  cell_note_unsupported_syscall(nr);
   return -(int64_t)ENOSYS;
 l_probe_enosys:
+  cell_note_unsupported_syscall(nr);
   return -(int64_t)ENOSYS;
 l_enosys:
+  cell_note_unsupported_syscall(nr);
   return -(int64_t)ENOSYS;
 l_unknown:
+  cell_note_unsupported_syscall(nr);
   return -(int64_t)ENOSYS;
 }
 #pragma clang diagnostic pop

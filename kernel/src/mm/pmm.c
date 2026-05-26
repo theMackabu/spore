@@ -13,6 +13,7 @@ static uint16_t refcounts[PMM_MAX_PAGES];
 static uint64_t total_page_count;
 static uint64_t free_page_count;
 static uint64_t next_free_page;
+static struct pmm_stats stats;
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
   return value & ~(align - 1);
@@ -49,6 +50,7 @@ static uint64_t alloc_page_in_range(uint64_t start_page, uint64_t end_page) {
   uint64_t first_word = start_page / BITS_PER_WORD;
   uint64_t last_word = (end_page - 1) / BITS_PER_WORD;
   for (uint64_t word_index = first_word; word_index <= last_word; ++word_index) {
+    ++stats.bitmap_words_scanned;
     uint64_t free_bits = ~bitmap[word_index];
     if (word_index == first_word) {
       uint64_t below = start_page % BITS_PER_WORD;
@@ -78,6 +80,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   total_page_count = 0;
   free_page_count = 0;
   next_free_page = 0x100000 / PAGE_SIZE;
+  stats = (struct pmm_stats){0};
 
   for (uint32_t i = 0; i < memmap_count; ++i) {
     const struct spore_memmap_entry *entry = &memmap[i];
@@ -99,9 +102,16 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
 
 uint64_t pmm_alloc_page(void) {
   const uint64_t first = 0x100000 / PAGE_SIZE;
+  ++stats.alloc_attempts;
   if (next_free_page < first || next_free_page >= PMM_MAX_PAGES) { next_free_page = first; }
   uint64_t pa = alloc_page_in_range(next_free_page, PMM_MAX_PAGES);
-  return pa != 0 ? pa : alloc_page_in_range(first, next_free_page);
+  if (pa == 0) { pa = alloc_page_in_range(first, next_free_page); }
+  if (pa == 0) {
+    ++stats.alloc_failures;
+    return 0;
+  }
+  ++stats.alloc_successes;
+  return pa;
 }
 
 uint64_t pmm_alloc_zero_page(void) {
@@ -149,4 +159,8 @@ uint64_t pmm_total_pages(void) {
 
 uint64_t pmm_free_pages(void) {
   return free_page_count;
+}
+
+struct pmm_stats pmm_get_stats(void) {
+  return stats;
 }

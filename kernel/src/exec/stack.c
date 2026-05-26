@@ -23,6 +23,7 @@ enum {
   AT_RANDOM = 25,
   AT_HWCAP2 = 26,
   AT_EXECFN = 31,
+  AT_MINSIGSTKSZ = 51,
 };
 
 enum {
@@ -34,6 +35,7 @@ enum {
   AARCH64_HWCAP_SHA2 = 1u << 6,
   AARCH64_HWCAP_CRC32 = 1u << 7,
   AARCH64_HWCAP_ATOMICS = 1u << 8,
+  SPORE_MINSIGSTKSZ = 8192,
 };
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
@@ -121,6 +123,7 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     {AT_RANDOM, random_va},
     {AT_HWCAP2, 0},
     {AT_EXECFN, argc > 0 ? argv_va[0] : 0},
+    {AT_MINSIGSTKSZ, SPORE_MINSIGSTKSZ},
     {AT_NULL, 0},
   };
 

@@ -1733,7 +1733,7 @@ static size_t procinfo_text(char *dst, size_t cap) {
   size_t len = 0;
   proc_append_str(dst, cap, &len,
                   "pid ppid state wait rss_pages cpu_ticks age_ticks budget_remaining budget_max name exec_path cwd "
-                  "cmdline\n");
+                  "cmdline unsupported_syscalls last_unsupported_syscall\n");
   for (size_t i = 0; i < MAX_DOMAINS; ++i) {
     const struct domain *domain = &domains[i];
     if (!domain->used) { continue; }
@@ -1762,6 +1762,10 @@ static size_t procinfo_text(char *dst, size_t cap) {
     proc_append_str(dst, cap, &len, domain->cwd);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_str(dst, cap, &len, domain->cmdline[0] == '\0' ? domain->name : domain->cmdline);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, domain->unsupported_syscalls);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, domain->last_unsupported_syscall);
     proc_append_char(dst, cap, &len, '\n');
   }
   return len;
@@ -1939,6 +1943,15 @@ static size_t meminfo_text(char *dst, size_t cap) {
   proc_append_u64(dst, cap, &len, used_kib);
   proc_append_str(dst, cap, &len, "\nMemFreeKiB: ");
   proc_append_u64(dst, cap, &len, free_kib);
+  struct pmm_stats stats = pmm_get_stats();
+  proc_append_str(dst, cap, &len, "\nPMMAllocAttempts: ");
+  proc_append_u64(dst, cap, &len, stats.alloc_attempts);
+  proc_append_str(dst, cap, &len, "\nPMMAllocSuccesses: ");
+  proc_append_u64(dst, cap, &len, stats.alloc_successes);
+  proc_append_str(dst, cap, &len, "\nPMMAllocFailures: ");
+  proc_append_u64(dst, cap, &len, stats.alloc_failures);
+  proc_append_str(dst, cap, &len, "\nPMMBitmapWordsScanned: ");
+  proc_append_u64(dst, cap, &len, stats.bitmap_words_scanned);
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }
@@ -2198,6 +2211,10 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   proc_append_u64(dst, cap, &len, domain->cpu_ticks);
   proc_append_str(dst, cap, &len, "\nCwd:\t");
   proc_append_str(dst, cap, &len, domain->cwd);
+  proc_append_str(dst, cap, &len, "\nUnsupportedSyscalls:\t");
+  proc_append_u64(dst, cap, &len, domain->unsupported_syscalls);
+  proc_append_str(dst, cap, &len, "\nLastUnsupportedSyscall:\t");
+  proc_append_u64(dst, cap, &len, domain->last_unsupported_syscall);
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }
@@ -4479,6 +4496,13 @@ uint32_t cell_proc_uid(int pid) {
 uint32_t cell_proc_gid(int pid) {
   struct domain *domain = find_domain(pid);
   return domain == NULL ? 0 : domain->gid;
+}
+
+void cell_note_unsupported_syscall(uint64_t nr) {
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return; }
+  ++domain->unsupported_syscalls;
+  domain->last_unsupported_syscall = nr;
 }
 
 int cell_proc_pid_at(size_t index) {

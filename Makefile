@@ -10,7 +10,7 @@ RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --vars "$(EDK2_VARS)" --
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run run-tests run-shell-check kill format fetch clean
+.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run run-tests run-shell-check benchmark rng-smoke kill format fetch clean
 
 all: image test-image runner
 
@@ -67,6 +67,34 @@ run-shell-check: runner run-root
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
 	$(QEMU_RUNNER) --mode shell --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
+
+benchmark: runner image
+	@root="$$(mktemp "$(BUILD_DIR)/bench-root.XXXXXX.ext2")"; \
+	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
+	trap 'rm -f "$$root"' EXIT INT TERM; \
+	$(QEMU_RUNNER) --mode bench --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
+
+rng-smoke: runner image
+	@root1="$$(mktemp "$(BUILD_DIR)/rng-root-a.XXXXXX.ext2")"; \
+	root2="$$(mktemp "$(BUILD_DIR)/rng-root-b.XXXXXX.ext2")"; \
+	out1="$$(mktemp "$(BUILD_DIR)/rng-a.XXXXXX.txt")"; \
+	out2="$$(mktemp "$(BUILD_DIR)/rng-b.XXXXXX.txt")"; \
+	cp -f "$(BUILD_DIR)/root.ext2" "$$root1"; \
+	cp -f "$(BUILD_DIR)/root.ext2" "$$root2"; \
+	trap 'rm -f "$$root1" "$$root2" "$$out1" "$$out2"' EXIT INT TERM; \
+	$(QEMU_RUNNER) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root1" > "$$out1"; \
+	$(QEMU_RUNNER) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root2" > "$$out2"; \
+	cat "$$out1"; \
+	cat "$$out2"; \
+	if ! grep -q '^\[rng\] 00000000:' "$$out1" || ! grep -q '^\[rng\] 00000000:' "$$out2"; then \
+		echo "rng-smoke: FAIL missing /dev/urandom sample"; \
+		exit 1; \
+	fi; \
+	if cmp -s "$$out1" "$$out2"; then \
+		echo "rng-smoke: FAIL repeated /dev/urandom sample"; \
+		exit 1; \
+	fi; \
+	echo "rng-smoke: PASS samples differ across boots"
 
 kill:
 	@pkill -f 'qemu-system-aarch64.*(image\.img|root\.ext2|edk2-vars\.fd)' >/dev/null 2>&1 || true

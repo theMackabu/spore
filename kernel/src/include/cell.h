@@ -184,6 +184,8 @@ struct domain {
   uint32_t egid;
   uint64_t start_ticks;
   uint64_t cpu_ticks;
+  uint64_t unsupported_syscalls;
+  uint64_t last_unsupported_syscall;
   struct user_address_space as;
   struct vma_list vmas;
   struct open_file *fds[MAX_FDS];
@@ -323,6 +325,7 @@ bool cell_proc_exists(int pid);
 int cell_proc_pid_at(size_t index);
 uint32_t cell_proc_uid(int pid);
 uint32_t cell_proc_gid(int pid);
+void cell_note_unsupported_syscall(uint64_t nr);
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
 int cell_fd_poll_events(int fd, int events);

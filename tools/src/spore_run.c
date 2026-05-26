@@ -154,7 +154,7 @@ static const char *shell_commands[] = {
   "printf 'one\\ntwo\\n' | less\n",
   "hexdump /tmp/coreutils\n",
   "xxd /tmp/coreutils\n",
-  "sudo edit /etc/motd\nd 1\na\nshell-check motd\n.\nw\nq\n",
+  "sudo edit /etc/motd\n",
   "cat /etc/motd\n",
   "echo hi > /tmp/f\n",
   "cat /tmp/f\n",
@@ -177,8 +177,20 @@ static const char *shell_commands[] = {
   "sudo shutdown\n",
 };
 
+struct bench_command {
+  const char *label;
+  const char *command;
+};
+
+static const struct bench_command bench_commands[] = {
+  {"ant startup", "time ant -e 'console.log(1)' > /dev/null\n"},
+  {"ls /bin", "time ls /bin > /dev/null\n"},
+  {"curl http", "time curl -s http://10.0.2.2:8080/ > /dev/null\n"},
+  {"nano --version", "time nano --version > /dev/null\n"},
+};
+
 static void usage(void) {
-  fputs("usage: spore-run [--mode plain|filter|shell|stdin] [--timings] [--log-to-stderr] --image IMAGE "
+  fputs("usage: spore-run [--mode plain|filter|shell|stdin|bench|rng] [--timings] [--log-to-stderr] --image IMAGE "
         "[--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--vars VARS_FD]\n",
         stderr);
   exit(2);
@@ -605,6 +617,17 @@ static void print_timing_summary(FILE *out, const struct boot_milestone *milesto
   fflush(out);
 }
 
+static bool capture_xxd_line(const char *buf, char *out, size_t cap) {
+  const char *line = strstr(buf, "00000000:");
+  if (line == NULL || cap == 0) { return false; }
+  const char *end = strchr(line, '\n');
+  size_t len = end == NULL ? strlen(line) : (size_t)(end - line);
+  if (len >= cap) { len = cap - 1; }
+  memcpy(out, line, len);
+  out[len] = '\0';
+  return true;
+}
+
 static void append(char *buf, size_t *len, const char *data, size_t n) {
   if (*len + n >= BUF_CAP) {
     size_t drop = (*len + n) - (BUF_CAP - 1);
@@ -695,12 +718,22 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   bool stdin_sent = false;
   bool shell_size_sent = false;
   bool pico_input_pending = false;
+  bool edit_input_pending = false;
   bool plain = strcmp(mode, "plain") == 0;
+  bool shell = strcmp(mode, "shell") == 0;
+  bool bench = strcmp(mode, "bench") == 0;
+  bool rng = strcmp(mode, "rng") == 0;
   bool interactive = plain;
+  size_t bench_done = 0;
+  bool bench_waiting = false;
+  bool bench_shutdown_sent = false;
+  double bench_started_at = 0.0;
+  int rng_stage = 0;
+  char rng_sample[256] = {0};
   struct termios saved_termios;
   bool raw_terminal = interactive && enter_raw_terminal(&saved_termios);
   double start = now_seconds();
-  double deadline = plain ? 0.0 : start + (strcmp(mode, "shell") == 0 ? 120.0 : 30.0);
+  double deadline = plain ? 0.0 : start + ((shell || bench || rng) ? 120.0 : 30.0);
   bool first_output = false;
   double first_output_at = -1.0;
   bool timing_summary_printed = false;
@@ -725,16 +758,17 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
       char chunk[4096];
       ssize_t n;
       while ((n = read(serial_pipe[0], chunk, sizeof(chunk))) > 0) {
-        if (plain || strcmp(mode, "shell") == 0) { write_serial_output(chunk, (size_t)n, &startup_serial); }
+        if (plain || shell) { write_serial_output(chunk, (size_t)n, &startup_serial); }
         append(buf, &len, chunk, (size_t)n);
       }
       while ((n = read(log_pipe[0], chunk, sizeof(chunk))) > 0) {
         if (mirror_log) { write_raw_to(chunk, (size_t)n, stderr); }
         append(buf, &len, chunk, (size_t)n);
       }
+      if (rng && rng_sample[0] != '\0') { printf("[rng] %s\n", rng_sample); }
       if (strcmp(mode, "filter") == 0 || strcmp(mode, "stdin") == 0) {
         print_filtered(buf);
-      } else if (!plain && strcmp(mode, "shell") != 0) {
+      } else if (!plain && !shell && !bench && !rng) {
         fputs(buf, stdout);
       }
       int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
@@ -785,7 +819,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
         if (n > 0) {
           record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
                         start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
-          if (plain || strcmp(mode, "shell") == 0) { write_serial_output(chunk, (size_t)n, &startup_serial); }
+          if (plain || shell) { write_serial_output(chunk, (size_t)n, &startup_serial); }
         }
       }
       if (FD_ISSET(log_pipe[0], &rfds)) {
@@ -806,15 +840,56 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           write_serial_input(in_pipe[1], "z\n", 2);
           stdin_sent = true;
         }
-        if (strcmp(mode, "shell") == 0 && pico_input_pending && contains(buf, "Spore Pico")) {
+        if (shell && pico_input_pending && contains(buf, "Spore Pico")) {
           static const char pico_input[] = "from pico\x0f\x18\x18";
           write_serial_input(in_pipe[1], pico_input, sizeof(pico_input) - 1);
           pico_input_pending = false;
           buf[0] = '\0';
           len = 0;
         }
-        if (strcmp(mode, "shell") == 0 && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) &&
-            find_shell_prompt(buf, len) >= 0) {
+        if (shell && edit_input_pending && contains(buf, "edit>")) {
+          static const char edit_input[] = "d 1\na\nshell-check motd\n.\nw\nq\n";
+          write_serial_input(in_pipe[1], edit_input, sizeof(edit_input) - 1);
+          edit_input_pending = false;
+          buf[0] = '\0';
+          len = 0;
+        }
+        ssize_t prompt = find_shell_prompt(buf, len);
+        if (bench && prompt >= 0) {
+          if (bench_waiting) {
+            double elapsed = now_seconds() - bench_started_at;
+            printf("[bench] %-18s %.3fs\n", bench_commands[bench_done].label, elapsed);
+            fflush(stdout);
+            ++bench_done;
+            bench_waiting = false;
+          }
+          if (bench_done < sizeof(bench_commands) / sizeof(bench_commands[0])) {
+            printf("[bench] running %-18s\n", bench_commands[bench_done].label);
+            fflush(stdout);
+            bench_started_at = now_seconds();
+            write_serial_input(in_pipe[1], bench_commands[bench_done].command, strlen(bench_commands[bench_done].command));
+            bench_waiting = true;
+          } else if (!bench_shutdown_sent) {
+            write_serial_input(in_pipe[1], "sudo shutdown\n", strlen("sudo shutdown\n"));
+            bench_shutdown_sent = true;
+          }
+          buf[0] = '\0';
+          len = 0;
+        }
+        if (rng && prompt >= 0) {
+          if (rng_stage == 0) {
+            write_serial_input(in_pipe[1], "xxd -l 32 /dev/urandom\n", strlen("xxd -l 32 /dev/urandom\n"));
+            rng_stage = 1;
+          } else if (rng_stage == 1) {
+            (void)capture_xxd_line(buf, rng_sample, sizeof(rng_sample));
+            write_serial_input(in_pipe[1], "sudo shutdown\n", strlen("sudo shutdown\n"));
+            rng_stage = 2;
+          }
+          buf[0] = '\0';
+          len = 0;
+        }
+        if (shell && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) && prompt >= 0) {
+          if (strcmp(shell_commands[sent], "sudo edit /etc/motd\n") == 0) { edit_input_pending = true; }
           if (strcmp(shell_commands[sent], "pico /tmp/pico-test\n") == 0) { pico_input_pending = true; }
           write_serial_input(in_pipe[1], shell_commands[sent], strlen(shell_commands[sent]));
           ++sent;
@@ -877,7 +952,7 @@ int main(int argc, char **argv) {
                   sizeof(root_drive_arg), log_pipe[1], log_chardev_arg, sizeof(log_chardev_arg));
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
-      strcmp(mode, "stdin") == 0) {
+      strcmp(mode, "stdin") == 0 || strcmp(mode, "bench") == 0 || strcmp(mode, "rng") == 0) {
     return run_harness(qemu_argv, mode, timings, mirror_log, log_pipe);
   }
   usage();

@@ -15,8 +15,13 @@ int main(void) {
 
   uint64_t first = pmm_alloc_page();
   uint64_t second = pmm_alloc_page();
+  struct pmm_stats stats = pmm_get_stats();
   assert(first == 0x100000);
   assert(second == 0x101000);
+  assert(stats.alloc_attempts == 2);
+  assert(stats.alloc_successes == 2);
+  assert(stats.alloc_failures == 0);
+  assert(stats.bitmap_words_scanned >= 2);
   assert(pmm_refcount(first) == 1);
   assert(pmm_refcount(second) == 1);
   assert(pmm_is_last_ref(first));
@@ -42,6 +47,11 @@ int main(void) {
   pmm_free_page(0x90000000);
   assert(!pmm_share_page(0x123));
   assert(!pmm_share_page(0x90000000));
+
+  stats = pmm_get_stats();
+  assert(stats.alloc_attempts == 3);
+  assert(stats.alloc_successes == 3);
+  assert(stats.alloc_failures == 0);
 
   return 0;
 }

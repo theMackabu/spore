@@ -91,6 +91,7 @@ int main(void) {
   bool saw_euid = false;
   bool saw_gid = false;
   bool saw_egid = false;
+  bool saw_minsigstksz = false;
   for (uint64_t p = sp + 32;; p += 16) {
     uint64_t key = read_u64(p);
     uint64_t value = read_u64(p + 8);
@@ -105,6 +106,7 @@ int main(void) {
     if (key == 12 && value == creds.euid) { saw_euid = true; }
     if (key == 13 && value == creds.gid) { saw_gid = true; }
     if (key == 14 && value == creds.egid) { saw_egid = true; }
+    if (key == 51 && value >= 8192) { saw_minsigstksz = true; }
   }
   assert(saw_phdr);
   assert(saw_entry);
@@ -116,5 +118,6 @@ int main(void) {
   assert(saw_euid);
   assert(saw_gid);
   assert(saw_egid);
+  assert(saw_minsigstksz);
   return 0;
 }
