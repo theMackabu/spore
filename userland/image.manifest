@@ -112,6 +112,7 @@ userland/demos/something /home/spore/demos/something
 userland/demos/something-else.msh /home/spore/demos/something-else.msh
 
 userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
+userland/usr/local/bin/curl /usr/local/bin/curl
 userland/usr/local/bin/htop /usr/local/bin/htop
 userland/usr/local/bin/nano /usr/local/bin/nano
 userland/third_party/ant /usr/local/bin/ant

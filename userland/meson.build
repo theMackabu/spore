@@ -118,6 +118,7 @@ subdir('bin/uds-client')
 
 subdir('usr/bin/env')
 subdir('usr/local/bin/fastfetch')
+subdir('usr/local/bin/curl')
 subdir('usr/local/bin/htop')
 subdir('usr/local/bin/nano')
 subdir('usr/local/bin/tcc')

@@ -14,6 +14,7 @@ enum {
   ICMP_ECHO_REQUEST = 8,
   IPV4_HEADER_LEN = 20,
   UDP_HEADER_LEN = 8,
+  TCP_HEADER_LEN = 20,
   ICMP_HEADER_LEN = 8,
   ETH_HEADER_LEN = 14,
   MAX_FRAME = 1514,
@@ -43,6 +44,17 @@ static void store_be16(uint8_t *p, uint16_t v) {
   p[1] = (uint8_t)v;
 }
 
+static uint32_t load_be32(const uint8_t *p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static void store_be32(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)(v >> 24);
+  p[1] = (uint8_t)(v >> 16);
+  p[2] = (uint8_t)(v >> 8);
+  p[3] = (uint8_t)v;
+}
+
 static void store_ip(uint8_t *p, uint32_t ip) {
   p[0] = (uint8_t)ip;
   p[1] = (uint8_t)(ip >> 8);
@@ -67,6 +79,18 @@ static uint16_t checksum(const void *data, size_t len) {
     sum = (sum & 0xffffu) + (sum >> 16);
   }
   return (uint16_t)~sum;
+}
+
+static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, const void *tcp, size_t len) {
+  uint8_t pseudo[12 + TCP_HEADER_LEN + 1460];
+  if (len > TCP_HEADER_LEN + 1460) { return 0; }
+  store_ip(pseudo, src_ip);
+  store_ip(pseudo + 4, dst_ip);
+  pseudo[8] = 0;
+  pseudo[9] = NET_IP_TCP;
+  store_be16(pseudo + 10, (uint16_t)len);
+  kmemcpy(pseudo + 12, tcp, len);
+  return checksum(pseudo, 12 + len);
 }
 
 static bool mac_is_for_us(const uint8_t *dst) {
@@ -176,6 +200,28 @@ bool net_udp_send(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const v
   return send_ipv4(NET_IP_UDP, dst_ip, packet, UDP_HEADER_LEN + len);
 }
 
+bool net_tcp_send_segment(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
+                          uint8_t flags, const void *payload, size_t len) {
+  if (!cell_egress_allowed(NET_IP_TCP, dst_ip, dst_port)) {
+    kprintf("[spore] net: tx denied proto=tcp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
+    return false;
+  }
+  if (len + TCP_HEADER_LEN > 1460) { return false; }
+  uint8_t packet[TCP_HEADER_LEN + 1460];
+  store_be16(packet, src_port);
+  store_be16(packet + 2, dst_port);
+  store_be32(packet + 4, seq);
+  store_be32(packet + 8, ack);
+  packet[12] = (uint8_t)(5u << 4);
+  packet[13] = flags;
+  store_be16(packet + 14, 65535);
+  store_be16(packet + 16, 0);
+  store_be16(packet + 18, 0);
+  if (len != 0) { kmemcpy(packet + TCP_HEADER_LEN, payload, len); }
+  store_be16(packet + 16, tcp_checksum(local_ip, dst_ip, packet, TCP_HEADER_LEN + len));
+  return send_ipv4(NET_IP_TCP, dst_ip, packet, TCP_HEADER_LEN + len);
+}
+
 bool net_icmp_send_echo(uint32_t dst_ip, const void *payload, size_t len) {
   if (is_loopback(dst_ip)) {
     uint8_t reply[ICMP_HEADER_LEN + 1472];
@@ -239,6 +285,18 @@ static void handle_udp(uint32_t src_ip, const uint8_t *udp, size_t len) {
   cell_net_deliver_udp(src_ip, src_port, dst_port, udp + UDP_HEADER_LEN, udp_len - UDP_HEADER_LEN);
 }
 
+static void handle_tcp(uint32_t src_ip, const uint8_t *tcp, size_t len) {
+  if (len < TCP_HEADER_LEN) { return; }
+  size_t offset = (size_t)(tcp[12] >> 4) * 4;
+  if (offset < TCP_HEADER_LEN || offset > len) { return; }
+  uint16_t src_port = load_be16(tcp);
+  uint16_t dst_port = load_be16(tcp + 2);
+  uint32_t seq = load_be32(tcp + 4);
+  uint32_t ack = load_be32(tcp + 8);
+  uint8_t flags = tcp[13];
+  cell_net_deliver_tcp(src_ip, src_port, dst_port, seq, ack, flags, tcp + offset, len - offset);
+}
+
 static void handle_ipv4(const uint8_t *ip, size_t len) {
   if (len < IPV4_HEADER_LEN || (ip[0] >> 4) != 4) { return; }
   size_t ihl = (size_t)(ip[0] & 0xf) * 4;
@@ -252,6 +310,8 @@ static void handle_ipv4(const uint8_t *ip, size_t len) {
   size_t payload_len = total - ihl;
   if (ip[9] == NET_IP_ICMP) {
     handle_icmp(src_ip, payload, payload_len);
+  } else if (ip[9] == NET_IP_TCP) {
+    handle_tcp(src_ip, payload, payload_len);
   } else if (ip[9] == NET_IP_UDP) {
     handle_udp(src_ip, payload, payload_len);
   }

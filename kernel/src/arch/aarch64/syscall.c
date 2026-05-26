@@ -219,6 +219,7 @@ enum {
   SO_ERROR = 4,
   SO_PEERCRED = 17,
   IPPROTO_ICMP = 1,
+  IPPROTO_TCP = 6,
   IPPROTO_UDP = 17,
   EROFS = 30,
   ENOENT = 2,
@@ -1926,6 +1927,11 @@ static int64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
     return cell_fd_socket_unix();
   }
   if (domain != AF_INET) { return -(int64_t)EAFNOSUPPORT; }
+  if ((type & 0xf) == SOCK_STREAM) {
+    if (protocol == 0) { protocol = IPPROTO_TCP; }
+    if (protocol != IPPROTO_TCP) { return -(int64_t)EPROTONOSUPPORT; }
+    return cell_fd_socket_inet((uint8_t)protocol);
+  }
   if ((type & 0xf) != SOCK_DGRAM) { return -(int64_t)EPROTONOSUPPORT; }
   if (protocol == 0) { protocol = IPPROTO_UDP; }
   if (protocol != IPPROTO_UDP && protocol != IPPROTO_ICMP) { return -(int64_t)EPROTONOSUPPORT; }
@@ -1946,7 +1952,7 @@ static int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
   return cell_fd_udp_bind((int)fd, bswap16(sa.sin_port)) ? 0 : -(int64_t)EBADF;
 }
 
-static int64_t sys_connect(uint64_t fd, uint64_t addr, uint64_t len) {
+static int64_t sys_connect(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64_t len) {
   uint16_t family = 0;
   if (!copy_sockaddr_family(addr, len, &family)) { return -(int64_t)EINVAL; }
   if (family == AF_UNIX) {
@@ -1957,6 +1963,9 @@ static int64_t sys_connect(uint64_t fd, uint64_t addr, uint64_t len) {
   }
   struct sockaddr_in64 sa;
   if (!copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
+  int rc = cell_fd_tcp_connect((int)fd, sa.sin_addr, bswap16(sa.sin_port), frame);
+  if (rc == CELL_SWITCHED) { return SYSCALL_SWITCHED; }
+  if (rc != -9) { return (int64_t)rc; }
   if (!cell_egress_allowed(IPPROTO_UDP, sa.sin_addr, bswap16(sa.sin_port))) { return -(int64_t)EPERM; }
   return cell_fd_udp_connect((int)fd, sa.sin_addr, bswap16(sa.sin_port)) ? 0 : -(int64_t)EBADF;
 }
@@ -1978,6 +1987,8 @@ static int64_t sys_sendto(struct trap_frame *frame, uint64_t fd, uint64_t buf, u
   (void)flags;
   if (!user_readable(buf, len)) { return -(int64_t)EFAULT; }
   if (addr == 0) {
+    int64_t tcp = cell_fd_tcp_send((int)fd, buf, len);
+    if (tcp != -EBADF && tcp != -9) { return tcp; }
     int64_t udp = cell_fd_udp_send((int)fd, 0, 0, buf, len);
     if (udp != -EBADF) { return udp; }
     int64_t rc = cell_fd_write((int)fd, buf, len, frame);
@@ -2515,7 +2526,7 @@ l_listen:
 l_accept:
   return sys_accept(f, a0, a1, a2);
 l_connect:
-  return sys_connect(a0, a1, a2);
+  return sys_connect(f, a0, a1, a2);
 l_sendto:
   return sys_sendto(f, a0, a1, a2, a3, a4, a5);
 l_recvfrom:

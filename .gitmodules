@@ -19,3 +19,6 @@
 [submodule "userland/third_party/tinycc"]
 	path = userland/third_party/tinycc
 	url = https://github.com/TinyCC/tinycc.git
+[submodule "userland/third_party/curl"]
+	path = userland/third_party/curl
+	url = https://github.com/curl/curl.git
