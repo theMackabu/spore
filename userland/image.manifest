@@ -30,6 +30,8 @@ userland/bin/edit /bin/edit
 userland/bin/pico /bin/pico
 userland/bin/head /bin/head
 userland/bin/tail /bin/tail
+userland/bin/more /bin/more
+userland/bin/less /bin/less
 userland/bin/wc /bin/wc
 userland/bin/grep /bin/grep
 userland/bin/find /bin/find
@@ -113,6 +115,7 @@ userland/demos/something-else.msh /home/spore/demos/something-else.msh
 
 userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
 userland/usr/local/bin/curl /usr/local/bin/curl
+userland/usr/local/bin/jq /usr/local/bin/jq
 userland/usr/local/bin/htop /usr/local/bin/htop
 userland/usr/local/bin/nano /usr/local/bin/nano
 userland/third_party/ant /usr/local/bin/ant

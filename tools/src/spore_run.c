@@ -53,6 +53,7 @@ static const char *shell_commands[] = {
   "ping -c 1 127.0.0.1\n",
   "nslookup localhost\n",
   "nslookup example.com\n",
+  "printf '10.0.2.2 example.test\\n' | sudo tee -a /etc/hosts\n",
   "curl http://example.test:8080/\n",
   "confine net:none curl http://example.test:8080/\n",
   "confine net:tcp:10.0.2.2:8080 curl http://example.test:8080/\n",
@@ -148,6 +149,9 @@ static const char *shell_commands[] = {
   "cat /tmp/coreutils.link\n",
   "tee /tmp/coreutils.tee < /tmp/coreutils\n",
   "cat /tmp/coreutils.tee\n",
+  "printf '{\"spore\":true}\\n' | jq .\n",
+  "printf 'one\\ntwo\\n' | more\n",
+  "printf 'one\\ntwo\\n' | less\n",
   "hexdump /tmp/coreutils\n",
   "xxd /tmp/coreutils\n",
   "sudo edit /etc/motd\nd 1\na\nshell-check motd\n.\nw\nq\n",
@@ -377,7 +381,8 @@ static pid_t start_http_server(void) {
     char buf[1024];
     (void)read(client, buf, sizeof(buf));
     const char body[] = "hello from host http\n";
-    const char header[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n\r\n";
+    const char header[] =
+      "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n\r\n";
     (void)write(client, header, sizeof(header) - 1);
     (void)write(client, body, sizeof(body) - 1);
     close(client);

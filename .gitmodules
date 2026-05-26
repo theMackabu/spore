@@ -22,3 +22,6 @@
 [submodule "userland/third_party/curl"]
 	path = userland/third_party/curl
 	url = https://github.com/curl/curl.git
+[submodule "userland/third_party/jq"]
+	path = userland/third_party/jq
+	url = https://github.com/jqlang/jq.git
