@@ -40,11 +40,13 @@ static int next_domain_id = 1;
 static int next_thread_id = 1;
 static int next_snapshot_id;
 static uint16_t next_tcp_port = 49152;
+static uint16_t next_udp_port = 49152;
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_idle_ticks;
 static uint64_t boot_epoch_sec;
 static bool pipe_waking;
 static bool poll_waking;
+static bool epoll_waking;
 static uint64_t proc_cache_tick = UINT64_MAX;
 static size_t proc_cache_rss[MAX_DOMAINS];
 static uint32_t tty_lflag = 0000001 | 0000002 | 0000010;
@@ -84,6 +86,8 @@ enum {
   CELL_O_CLOEXEC = 02000000,
   CAP_ENFORCE = 1 << 0,
   CAP_EGRESS_ENFORCE = 1 << 1,
+  SOCK_STREAM = 1,
+  SOCK_DGRAM = 2,
   IPPROTO_TCP = 6,
   IPPROTO_UDP = 17,
   IPPROTO_ICMP = 1,
@@ -3210,6 +3214,8 @@ static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t event
 }
 
 static void wake_epoll_waiters(void) {
+  if (epoll_waking) { return; }
+  epoll_waking = true;
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = &threads[i];
     if (thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_EPOLL || thread->domain == NULL) { continue; }
@@ -3221,12 +3227,19 @@ static void wake_epoll_waiters(void) {
       ready =
         epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, true);
     }
-    if (ready < 0) { ready = -EFAULT; }
+    /*
+     * The original syscall arguments were already validated before blocking.
+     * If the saved wait can no longer be committed after an asynchronous wake
+     * (for example because another thread changed the fd table), report an
+     * interrupted wait instead of surfacing a fresh EINVAL/EFAULT to userland.
+     */
+    if (ready < 0) { ready = -EINTR; }
     thread->tf.x[0] = (uint64_t)ready;
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;
     clear_epoll_wait(thread);
   }
+  epoll_waking = false;
 }
 
 static void clear_pipe_wait(struct thread *thread) {
@@ -3479,6 +3492,21 @@ int cell_fd_socket_unix(void) {
   file->unix_owner_gid = domain->egid;
   domain->fds[fd] = file;
   return fd;
+}
+
+bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto) {
+  struct domain *domain = current_domain();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
+  struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
+    if (type != NULL) { *type = SOCK_STREAM; }
+    if (proto != NULL) { *proto = 0; }
+    return true;
+  }
+  if (file->type != OPEN_SOCKET) { return false; }
+  if (type != NULL) { *type = file->socket_proto == IPPROTO_TCP ? SOCK_STREAM : SOCK_DGRAM; }
+  if (proto != NULL) { *proto = file->socket_proto; }
+  return true;
 }
 
 static struct open_file *unix_file_for_fd(struct domain *domain, int fd) {
@@ -3764,6 +3792,10 @@ static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
 bool cell_fd_udp_bind(int fd, uint16_t port) {
   struct open_file *file = udp_socket_for_fd(current_domain(), fd);
   if (file == NULL) { return false; }
+  if (port == 0) {
+    port = next_udp_port++;
+    if (next_udp_port < 49152) { next_udp_port = 49152; }
+  }
   file->udp_local_port = port;
   return true;
 }
@@ -3797,8 +3829,6 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
   if (file->tcp_state == TCP_ESTABLISHED) { return 0; }
   if (!cell_egress_allowed(IPPROTO_TCP, ip, port)) { return -EPERM; }
   if (file->tcp_state == TCP_CLOSED) {
-    kprintf("[trace] tcp connect pid=%d name=%s fd=%d dst=%x:%u\n", domain == NULL ? 0 : domain->id,
-            domain == NULL ? "-" : domain->name, fd, (unsigned)ip, (unsigned)port);
     file->tcp_remote_ip = ip;
     file->tcp_remote_port = port;
     file->tcp_local_port = next_tcp_port++;
@@ -3832,10 +3862,6 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
 int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len) {
   struct domain *domain = current_domain();
   struct open_file *file = tcp_socket_for_fd(domain, fd);
-  if (domain != NULL && file != NULL) {
-    kprintf("[trace] tcp send pid=%d name=%s fd=%d len=%u state=%u\n", domain->id, domain->name, fd, (unsigned)len,
-            (unsigned)file->tcp_state);
-  }
   return tcp_write_from_domain(domain, file, buf, len);
 }
 
@@ -3868,8 +3894,6 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
     }
     return -EIO;
   }
-  kprintf("[spore] socket send fd=%d proto=%u dst=%x:%u len=%u\n", fd, (unsigned)file->socket_proto,
-          (unsigned)effective_ip, (unsigned)effective_port, (unsigned)len);
   return (int64_t)len;
 }
 
@@ -3932,11 +3956,6 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_fram
   net_poll();
   if (file->socket_proto == IPPROTO_TCP) {
     int64_t got = tcp_read_to_domain(domain, file, buf, len);
-    if (domain != NULL) {
-      kprintf("[trace] tcp recv pid=%d name=%s fd=%d want=%u got=%d rx=%u fin=%u err=%u\n", domain->id, domain->name,
-              fd, (unsigned)len, (int)got, (unsigned)file->tcp_rx_len, (unsigned)file->tcp_fin,
-              (unsigned)file->tcp_error);
-    }
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     cell_save_current(frame);
     current_thread->state = THREAD_BLOCKED;
@@ -3951,6 +3970,7 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_fram
     return CELL_SWITCHED;
   }
   if (file->udp_rx_len == 0) {
+    if ((file->flags & CELL_O_NONBLOCK) != 0) { return -EAGAIN; }
     if (frame == NULL) { return -EAGAIN; }
     cell_save_current(frame);
     current_thread->state = THREAD_BLOCKED;
@@ -4050,7 +4070,6 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
       struct open_file *file = domains[d].fds[fd];
       if (!socket_matches_tcp(file, src_ip, src_port, dst_port)) { continue; }
       if (file->tcp_state == TCP_SYN_SENT && (flags & 0x12) == 0x12 && ack == file->tcp_seq) {
-        kprintf("[trace] tcp established pid=%d fd=%u\n", domains[d].id, (unsigned)fd);
         file->tcp_ack = seq + 1;
         file->tcp_state = TCP_ESTABLISHED;
         (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
@@ -4065,8 +4084,6 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
         return;
       }
       if (len != 0) {
-        kprintf("[trace] tcp rx pid=%d fd=%u len=%u flags=%x rx_before=%u\n", domains[d].id, (unsigned)fd,
-                (unsigned)len, (unsigned)flags, (unsigned)file->tcp_rx_len);
         uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
         uint64_t n = len < room ? len : room;
         if (n != 0) {

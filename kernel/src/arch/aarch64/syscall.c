@@ -131,6 +131,9 @@ enum {
   SYS_MEMBARRIER = 283,
   SYS_STATX = 291,
   SYS_RSEQ = 293,
+  SYS_IO_URING_SETUP = 425,
+  SYS_IO_URING_ENTER = 426,
+  SYS_IO_URING_REGISTER = 427,
   SYS_CLONE3 = 435,
   SYS_FACCESSAT2 = 439,
   SYS_SPORE_SNAPSHOT = 0x4000,
@@ -229,11 +232,17 @@ enum {
   SOCK_STREAM = 1,
   SOCK_DGRAM = 2,
   SOL_SOCKET = 1,
+  SO_TYPE = 3,
   SO_ERROR = 4,
+  SO_SNDBUF = 7,
+  SO_RCVBUF = 8,
+  SO_KEEPALIVE = 9,
   SO_PEERCRED = 17,
+  SO_PROTOCOL = 38,
   IPPROTO_ICMP = 1,
   IPPROTO_TCP = 6,
   IPPROTO_UDP = 17,
+  TCP_NODELAY = 1,
   EROFS = 30,
   ENOENT = 2,
   EPERM = 1,
@@ -2048,21 +2057,36 @@ static bool copy_sockaddr_un(uint64_t addr, uint64_t len, struct sockaddr_un64 *
   return out->sun_path[0] == '/';
 }
 
+static int finish_socket_fd(int fd, uint64_t type) {
+  if (fd < 0) { return fd; }
+  if ((type & O_NONBLOCK) != 0) {
+    int rc = cell_fd_set_flags(fd, O_NONBLOCK);
+    if (rc < 0) { return rc; }
+  }
+  if ((type & O_CLOEXEC) != 0) {
+    int rc = cell_fd_set_fd_flags(fd, FD_CLOEXEC);
+    if (rc < 0) { return rc; }
+  }
+  return fd;
+}
+
 static int64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
+  uint64_t base_type = type & 0xf;
+  if ((type & ~(uint64_t)(0xf | O_NONBLOCK | O_CLOEXEC)) != 0) { return -(int64_t)EINVAL; }
   if (domain == AF_UNIX) {
-    if ((type & 0xf) != SOCK_STREAM || protocol != 0) { return -(int64_t)EPROTONOSUPPORT; }
-    return cell_fd_socket_unix();
+    if (base_type != SOCK_STREAM || protocol != 0) { return -(int64_t)EPROTONOSUPPORT; }
+    return finish_socket_fd(cell_fd_socket_unix(), type);
   }
   if (domain != AF_INET) { return -(int64_t)EAFNOSUPPORT; }
-  if ((type & 0xf) == SOCK_STREAM) {
+  if (base_type == SOCK_STREAM) {
     if (protocol == 0) { protocol = IPPROTO_TCP; }
     if (protocol != IPPROTO_TCP) { return -(int64_t)EPROTONOSUPPORT; }
-    return cell_fd_socket_inet((uint8_t)protocol);
+    return finish_socket_fd(cell_fd_socket_inet((uint8_t)protocol), type);
   }
-  if ((type & 0xf) != SOCK_DGRAM) { return -(int64_t)EPROTONOSUPPORT; }
+  if (base_type != SOCK_DGRAM) { return -(int64_t)EPROTONOSUPPORT; }
   if (protocol == 0) { protocol = IPPROTO_UDP; }
   if (protocol != IPPROTO_UDP && protocol != IPPROTO_ICMP) { return -(int64_t)EPROTONOSUPPORT; }
-  return cell_fd_socket_inet((uint8_t)protocol);
+  return finish_socket_fd(cell_fd_socket_inet((uint8_t)protocol), type);
 }
 
 static int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
@@ -2177,25 +2201,12 @@ static int64_t sys_getsockname(uint64_t fd, uint64_t addr, uint64_t addrlen) {
 }
 
 static int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t optval, uint64_t optlen_addr) {
-  if (level != SOL_SOCKET || optval == 0 || optlen_addr == 0 || !user_writable(optlen_addr, sizeof(uint32_t))) {
-    return -(int64_t)EINVAL;
-  }
+  if (optval == 0 || optlen_addr == 0 || !user_writable(optlen_addr, sizeof(uint32_t))) { return -(int64_t)EINVAL; }
 
   uint32_t optlen = 0;
   if (!vmm_copy_from_user(active_as(), &optlen, optlen_addr, sizeof(optlen))) { return -(int64_t)EFAULT; }
 
-  if (optname == SO_ERROR) {
-    if (optlen < sizeof(int32_t) || !user_writable(optval, sizeof(int32_t))) { return -(int64_t)EINVAL; }
-    int32_t zero = 0;
-    uint32_t out_len = sizeof(zero);
-    if (!vmm_copy_to_user(active_as(), optval, &zero, sizeof(zero)) ||
-        !vmm_copy_to_user(active_as(), optlen_addr, &out_len, sizeof(out_len))) {
-      return -(int64_t)EFAULT;
-    }
-    return 0;
-  }
-
-  if (optname == SO_PEERCRED) {
+  if (level == SOL_SOCKET && optname == SO_PEERCRED) {
     if (optlen < sizeof(struct ucred64) || !user_writable(optval, sizeof(struct ucred64))) { return -(int64_t)EINVAL; }
     struct cell_peer_cred peer;
     if (!cell_fd_unix_peer_cred((int)fd, &peer)) { return -(int64_t)ENOTCONN; }
@@ -2212,7 +2223,45 @@ static int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uin
     return 0;
   }
 
-  return -(int64_t)ENOPROTOOPT;
+  if (optlen < sizeof(int32_t) || !user_writable(optval, sizeof(int32_t))) { return -(int64_t)EINVAL; }
+
+  int32_t value = 0;
+  if (level == SOL_SOCKET) {
+    switch (optname) {
+    case SO_ERROR:
+      value = 0;
+      break;
+    case SO_TYPE:
+      if (!cell_fd_socket_info((int)fd, &value, NULL)) { return -(int64_t)EBADF; }
+      break;
+    case SO_SNDBUF:
+    case SO_RCVBUF:
+      value = 262144;
+      break;
+    case SO_KEEPALIVE:
+      value = 0;
+      break;
+    case SO_PROTOCOL:
+      if (!cell_fd_socket_info((int)fd, NULL, &value)) { return -(int64_t)EBADF; }
+      break;
+    default:
+      return -(int64_t)ENOPROTOOPT;
+    }
+  } else if (level == IPPROTO_TCP) {
+    int32_t proto = 0;
+    if (!cell_fd_socket_info((int)fd, NULL, &proto)) { return -(int64_t)EBADF; }
+    if (optname != TCP_NODELAY || proto != IPPROTO_TCP) { return -(int64_t)ENOPROTOOPT; }
+    value = 1;
+  } else {
+    return -(int64_t)ENOPROTOOPT;
+  }
+
+  uint32_t out_len = sizeof(value);
+  if (!vmm_copy_to_user(active_as(), optval, &value, sizeof(value)) ||
+      !vmm_copy_to_user(active_as(), optlen_addr, &out_len, sizeof(out_len))) {
+    return -(int64_t)EFAULT;
+  }
+  return 0;
 }
 
 static int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len) {
@@ -2442,6 +2491,9 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_MEMBARRIER] = &&l_membarrier,
     [SYS_STATX] = &&l_statx,
     [SYS_RSEQ] = &&l_rseq,
+    [SYS_IO_URING_SETUP] = &&l_probe_enosys,
+    [SYS_IO_URING_ENTER] = &&l_probe_enosys,
+    [SYS_IO_URING_REGISTER] = &&l_probe_enosys,
     [SYS_CLONE3] = &&l_enosys,
     [SYS_FACCESSAT2] = &&l_faccessat2,
   };
@@ -2814,6 +2866,8 @@ l_gettimeofday:
 l_membarrier:
   return a0 == 0 ? 0 : -(int64_t)EINVAL;
 l_rseq:
+  return -(int64_t)ENOSYS;
+l_probe_enosys:
   return -(int64_t)ENOSYS;
 l_enosys:
   kprintf("[kernel] syscall %d ENOSYS pid=%d name=%s\n", (int)nr, cell_current_pid(), cell_current_name());

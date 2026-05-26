@@ -335,6 +335,7 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence);
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path);
 int cell_fd_socket_inet(uint8_t proto);
 int cell_fd_socket_unix(void);
+bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto);
 bool cell_fd_udp_bind(int fd, uint16_t port);
 bool cell_fd_udp_connect(int fd, uint32_t ip, uint16_t port);
 int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint64_t len);
