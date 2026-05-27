@@ -331,8 +331,6 @@ int cell_proc_pid_at(size_t index);
 uint32_t cell_proc_uid(int pid);
 uint32_t cell_proc_gid(int pid);
 void cell_note_unsupported_syscall(uint64_t nr);
-int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
-int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
 int cell_fd_poll_events(int fd, int events);
 int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks, struct trap_frame *frame);
 int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds, bool has_timeout,

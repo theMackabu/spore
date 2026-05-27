@@ -2,6 +2,9 @@
 
 #include "pl011.h"
 #include "proc/domain.h"
+#include "proc/poll.h"
+#include "proc/signal.h"
+#include "proc/thread.h"
 
 enum {
   EINTR = 4,
@@ -321,4 +324,57 @@ bool cell_tty_stdin_readable(void) {
   if (tty_ready_len != 0 || tty_pending_signal != 0) { return true; }
   cell_tty_process_input();
   return tty_ready_len != 0 || tty_pending_signal != 0;
+}
+
+static struct thread *tty_signal_target_for_domain(struct domain *domain) {
+  struct thread *fallback = NULL;
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    struct thread *thread = cell_thread_slot(i);
+    if (thread == NULL || thread->state == THREAD_UNUSED || thread->domain != domain) { continue; }
+    if (fallback == NULL) { fallback = thread; }
+    if (thread->state == THREAD_BLOCKED && thread->wait_reason == WAIT_STDIN) { return thread; }
+  }
+  return fallback;
+}
+
+static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
+  int signal = cell_tty_take_pending_signal();
+  if (signal == 0) { return; }
+  int pgrp = cell_tty_foreground_pgrp();
+  if (pgrp <= 0) { return; }
+  struct thread *interrupted = cell_current_thread_internal();
+  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+    struct domain *domain = cell_domain_slot(i);
+    if (domain == NULL || !domain->used || domain->zombie || domain->pgrp_id != pgrp) { continue; }
+    struct thread *thread = tty_signal_target_for_domain(domain);
+    if (thread == interrupted && frame != NULL) {
+      cell_signal_current(signal, frame);
+    } else {
+      (void)cell_deliver_signal_to_thread(thread, signal);
+    }
+  }
+}
+
+void cell_wake_stdin(struct trap_frame *frame) {
+  cell_tty_process_input();
+  tty_deliver_pending_signal_to_foreground(frame);
+  cell_wake_poll_waiters_internal();
+  cell_wake_epoll_waiters_internal();
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    struct thread *thread = cell_thread_slot(i);
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_STDIN) { continue; }
+    int64_t n = cell_tty_read_to_user(thread->domain, thread->stdin_buf, thread->stdin_len);
+    if (n == -EINTR && cell_tty_pending_signal() != 0) {
+      int signal = cell_tty_take_pending_signal();
+      (void)cell_deliver_signal_to_thread(thread, signal);
+      continue;
+    }
+    if (n <= 0) { continue; }
+    thread->tf.x[0] = (uint64_t)n;
+    thread->state = THREAD_RUNNABLE;
+    thread->wait_reason = WAIT_NONE;
+    thread->stdin_buf = 0;
+    thread->stdin_len = 0;
+  }
+  cell_wake_poll_waiters_internal();
 }

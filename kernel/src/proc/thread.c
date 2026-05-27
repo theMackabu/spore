@@ -7,6 +7,10 @@
 extern void arch_fp_save(struct fp_state *state);
 extern void arch_fp_restore(const struct fp_state *state);
 
+enum {
+  EINVAL = 22,
+};
+
 static struct thread threads[MAX_THREADS];
 static struct thread *current_thread;
 static int next_thread_id = 1;
@@ -103,6 +107,12 @@ void cell_wake_vfork_parent_of(int child_id) {
       thread->wait_target = -1;
     }
   }
+}
+
+int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame) {
+  if (cell_current_thread_internal() == NULL || cell_current_domain_internal() == NULL) { return -EINVAL; }
+  if (timeout_ticks == 0) { return 0; }
+  return cell_block_current_on_sleep(cell_uptime_ticks() + timeout_ticks, frame);
 }
 
 void cell_wake_sleep_waiters(uint64_t scheduler_ticks) {

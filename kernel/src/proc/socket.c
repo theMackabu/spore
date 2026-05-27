@@ -6,6 +6,7 @@
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/pipe.h"
+#include "proc/poll.h"
 #include "proc/thread.h"
 #include "vfs.h"
 
@@ -525,4 +526,55 @@ void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len) {
       return;
     }
   }
+}
+
+static void wake_socket_waiters(struct open_file *file) {
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    struct thread *thread = cell_thread_slot(i);
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
+        thread->domain == NULL) {
+      continue;
+    }
+    int fd = thread->wait_target;
+    if (fd >= 0 && fd < MAX_FDS && thread->domain->fds[fd] == file) {
+      if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
+        if (thread->pipe_buf == 0 && thread->pipe_len == 0) {
+          if (file->tcp_error != 0) {
+            thread->tf.x[0] = (uint64_t)(-(int64_t)file->tcp_error);
+          } else if (file->tcp_state != TCP_ESTABLISHED) {
+            continue;
+          } else {
+            thread->tf.x[0] = 0;
+          }
+        } else {
+          int64_t rc = cell_socket_tcp_read_to_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len);
+          if (rc == -EAGAIN) { continue; }
+          thread->tf.x[0] = (uint64_t)rc;
+        }
+      } else if (file->type == OPEN_SOCKET && file->udp_rx_len != 0 && thread->pipe_buf != 0) {
+        uint64_t n = file->udp_rx_len < thread->pipe_len ? file->udp_rx_len : thread->pipe_len;
+        if (!vmm_copy_to_user(&thread->domain->as, thread->pipe_buf, file->udp_rx, (size_t)n)) {
+          thread->tf.x[0] = (uint64_t)(-(int64_t)EFAULT);
+        } else if (!cell_socket_copy_udp_source_to_domain(thread->domain, file, thread->socket_addr,
+                                                          thread->socket_addrlen)) {
+          thread->tf.x[0] = (uint64_t)(-(int64_t)EFAULT);
+        } else {
+          file->udp_rx_len = 0;
+          thread->tf.x[0] = (uint64_t)n;
+        }
+      }
+      thread->state = THREAD_RUNNABLE;
+      thread->wait_reason = WAIT_NONE;
+      thread->wait_target = -1;
+      thread->pipe_buf = 0;
+      thread->pipe_len = 0;
+      thread->socket_addr = 0;
+      thread->socket_addrlen = 0;
+    }
+  }
+  cell_wake_poll_waiters_internal();
+}
+
+void cell_socket_wake_file(struct open_file *file) {
+  wake_socket_waiters(file);
 }
