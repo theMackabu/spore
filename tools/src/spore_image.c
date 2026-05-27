@@ -337,7 +337,6 @@ static void compile_or_copy_userland(const char *source_root, const char *source
     argv[argc++] = "-s";
     if (!static_binary) {
       argv[argc++] = "-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1";
-      argv[argc++] = "-Wl,-rpath,/lib";
     }
     argv[argc++] = include;
     for (size_t i = 0; i < source_count; ++i) {
@@ -356,7 +355,6 @@ static void compile_or_copy_userland(const char *source_root, const char *source
       "-std=c23",
       "-D_GNU_SOURCE",
       "-s",
-      "-Wl,-rpath,/lib",
       src,
       "-o",
       (char *)out,
@@ -529,6 +527,11 @@ static void install_musl_devel(const char *rootfs) {
   if (symlink("/lib/libc.so", libc_link) != 0) { die("symlink libc.so"); }
 }
 
+enum {
+  ROOT_EXT2_BLOCK_SIZE = 4096,
+  ROOT_EXT2_BLOCKS = (10ull * 1024ull * 1024ull * 1024ull) / ROOT_EXT2_BLOCK_SIZE,
+};
+
 static void build_root_ext2(const char *rootfs_dir, const char *output_root, const char *output_copy) {
   char dev_dir[MAX_PATH];
   char etc_dir[MAX_PATH];
@@ -543,9 +546,12 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   ensure_dir(proc_dir);
   ensure_dir(tmp_dir);
 
-  char *const mkfs_argv[] = {
-    "mke2fs", "-q", "-t", "ext2", "-b", "4096", "-d", (char *)rootfs_dir, (char *)output_root, "131072", NULL,
-  };
+  char block_size_arg[16];
+  char block_count_arg[32];
+  snprintf(block_size_arg, sizeof(block_size_arg), "%u", ROOT_EXT2_BLOCK_SIZE);
+  snprintf(block_count_arg, sizeof(block_count_arg), "%llu", (unsigned long long)ROOT_EXT2_BLOCKS);
+  char *const mkfs_argv[] = {"mke2fs", "-q", "-t", "ext2", "-b", block_size_arg, "-d", (char *)rootfs_dir,
+                             (char *)output_root, block_count_arg, NULL};
   unlink(output_root);
   run_argv(mkfs_argv, false);
 

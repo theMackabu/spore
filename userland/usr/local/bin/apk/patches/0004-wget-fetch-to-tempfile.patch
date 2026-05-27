@@ -1,0 +1,64 @@
+diff --git a/src/io_url_wget.c b/src/io_url_wget.c
+index ffbb0d7..54f789c 100644
+--- a/src/io_url_wget.c
++++ b/src/io_url_wget.c
+@@ -8,19 +8,28 @@
+  */
+ 
+ #include "apk_io.h"
++#include "apk_print.h"
+ #include "apk_process.h"
+ 
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++
+ static char wget_timeout[16];
+ static bool wget_no_check_certificate;
+ static struct apk_out *wget_out;
++static unsigned int wget_fetch_seq;
+ 
+ struct apk_istream *apk_io_url_istream(const char *url, time_t since)
+ {
+ 	char *argv[16];
++	char tmp[96];
+ 	int i = 0;
+ 
++	apk_fmt(tmp, sizeof tmp, "/tmp/apk-fetch.%d.%u", (int)getpid(), wget_fetch_seq++);
++	unlink(tmp);
++
+ 	argv[i++] = "wget";
+-	argv[i++] = "-q";
+ 	if (wget_timeout[0] != '\0') {
+ 		argv[i++] = "-T";
+ 		argv[i++] = wget_timeout;
+@@ -28,10 +37,27 @@ struct apk_istream *apk_io_url_istream(const char *url, time_t since)
+ 	if (wget_no_check_certificate) argv[i++] = "--no-check-certificate";
+ 	argv[i++] = (char *) url;
+ 	argv[i++] = "-O";
+-	argv[i++] = "-";
++	argv[i++] = tmp;
+ 	argv[i++] = 0;
+ 
+-	return apk_process_istream(argv, wget_out, "wget");
++	struct apk_process proc;
++	int r = apk_process_init(&proc, "wget", "wget", wget_out, NULL);
++	if (r != 0) return ERR_PTR(-r);
++	pid_t pid = apk_process_fork(&proc);
++	if (pid < 0) {
++		apk_process_cleanup(&proc);
++		return ERR_PTR(-errno);
++	}
++	if (pid == 0) {
++		execvp(argv[0], argv);
++		_exit(127);
++	}
++	r = apk_process_run(&proc);
++	if (r != 0) {
++		unlink(tmp);
++		return ERR_PTR(r);
++	}
++	return apk_istream_from_file(AT_FDCWD, tmp);
+ }
+ 
+ void apk_io_url_check_certificate(bool check_cert)

@@ -1,19 +1,9 @@
-#include "arch/aarch64/exceptions.h"
-
 #include "arch/aarch64/regs.h"
 #include "arch/aarch64/syscall_handlers.h"
 #include "cell.h"
-#include "elf/loader.h"
-#include "exec/stack.h"
 #include "kprintf.h"
 #include "mem.h"
-#include "mm/pmm.h"
 #include "mm/vmm.h"
-#include "net.h"
-#include "pl011.h"
-#include "ramfs.h"
-#include "random.h"
-#include "spore_version.h"
 #include "vfs.h"
 
 #include <stdbool.h>
@@ -30,6 +20,7 @@ enum {
   SYS_DUP = 23,
   SYS_DUP3 = 24,
   SYS_FCNTL = 25,
+  SYS_FLOCK = 32,
   SYS_IOCTL = 29,
   SYS_MKNODAT = 33,
   SYS_MKDIRAT = 34,
@@ -63,6 +54,7 @@ enum {
   SYS_NEWFSTATAT = 79,
   SYS_FSTAT = 80,
   SYS_FSYNC = 82,
+  SYS_UTIMENSAT = 88,
   SYS_EXIT = 93,
   SYS_EXIT_GROUP = 94,
   SYS_SET_TID_ADDRESS = 96,
@@ -222,6 +214,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_DUP] = &&l_dup,
     [SYS_DUP3] = &&l_dup3,
     [SYS_FCNTL] = &&l_fcntl,
+    [SYS_FLOCK] = &&l_flock,
     [SYS_IOCTL] = &&l_ioctl,
     [SYS_MKDIRAT] = &&l_mkdirat,
     [SYS_UNLINKAT] = &&l_unlinkat,
@@ -255,6 +248,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_NEWFSTATAT] = &&l_newfstatat,
     [SYS_FSTAT] = &&l_fstat,
     [SYS_FSYNC] = &&l_fsync,
+    [SYS_UTIMENSAT] = &&l_utimensat,
     [SYS_EXIT] = &&l_exit,
     [SYS_EXIT_GROUP] = &&l_exit_group,
     [SYS_SET_TID_ADDRESS] = &&l_set_tid_address,
@@ -601,6 +595,8 @@ l_getdents64:
   return sys_getdents64(a0, a1, a2);
 l_readlinkat:
   return sys_readlinkat(a0, a1, a2, a3);
+l_utimensat:
+  return sys_utimensat(a0, a1, a2, a3);
 l_dup:
   return cell_fd_dup((int)a0, 0);
 l_dup3:
@@ -615,6 +611,11 @@ l_fcntl:
   }
   if (a1 == F_SETFL) { return cell_fd_set_flags((int)a0, (int)a2); }
   return -(int64_t)EINVAL;
+l_flock: {
+  int flags = cell_fd_get_flags((int)a0);
+  if (flags < 0) { return flags; }
+  return 0;
+}
 l_getcwd:
   return sys_getcwd(a0, a1);
 l_getrlimit:

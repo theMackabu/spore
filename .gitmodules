@@ -31,3 +31,12 @@
 [submodule "userland/third_party/dropbear"]
 	path = userland/third_party/dropbear
 	url = https://github.com/mkj/dropbear.git
+[submodule "userland/third_party/zlib"]
+	path = userland/third_party/zlib
+	url = https://github.com/madler/zlib.git
+[submodule "userland/third_party/apk-tools"]
+	path = userland/third_party/apk-tools
+	url = https://gitlab.alpinelinux.org/alpine/apk-tools.git
+[submodule "userland/third_party/busybox"]
+	path = userland/third_party/busybox
+	url = https://git.busybox.net/busybox

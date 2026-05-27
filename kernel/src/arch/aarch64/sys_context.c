@@ -116,7 +116,7 @@ static bool normalize_path(const char *base, const char *path, char *out, size_t
   }
   input[pos] = '\0';
 
-  char components[16][32];
+  char components[16][256];
   size_t count = 0;
   const char *p = input;
   while (*p != '\0') {
@@ -124,7 +124,7 @@ static bool normalize_path(const char *base, const char *path, char *out, size_t
       ++p;
     }
     if (*p == '\0') { break; }
-    char comp[32];
+    char comp[256];
     size_t len = 0;
     while (p[len] != '\0' && p[len] != '/') {
       if (len + 1 >= sizeof(comp)) { return false; }
@@ -266,4 +266,3 @@ uint8_t syscall_fs_rights_from_access(uint64_t access) {
   if ((access & X_OK) != 0) { rights |= CELL_FS_EXEC; }
   return rights;
 }
-

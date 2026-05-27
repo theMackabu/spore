@@ -500,7 +500,11 @@ static bool alloc_block(struct ext2_fs *fs, uint32_t *out) {
     if (!read_group_desc(fs, group, &gd) || gd.free_blocks_count == 0 || !read_block(fs, gd.block_bitmap, bitmap)) {
       continue;
     }
-    for (uint32_t bit = 0; bit < fs->blocks_per_group; ++bit) {
+    uint32_t group_first = fs->first_data_block + group * fs->blocks_per_group;
+    if (group_first >= fs->block_count) { continue; }
+    uint32_t group_blocks = fs->block_count - group_first;
+    if (group_blocks > fs->blocks_per_group) { group_blocks = fs->blocks_per_group; }
+    for (uint32_t bit = 0; bit < group_blocks; ++bit) {
       if ((bitmap[bit / 8u] & (1u << (bit % 8u))) != 0) { continue; }
       bitmap[bit / 8u] |= (uint8_t)(1u << (bit % 8u));
       if (!write_block(fs, gd.block_bitmap, bitmap)) { return false; }
@@ -585,23 +589,65 @@ static bool free_inode(struct ext2_fs *fs, uint32_t ino) {
 
 static bool file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32_t file_block_index,
                                  uint32_t *block_out) {
+  uint32_t entries_per_block = fs->block_size / sizeof(uint32_t);
+  uint8_t block[4096];
+  if (fs->block_size > sizeof(block) || entries_per_block == 0) { return false; }
+
   if (file_block_index < 12) {
     if (node->blocks[file_block_index] == 0 && !alloc_block(fs, &node->blocks[file_block_index])) { return false; }
     *block_out = node->blocks[file_block_index];
     return true;
   }
   file_block_index -= 12;
-  uint32_t entries_per_block = fs->block_size / sizeof(uint32_t);
-  if (file_block_index >= entries_per_block) { return false; }
-  if (node->blocks[12] == 0 && !alloc_block(fs, &node->blocks[12])) { return false; }
-  uint8_t block[4096];
-  if (fs->block_size > sizeof(block) || !read_block(fs, node->blocks[12], block)) { return false; }
-  uint32_t *entries = (uint32_t *)block;
-  if (entries[file_block_index] == 0) {
-    if (!alloc_block(fs, &entries[file_block_index]) || !write_block(fs, node->blocks[12], block)) { return false; }
+
+  if (file_block_index < entries_per_block) {
+    if (node->blocks[12] == 0 && !alloc_block(fs, &node->blocks[12])) { return false; }
+    if (!read_block(fs, node->blocks[12], block)) { return false; }
+    uint32_t *entries = (uint32_t *)block;
+    if (entries[file_block_index] == 0) {
+      if (!alloc_block(fs, &entries[file_block_index]) || !write_block(fs, node->blocks[12], block)) { return false; }
+    }
+    *block_out = entries[file_block_index];
+    return true;
   }
-  *block_out = entries[file_block_index];
+  file_block_index -= entries_per_block;
+
+  uint32_t double_span = entries_per_block * entries_per_block;
+  if (file_block_index >= double_span) { return false; }
+  if (node->blocks[13] == 0 && !alloc_block(fs, &node->blocks[13])) { return false; }
+  if (!read_block(fs, node->blocks[13], block)) { return false; }
+  uint32_t *outer = (uint32_t *)block;
+  uint32_t outer_index = file_block_index / entries_per_block;
+  uint32_t inner_index = file_block_index % entries_per_block;
+  if (outer[outer_index] == 0) {
+    if (!alloc_block(fs, &outer[outer_index]) || !write_block(fs, node->blocks[13], block)) { return false; }
+  }
+  uint32_t inner_block = outer[outer_index];
+  if (!read_block(fs, inner_block, block)) { return false; }
+  uint32_t *inner = (uint32_t *)block;
+  if (inner[inner_index] == 0) {
+    if (!alloc_block(fs, &inner[inner_index]) || !write_block(fs, inner_block, block)) { return false; }
+  }
+  *block_out = inner[inner_index];
   return true;
+}
+
+static void free_indirect_tree(struct ext2_fs *fs, uint32_t block, uint32_t depth) {
+  if (block == 0) { return; }
+  uint8_t buf[4096];
+  if (depth > 0 && fs->block_size <= sizeof(buf) && read_block(fs, block, buf)) {
+    uint32_t *entries = (uint32_t *)buf;
+    uint32_t n = fs->block_size / sizeof(uint32_t);
+    for (uint32_t i = 0; i < n; ++i) {
+      if (entries[i] == 0) { continue; }
+      if (depth == 1) {
+        (void)free_block(fs, entries[i]);
+      } else {
+        free_indirect_tree(fs, entries[i], depth - 1);
+      }
+    }
+  }
+  (void)free_block(fs, block);
 }
 
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len) {
@@ -646,18 +692,12 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
       node->blocks[i] = 0;
     }
   }
-  if (node->blocks[12] != 0) {
-    uint8_t block[4096];
-    if (fs->block_size <= sizeof(block) && read_block(fs, node->blocks[12], block)) {
-      uint32_t *entries = (uint32_t *)block;
-      uint32_t n = fs->block_size / sizeof(uint32_t);
-      for (uint32_t i = 0; i < n; ++i) {
-        if (entries[i] != 0) { (void)free_block(fs, entries[i]); }
-      }
-    }
-    (void)free_block(fs, node->blocks[12]);
-    node->blocks[12] = 0;
-  }
+  free_indirect_tree(fs, node->blocks[12], 1);
+  node->blocks[12] = 0;
+  free_indirect_tree(fs, node->blocks[13], 2);
+  node->blocks[13] = 0;
+  free_indirect_tree(fs, node->blocks[14], 3);
+  node->blocks[14] = 0;
   node->size = 0;
   uint32_t now = now_sec();
   node->mtime = now;
@@ -1032,8 +1072,17 @@ bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path)
   node.atime = now;
   node.ctime = now;
   node.mtime = now;
-  int64_t wrote = ext2_write_file(fs, &node, 0, target, kstrlen(target));
-  if (wrote < 0 || (uint64_t)wrote != kstrlen(target) || !add_dirent(fs, &parent, name, ino, EXT2_FT_SYMLINK)) {
+  size_t target_len = kstrlen(target);
+  bool wrote_target = false;
+  if (target_len <= sizeof(node.blocks)) {
+    kmemcpy(node.blocks, target, target_len);
+    node.size = (uint32_t)target_len;
+    wrote_target = write_inode(fs, &node);
+  } else {
+    int64_t wrote = ext2_write_file(fs, &node, 0, target, target_len);
+    wrote_target = wrote >= 0 && (uint64_t)wrote == target_len;
+  }
+  if (!wrote_target || !add_dirent(fs, &parent, name, ino, EXT2_FT_SYMLINK)) {
     (void)ext2_truncate(fs, &node, 0);
     (void)free_inode(fs, ino);
     return false;

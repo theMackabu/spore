@@ -10,11 +10,15 @@ dir /etc/mycelium
 dir /sbin
 dir /libexec
 dir /libexec/spore-test
+dir /lib/apk/db
 dir /lib/mycelium
 dir /run/mycelium
+dir /var/cache/apk
 dir /var/log
 dir /var/lib/mycelium
 dir /etc/update-motd.d
+dir /etc/apk
+dir /etc/apk/keys
 
 userland/bin/init /lib/mycelium/init
 symlink /lib/mycelium/init /sbin/init
@@ -130,6 +134,8 @@ userland/demos/something-else.msh /home/spore/demos/something-else.msh
 userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
 userland/usr/local/bin/curl /usr/local/bin/curl
 userland/usr/local/bin/jq /usr/local/bin/jq
+userland/usr/local/bin/apk /usr/local/bin/apk
+userland/usr/local/bin/wget /usr/local/bin/wget
 userland/usr/local/bin/htop /usr/local/bin/htop
 userland/usr/local/bin/nano /usr/local/bin/nano
 userland/third_party/ant /usr/local/bin/ant
@@ -155,6 +161,7 @@ userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd
 userland/etc/update-motd.d/90-last-login /etc/update-motd.d/90-last-login
 userland/etc/environment /etc/environment
+userland/etc/ld-musl-aarch64.path /etc/ld-musl-aarch64.path
 userland/etc/profile /etc/profile
 userland/etc/dashrc /etc/dashrc
 userland/etc/os-release /etc/os-release
@@ -171,8 +178,15 @@ userland/etc/mycelium/network.target /etc/mycelium/network.target
 userland/etc/hostname /etc/hostname
 userland/etc/hosts /etc/hosts
 userland/etc/resolv.conf /etc/resolv.conf
+userland/etc/apk/repositories /etc/apk/repositories
+userland/etc/apk/world /etc/apk/world
+userland/etc/apk/keys/alpine-devel@lists.alpinelinux.org-58199dcc.rsa.pub /etc/apk/keys/alpine-devel@lists.alpinelinux.org-58199dcc.rsa.pub
+userland/etc/apk/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub /etc/apk/keys/alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub
+userland/lib/apk/db/installed /lib/apk/db/installed
+userland/lib/apk/db/world /lib/apk/db/world
 dir /etc/ssl/certs
 userland/etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+symlink /etc/ssl/certs/ca-certificates.crt /etc/apk/ca.pem
 symlink certs/ca-certificates.crt /etc/ssl/cert.pem
 symlink certs/ca-certificates.crt /etc/ssl/ca-certificates.crt
 dir /usr/lib/ssl
