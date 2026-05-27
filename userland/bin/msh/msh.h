@@ -28,6 +28,7 @@ enum token_type {
   TOK_GT,
   TOK_GTGT,
   TOK_LT,
+  TOK_IO_NUMBER,
 };
 
 struct token {
@@ -35,15 +36,32 @@ struct token {
   char text[WORD_CAP];
 };
 
+enum redir_op {
+  REDIR_OPEN_READ,
+  REDIR_OPEN_WRITE,
+  REDIR_OPEN_APPEND,
+  REDIR_DUP,
+};
+
+struct redir_action {
+  enum redir_op op;
+  int fd;
+  int dup_fd;
+  const char *path;
+};
+
+enum { REDIR_CAP = 8 };
+
 struct redirs {
-  const char *in;
-  const char *out;
-  bool append;
+  struct redir_action actions[REDIR_CAP];
+  size_t count;
 };
 
 struct command {
   char *argv[ARG_CAP];
+  char *env[ARG_CAP];
   int argc;
+  int envc;
   struct redirs redir;
   bool background;
 };

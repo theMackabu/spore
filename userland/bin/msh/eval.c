@@ -26,6 +26,7 @@ static struct job jobs[JOB_CAP];
 
 static int run_builtin(struct command *cmd, int last_status, bool *handled);
 static void resolve_exec_rule_path(const char *cmd, char *out, size_t cap);
+static bool is_name_char(char c, bool first);
 
 static const char *command_name(char **argv) {
   return argv != NULL && argv[0] != NULL ? argv[0] : "?";
@@ -118,28 +119,58 @@ void sh_reap_jobs(bool verbose) {
 }
 
 static int apply_redirs(const struct redirs *redir) {
-  if (redir->in != NULL) {
-    close(STDIN_FILENO);
-    int fd = open(redir->in, O_RDONLY);
-    if (fd != STDIN_FILENO) { return -1; }
-  }
-  if (redir->out != NULL) {
-    close(STDOUT_FILENO);
-    int flags = O_CREAT | O_WRONLY | (redir->append ? O_APPEND : O_TRUNC);
-    int fd = open(redir->out, flags, 0666);
-    if (fd != STDOUT_FILENO) { return -1; }
+  for (size_t i = 0; i < redir->count; ++i) {
+    const struct redir_action *action = &redir->actions[i];
+    if (action->op == REDIR_DUP) {
+      if (dup2(action->dup_fd, action->fd) < 0) { return -1; }
+      continue;
+    }
+
+    int flags = O_RDONLY;
+    if (action->op == REDIR_OPEN_WRITE || action->op == REDIR_OPEN_APPEND) {
+      flags = O_CREAT | O_WRONLY | (action->op == REDIR_OPEN_APPEND ? O_APPEND : O_TRUNC);
+    }
+    int fd = open(action->path, flags, 0666);
+    if (fd < 0) { return -1; }
+    if (fd != action->fd) {
+      if (dup2(fd, action->fd) < 0) {
+        close(fd);
+        return -1;
+      }
+      close(fd);
+    }
   }
   return 0;
 }
 
+static bool set_assignment(char *word) {
+  char *eq = strchr(word, '=');
+  if (eq == NULL || eq == word) { return false; }
+  for (char *p = word; p < eq; ++p) {
+    if (!is_name_char(*p, p == word)) { return false; }
+  }
+  *eq = '\0';
+  int rc = setenv(word, eq + 1, 1);
+  *eq = '=';
+  return rc == 0;
+}
+
+static void apply_env_assignments(struct command *cmd) {
+  for (int i = 0; i < cmd->envc; ++i) {
+    if (!set_assignment(cmd->env[i])) { _exit(126); }
+  }
+}
+
 static int run_builtin_with_redirs(struct command *cmd, int last_status, bool *handled) {
-  if (cmd->redir.in == NULL && cmd->redir.out == NULL) { return run_builtin(cmd, last_status, handled); }
+  if (cmd->redir.count == 0) { return run_builtin(cmd, last_status, handled); }
 
   int saved_in = dup(STDIN_FILENO);
   int saved_out = dup(STDOUT_FILENO);
-  if (saved_in < 0 || saved_out < 0) {
+  int saved_err = dup(STDERR_FILENO);
+  if (saved_in < 0 || saved_out < 0 || saved_err < 0) {
     if (saved_in >= 0) { close(saved_in); }
     if (saved_out >= 0) { close(saved_out); }
+    if (saved_err >= 0) { close(saved_err); }
     perror("dup");
     *handled = true;
     return 1;
@@ -149,18 +180,23 @@ static int run_builtin_with_redirs(struct command *cmd, int last_status, bool *h
     perror("redir");
     dup2(saved_in, STDIN_FILENO);
     dup2(saved_out, STDOUT_FILENO);
+    dup2(saved_err, STDERR_FILENO);
     close(saved_in);
     close(saved_out);
+    close(saved_err);
     *handled = true;
     return 1;
   }
 
   int status = run_builtin(cmd, last_status, handled);
   fflush(stdout);
+  fflush(stderr);
   dup2(saved_in, STDIN_FILENO);
   dup2(saved_out, STDOUT_FILENO);
+  dup2(saved_err, STDERR_FILENO);
   close(saved_in);
   close(saved_out);
+  close(saved_err);
   return status;
 }
 
@@ -286,6 +322,7 @@ static int run_external(struct command *cmd) {
       perror("redir");
       _exit(126);
     }
+    apply_env_assignments(cmd);
     exec_search(cmd->argv);
     perror(cmd->argv[0]);
     _exit(127);
@@ -350,6 +387,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
         perror("redir");
         _exit(126);
       }
+      apply_env_assignments(&stages[i]);
       bool handled = false;
       int builtin_status = run_builtin(&stages[i], last_status, &handled);
       if (handled) { _exit(builtin_status); }
@@ -434,15 +472,7 @@ static bool is_name_char(char c, bool first) {
 }
 
 static bool assignment_word(char *word) {
-  char *eq = strchr(word, '=');
-  if (eq == NULL || eq == word) { return false; }
-  for (char *p = word; p < eq; ++p) {
-    if (!is_name_char(*p, p == word)) { return false; }
-  }
-  *eq = '\0';
-  int rc = setenv(word, eq + 1, 1);
-  *eq = '=';
-  return rc == 0;
+  return set_assignment(word);
 }
 
 static bool all_assignments(struct command *cmd) {
@@ -530,11 +560,15 @@ static int run_test_builtin(struct command *cmd) {
 }
 
 static void trace_command(const struct command *cmd) {
-  if (!xtrace || cmd->argc == 0) { return; }
+  if (!xtrace || (cmd->argc == 0 && cmd->envc == 0)) { return; }
   const char *ps4 = getenv("PS4");
   char prompt[96];
   sh_expand_prompt(ps4 == NULL ? "+ " : ps4, prompt, sizeof(prompt));
   fputs(prompt, stderr);
+  for (int i = 0; i < cmd->envc; ++i) {
+    fputs(cmd->env[i], stderr);
+    fputc(' ', stderr);
+  }
   for (int i = 0; i < cmd->argc; ++i) {
     if (i > 0) { fputc(' ', stderr); }
     fputs(cmd->argv[i], stderr);
@@ -544,7 +578,15 @@ static void trace_command(const struct command *cmd) {
 
 static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   *handled = true;
-  if (cmd->argc == 0) { return 0; }
+  if (cmd->argc == 0) {
+    for (int i = 0; i < cmd->envc; ++i) {
+      if (!set_assignment(cmd->env[i])) {
+        perror("setenv");
+        return 1;
+      }
+    }
+    return 0;
+  }
 
   if (all_assignments(cmd)) {
     for (int i = 0; i < cmd->argc; ++i) {
@@ -1020,7 +1062,7 @@ int sh_execute_line(char *line, int last_status) {
 
     bool should_run =
       previous == TOK_SEMI || (previous == TOK_AND && status == 0) || (previous == TOK_OR && status != 0);
-    if (stages[0].argc > 0 && should_run) {
+    if ((stages[0].argc > 0 || stages[0].envc > 0) && should_run) {
       trace_command(&stages[0]);
       if (stage_count > 1) {
         status = run_pipeline(stages, stage_count, background, status);

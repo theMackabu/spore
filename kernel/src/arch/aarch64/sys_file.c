@@ -22,6 +22,7 @@ enum {
   O_WRONLY = 1,
   O_RDWR = 2,
   O_CREAT = 0100,
+  O_EXCL = 0200,
   O_TRUNC = 01000,
   S_IFMT = 0170000,
   S_IFIFO = 0010000,
@@ -141,7 +142,9 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   if ((flags & O_TRUNC) != 0) { access |= W_OK; }
   if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(access))) { return -(int64_t)EPERM; }
   struct vfs_node node;
-  if (!vfs_lookup(path, &node)) {
+  bool exists = vfs_lookup(path, &node);
+  if (exists && (flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) { return -(int64_t)EEXIST; }
+  if (!exists) {
     if ((flags & O_CREAT) == 0 || !vfs_create(path, &node)) { return -(int64_t)ENOENT; }
     (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
     (void)vfs_lookup(path, &node);

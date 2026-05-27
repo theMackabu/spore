@@ -480,6 +480,12 @@ static void write_dir_record(uint8_t *p, uint32_t ino, uint16_t rec_len, uint8_t
   kmemcpy(p + 8, name, name_len);
 }
 
+static uint8_t dirent_type_for_node(const struct ext2_node *node) {
+  if (ext2_is_dir(node)) { return EXT2_FT_DIR; }
+  if (ext2_is_symlink(node)) { return EXT2_FT_SYMLINK; }
+  return EXT2_FT_REG_FILE;
+}
+
 static bool bitmap_set(struct ext2_fs *fs, uint32_t bitmap_block, uint32_t bit, bool used) {
   uint8_t block[4096];
   if (fs->block_size > sizeof(block) || !read_block(fs, bitmap_block, block)) { return false; }
@@ -856,13 +862,19 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
     uint32_t off = 0;
     while (off + 8 <= fs->block_size) {
       uint16_t rec_len = (uint16_t)block[off + 4] | ((uint16_t)block[off + 5] << 8);
+      uint32_t old_ino = (uint32_t)block[off] | ((uint32_t)block[off + 1] << 8) | ((uint32_t)block[off + 2] << 16) |
+                         ((uint32_t)block[off + 3] << 24);
       uint8_t old_name_len = block[off + 6];
       if (rec_len < 8 || off + rec_len > fs->block_size) { break; }
-      uint16_t used = rec_len_for(old_name_len);
+      uint16_t used = old_ino == 0 ? 0 : rec_len_for(old_name_len);
       if (rec_len >= used + need) {
-        block[off + 4] = (uint8_t)used;
-        block[off + 5] = (uint8_t)(used >> 8);
-        write_dir_record(block + off + used, ino, (uint16_t)(rec_len - used), name_len, type, name);
+        if (used == 0) {
+          write_dir_record(block + off, ino, rec_len, name_len, type, name);
+        } else {
+          block[off + 4] = (uint8_t)used;
+          block[off + 5] = (uint8_t)(used >> 8);
+          write_dir_record(block + off + used, ino, (uint16_t)(rec_len - used), name_len, type, name);
+        }
         uint32_t now = now_sec();
         dir->mtime = now;
         dir->ctime = now;
@@ -891,6 +903,7 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
     uint32_t disk_block = 0;
     if (!file_block(fs, dir, bi, &disk_block) || disk_block == 0 || !read_block(fs, disk_block, block)) { continue; }
     uint32_t off = 0;
+    uint32_t prev_off = UINT32_MAX;
     while (off + 8 <= fs->block_size) {
       uint32_t ino = (uint32_t)block[off] | ((uint32_t)block[off + 1] << 8) | ((uint32_t)block[off + 2] << 16) |
                      ((uint32_t)block[off + 3] << 24);
@@ -899,12 +912,20 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
       if (rec_len < 8 || off + rec_len > fs->block_size) { break; }
       if (ino != 0 && name_equals((const char *)block + off + 8, name_len, name)) {
         if (ino_out != NULL) { *ino_out = ino; }
-        block[off] = block[off + 1] = block[off + 2] = block[off + 3] = 0;
+        if (prev_off != UINT32_MAX) {
+          uint16_t prev_rec_len = (uint16_t)block[prev_off + 4] | ((uint16_t)block[prev_off + 5] << 8);
+          uint16_t merged = (uint16_t)(prev_rec_len + rec_len);
+          block[prev_off + 4] = (uint8_t)merged;
+          block[prev_off + 5] = (uint8_t)(merged >> 8);
+        } else {
+          block[off] = block[off + 1] = block[off + 2] = block[off + 3] = 0;
+        }
         uint32_t now = now_sec();
         dir->mtime = now;
         dir->ctime = now;
         return write_block(fs, disk_block, block) && write_inode(fs, dir);
       }
+      prev_off = off;
       off += rec_len;
     }
   }
@@ -1037,8 +1058,7 @@ bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path) {
       !ext2_is_dir(&parent) || lookup_child(fs, &parent, new_name, kstrlen(new_name), &existing)) {
     return false;
   }
-  if (node.links_count == UINT16_MAX ||
-      !add_dirent(fs, &parent, new_name, node.ino, ext2_is_dir(&node) ? EXT2_FT_DIR : EXT2_FT_REG_FILE)) {
+  if (node.links_count == UINT16_MAX || !add_dirent(fs, &parent, new_name, node.ino, dirent_type_for_node(&node))) {
     return false;
   }
   ++node.links_count;
@@ -1164,12 +1184,24 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
       !lookup_child(fs, &old_parent, old_name, kstrlen(old_name), &node)) {
     return false;
   }
+  if (name_equals(old_parent_path, kstrlen(old_parent_path), new_parent_path) &&
+      name_equals(old_name, kstrlen(old_name), new_name)) {
+    return true;
+  }
   struct ext2_node existing;
-  if (lookup_child(fs, &new_parent, new_name, kstrlen(new_name), &existing)) { (void)ext2_unlink(fs, new_path); }
-  if (!add_dirent(fs, &new_parent, new_name, node.ino, ext2_is_dir(&node) ? EXT2_FT_DIR : EXT2_FT_REG_FILE)) {
+  if (lookup_child(fs, &new_parent, new_name, kstrlen(new_name), &existing)) {
+    if ((ext2_is_dir(&node) && !ext2_is_dir(&existing)) || (!ext2_is_dir(&node) && ext2_is_dir(&existing))) {
+      return false;
+    }
+    if (!ext2_unlink(fs, new_path)) { return false; }
+    if (!read_inode(fs, new_parent.ino, &new_parent)) { return false; }
+  }
+  if (!add_dirent(fs, &new_parent, new_name, node.ino, dirent_type_for_node(&node))) {
     return false;
   }
   node.ctime = now_sec();
   (void)write_inode(fs, &node);
-  return remove_dirent(fs, &old_parent, old_name, NULL);
+  if (remove_dirent(fs, &old_parent, old_name, NULL)) { return true; }
+  (void)ext2_unlink(fs, new_path);
+  return false;
 }

@@ -2,12 +2,88 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static bool file_read(void *ctx, uint64_t offset, void *dst, uint32_t len) {
   FILE *f = ctx;
   if (fseek(f, (long)offset, SEEK_SET) != 0) { return false; }
   return fread(dst, 1, len, f) == len;
+}
+
+static bool file_write(void *ctx, uint64_t offset, const void *src, uint32_t len) {
+  FILE *f = ctx;
+  if (fseek(f, (long)offset, SEEK_SET) != 0) { return false; }
+  return fwrite(src, 1, len, f) == len && fflush(f) == 0;
+}
+
+static void copy_file(const char *src_path, const char *dst_path) {
+  FILE *src = fopen(src_path, "rb");
+  assert(src != NULL);
+  FILE *dst = fopen(dst_path, "wb");
+  assert(dst != NULL);
+  char buf[16384];
+  for (;;) {
+    size_t n = fread(buf, 1, sizeof(buf), src);
+    if (n > 0) { assert(fwrite(buf, 1, n, dst) == n); }
+    if (n < sizeof(buf)) {
+      assert(feof(src));
+      break;
+    }
+  }
+  assert(fclose(src) == 0);
+  assert(fclose(dst) == 0);
+}
+
+static void assert_readlink(struct ext2_fs *fs, const char *path, const char *want) {
+  char got[128];
+  size_t len = 0;
+  assert(ext2_readlink(fs, path, got, sizeof(got), &len));
+  assert(len == strlen(want));
+  assert(strcmp(got, want) == 0);
+}
+
+static void test_mutations(const char *image_path) {
+  char tmp_path[256];
+  snprintf(tmp_path, sizeof(tmp_path), "/tmp/spore-ext2-test-%ld.img", (long)getpid());
+  copy_file(image_path, tmp_path);
+
+  FILE *f = fopen(tmp_path, "r+b");
+  assert(f != NULL);
+  struct ext2_fs fs;
+  assert(ext2_mount_rw(&fs, file_read, file_write, f));
+
+  assert(ext2_create(&fs, "/apkdir", true, NULL));
+  for (int i = 0; i < 128; ++i) {
+    char tmp[128];
+    char final[128];
+    snprintf(tmp, sizeof(tmp), "/apkdir/.apk.%048d", i);
+    snprintf(final, sizeof(final), "/apkdir/git-tool-%03d", i);
+    assert(ext2_symlink(&fs, "../../bin/git", tmp));
+    assert(ext2_rename(&fs, tmp, final));
+    struct ext2_node node;
+    assert(!ext2_lstat(&fs, tmp, &node));
+    assert(ext2_lstat(&fs, final, &node));
+    assert(ext2_is_symlink(&node));
+    assert_readlink(&fs, final, "../../bin/git");
+  }
+
+  assert(ext2_symlink(&fs, "old", "/apkdir/.apk.replace"));
+  assert(ext2_rename(&fs, "/apkdir/.apk.replace", "/apkdir/replace"));
+  assert_readlink(&fs, "/apkdir/replace", "old");
+  for (int i = 0; i < 32; ++i) {
+    char target[32];
+    snprintf(target, sizeof(target), "new-%02d", i);
+    assert(ext2_symlink(&fs, target, "/apkdir/.apk.replace"));
+    assert(ext2_rename(&fs, "/apkdir/.apk.replace", "/apkdir/replace"));
+    assert_readlink(&fs, "/apkdir/replace", target);
+    struct ext2_node node;
+    assert(!ext2_lstat(&fs, "/apkdir/.apk.replace", &node));
+  }
+
+  assert(fclose(f) == 0);
+  assert(remove(tmp_path) == 0);
 }
 
 int main(int argc, char **argv) {
@@ -59,5 +135,6 @@ int main(int argc, char **argv) {
   assert(ext2_is_regular(&libc));
 
   fclose(f);
+  test_mutations(argv[1]);
   return 0;
 }
