@@ -62,6 +62,7 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_FILESYSTEMS:
   case RAMFS_DEV_PARTITIONS:
   case RAMFS_DEV_DEVICES:
+  case RAMFS_DEV_FSSTATS:
   case RAMFS_DEV_PROC_PID_STAT:
   case RAMFS_DEV_PROC_PID_STATUS:
   case RAMFS_DEV_PROC_PID_CMDLINE:
@@ -153,6 +154,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_FILESYSTEMS:
   case RAMFS_DEV_PARTITIONS:
   case RAMFS_DEV_DEVICES:
+  case RAMFS_DEV_FSSTATS:
   case RAMFS_DEV_PROC_PID_STAT:
   case RAMFS_DEV_PROC_PID_STATUS:
   case RAMFS_DEV_PROC_PID_CMDLINE:
@@ -311,4 +313,3 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   }
   return (int64_t)done;
 }
-

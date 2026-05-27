@@ -93,6 +93,7 @@ struct block_cache_entry {
 static struct block_cache_entry block_cache[BLOCK_CACHE_ENTRIES];
 static uint64_t block_cache_clock;
 static uint32_t ext2_now_sec;
+static struct ext2_stats ext2_stat_counters;
 
 void ext2_set_now(uint32_t epoch_sec) {
   ext2_now_sec = epoch_sec;
@@ -120,6 +121,10 @@ uint64_t ext2_cache_used_pages(void) {
   return pages;
 }
 
+struct ext2_stats ext2_get_stats(void) {
+  return ext2_stat_counters;
+}
+
 static struct block_cache_entry *cache_find(struct ext2_fs *fs, uint32_t block) {
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     if (block_cache[i].valid && block_cache[i].fs == fs && block_cache[i].block == block) { return &block_cache[i]; }
@@ -140,11 +145,14 @@ static bool read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
   if (fs->block_size > sizeof(block_cache[0].data)) { return false; }
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
+    ++ext2_stat_counters.block_cache_misses;
     entry = cache_victim();
     if (!fs->read(fs->ctx, (uint64_t)block * fs->block_size, entry->data, fs->block_size)) { return false; }
     entry->valid = true;
     entry->fs = fs;
     entry->block = block;
+  } else {
+    ++ext2_stat_counters.block_cache_hits;
   }
   entry->age = ++block_cache_clock;
   kmemcpy(dst, entry->data, fs->block_size);
@@ -154,6 +162,7 @@ static bool read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
 static bool write_block(struct ext2_fs *fs, uint32_t block, const void *src) {
   if (fs->write == NULL || fs->block_size > sizeof(block_cache[0].data)) { return false; }
   if (!fs->write(fs->ctx, (uint64_t)block * fs->block_size, src, fs->block_size)) { return false; }
+  ++ext2_stat_counters.block_cache_writes;
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
     entry = cache_victim();
@@ -657,6 +666,7 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
 }
 
 bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
+  ++ext2_stat_counters.dir_iter_count;
   if (!ext2_is_dir(dir)) { return false; }
   uint64_t off = cursor == NULL ? 0 : *cursor;
   uint8_t block[4096];
@@ -715,6 +725,7 @@ static bool name_equals(const char *a, size_t a_len, const char *b) {
 
 static bool lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t name_len,
                          struct ext2_node *out) {
+  ++ext2_stat_counters.lookup_child_count;
   struct ext2_dirent ent;
   uint64_t cursor = 0;
   while (ext2_next_dirent(fs, dir, &cursor, &ent)) {
@@ -921,10 +932,12 @@ static bool ext2_lookup_inner(struct ext2_fs *fs, const char *path, struct ext2_
 }
 
 bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+  ++ext2_stat_counters.lookup_count;
   return ext2_lookup_inner(fs, path, out, true, 0);
 }
 
 bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+  ++ext2_stat_counters.lstat_count;
   return ext2_lookup_inner(fs, path, out, false, 0);
 }
 

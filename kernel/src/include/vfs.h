@@ -60,6 +60,20 @@ struct vfs_mount_info {
   uint64_t free_blocks;
 };
 
+struct vfs_stats {
+  uint64_t lookup_count;
+  uint64_t lstat_count;
+  uint64_t lookup_cache_hits;
+  uint64_t lookup_cache_misses;
+  uint64_t lookup_cache_invalidations;
+  uint64_t dirent_count;
+  uint64_t next_dirent_count;
+  uint64_t page_cache_hits;
+  uint64_t page_cache_misses;
+  uint64_t page_cache_loads;
+  uint64_t page_cache_invalidations;
+};
+
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset);
 bool vfs_lookup(const char *path, struct vfs_node *out);
 bool vfs_lstat(const char *path, struct vfs_node *out);
@@ -86,3 +100,4 @@ bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out
 bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);
+struct vfs_stats vfs_get_stats(void);

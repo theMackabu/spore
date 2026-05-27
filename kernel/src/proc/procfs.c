@@ -95,7 +95,7 @@ static size_t procinfo_text(char *dst, size_t cap) {
   size_t len = 0;
   proc_append_str(dst, cap, &len,
                   "pid ppid state wait rss_pages cpu_ticks age_ticks budget_remaining budget_max name exec_path cwd "
-                  "cmdline unsupported_syscalls last_unsupported_syscall\n");
+                  "cmdline unsupported_syscalls last_unsupported_syscall unsupported_ioctls last_unsupported_ioctl\n");
   for (size_t i = 0; i < MAX_DOMAINS; ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
@@ -128,6 +128,10 @@ static size_t procinfo_text(char *dst, size_t cap) {
     proc_append_u64(dst, cap, &len, domain->unsupported_syscalls);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, domain->last_unsupported_syscall);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, domain->unsupported_ioctls);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, domain->last_unsupported_ioctl);
     proc_append_char(dst, cap, &len, '\n');
   }
   return len;
@@ -175,6 +179,10 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   proc_append_u64(dst, cap, &len, domain->unsupported_syscalls);
   proc_append_str(dst, cap, &len, "\nLastUnsupportedSyscall:\t");
   proc_append_u64(dst, cap, &len, domain->last_unsupported_syscall);
+  proc_append_str(dst, cap, &len, "\nUnsupportedIoctls:\t");
+  proc_append_u64(dst, cap, &len, domain->unsupported_ioctls);
+  proc_append_str(dst, cap, &len, "\nLastUnsupportedIoctl:\t");
+  proc_append_u64(dst, cap, &len, domain->last_unsupported_ioctl);
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }
@@ -365,6 +373,8 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
     return read_generated_device(file, domain, buf, len, proc_partitions_text);
   case RAMFS_DEV_DEVICES:
     return read_generated_device(file, domain, buf, len, proc_devices_text);
+  case RAMFS_DEV_FSSTATS:
+    return read_generated_device(file, domain, buf, len, proc_fsstats_text);
   case RAMFS_DEV_PROC_PID_STAT:
     return read_generated_pid_device(file, domain, buf, len, proc_pid_proc_stat_text);
   case RAMFS_DEV_PROC_PID_STATUS:

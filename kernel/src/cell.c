@@ -141,6 +141,13 @@ void cell_note_unsupported_syscall(uint64_t nr) {
   domain->last_unsupported_syscall = nr;
 }
 
+void cell_note_unsupported_ioctl(uint64_t request) {
+  struct domain *domain = current_domain();
+  if (domain == NULL) { return; }
+  ++domain->unsupported_ioctls;
+  domain->last_unsupported_ioctl = request;
+}
+
 int cell_proc_pid_at(size_t index) {
   size_t seen = 0;
   for (size_t i = 0; i < MAX_DOMAINS; ++i) {

@@ -53,6 +53,16 @@ struct ext2_info {
   uint32_t free_inodes;
 };
 
+struct ext2_stats {
+  uint64_t lookup_count;
+  uint64_t lstat_count;
+  uint64_t lookup_child_count;
+  uint64_t dir_iter_count;
+  uint64_t block_cache_hits;
+  uint64_t block_cache_misses;
+  uint64_t block_cache_writes;
+};
+
 bool ext2_mount(struct ext2_fs *fs, ext2_read_fn read, void *ctx);
 bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, void *ctx);
 void ext2_set_now(uint32_t epoch_sec);
@@ -80,3 +90,4 @@ bool ext2_is_regular(const struct ext2_node *node);
 bool ext2_is_symlink(const struct ext2_node *node);
 bool ext2_info(struct ext2_fs *fs, struct ext2_info *out);
 uint64_t ext2_cache_used_pages(void);
+struct ext2_stats ext2_get_stats(void);

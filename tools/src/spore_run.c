@@ -2,6 +2,7 @@
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,16 @@ enum {
 };
 
 static volatile sig_atomic_t resize_pending;
+
+enum scripted_input {
+  SCRIPT_NONE,
+  SCRIPT_EDIT_MOTD,
+  SCRIPT_EDIT_PASTE,
+  SCRIPT_PICO_SIMPLE,
+  SCRIPT_PICO_PASTE,
+  SCRIPT_NANO_PASTE,
+  SCRIPT_ANT_CTRL_C,
+};
 
 static const char *shell_commands[] = {
   "ls /bin\n",
@@ -64,6 +75,9 @@ static const char *shell_commands[] = {
   "ls\n",
   "exit\n",
   "msh -c 'echo msh-c-ok'\n",
+  "__spore_harness_msh_paste__\n",
+  "wc /tmp/msh-paste\n",
+  "grep msh-paste-064 /tmp/msh-paste\n",
   "echo '#!/usr/bin/env msh' > /tmp/script.msh\n",
   "echo 'if true; then' >> /tmp/script.msh\n",
   "echo ' echo if-ok' >> /tmp/script.msh\n",
@@ -160,8 +174,18 @@ static const char *shell_commands[] = {
   "cat /tmp/f\n",
   "edit /tmp/edit-test\na\nfrom edit\n.\nw\nq\n",
   "cat /tmp/edit-test\n",
+  "edit /tmp/edit-paste\n",
+  "wc /tmp/edit-paste\n",
+  "grep edit-paste-064 /tmp/edit-paste\n",
   "pico /tmp/pico-test\n",
   "cat /tmp/pico-test\n",
+  "pico /tmp/pico-paste\n",
+  "wc /tmp/pico-paste\n",
+  "grep pico-paste-032 /tmp/pico-paste\n",
+  "nano /tmp/nano-paste\n",
+  "wc /tmp/nano-paste\n",
+  "grep nano-paste-032 /tmp/nano-paste\n",
+  "ant\n",
   "mkdir /tmp/d && cd /tmp/d && touch x && ls\n",
   "/bin/hello\n",
   "/libexec/spore-test/pthread-demo\n",
@@ -185,8 +209,13 @@ struct bench_command {
 static const struct bench_command bench_commands[] = {
   {"ant startup", "time ant -e 'console.log(1)' > /dev/null\n"},
   {"ls /bin", "time ls /bin > /dev/null\n"},
+  {"du -s /", "time du -s / > /dev/null\n"},
+  {"find /etc", "time find /etc > /dev/null\n"},
+  {"ls -l usr/local", "time ls -l /usr/local/bin > /dev/null\n"},
+  {"dynamic opens", "time curl -V > /dev/null\n"},
   {"curl http", "time curl -s http://10.0.2.2:8080/ > /dev/null\n"},
   {"nano --version", "time nano --version > /dev/null\n"},
+  {"fs stats", "cat /proc/fsstats\n"},
 };
 
 static void usage(void) {
@@ -223,6 +252,52 @@ static void write_serial_input(int fd, const char *buf, size_t len) {
       (void)nanosleep(&ts, NULL);
     }
   }
+}
+
+static size_t append_format(char *buf, size_t cap, size_t len, const char *fmt, ...) {
+  if (len >= cap) { return len; }
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(buf + len, cap - len, fmt, ap);
+  va_end(ap);
+  if (n <= 0) { return len; }
+  size_t add = (size_t)n;
+  if (add > cap - len) { return cap; }
+  return len + add;
+}
+
+static void send_numbered_lines(int fd, const char *prefix, const char *tag, size_t count, const char *suffix) {
+  char input[16384];
+  size_t len = 0;
+  if (prefix != NULL) { len = append_format(input, sizeof(input), len, "%s", prefix); }
+  for (size_t i = 1; i <= count; ++i) {
+    len = append_format(input, sizeof(input), len, "%s-%03zu\n", tag, i);
+  }
+  if (suffix != NULL) { len = append_format(input, sizeof(input), len, "%s", suffix); }
+  if (len > sizeof(input)) { len = sizeof(input); }
+  write_serial_input(fd, input, len);
+}
+
+static void send_numbered_cr_lines(int fd, const char *tag, size_t count, const char *suffix) {
+  char input[16384];
+  size_t len = 0;
+  for (size_t i = 1; i <= count; ++i) {
+    len = append_format(input, sizeof(input), len, "%s-%03zu\r", tag, i);
+  }
+  if (suffix != NULL) { len = append_format(input, sizeof(input), len, "%s", suffix); }
+  if (len > sizeof(input)) { len = sizeof(input); }
+  write_serial_input(fd, input, len);
+}
+
+static void send_shell_printf_paste(int fd) {
+  char input[4096];
+  size_t len = append_format(input, sizeof(input), 0, "printf '");
+  for (size_t i = 1; i <= 64; ++i) {
+    len = append_format(input, sizeof(input), len, "msh-paste-%03zu\\n", i);
+  }
+  len = append_format(input, sizeof(input), len, "' > /tmp/msh-paste\n");
+  if (len > sizeof(input)) { len = sizeof(input); }
+  write_serial_input(fd, input, len);
 }
 
 static void on_sigwinch(int sig) {
@@ -717,8 +792,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   size_t sent = 0;
   bool stdin_sent = false;
   bool shell_size_sent = false;
-  bool pico_input_pending = false;
-  bool edit_input_pending = false;
+  enum scripted_input scripted_input = SCRIPT_NONE;
+  int ant_ctrl_c_stage = 0;
   bool plain = strcmp(mode, "plain") == 0;
   bool shell = strcmp(mode, "shell") == 0;
   bool bench = strcmp(mode, "bench") == 0;
@@ -840,17 +915,47 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           write_serial_input(in_pipe[1], "z\n", 2);
           stdin_sent = true;
         }
-        if (shell && pico_input_pending && contains(buf, "Spore Pico")) {
+        if (shell && scripted_input == SCRIPT_PICO_SIMPLE && contains(buf, "Spore Pico")) {
           static const char pico_input[] = "from pico\x0f\x18\x18";
           write_serial_input(in_pipe[1], pico_input, sizeof(pico_input) - 1);
-          pico_input_pending = false;
+          scripted_input = SCRIPT_NONE;
           buf[0] = '\0';
           len = 0;
         }
-        if (shell && edit_input_pending && contains(buf, "edit>")) {
+        if (shell && scripted_input == SCRIPT_PICO_PASTE && contains(buf, "Spore Pico")) {
+          send_numbered_lines(in_pipe[1], NULL, "pico-paste", 32, "\x0f\x18\x18");
+          scripted_input = SCRIPT_NONE;
+          buf[0] = '\0';
+          len = 0;
+        }
+        if (shell && scripted_input == SCRIPT_NANO_PASTE && contains(buf, "GNU nano")) {
+          send_numbered_cr_lines(in_pipe[1], "nano-paste", 32, "\x0f\r\x18");
+          scripted_input = SCRIPT_NONE;
+          buf[0] = '\0';
+          len = 0;
+        }
+        if (shell && scripted_input == SCRIPT_EDIT_MOTD && contains(buf, "edit>")) {
           static const char edit_input[] = "d 1\na\nshell-check motd\n.\nw\nq\n";
           write_serial_input(in_pipe[1], edit_input, sizeof(edit_input) - 1);
-          edit_input_pending = false;
+          scripted_input = SCRIPT_NONE;
+          buf[0] = '\0';
+          len = 0;
+        }
+        if (shell && scripted_input == SCRIPT_EDIT_PASTE && contains(buf, "edit>")) {
+          send_numbered_lines(in_pipe[1], "a\n", "edit-paste", 64, ".\nw\nq\n");
+          scripted_input = SCRIPT_NONE;
+          buf[0] = '\0';
+          len = 0;
+        }
+        if (shell && scripted_input == SCRIPT_ANT_CTRL_C && ant_ctrl_c_stage == 0 &&
+            contains(buf, "for more information")) {
+          static const char ctrl_c[] = "\x03";
+          static const char exit_ant[] = ".exit\n";
+          write_serial_input(in_pipe[1], ctrl_c, sizeof(ctrl_c) - 1);
+          struct timespec ts = {.tv_sec = 0, .tv_nsec = 20000000};
+          (void)nanosleep(&ts, NULL);
+          write_serial_input(in_pipe[1], exit_ant, sizeof(exit_ant) - 1);
+          ant_ctrl_c_stage = 2;
           buf[0] = '\0';
           len = 0;
         }
@@ -889,8 +994,26 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           len = 0;
         }
         if (shell && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) && prompt >= 0) {
-          if (strcmp(shell_commands[sent], "sudo edit /etc/motd\n") == 0) { edit_input_pending = true; }
-          if (strcmp(shell_commands[sent], "pico /tmp/pico-test\n") == 0) { pico_input_pending = true; }
+          if (scripted_input == SCRIPT_ANT_CTRL_C && ant_ctrl_c_stage > 0) {
+            scripted_input = SCRIPT_NONE;
+            ant_ctrl_c_stage = 0;
+          }
+          if (strcmp(shell_commands[sent], "__spore_harness_msh_paste__\n") == 0) {
+            send_shell_printf_paste(in_pipe[1]);
+            ++sent;
+            buf[0] = '\0';
+            len = 0;
+            continue;
+          }
+          if (strcmp(shell_commands[sent], "sudo edit /etc/motd\n") == 0) { scripted_input = SCRIPT_EDIT_MOTD; }
+          if (strcmp(shell_commands[sent], "edit /tmp/edit-paste\n") == 0) { scripted_input = SCRIPT_EDIT_PASTE; }
+          if (strcmp(shell_commands[sent], "pico /tmp/pico-test\n") == 0) { scripted_input = SCRIPT_PICO_SIMPLE; }
+          if (strcmp(shell_commands[sent], "pico /tmp/pico-paste\n") == 0) { scripted_input = SCRIPT_PICO_PASTE; }
+          if (strcmp(shell_commands[sent], "nano /tmp/nano-paste\n") == 0) { scripted_input = SCRIPT_NANO_PASTE; }
+          if (strcmp(shell_commands[sent], "ant\n") == 0) {
+            scripted_input = SCRIPT_ANT_CTRL_C;
+            ant_ctrl_c_stage = 0;
+          }
           write_serial_input(in_pipe[1], shell_commands[sent], strlen(shell_commands[sent]));
           ++sent;
           buf[0] = '\0';

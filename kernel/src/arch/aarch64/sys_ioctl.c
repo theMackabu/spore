@@ -119,5 +119,6 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     cell_tty_set_erase_char(tio.c_cc[2]);
     return 0;
   }
+  cell_note_unsupported_ioctl(request);
   return -(int64_t)EINVAL;
 }

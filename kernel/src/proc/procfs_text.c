@@ -347,6 +347,50 @@ size_t proc_devices_text(char *dst, size_t cap) {
   return len;
 }
 
+size_t proc_fsstats_text(char *dst, size_t cap) {
+  size_t len = 0;
+  struct vfs_stats vfs = vfs_get_stats();
+  struct ext2_stats ext2 = ext2_get_stats();
+  proc_append_str(dst, cap, &len, "vfs.lookup ");
+  proc_append_u64(dst, cap, &len, vfs.lookup_count);
+  proc_append_str(dst, cap, &len, "\nvfs.lstat ");
+  proc_append_u64(dst, cap, &len, vfs.lstat_count);
+  proc_append_str(dst, cap, &len, "\nvfs.lookup_cache_hits ");
+  proc_append_u64(dst, cap, &len, vfs.lookup_cache_hits);
+  proc_append_str(dst, cap, &len, "\nvfs.lookup_cache_misses ");
+  proc_append_u64(dst, cap, &len, vfs.lookup_cache_misses);
+  proc_append_str(dst, cap, &len, "\nvfs.lookup_cache_invalidations ");
+  proc_append_u64(dst, cap, &len, vfs.lookup_cache_invalidations);
+  proc_append_str(dst, cap, &len, "\nvfs.dirent ");
+  proc_append_u64(dst, cap, &len, vfs.dirent_count);
+  proc_append_str(dst, cap, &len, "\nvfs.next_dirent ");
+  proc_append_u64(dst, cap, &len, vfs.next_dirent_count);
+  proc_append_str(dst, cap, &len, "\nvfs.page_cache_hits ");
+  proc_append_u64(dst, cap, &len, vfs.page_cache_hits);
+  proc_append_str(dst, cap, &len, "\nvfs.page_cache_misses ");
+  proc_append_u64(dst, cap, &len, vfs.page_cache_misses);
+  proc_append_str(dst, cap, &len, "\nvfs.page_cache_loads ");
+  proc_append_u64(dst, cap, &len, vfs.page_cache_loads);
+  proc_append_str(dst, cap, &len, "\nvfs.page_cache_invalidations ");
+  proc_append_u64(dst, cap, &len, vfs.page_cache_invalidations);
+  proc_append_str(dst, cap, &len, "\next2.lookup ");
+  proc_append_u64(dst, cap, &len, ext2.lookup_count);
+  proc_append_str(dst, cap, &len, "\next2.lstat ");
+  proc_append_u64(dst, cap, &len, ext2.lstat_count);
+  proc_append_str(dst, cap, &len, "\next2.lookup_child ");
+  proc_append_u64(dst, cap, &len, ext2.lookup_child_count);
+  proc_append_str(dst, cap, &len, "\next2.dir_iter ");
+  proc_append_u64(dst, cap, &len, ext2.dir_iter_count);
+  proc_append_str(dst, cap, &len, "\next2.block_cache_hits ");
+  proc_append_u64(dst, cap, &len, ext2.block_cache_hits);
+  proc_append_str(dst, cap, &len, "\next2.block_cache_misses ");
+  proc_append_u64(dst, cap, &len, ext2.block_cache_misses);
+  proc_append_str(dst, cap, &len, "\next2.block_cache_writes ");
+  proc_append_u64(dst, cap, &len, ext2.block_cache_writes);
+  proc_append_char(dst, cap, &len, '\n');
+  return len;
+}
+
 size_t proc_kmsg_text(char *dst, size_t cap) {
   return (size_t)klog_copy(dst, cap);
 }
@@ -419,4 +463,3 @@ size_t proc_stat_text(char *dst, size_t cap) {
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }
-
