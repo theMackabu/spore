@@ -189,6 +189,8 @@ struct domain {
   uint32_t egid;
   uint64_t start_ticks;
   uint64_t cpu_ticks;
+  uint64_t minor_faults;
+  uint64_t major_faults;
   uint64_t unsupported_syscalls;
   uint64_t last_unsupported_syscall;
   uint64_t unsupported_ioctls;
@@ -256,6 +258,9 @@ struct proc_info {
   uint32_t wait_reason;
   uint32_t _pad;
   uint64_t resident_pages;
+  uint64_t virtual_pages;
+  uint64_t minor_faults;
+  uint64_t major_faults;
   uint64_t cpu_ticks;
   uint64_t start_ticks;
   uint64_t remaining_ticks;
@@ -265,6 +270,13 @@ struct proc_info {
   char argv0[64];
   char cmdline[160];
   char cwd[64];
+};
+
+struct cell_memory_accounting {
+  uint64_t virtual_pages;
+  uint64_t resident_pages;
+  uint64_t minor_faults;
+  uint64_t major_faults;
 };
 
 struct cell_peer_cred {
@@ -393,6 +405,7 @@ bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t fla
 bool cell_remove_vma(uint64_t start, uint64_t end);
 bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
 size_t cell_resident_pages(uint64_t start, uint64_t end);
+bool cell_memory_accounting(const struct domain *domain, struct cell_memory_accounting *out);
 size_t cell_proc_info(struct proc_info *out, size_t max);
 uint64_t cell_uptime_ticks(void);
 uint64_t cell_idle_ticks(void);

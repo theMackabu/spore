@@ -1,11 +1,11 @@
 #include "mm/vma.h"
 
 #include "mem.h"
+#include "mm/pmm.h"
 
 #if __STDC_HOSTED__
 #include <stdlib.h>
 #else
-#include "mm/pmm.h"
 #endif
 
 #define VMAS_PER_CHUNK (VMA_CHUNK_BYTES / sizeof(struct vma))
@@ -306,4 +306,14 @@ size_t vma_count(const struct vma_list *list) {
     if (vma->used) { ++count; }
   }
   return count;
+}
+
+uint64_t vma_virtual_pages(const struct vma_list *list) {
+  uint64_t pages = 0;
+  for (size_t i = 0; i < vma_capacity(list); ++i) {
+    const struct vma *vma = vma_at(list, i);
+    if (!vma->used) { continue; }
+    pages += (vma->end - vma->start + PAGE_SIZE - 1) / PAGE_SIZE;
+  }
+  return pages;
 }

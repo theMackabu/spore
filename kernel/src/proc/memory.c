@@ -57,6 +57,15 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
   return true;
 }
 
+static void note_fault(struct domain *domain, bool major) {
+  if (domain == NULL) { return; }
+  if (major) {
+    ++domain->major_faults;
+  } else {
+    ++domain->minor_faults;
+  }
+}
+
 bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t len, enum vmm_access access) {
   if (domain == NULL || len == 0) { return true; }
   uint64_t end = va + len - 1;
@@ -69,13 +78,16 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
       if (!domain_access_allowed(vma, access)) { return false; }
       if (vma->type == VMA_FILE) {
         if (!fault_file_page(domain, vma, page)) { return false; }
+        note_fault(domain, true);
       } else if (!vmm_alloc_page(&domain->as, page, vma->prot)) {
         return false;
+      } else {
+        note_fault(domain, false);
       }
     }
-    if (access == VMM_ACCESS_WRITE && !vmm_user_range_accessible(&domain->as, page, 1, VMM_ACCESS_WRITE) &&
-        !vmm_handle_cow_fault(&domain->as, page)) {
-      return false;
+    if (access == VMM_ACCESS_WRITE && !vmm_user_range_accessible(&domain->as, page, 1, VMM_ACCESS_WRITE)) {
+      if (!vmm_handle_cow_fault(&domain->as, page)) { return false; }
+      note_fault(domain, false);
     }
     if (!vmm_user_range_accessible(&domain->as, page, 1, access)) { return false; }
     if (page == last) { return true; }
@@ -85,7 +97,9 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
 
 bool cell_handle_cow_fault(uint64_t far) {
   struct domain *domain = cell_current_domain_internal();
-  return domain != NULL && vmm_handle_cow_fault(&domain->as, far);
+  if (domain == NULL || !vmm_handle_cow_fault(&domain->as, far)) { return false; }
+  note_fault(domain, false);
+  return true;
 }
 
 bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
@@ -94,9 +108,15 @@ bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
   uint64_t va = far & ~(uint64_t)(PAGE_SIZE - 1);
   const struct vma *vma = vma_lookup(&domain->vmas, va);
   if (vma == NULL || !access_allowed(vma, access)) { return false; }
-  if (vma->type == VMA_FILE) { return fault_file_page(domain, vma, va); }
+  if (vma->type == VMA_FILE) {
+    if (!fault_file_page(domain, vma, va)) { return false; }
+    note_fault(domain, true);
+    return true;
+  }
   if (vma->type != VMA_ANON && vma->type != VMA_STACK) { return false; }
-  return vmm_alloc_page(&domain->as, va, vma->prot);
+  if (!vmm_alloc_page(&domain->as, va, vma->prot)) { return false; }
+  note_fault(domain, false);
+  return true;
 }
 
 bool cell_ensure_user_range(uint64_t va, size_t len, enum vmm_access access) {
@@ -151,4 +171,17 @@ bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {
 size_t cell_resident_pages(uint64_t start, uint64_t end) {
   struct domain *domain = cell_current_domain_internal();
   return domain == NULL ? 0 : vmm_mapped_pages_in_range(&domain->as, start, end);
+}
+
+bool cell_memory_accounting(const struct domain *domain, struct cell_memory_accounting *out) {
+  if (domain == NULL || out == NULL || !domain->used) { return false; }
+  out->virtual_pages = vma_virtual_pages(&domain->vmas);
+  out->resident_pages = 0;
+  for (size_t i = 0; i < vma_capacity(&domain->vmas); ++i) {
+    const struct vma *vma = vma_at(&domain->vmas, i);
+    if (vma->used) { out->resident_pages += vmm_mapped_pages_in_range(&domain->as, vma->start, vma->end); }
+  }
+  out->minor_faults = domain->minor_faults;
+  out->major_faults = domain->major_faults;
+  return true;
 }

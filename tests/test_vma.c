@@ -54,6 +54,7 @@ int main(void) {
   assert(vma_insert(&heap, brk_current, brk_base + 0x5000, 3, 0x22, VMA_ANON));
   brk_current = brk_base + 0x5000;
   assert(vma_count(&heap) == 1);
+  assert(vma_virtual_pages(&heap) == 5);
   assert(vma_lookup(&heap, brk_base + 0x4fff) != NULL);
   assert(vma_lookup(&heap, brk_current) == NULL);
   vma_list_destroy(&heap);

@@ -20,11 +20,18 @@ struct proc_row {
   unsigned ppid;
   char state[16];
   char wait[16];
+  unsigned long long vsz_pages;
   unsigned long long rss_pages;
+  unsigned long long minflt;
+  unsigned long long majflt;
   unsigned long long cpu_ticks;
   unsigned long long age_ticks;
   unsigned long long budget_remaining;
   unsigned long long budget_max;
+  unsigned long long unsupported_syscalls;
+  unsigned long long last_unsupported_syscall;
+  unsigned long long unsupported_ioctls;
+  unsigned long long last_unsupported_ioctl;
   char name[32];
   char exec_path[128];
   char cwd[64];
@@ -112,12 +119,14 @@ static void fmt_kib(unsigned long long kib, char *out, size_t cap) {
 static int read_meminfo(unsigned long long *total_kib, unsigned long long *used_kib, unsigned long long *free_kib) {
   FILE *f = fopen("/proc/meminfo", "r");
   if (f == NULL) { return -1; }
-  char key[32];
-  unsigned long long value;
+  char line[128];
   *total_kib = 0;
   *used_kib = 0;
   *free_kib = 0;
-  while (fscanf(f, "%31s %llu", key, &value) == 2) {
+  while (fgets(line, sizeof(line), f) != NULL) {
+    char key[32];
+    unsigned long long value;
+    if (sscanf(line, "%31s %llu", key, &value) != 2) { continue; }
     if (streq(key, "MemTotalKiB:")) {
       *total_kib = value;
     } else if (streq(key, "MemUsedKiB:")) {
@@ -133,14 +142,17 @@ static int read_meminfo(unsigned long long *total_kib, unsigned long long *used_
 static long load_procs(struct proc_row *infos, size_t cap) {
   FILE *f = fopen("/proc/procinfo", "r");
   if (f == NULL) { return -1; }
-  char header[160];
+  char header[512];
   (void)fgets(header, sizeof(header), f);
   long n = 0;
   while ((size_t)n < cap &&
-         fscanf(f, "%u %u %15s %15s %llu %llu %llu %llu %llu %31s %127s %63s %159[^\n]\n", &infos[n].pid,
-                &infos[n].ppid, infos[n].state, infos[n].wait, &infos[n].rss_pages, &infos[n].cpu_ticks,
-                &infos[n].age_ticks, &infos[n].budget_remaining, &infos[n].budget_max, infos[n].name,
-                infos[n].exec_path, infos[n].cwd, infos[n].cmdline) == 13) {
+         fscanf(f, "%u %u %15s %15s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %31s %127s %63s "
+                   "%159[^\n]\n",
+                &infos[n].pid, &infos[n].ppid, infos[n].state, infos[n].wait, &infos[n].vsz_pages, &infos[n].rss_pages,
+                &infos[n].minflt, &infos[n].majflt, &infos[n].cpu_ticks, &infos[n].age_ticks,
+                &infos[n].budget_remaining, &infos[n].budget_max, &infos[n].unsupported_syscalls,
+                &infos[n].last_unsupported_syscall, &infos[n].unsupported_ioctls, &infos[n].last_unsupported_ioctl,
+                infos[n].name, infos[n].exec_path, infos[n].cwd, infos[n].cmdline) == 20) {
     ++n;
   }
   fclose(f);

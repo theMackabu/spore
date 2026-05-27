@@ -188,7 +188,8 @@ int64_t sys_getrusage(int who, uint64_t usage_addr) {
       if ((int)procs[i].pid != pid) { continue; }
       ticks_to_timeval(procs[i].cpu_ticks, &usage.ru_utime);
       usage.ru_maxrss = (int64_t)((procs[i].resident_pages * PAGE_SIZE) / 1024);
-      usage.ru_minflt = (int64_t)procs[i].resident_pages;
+      usage.ru_minflt = (int64_t)procs[i].minor_faults;
+      usage.ru_majflt = (int64_t)procs[i].major_faults;
       break;
     }
   }

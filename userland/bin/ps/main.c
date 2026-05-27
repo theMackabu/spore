@@ -9,11 +9,18 @@ struct proc_row {
   unsigned ppid;
   char state[16];
   char wait[16];
+  unsigned long long vsz_pages;
   unsigned long long rss_pages;
+  unsigned long long minflt;
+  unsigned long long majflt;
   unsigned long long cpu_ticks;
   unsigned long long age_ticks;
   unsigned long long budget_remaining;
   unsigned long long budget_max;
+  unsigned long long unsupported_syscalls;
+  unsigned long long last_unsupported_syscall;
+  unsigned long long unsupported_ioctls;
+  unsigned long long last_unsupported_ioctl;
   char name[32];
   char exec_path[128];
   char cwd[64];
@@ -63,14 +70,17 @@ static int load_rows(struct proc_row *rows, size_t cap) {
     perror("ps");
     return -1;
   }
-  char header[160];
+  char header[512];
   (void)fgets(header, sizeof(header), f);
   int n = 0;
   while ((size_t)n < cap &&
-         fscanf(f, "%u %u %15s %15s %llu %llu %llu %llu %llu %31s %127s %63s %159[^\n]\n", &rows[n].pid, &rows[n].ppid,
-                rows[n].state, rows[n].wait, &rows[n].rss_pages, &rows[n].cpu_ticks, &rows[n].age_ticks,
-                &rows[n].budget_remaining, &rows[n].budget_max, rows[n].name, rows[n].exec_path, rows[n].cwd,
-                rows[n].cmdline) == 13) {
+         fscanf(f, "%u %u %15s %15s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %31s %127s %63s "
+                   "%159[^\n]\n",
+                &rows[n].pid, &rows[n].ppid, rows[n].state, rows[n].wait, &rows[n].vsz_pages, &rows[n].rss_pages,
+                &rows[n].minflt, &rows[n].majflt, &rows[n].cpu_ticks, &rows[n].age_ticks, &rows[n].budget_remaining,
+                &rows[n].budget_max, &rows[n].unsupported_syscalls, &rows[n].last_unsupported_syscall,
+                &rows[n].unsupported_ioctls, &rows[n].last_unsupported_ioctl, rows[n].name, rows[n].exec_path,
+                rows[n].cwd, rows[n].cmdline) == 20) {
     ++n;
   }
   fclose(f);
@@ -92,7 +102,7 @@ static void print_aux(const struct proc_row *rows, int n) {
   puts("USER               PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND");
   for (int i = 0; i < n; ++i) {
     unsigned long long rss_kib = rows[i].rss_pages * 4ull;
-    unsigned long long vsz_kib = rss_kib;
+    unsigned long long vsz_kib = rows[i].vsz_pages * 4ull;
     unsigned long long cpu_tenths = rows[i].age_ticks == 0 ? 0 : (rows[i].cpu_ticks * 1000ull) / rows[i].age_ticks;
     unsigned long long mem_tenths = total_kib == 0 ? 0 : (rss_kib * 1000ull) / total_kib;
     char time[24];

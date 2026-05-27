@@ -6,16 +6,10 @@
 #include "kstr.h"
 #include "mem.h"
 #include "mm/pmm.h"
-#include "mm/vmm.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
 
 #include <stddef.h>
-
-static uint64_t proc_cache_tick = UINT64_MAX;
-static size_t proc_cache_rss[MAX_DOMAINS];
-
-static size_t domain_resident_pages(const struct domain *domain);
 
 static const char *thread_state_text(enum thread_state state) {
   switch (state) {
@@ -94,11 +88,14 @@ static const char *domain_wait_text(const struct domain *domain) {
 static size_t procinfo_text(char *dst, size_t cap) {
   size_t len = 0;
   proc_append_str(dst, cap, &len,
-                  "pid ppid state wait rss_pages cpu_ticks age_ticks budget_remaining budget_max name exec_path cwd "
-                  "cmdline unsupported_syscalls last_unsupported_syscall unsupported_ioctls last_unsupported_ioctl\n");
+                  "pid ppid state wait vsz_pages rss_pages minflt majflt cpu_ticks age_ticks budget_remaining "
+                  "budget_max unsupported_syscalls last_unsupported_syscall unsupported_ioctls last_unsupported_ioctl "
+                  "name exec_path cwd cmdline\n");
   for (size_t i = 0; i < MAX_DOMAINS; ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
+    struct cell_memory_accounting mem = {0};
+    (void)cell_memory_accounting(domain, &mem);
     proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
@@ -107,7 +104,13 @@ static size_t procinfo_text(char *dst, size_t cap) {
     proc_append_char(dst, cap, &len, ' ');
     proc_append_str(dst, cap, &len, domain_wait_text(domain));
     proc_append_char(dst, cap, &len, ' ');
-    proc_append_u64(dst, cap, &len, domain_resident_pages(domain));
+    proc_append_u64(dst, cap, &len, mem.virtual_pages);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, mem.resident_pages);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, mem.minor_faults);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, mem.major_faults);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, domain->cpu_ticks);
     proc_append_char(dst, cap, &len, ' ');
@@ -117,14 +120,6 @@ static size_t procinfo_text(char *dst, size_t cap) {
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, domain->budget.max_ticks);
     proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, domain->name);
-    proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, domain->exec_path[0] == '\0' ? "-" : domain->exec_path);
-    proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, domain->cwd);
-    proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, domain->cmdline[0] == '\0' ? domain->name : domain->cmdline);
-    proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, domain->unsupported_syscalls);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, domain->last_unsupported_syscall);
@@ -132,6 +127,14 @@ static size_t procinfo_text(char *dst, size_t cap) {
     proc_append_u64(dst, cap, &len, domain->unsupported_ioctls);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, domain->last_unsupported_ioctl);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, domain->name);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, domain->exec_path[0] == '\0' ? "-" : domain->exec_path);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, domain->cwd);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, domain->cmdline[0] == '\0' ? domain->name : domain->cmdline);
     proc_append_char(dst, cap, &len, '\n');
   }
   return len;
@@ -145,6 +148,8 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   size_t len = 0;
   const struct domain *domain = domain_for_pid(pid);
   if (domain == NULL) { return 0; }
+  struct cell_memory_accounting mem = {0};
+  (void)cell_memory_accounting(domain, &mem);
   proc_append_str(dst, cap, &len, "Name:\t");
   proc_append_str(dst, cap, &len, domain->name);
   proc_append_str(dst, cap, &len, "\nState:\t");
@@ -169,8 +174,18 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   proc_append_u64(dst, cap, &len, domain->gid);
   proc_append_char(dst, cap, &len, '\t');
   proc_append_u64(dst, cap, &len, domain->egid);
+  proc_append_str(dst, cap, &len, "\nVmSize:\t");
+  proc_append_u64(dst, cap, &len, mem.virtual_pages * 4);
+  proc_append_str(dst, cap, &len, " kB\nVmRSS:\t");
+  proc_append_u64(dst, cap, &len, mem.resident_pages * 4);
+  proc_append_str(dst, cap, &len, " kB\nVmSizePages:\t");
+  proc_append_u64(dst, cap, &len, mem.virtual_pages);
   proc_append_str(dst, cap, &len, "\nVmRSSPages:\t");
-  proc_append_u64(dst, cap, &len, domain_resident_pages(domain));
+  proc_append_u64(dst, cap, &len, mem.resident_pages);
+  proc_append_str(dst, cap, &len, "\nMinFlt:\t");
+  proc_append_u64(dst, cap, &len, mem.minor_faults);
+  proc_append_str(dst, cap, &len, "\nMajFlt:\t");
+  proc_append_u64(dst, cap, &len, mem.major_faults);
   proc_append_str(dst, cap, &len, "\nCpuTicks:\t");
   proc_append_u64(dst, cap, &len, domain->cpu_ticks);
   proc_append_str(dst, cap, &len, "\nCwd:\t");
@@ -191,7 +206,8 @@ static size_t proc_pid_proc_stat_text(char *dst, size_t cap, int pid) {
   size_t len = 0;
   const struct domain *domain = domain_for_pid(pid);
   if (domain == NULL) { return 0; }
-  uint64_t rss = domain_resident_pages(domain);
+  struct cell_memory_accounting mem = {0};
+  (void)cell_memory_accounting(domain, &mem);
   uint64_t start_time = domain->start_ticks;
   uint64_t utime = domain->cpu_ticks;
   proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
@@ -201,14 +217,18 @@ static size_t proc_pid_proc_stat_text(char *dst, size_t cap, int pid) {
   proc_append_char(dst, cap, &len, domain_proc_state_char(domain));
   proc_append_char(dst, cap, &len, ' ');
   proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
-  proc_append_str(dst, cap, &len, " 0 0 0 0 0 0 0 0 0 0 ");
+  proc_append_str(dst, cap, &len, " 0 0 0 0 0 ");
+  proc_append_u64(dst, cap, &len, mem.minor_faults);
+  proc_append_str(dst, cap, &len, " 0 ");
+  proc_append_u64(dst, cap, &len, mem.major_faults);
+  proc_append_str(dst, cap, &len, " 0 ");
   proc_append_u64(dst, cap, &len, utime);
   proc_append_str(dst, cap, &len, " 0 0 0 20 0 1 0 ");
   proc_append_u64(dst, cap, &len, start_time);
   proc_append_str(dst, cap, &len, " ");
-  proc_append_u64(dst, cap, &len, rss * PAGE_SIZE);
+  proc_append_u64(dst, cap, &len, mem.virtual_pages * PAGE_SIZE);
   proc_append_str(dst, cap, &len, " ");
-  proc_append_u64(dst, cap, &len, rss);
+  proc_append_u64(dst, cap, &len, mem.resident_pages);
   proc_append_str(dst, cap, &len, " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
   return len;
 }
@@ -226,13 +246,13 @@ static size_t proc_pid_statm_text(char *dst, size_t cap, int pid) {
   size_t len = 0;
   const struct domain *domain = domain_for_pid(pid);
   if (domain == NULL) { return 0; }
-  uint64_t rss = domain_resident_pages(domain);
-  uint64_t virt = rss == 0 ? 1 : rss;
-  proc_append_u64(dst, cap, &len, virt);
+  struct cell_memory_accounting mem = {0};
+  (void)cell_memory_accounting(domain, &mem);
+  proc_append_u64(dst, cap, &len, mem.virtual_pages);
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, rss);
+  proc_append_u64(dst, cap, &len, mem.resident_pages);
   proc_append_str(dst, cap, &len, " 0 0 0 ");
-  proc_append_u64(dst, cap, &len, rss);
+  proc_append_u64(dst, cap, &len, mem.virtual_pages > mem.resident_pages ? mem.virtual_pages - mem.resident_pages : 0);
   proc_append_str(dst, cap, &len, " 0\n");
   return len;
 }
@@ -266,7 +286,7 @@ static size_t proc_pid_exe_text(char *dst, size_t cap, int pid) {
 
 static int64_t read_generated_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                                      size_t (*fill)(char *, size_t)) {
-  char text[2048] = {0};
+  char text[4096] = {0};
   size_t text_len = fill(text, sizeof(text));
   if (file->offset >= text_len) { return 0; }
   size_t chunk = text_len - (size_t)file->offset;
@@ -278,7 +298,7 @@ static int64_t read_generated_device(struct open_file *file, struct domain *doma
 
 static int64_t read_generated_pid_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                                          size_t (*fill)(char *, size_t, int)) {
-  char text[2048] = {0};
+  char text[4096] = {0};
   size_t text_len = fill(text, sizeof(text), file->node.proc_pid);
   if (file->offset >= text_len) { return 0; }
   size_t chunk = text_len - (size_t)file->offset;
@@ -288,37 +308,14 @@ static int64_t read_generated_pid_device(struct open_file *file, struct domain *
   return (int64_t)chunk;
 }
 
-static size_t domain_resident_pages_uncached(const struct domain *domain) {
-  size_t pages = 0;
-  for (size_t i = 0; i < vma_capacity(&domain->vmas); ++i) {
-    const struct vma *vma = vma_at(&domain->vmas, i);
-    if (vma->used) { pages += vmm_mapped_pages_in_range(&domain->as, vma->start, vma->end); }
-  }
-  return pages;
-}
-
-static void refresh_proc_cache(void) {
-  if (proc_cache_tick == cell_uptime_ticks()) { return; }
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
-    struct domain *domain = cell_domain_slot(i);
-    proc_cache_rss[i] = domain != NULL && domain->used ? domain_resident_pages_uncached(domain) : 0;
-  }
-  proc_cache_tick = cell_uptime_ticks();
-}
-
-static size_t domain_resident_pages(const struct domain *domain) {
-  if (domain == NULL) { return 0; }
-  refresh_proc_cache();
-  size_t index = cell_domain_index(domain);
-  return index < MAX_DOMAINS ? proc_cache_rss[index] : 0;
-}
-
 size_t cell_proc_info(struct proc_info *out, size_t max) {
   size_t count = 0;
   for (size_t i = 0; i < MAX_DOMAINS; ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
     if (count < max && out != NULL) {
+      struct cell_memory_accounting mem = {0};
+      (void)cell_memory_accounting(domain, &mem);
       struct proc_info info = {
         .pid = (uint32_t)domain->id,
         .tid = (uint32_t)(cell_thread_for_domain((struct domain *)domain) == NULL
@@ -329,7 +326,10 @@ size_t cell_proc_info(struct proc_info *out, size_t max) {
                               ? THREAD_ZOMBIE
                               : (str_eq(domain_state_text(domain), "blocked") ? THREAD_BLOCKED : THREAD_RUNNABLE)),
         .wait_reason = 0,
-        .resident_pages = domain_resident_pages(domain),
+        .resident_pages = mem.resident_pages,
+        .virtual_pages = mem.virtual_pages,
+        .minor_faults = mem.minor_faults,
+        .major_faults = mem.major_faults,
         .cpu_ticks = domain->cpu_ticks,
         .start_ticks = domain->start_ticks,
         .remaining_ticks = domain->budget.remaining_ticks,
