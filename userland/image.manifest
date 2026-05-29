@@ -134,9 +134,9 @@ userland/demos/something-else.msh /home/spore/demos/something-else.msh
 userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
 userland/usr/local/bin/curl /usr/local/bin/curl
 userland/usr/local/bin/jq /usr/local/bin/jq
-userland/usr/local/bin/apk /usr/local/bin/apk
+userland/usr/local/bin/apk/spm /usr/local/bin/spm
 userland/usr/local/bin/wget /usr/local/bin/wget
-userland/usr/local/bin/which /usr/local/bin/which
+userland/usr/local/bin/wget/which /usr/local/bin/which
 userland/usr/local/bin/htop /usr/local/bin/htop
 userland/usr/local/bin/nano /usr/local/bin/nano
 userland/third_party/ant /usr/local/bin/ant

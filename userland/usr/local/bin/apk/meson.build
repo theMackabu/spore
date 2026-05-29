@@ -5,7 +5,7 @@ apk_patch_files = files(
 )
 
 userland_apk = custom_target('userland-apk',
-  output: 'apk',
+  output: 'spm',
   command: [
     files('build.sh'),
     meson.project_source_root(),
