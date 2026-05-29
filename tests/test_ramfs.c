@@ -40,8 +40,10 @@ int main(void) {
   assert(ramfs_root_dirent(1, &ent));
   assert(strcmp(ent.name, "proc") == 0 && ent.is_dir);
   assert(ramfs_root_dirent(2, &ent));
-  assert(strcmp(ent.name, "tmp") == 0 && ent.is_dir);
+  assert(strcmp(ent.name, "sys") == 0 && ent.is_dir);
   assert(ramfs_root_dirent(3, &ent));
+  assert(strcmp(ent.name, "tmp") == 0 && ent.is_dir);
+  assert(ramfs_root_dirent(4, &ent));
   assert(strcmp(ent.name, "run") == 0 && ent.is_dir);
   assert(ramfs_lookup_node(&fs, "/dev/null", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_NULL);
@@ -61,6 +63,10 @@ int main(void) {
   assert(!node.is_dir && node.device == RAMFS_DEV_PARTITIONS);
   assert(ramfs_lookup_node(&fs, "/proc/devices", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_DEVICES);
+  assert(ramfs_lookup_node(&fs, "/sys/devices/system/cpu/online", &node));
+  assert(!node.is_dir && node.device == RAMFS_DEV_SYS_CPU_ONLINE);
+  assert(ramfs_lookup_node(&fs, "/sys/devices/system/cpu/cpu0/online", &node));
+  assert(!node.is_dir && node.device == RAMFS_DEV_SYS_CPU_CORE_ONLINE);
   assert(ramfs_lookup_node(&fs, "/dev/procinfo", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_PROCINFO);
 
