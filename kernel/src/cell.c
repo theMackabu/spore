@@ -58,8 +58,7 @@ bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint
     return false;
   }
   if (!vma_insert(cell_domain_vmas(domain), USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP,
-                  VMM_USER_READ | VMM_USER_WRITE, 0,
-                  VMA_STACK)) {
+                  VMM_USER_READ | VMM_USER_WRITE, 0, VMA_STACK)) {
     thread->state = THREAD_UNUSED;
     cell_mm_release(domain->mm);
     domain->mm = NULL;

@@ -31,7 +31,9 @@ void cell_wake_parent_of(struct domain *child) {
     if (child->term_signal != 0) { status = child->term_signal; }
     uint64_t status_addr = parent->tf.x[1];
     struct user_address_space *parent_as = cell_domain_as(parent_domain);
-    if (status_addr != 0 && parent_as != NULL) { (void)vmm_copy_to_user(parent_as, status_addr, &status, sizeof(status)); }
+    if (status_addr != 0 && parent_as != NULL) {
+      (void)vmm_copy_to_user(parent_as, status_addr, &status, sizeof(status));
+    }
     parent->tf.x[0] = (uint64_t)child->id;
     struct thread *child_thread = cell_thread_for_domain(child);
     if (child_thread != NULL) { child_thread->state = child_is_current ? THREAD_ZOMBIE : THREAD_UNUSED; }
@@ -53,7 +55,9 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
   if (cell_current_thread_internal()->clear_child_tid != 0) {
     uint32_t zero = 0;
     struct user_address_space *as = cell_domain_as(domain);
-    if (as != NULL) { (void)vmm_copy_to_user(as, cell_current_thread_internal()->clear_child_tid, &zero, sizeof(zero)); }
+    if (as != NULL) {
+      (void)vmm_copy_to_user(as, cell_current_thread_internal()->clear_child_tid, &zero, sizeof(zero));
+    }
     (void)cell_futex_wake_domain(domain, cell_current_thread_internal()->clear_child_tid, 1);
   }
   if (cell_runnable_or_blocked_threads_in_domain(domain) <= 1) {

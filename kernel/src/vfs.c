@@ -888,12 +888,8 @@ size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
 
   uint64_t tmp_blocks = pmm_total_pages();
   uint64_t tmp_free = pmm_free_pages();
-  if (n < cap) {
-    set_mount_info(&out[n++], "tmpfs", "/tmp", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free);
-  }
-  if (n < cap) {
-    set_mount_info(&out[n++], "runfs", "/run", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free);
-  }
+  if (n < cap) { set_mount_info(&out[n++], "tmpfs", "/tmp", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free); }
+  if (n < cap) { set_mount_info(&out[n++], "runfs", "/run", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free); }
   if (n < cap) {
     uint64_t boot_blocks = BOOT_IMAGE_BYTES / 1024;
     set_mount_info(&out[n++], "bootfs", "/dev/fs/boot", "fat16", 1024, boot_blocks, 0);

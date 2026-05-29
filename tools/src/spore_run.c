@@ -220,7 +220,7 @@ static const struct bench_command bench_commands[] = {
 
 static void usage(void) {
   fputs("usage: spore-run [--mode plain|filter|shell|stdin|bench|rng] [--timings] [--log-to-stderr] --image IMAGE "
-        "[--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--vars VARS_FD]\n",
+        "[--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--memory MEM] [--smp N] [--vars VARS_FD]\n",
         stderr);
   exit(2);
 }
@@ -477,10 +477,10 @@ static pid_t start_http_server(void) {
 }
 
 static void build_qemu_args(char **argv, int *argc, const char *qemu, const char *image, const char *root,
-                            const char *accel, const char *cpu, const char *vars, char *firmware_arg,
-                            size_t firmware_cap, char *vars_arg, size_t vars_cap, char *image_drive_arg,
-                            size_t image_drive_cap, char *root_drive_arg, size_t root_drive_cap, int log_fd,
-                            char *log_chardev_arg, size_t log_chardev_cap) {
+                            const char *accel, const char *cpu, const char *memory, const char *smp, const char *vars,
+                            char *firmware_arg, size_t firmware_cap, char *vars_arg, size_t vars_cap,
+                            char *image_drive_arg, size_t image_drive_cap, char *root_drive_arg, size_t root_drive_cap,
+                            int log_fd, char *log_chardev_arg, size_t log_chardev_cap) {
   char firmware[PATH_CAP];
   if (!find_firmware(qemu, firmware, sizeof(firmware))) {
     fputs("spore-run: edk2-aarch64-code.fd not found\n", stderr);
@@ -501,9 +501,9 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
   argv[i++] = "-cpu";
   argv[i++] = (char *)cpu;
   argv[i++] = "-m";
-  argv[i++] = "8G";
+  argv[i++] = (char *)memory;
   argv[i++] = "-smp";
-  argv[i++] = "4";
+  argv[i++] = (char *)smp;
   argv[i++] = "-global";
   argv[i++] = "virtio-mmio.force-legacy=false";
   argv[i++] = "-netdev";
@@ -1034,6 +1034,8 @@ int main(int argc, char **argv) {
   const char *qemu = "qemu-system-aarch64";
   const char *accel = "hvf";
   const char *cpu = "host";
+  const char *memory = "8G";
+  const char *smp = "4";
   const char *vars = NULL;
   bool timings = false;
   bool mirror_log = false;
@@ -1054,6 +1056,10 @@ int main(int argc, char **argv) {
       accel = argv[++i];
     } else if (strcmp(argv[i], "--cpu") == 0 && i + 1 < argc) {
       cpu = argv[++i];
+    } else if (strcmp(argv[i], "--memory") == 0 && i + 1 < argc) {
+      memory = argv[++i];
+    } else if (strcmp(argv[i], "--smp") == 0 && i + 1 < argc) {
+      smp = argv[++i];
     } else if (strcmp(argv[i], "--vars") == 0 && i + 1 < argc) {
       vars = argv[++i];
     } else {
@@ -1073,9 +1079,9 @@ int main(int argc, char **argv) {
   }
   char *qemu_argv[96];
   int qemu_argc = 0;
-  build_qemu_args(qemu_argv, &qemu_argc, qemu, image, root, accel, cpu, vars, firmware_arg, sizeof(firmware_arg),
-                  vars_arg, sizeof(vars_arg), image_drive_arg, sizeof(image_drive_arg), root_drive_arg,
-                  sizeof(root_drive_arg), log_pipe[1], log_chardev_arg, sizeof(log_chardev_arg));
+  build_qemu_args(qemu_argv, &qemu_argc, qemu, image, root, accel, cpu, memory, smp, vars, firmware_arg,
+                  sizeof(firmware_arg), vars_arg, sizeof(vars_arg), image_drive_arg, sizeof(image_drive_arg),
+                  root_drive_arg, sizeof(root_drive_arg), log_pipe[1], log_chardev_arg, sizeof(log_chardev_arg));
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
       strcmp(mode, "stdin") == 0 || strcmp(mode, "bench") == 0 || strcmp(mode, "rng") == 0) {

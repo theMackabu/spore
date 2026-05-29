@@ -86,12 +86,16 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
   uint32_t read = 0;
   assert(ext2_read_file(&fs, &fresh, 100u * block_size, got, block_size, &read));
   assert(read == block_size);
-  for (size_t i = 0; i < block_size; ++i) { assert(got[i] == (uint8_t)100); }
+  for (size_t i = 0; i < block_size; ++i) {
+    assert(got[i] == (uint8_t)100);
+  }
 
   uint32_t late_block = write_blocks - 200;
   assert(ext2_read_file(&fs, &fresh, (uint64_t)late_block * block_size, got, block_size, &read));
   assert(read == block_size);
-  for (size_t i = 0; i < block_size; ++i) { assert(got[i] == (uint8_t)(late_block & 0xffu)); }
+  for (size_t i = 0; i < block_size; ++i) {
+    assert(got[i] == (uint8_t)(late_block & 0xffu));
+  }
 
   assert(fclose(f) == 0);
   assert(remove(path) == 0);
