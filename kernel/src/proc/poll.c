@@ -108,14 +108,14 @@ static int64_t ppoll_check(struct thread *thread, bool commit) {
   for (uint64_t i = 0; i < thread->poll_nfds; ++i) {
     struct pollfd64 pfd;
     uint64_t addr = thread->poll_fds + i * sizeof(pfd);
-    if (!vmm_copy_from_user(&thread->domain->as, &pfd, addr, sizeof(pfd))) { return -EFAULT; }
+    if (!vmm_copy_from_user(cell_domain_as(thread->domain), &pfd, addr, sizeof(pfd))) { return -EFAULT; }
 
     int revents = 0;
     if (pfd.fd >= 0) { revents = fd_poll_events_for_domain(thread->domain, pfd.fd, pfd.events); }
     if (revents != 0) { ++ready; }
     if (commit) {
       pfd.revents = (int16_t)revents;
-      if (!vmm_copy_to_user(&thread->domain->as, addr, &pfd, sizeof(pfd))) { return -EFAULT; }
+      if (!vmm_copy_to_user(cell_domain_as(thread->domain), addr, &pfd, sizeof(pfd))) { return -EFAULT; }
     }
   }
   return ready;
@@ -129,11 +129,11 @@ static int64_t pselect_check(struct thread *thread, bool commit) {
   uint64_t write_out = 0;
   uint64_t except_out = 0;
   if (thread->poll_readfds != 0 &&
-      !vmm_copy_from_user(&thread->domain->as, &read_in, thread->poll_readfds, sizeof(read_in))) {
+      !vmm_copy_from_user(cell_domain_as(thread->domain), &read_in, thread->poll_readfds, sizeof(read_in))) {
     return -EFAULT;
   }
   if (thread->poll_writefds != 0 &&
-      !vmm_copy_from_user(&thread->domain->as, &write_in, thread->poll_writefds, sizeof(write_in))) {
+      !vmm_copy_from_user(cell_domain_as(thread->domain), &write_in, thread->poll_writefds, sizeof(write_in))) {
     return -EFAULT;
   }
 
@@ -152,11 +152,11 @@ static int64_t pselect_check(struct thread *thread, bool commit) {
 
   if (commit) {
     if ((thread->poll_readfds != 0 &&
-         !vmm_copy_to_user(&thread->domain->as, thread->poll_readfds, &read_out, sizeof(read_out))) ||
+         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->poll_readfds, &read_out, sizeof(read_out))) ||
         (thread->poll_writefds != 0 &&
-         !vmm_copy_to_user(&thread->domain->as, thread->poll_writefds, &write_out, sizeof(write_out))) ||
+         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->poll_writefds, &write_out, sizeof(write_out))) ||
         (thread->poll_exceptfds != 0 &&
-         !vmm_copy_to_user(&thread->domain->as, thread->poll_exceptfds, &except_out, sizeof(except_out)))) {
+         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->poll_exceptfds, &except_out, sizeof(except_out)))) {
       return -EFAULT;
     }
   }
@@ -252,7 +252,7 @@ static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t event
     if (commit) {
       struct epoll_event64 out = {.events = (uint32_t)ready, .data = ep->epoll_watches[i].data};
       uint64_t dst = events_addr + (uint64_t)written * sizeof(out);
-      if (!vmm_copy_to_user(&domain->as, dst, &out, sizeof(out))) { return -EFAULT; }
+      if (!vmm_copy_to_user(cell_domain_as(domain), dst, &out, sizeof(out))) { return -EFAULT; }
     }
     ++written;
   }

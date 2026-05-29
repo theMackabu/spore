@@ -291,7 +291,7 @@ static int64_t read_generated_device(struct open_file *file, struct domain *doma
   if (file->offset >= text_len) { return 0; }
   size_t chunk = text_len - (size_t)file->offset;
   if (chunk > len) { chunk = (size_t)len; }
-  if (!vmm_copy_to_user(&domain->as, buf, text + file->offset, chunk)) { return -14; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, text + file->offset, chunk)) { return -14; }
   file->offset += chunk;
   return (int64_t)chunk;
 }
@@ -303,7 +303,7 @@ static int64_t read_generated_pid_device(struct open_file *file, struct domain *
   if (file->offset >= text_len) { return 0; }
   size_t chunk = text_len - (size_t)file->offset;
   if (chunk > len) { chunk = (size_t)len; }
-  if (!vmm_copy_to_user(&domain->as, buf, text + file->offset, chunk)) { return -14; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, text + file->offset, chunk)) { return -14; }
   file->offset += chunk;
   return (int64_t)chunk;
 }

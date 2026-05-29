@@ -937,40 +937,83 @@ static bool append_path_component(char *path, size_t cap, const char *name, size
   return true;
 }
 
+static bool normalize_absolute_path(const char *path, char *out, size_t cap) {
+  if (path == NULL || path[0] != '/' || cap < 2) { return false; }
+  size_t out_len = 1;
+  out[0] = '/';
+  out[1] = '\0';
+
+  const char *p = path;
+  while (*p != '\0') {
+    while (*p == '/') {
+      ++p;
+    }
+    if (*p == '\0') { break; }
+
+    const char *start = p;
+    while (*p != '\0' && *p != '/') {
+      ++p;
+    }
+    size_t len = (size_t)(p - start);
+    if (len == 1 && start[0] == '.') { continue; }
+    if (len == 2 && start[0] == '.' && start[1] == '.') {
+      if (out_len > 1) {
+        while (out_len > 1 && out[out_len - 1] != '/') {
+          --out_len;
+        }
+        if (out_len > 1) { --out_len; }
+        out[out_len] = '\0';
+      }
+      continue;
+    }
+
+    if (out_len != 1) {
+      if (out_len + 1 >= cap) { return false; }
+      out[out_len++] = '/';
+    }
+    if (out_len + len >= cap) { return false; }
+    kmemcpy(out + out_len, start, len);
+    out_len += len;
+    out[out_len] = '\0';
+  }
+  return true;
+}
+
 static bool combine_symlink_path(char *out, size_t cap, const char *parent, const char *target, const char *rest) {
+  char raw[256];
   size_t pos = 0;
   if (cap == 0 || target[0] == '\0') { return false; }
   if (target[0] == '/') {
     for (const char *p = target; *p != '\0'; ++p) {
-      if (pos + 1 >= cap) { return false; }
-      out[pos++] = *p;
+      if (pos + 1 >= sizeof(raw)) { return false; }
+      raw[pos++] = *p;
     }
   } else {
     for (const char *p = parent; *p != '\0'; ++p) {
-      if (pos + 1 >= cap) { return false; }
-      out[pos++] = *p;
+      if (pos + 1 >= sizeof(raw)) { return false; }
+      raw[pos++] = *p;
     }
-    if (!(pos == 1 && out[0] == '/')) {
-      if (pos + 1 >= cap) { return false; }
-      out[pos++] = '/';
+    if (!(pos == 1 && raw[0] == '/')) {
+      if (pos + 1 >= sizeof(raw)) { return false; }
+      raw[pos++] = '/';
     }
     for (const char *p = target; *p != '\0'; ++p) {
-      if (pos + 1 >= cap) { return false; }
-      out[pos++] = *p;
+      if (pos + 1 >= sizeof(raw)) { return false; }
+      raw[pos++] = *p;
     }
   }
   if (rest != NULL && rest[0] != '\0') {
-    if (pos == 0 || out[pos - 1] != '/') {
-      if (pos + 1 >= cap) { return false; }
-      out[pos++] = '/';
+    if (pos == 0 || raw[pos - 1] != '/') {
+      if (pos + 1 >= sizeof(raw)) { return false; }
+      raw[pos++] = '/';
     }
     for (const char *p = rest; *p != '\0'; ++p) {
-      if (pos + 1 >= cap) { return false; }
-      out[pos++] = *p;
+      if (pos + 1 >= sizeof(raw)) { return false; }
+      raw[pos++] = *p;
     }
   }
-  out[pos] = '\0';
-  return true;
+  raw[pos] = '\0';
+  return normalize_absolute_path(raw, out, cap);
 }
 
 static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *name, uint32_t ino, uint8_t type) {

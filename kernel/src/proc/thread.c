@@ -136,7 +136,7 @@ void cell_save_current(const struct trap_frame *frame) {
 }
 
 static void restore_thread(struct thread *thread, struct trap_frame *frame, struct domain *old_domain) {
-  if (old_domain != thread->domain) { vmm_install_user(&thread->domain->as); }
+  if (old_domain != thread->domain) { vmm_install_user(cell_domain_as(thread->domain)); }
   arch_fp_restore(&thread->fp);
   __asm__ volatile("msr tpidr_el0, %0" : : "r"(thread->tpidr_el0));
   *frame = thread->tf;
@@ -149,7 +149,7 @@ static void cleanup_reaped_current_domain(struct domain *old_domain, struct thre
 
 void cell_restore_current(struct trap_frame *frame) {
   if (current_thread == NULL) { return; }
-  vmm_install_user(&current_thread->domain->as);
+  vmm_install_user(cell_domain_as(current_thread->domain));
   arch_fp_restore(&current_thread->fp);
   __asm__ volatile("msr tpidr_el0, %0" : : "r"(current_thread->tpidr_el0));
   *frame = current_thread->tf;

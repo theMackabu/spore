@@ -30,8 +30,8 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
   const uint64_t signal_mask = 0xff;
   if ((flags & CLONE_VFORK) != 0) {
     const uint64_t allowed_vfork_flags = CLONE_VM | CLONE_VFORK;
-    if ((flags & ~(allowed_vfork_flags | signal_mask)) != 0 || newsp != 0) { return -(int64_t)ENOSYS; }
-    return cell_vfork_current(f);
+    if ((flags & ~(allowed_vfork_flags | signal_mask)) != 0) { return -(int64_t)ENOSYS; }
+    return cell_vfork_current(f, newsp);
   }
   if ((flags & CLONE_VM) == 0) {
     if (newsp != 0) { return -(int64_t)ENOSYS; }

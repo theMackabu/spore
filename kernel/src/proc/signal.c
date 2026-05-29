@@ -93,7 +93,7 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
 
   uint64_t frame_addr = (thread->tf.sp_el0 - sizeof(frame)) & ~15ull;
   if (!cell_domain_ensure_user_range(domain, frame_addr, sizeof(frame), VMM_ACCESS_WRITE) ||
-      !vmm_copy_to_user(&domain->as, frame_addr, &frame, sizeof(frame))) {
+      !vmm_copy_to_user(cell_domain_as(domain), frame_addr, &frame, sizeof(frame))) {
     terminate_domain_by_signal(domain, SIGSEGV);
     return true;
   }
@@ -130,14 +130,14 @@ int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t
     old.mask[0] = (uint32_t)(domain->signal_actions[signal].mask & 0xffffffffu);
     old.mask[1] = (uint32_t)(domain->signal_actions[signal].mask >> 32);
     if (!cell_domain_ensure_user_range(domain, old_addr, sizeof(old), VMM_ACCESS_WRITE) ||
-        !vmm_copy_to_user(&domain->as, old_addr, &old, sizeof(old))) {
+        !vmm_copy_to_user(cell_domain_as(domain), old_addr, &old, sizeof(old))) {
       return -EFAULT;
     }
   }
   if (act_addr != 0) {
     struct k_sigaction64 act;
     if (!cell_domain_ensure_user_range(domain, act_addr, sizeof(act), VMM_ACCESS_READ) ||
-        !vmm_copy_from_user(&domain->as, &act, act_addr, sizeof(act))) {
+        !vmm_copy_from_user(cell_domain_as(domain), &act, act_addr, sizeof(act))) {
       return -EFAULT;
     }
     domain->signal_actions[signal].handler = act.handler;
@@ -154,7 +154,7 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
   struct signal_frame64 sigframe;
   uint64_t frame_addr = frame->sp_el0;
   if (!cell_domain_ensure_user_range(domain, frame_addr, sizeof(sigframe), VMM_ACCESS_READ) ||
-      !vmm_copy_from_user(&domain->as, &sigframe, frame_addr, sizeof(sigframe)) ||
+      !vmm_copy_from_user(cell_domain_as(domain), &sigframe, frame_addr, sizeof(sigframe)) ||
       sigframe.magic != 0x5350475349474652ull) {
     cell_signal_current(SIGSEGV, frame);
     return -EFAULT;
@@ -186,16 +186,16 @@ void cell_dump_current_fault(const struct trap_frame *frame, uint64_t far) {
     frame == NULL ? NULL : (void *)(uintptr_t)frame->x[29], frame == NULL ? NULL : (void *)(uintptr_t)frame->x[30]);
   if (frame != NULL) {
     uint64_t words[4] = {0};
-    if (vmm_copy_from_user(&domain->as, words, frame->sp_el0, sizeof(words))) {
+    if (vmm_copy_from_user(cell_domain_as(domain), words, frame->sp_el0, sizeof(words))) {
       kprintf("[kernel] fault stack: %p %p %p %p\n", (void *)(uintptr_t)words[0], (void *)(uintptr_t)words[1],
               (void *)(uintptr_t)words[2], (void *)(uintptr_t)words[3]);
     }
-    if (frame->x[19] != 0 && vmm_copy_from_user(&domain->as, words, frame->x[19], sizeof(words))) {
+    if (frame->x[19] != 0 && vmm_copy_from_user(cell_domain_as(domain), words, frame->x[19], sizeof(words))) {
       kprintf("[kernel] fault x19 mem: %p %p %p %p\n", (void *)(uintptr_t)words[0], (void *)(uintptr_t)words[1],
               (void *)(uintptr_t)words[2], (void *)(uintptr_t)words[3]);
     }
-    for (size_t i = 0; i < vma_capacity(&domain->vmas); ++i) {
-      const struct vma *vma = vma_at(&domain->vmas, i);
+    for (size_t i = 0; i < vma_capacity(cell_domain_vmas(domain)); ++i) {
+      const struct vma *vma = vma_at(cell_domain_vmas(domain), i);
       if (vma == NULL || !vma->used) { continue; }
       bool interesting = (frame->sp_el0 >= vma->start && frame->sp_el0 < vma->end) ||
                          (frame->elr_el1 >= vma->start && frame->elr_el1 < vma->end) ||

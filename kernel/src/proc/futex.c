@@ -37,9 +37,9 @@ static void robust_wake_entry(struct domain *domain, uint64_t entry, int64_t fut
   uint64_t futex_addr = (uint64_t)((int64_t)entry + futex_offset);
   if ((futex_addr & 3u) != 0 || !cell_ensure_user_range(futex_addr, sizeof(uint32_t), VMM_ACCESS_WRITE)) { return; }
   uint32_t word = 0;
-  if (!vmm_copy_from_user(&domain->as, &word, futex_addr, sizeof(word))) { return; }
+  if (!vmm_copy_from_user(cell_domain_as(domain), &word, futex_addr, sizeof(word))) { return; }
   word |= FUTEX_OWNER_DIED;
-  (void)vmm_copy_to_user(&domain->as, futex_addr, &word, sizeof(word));
+  (void)vmm_copy_to_user(cell_domain_as(domain), futex_addr, &word, sizeof(word));
   (void)cell_futex_wake_domain(domain, futex_addr, 1);
 }
 
@@ -50,13 +50,13 @@ void cell_futex_cleanup_robust_list(struct thread *thread) {
     return;
   }
   struct robust_list_head64 head;
-  if (!vmm_copy_from_user(&domain->as, &head, thread->robust_list, sizeof(head))) { return; }
+  if (!vmm_copy_from_user(cell_domain_as(domain), &head, thread->robust_list, sizeof(head))) { return; }
   if (head.pending != 0) { robust_wake_entry(domain, head.pending, head.futex_offset); }
   uint64_t node = head.next;
   for (size_t i = 0; i < ROBUST_LIST_LIMIT && node != 0 && node != thread->robust_list; ++i) {
     uint64_t next = 0;
     if (!cell_ensure_user_range(node, sizeof(next), VMM_ACCESS_READ) ||
-        !vmm_copy_from_user(&domain->as, &next, node, sizeof(next))) {
+        !vmm_copy_from_user(cell_domain_as(domain), &next, node, sizeof(next))) {
       break;
     }
     robust_wake_entry(domain, node, head.futex_offset);
@@ -77,7 +77,7 @@ int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, struct trap_frame
   if (domain == NULL || thread == NULL || (uaddr & 3u) != 0) { return -EINVAL; }
   if (!cell_ensure_user_range(uaddr, sizeof(uint32_t), VMM_ACCESS_READ)) { return -EFAULT; }
   uint32_t actual = 0;
-  if (!vmm_copy_from_user(&domain->as, &actual, uaddr, sizeof(actual))) { return -EFAULT; }
+  if (!vmm_copy_from_user(cell_domain_as(domain), &actual, uaddr, sizeof(actual))) { return -EFAULT; }
   if (actual != expected) { return -EAGAIN; }
   cell_save_current(frame);
   thread->state = THREAD_BLOCKED;

@@ -90,7 +90,7 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
     while (done < len) {
       uint64_t chunk = len - done;
       if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-      if (!vmm_copy_from_user(&domain->as, file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
+      if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
       if (!virtio_blk_write(file->offset, file_io_tmp, (uint32_t)chunk)) { return -5; }
       file->offset += chunk;
       done += chunk;
@@ -124,7 +124,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
       } else {
         kmemset(file_io_tmp, 0, (size_t)chunk);
       }
-      if (!vmm_copy_to_user(&domain->as, buf + done, file_io_tmp, (size_t)chunk)) {
+      if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)chunk)) {
         kmemset(file_io_tmp, 0, FILE_IO_CHUNK);
         return -14;
       }
@@ -180,7 +180,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
       uint64_t chunk = len - done;
       if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
       if (!virtio_blk_read(file->offset, file_io_tmp, (uint32_t)chunk)) { return done == 0 ? -5 : (int64_t)done; }
-      if (!vmm_copy_to_user(&domain->as, buf + done, file_io_tmp, (size_t)chunk)) { return -14; }
+      if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)chunk)) { return -14; }
       file->offset += chunk;
       done += chunk;
     }
@@ -192,7 +192,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
       uint64_t chunk = len - done;
       if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
       if (!virtio_blk_read_boot(file->offset, file_io_tmp, (uint32_t)chunk)) { return done == 0 ? -5 : (int64_t)done; }
-      if (!vmm_copy_to_user(&domain->as, buf + done, file_io_tmp, (size_t)chunk)) { return -14; }
+      if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)chunk)) { return -14; }
       file->offset += chunk;
       done += chunk;
     }
@@ -239,7 +239,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
     while (done < len) {
       uint64_t chunk = len - done;
       if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-      if (!vmm_copy_from_user(&domain->as, file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
+      if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
       int64_t wrote = vfs_write(&file->node, file->offset, file_io_tmp, chunk);
       if (wrote < 0) { return done == 0 ? wrote : (int64_t)done; }
       if (wrote == 0) { return done == 0 ? -28 : (int64_t)done; }
@@ -310,7 +310,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
     uint64_t got = vfs_read(&file->node, file->offset, file_io_tmp, chunk);
     if (got == 0) { break; }
-    if (!vmm_copy_to_user(&domain->as, buf + done, file_io_tmp, (size_t)got)) { return -14; }
+    if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)got)) { return -14; }
     file->offset += got;
     done += got;
   }
@@ -329,7 +329,7 @@ int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct t
     if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
     uint64_t got = vfs_read(&file->node, off + done, file_io_tmp, chunk);
     if (got == 0) { break; }
-    if (!vmm_copy_to_user(&domain->as, buf + done, file_io_tmp, (size_t)got)) { return -14; }
+    if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)got)) { return -14; }
     done += got;
   }
   return (int64_t)done;
@@ -349,7 +349,7 @@ int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct 
   while (done < len) {
     uint64_t chunk = len - done;
     if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-    if (!vmm_copy_from_user(&domain->as, file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
+    if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
     int64_t wrote = vfs_write(&file->node, off + done, file_io_tmp, chunk);
     if (wrote < 0) { return done == 0 ? wrote : (int64_t)done; }
     if (wrote == 0) { return done == 0 ? -28 : (int64_t)done; }

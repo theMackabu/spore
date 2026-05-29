@@ -109,8 +109,8 @@ void cell_destroy_domain(struct domain *domain) {
     }
   }
   cell_close_all_fds(domain);
-  vmm_destroy(&domain->as);
-  vma_list_destroy(&domain->vmas);
+  cell_mm_release(domain->mm);
+  domain->mm = NULL;
   domain->used = false;
   domain->zombie = false;
   domain->refcount = 0;
@@ -140,7 +140,7 @@ void cell_set_domain_identity(struct domain *domain, const char *path, const cha
 
 struct user_address_space *cell_current_as(void) {
   struct domain *domain = cell_current_domain_internal();
-  return domain == NULL ? NULL : &domain->as;
+  return cell_domain_as(domain);
 }
 
 int cell_current_pid(void) {

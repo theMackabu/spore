@@ -177,7 +177,7 @@ int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_fil
   if (len == 0) { return 0; }
   uint64_t chunk = len > 1400 ? 1400 : len;
   uint8_t tmp[1400];
-  if (!vmm_copy_from_user(&domain->as, tmp, buf, (size_t)chunk)) { return -EFAULT; }
+  if (!vmm_copy_from_user(cell_domain_as(domain), tmp, buf, (size_t)chunk)) { return -EFAULT; }
   if (!net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
                             file->tcp_ack, tcp_window(file), 0x18, tmp, (size_t)chunk)) {
     return -EIO;
@@ -190,7 +190,7 @@ int64_t cell_socket_tcp_read_to_domain(struct domain *domain, struct open_file *
   if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
   if (file->tcp_rx_len == 0) { return file->tcp_fin ? 0 : -EAGAIN; }
   uint64_t n = file->tcp_rx_len < len ? file->tcp_rx_len : len;
-  if (!vmm_copy_to_user(&domain->as, buf, file->tcp_rx, (size_t)n)) { return -EFAULT; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, file->tcp_rx, (size_t)n)) { return -EFAULT; }
   if (n < file->tcp_rx_len) {
     uint32_t remaining = file->tcp_rx_len - (uint32_t)n;
     for (uint32_t i = 0; i < remaining; ++i) {
@@ -519,7 +519,7 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
   }
   uint8_t tmp[1472];
   if (len > sizeof(tmp)) { return -EMSGSIZE; }
-  if (!vmm_copy_from_user(&domain->as, tmp, buf, (size_t)len)) { return -EFAULT; }
+  if (!vmm_copy_from_user(cell_domain_as(domain), tmp, buf, (size_t)len)) { return -EFAULT; }
   bool sent = false;
   if (file->socket_proto == IPPROTO_UDP) {
     sent = net_udp_send(file->udp_local_port, effective_ip, effective_port, tmp, (size_t)len);
@@ -551,7 +551,7 @@ bool cell_socket_copy_udp_source_to_domain(struct domain *domain, const struct o
   if (addr == 0 && addrlen == 0) { return true; }
   if (addrlen != 0) {
     uint32_t len = sizeof(struct sockaddr_in_cell);
-    if (!vmm_copy_to_user(&domain->as, addrlen, &len, sizeof(len))) { return false; }
+    if (!vmm_copy_to_user(cell_domain_as(domain), addrlen, &len, sizeof(len))) { return false; }
   }
   if (addr == 0) { return true; }
   struct sockaddr_in_cell sa;
@@ -559,7 +559,7 @@ bool cell_socket_copy_udp_source_to_domain(struct domain *domain, const struct o
   sa.sin_family = 2;
   sa.sin_port = net_bswap16(file->udp_rx_port);
   sa.sin_addr = file->udp_rx_ip;
-  return vmm_copy_to_user(&domain->as, addr, &sa, sizeof(sa));
+  return vmm_copy_to_user(cell_domain_as(domain), addr, &sa, sizeof(sa));
 }
 
 int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame, uint64_t addr,
@@ -585,7 +585,7 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_fram
     return cell_block_current_on_socket(fd, buf, len, addr, addrlen, frame);
   }
   uint64_t n = file->udp_rx_len < len ? file->udp_rx_len : len;
-  if (!vmm_copy_to_user(&domain->as, buf, file->udp_rx, (size_t)n)) { return -EFAULT; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, file->udp_rx, (size_t)n)) { return -EFAULT; }
   if (!cell_socket_copy_udp_source_to_domain(domain, file, addr, addrlen)) { return -EFAULT; }
   file->udp_rx_len = 0;
   return (int64_t)n;
@@ -733,7 +733,7 @@ static void wake_socket_waiters(struct open_file *file) {
         }
       } else if (file->type == OPEN_SOCKET && file->udp_rx_len != 0 && thread->pipe_buf != 0) {
         uint64_t n = file->udp_rx_len < thread->pipe_len ? file->udp_rx_len : thread->pipe_len;
-        if (!vmm_copy_to_user(&thread->domain->as, thread->pipe_buf, file->udp_rx, (size_t)n)) {
+        if (!vmm_copy_to_user(cell_domain_as(thread->domain), thread->pipe_buf, file->udp_rx, (size_t)n)) {
           thread->tf.x[0] = (uint64_t)(-(int64_t)EFAULT);
         } else if (!cell_socket_copy_udp_source_to_domain(thread->domain, file, thread->socket_addr,
                                                           thread->socket_addrlen)) {

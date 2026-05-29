@@ -68,6 +68,23 @@ static void test_large_file_write(struct ext2_fs *fs) {
   assert(ext2_unlink(fs, "/large-write.bin"));
 }
 
+static void test_relative_symlink_with_dotdot(struct ext2_fs *fs) {
+  struct ext2_node node;
+  assert(ext2_create(fs, "/symlink-bin", true, NULL));
+  assert(ext2_create(fs, "/symlink-lib", true, NULL));
+  assert(ext2_create(fs, "/symlink-lib/llvm", true, NULL));
+  assert(ext2_create(fs, "/symlink-lib/llvm/tool-real", false, &node));
+  const char payload[] = "real tool\n";
+  assert(ext2_write_file(fs, &node, 0, payload, sizeof(payload) - 1) == (int64_t)(sizeof(payload) - 1));
+  assert(ext2_symlink(fs, "../symlink-lib/llvm/tool", "/symlink-bin/tool"));
+  assert(ext2_symlink(fs, "tool-real", "/symlink-lib/llvm/tool"));
+
+  struct ext2_node resolved;
+  assert(ext2_lookup(fs, "/symlink-bin/tool", &resolved));
+  assert(ext2_is_regular(&resolved));
+  assert(resolved.size == sizeof(payload) - 1);
+}
+
 static void test_mutations(const char *image_path) {
   char tmp_path[256];
   snprintf(tmp_path, sizeof(tmp_path), "/tmp/spore-ext2-test-%ld.img", (long)getpid());
@@ -78,6 +95,7 @@ static void test_mutations(const char *image_path) {
   struct ext2_fs fs;
   assert(ext2_mount_rw(&fs, file_read, file_write, f));
   test_large_file_write(&fs);
+  test_relative_symlink_with_dotdot(&fs);
 
   assert(ext2_create(&fs, "/apkdir", true, NULL));
   for (int i = 0; i < 128; ++i) {

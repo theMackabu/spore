@@ -119,7 +119,7 @@ void cell_copy_open_path(struct open_file *file, const char *path) {
 int64_t cell_eventfd_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
   if (len < sizeof(uint64_t)) { return -EINVAL; }
   uint64_t add = 0;
-  if (!vmm_copy_from_user(&domain->as, &add, buf, sizeof(add))) { return -EFAULT; }
+  if (!vmm_copy_from_user(cell_domain_as(domain), &add, buf, sizeof(add))) { return -EFAULT; }
   if (add == UINT64_MAX || UINT64_MAX - file->eventfd_value <= add) { return -EAGAIN; }
   file->eventfd_value += add;
   cell_wake_poll_waiters_internal();
@@ -131,7 +131,7 @@ int64_t cell_eventfd_read_to_domain(struct domain *domain, struct open_file *fil
   if (file->eventfd_value == 0) { return -EAGAIN; }
   uint64_t value = file->eventfd_semaphore ? 1 : file->eventfd_value;
   file->eventfd_value -= value;
-  if (!vmm_copy_to_user(&domain->as, buf, &value, sizeof(value))) { return -EFAULT; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, &value, sizeof(value))) { return -EFAULT; }
   cell_wake_poll_waiters_internal();
   return sizeof(value);
 }
@@ -263,7 +263,7 @@ int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
   write_file->pipe_write_end = true;
 
   int fds[2] = {read_fd, write_fd};
-  if (!vmm_copy_to_user(&domain->as, pipefd_addr, fds, sizeof(fds))) {
+  if (!vmm_copy_to_user(cell_domain_as(domain), pipefd_addr, fds, sizeof(fds))) {
     cell_release_open_file(read_file);
     cell_release_open_file(write_file);
     return -EFAULT;

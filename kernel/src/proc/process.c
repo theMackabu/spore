@@ -30,7 +30,8 @@ void cell_wake_parent_of(struct domain *child) {
     int status = child->exit_status << 8;
     if (child->term_signal != 0) { status = child->term_signal; }
     uint64_t status_addr = parent->tf.x[1];
-    if (status_addr != 0) { (void)vmm_copy_to_user(&parent_domain->as, status_addr, &status, sizeof(status)); }
+    struct user_address_space *parent_as = cell_domain_as(parent_domain);
+    if (status_addr != 0 && parent_as != NULL) { (void)vmm_copy_to_user(parent_as, status_addr, &status, sizeof(status)); }
     parent->tf.x[0] = (uint64_t)child->id;
     struct thread *child_thread = cell_thread_for_domain(child);
     if (child_thread != NULL) { child_thread->state = child_is_current ? THREAD_ZOMBIE : THREAD_UNUSED; }
@@ -51,7 +52,8 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
   cell_futex_cleanup_robust_list(cell_current_thread_internal());
   if (cell_current_thread_internal()->clear_child_tid != 0) {
     uint32_t zero = 0;
-    (void)vmm_copy_to_user(&domain->as, cell_current_thread_internal()->clear_child_tid, &zero, sizeof(zero));
+    struct user_address_space *as = cell_domain_as(domain);
+    if (as != NULL) { (void)vmm_copy_to_user(as, cell_current_thread_internal()->clear_child_tid, &zero, sizeof(zero)); }
     (void)cell_futex_wake_domain(domain, cell_current_thread_internal()->clear_child_tid, 1);
   }
   if (cell_runnable_or_blocked_threads_in_domain(domain) <= 1) {
@@ -92,20 +94,16 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
 int cell_fork_current(struct trap_frame *frame) {
   struct domain *parent = current_domain();
   struct domain *child_domain = cell_alloc_domain();
-  if (parent == NULL || child_domain == NULL) { return -12; }
+  if (parent == NULL || parent->mm == NULL || child_domain == NULL) { return -12; }
   struct thread *child_thread = cell_alloc_thread(child_domain);
   if (child_thread == NULL) {
     child_domain->used = false;
     return -12;
   }
   cell_save_current(frame);
-  if (!vmm_clone_cow(&child_domain->as, &parent->as, 0)) {
-    child_thread->state = THREAD_UNUSED;
-    child_domain->used = false;
-    return -12;
-  }
-  if (!vma_clone(&child_domain->vmas, &parent->vmas)) {
-    vmm_destroy(&child_domain->as);
+  struct process_mm *child_mm = cell_mm_clone_cow(parent->mm);
+  if (child_mm == NULL || !cell_domain_set_mm(child_domain, child_mm)) {
+    if (child_mm != NULL) { cell_mm_release(child_mm); }
     child_thread->state = THREAD_UNUSED;
     child_domain->used = false;
     return -12;
@@ -123,12 +121,36 @@ int cell_fork_current(struct trap_frame *frame) {
   return child_domain->id;
 }
 
-int cell_vfork_current(struct trap_frame *frame) {
-  int child_id = cell_fork_current(frame);
-  if (child_id < 0) { return child_id; }
+int cell_vfork_current(struct trap_frame *frame, uint64_t newsp) {
+  struct domain *parent = current_domain();
+  if (parent == NULL || parent->mm == NULL) { return -12; }
+  struct domain *child = cell_alloc_domain();
+  if (child == NULL) { return -12; }
+  struct thread *child_thread = cell_alloc_thread(child);
+  if (child_thread == NULL) {
+    child->used = false;
+    return -12;
+  }
+  cell_save_current(frame);
+  if (!cell_domain_set_mm(child, cell_mm_retain(parent->mm))) {
+    child_thread->state = THREAD_UNUSED;
+    child->used = false;
+    return -12;
+  }
+  cell_copy_domain_metadata(child, parent);
+  cell_copy_fd_table(child, parent);
+  child->parent_id = parent->id;
+  child_thread->state = THREAD_RUNNABLE;
+  child_thread->tf = cell_current_thread_internal()->tf;
+  child_thread->fp = cell_current_thread_internal()->fp;
+  child_thread->tf.x[0] = 0;
+  if (newsp != 0 && child_thread != NULL) { child_thread->tf.sp_el0 = newsp; }
+  child_thread->tpidr_el0 = cell_current_thread_internal()->tpidr_el0;
+  cell_current_thread_internal()->tf.x[0] = (uint64_t)child->id;
+  copy_cstr(child->name, sizeof(child->name), parent->name);
   cell_current_thread_internal()->state = THREAD_BLOCKED;
   cell_current_thread_internal()->wait_reason = WAIT_VFORK;
-  cell_current_thread_internal()->wait_target = child_id;
+  cell_current_thread_internal()->wait_target = child->id;
   cell_schedule(frame);
   return CELL_SWITCHED;
 }
@@ -149,11 +171,13 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   thread->clear_child_tid = ((flags & 0x00200000ull) != 0) ? child_tid : 0;
   if ((flags & 0x00100000ull) != 0 && parent_tid != 0) {
     uint32_t tid = (uint32_t)thread->tid;
-    (void)vmm_copy_to_user(&domain->as, parent_tid, &tid, sizeof(tid));
+    struct user_address_space *as = cell_domain_as(domain);
+    if (as != NULL) { (void)vmm_copy_to_user(as, parent_tid, &tid, sizeof(tid)); }
   }
   if ((flags & 0x01000000ull) != 0 && child_tid != 0) {
     uint32_t tid = (uint32_t)thread->tid;
-    (void)vmm_copy_to_user(&domain->as, child_tid, &tid, sizeof(tid));
+    struct user_address_space *as = cell_domain_as(domain);
+    if (as != NULL) { (void)vmm_copy_to_user(as, child_tid, &tid, sizeof(tid)); }
   }
   cell_current_thread_internal()->tf.x[0] = (uint64_t)thread->tid;
   return thread->tid;
@@ -203,7 +227,8 @@ int cell_wait4_options(int pid, uint64_t status_addr, int options, struct trap_f
 
   int status = child->exit_status << 8;
   if (child->term_signal != 0) { status = child->term_signal; }
-  if (status_addr != 0 && !vmm_copy_to_user(&domain->as, status_addr, &status, sizeof(status))) { return -14; }
+  struct user_address_space *as = cell_domain_as(domain);
+  if (status_addr != 0 && (as == NULL || !vmm_copy_to_user(as, status_addr, &status, sizeof(status)))) { return -14; }
   int child_id = child->id;
   struct thread *child_thread = cell_thread_for_domain(child);
   if (child_thread != NULL) { child_thread->state = THREAD_UNUSED; }
@@ -222,8 +247,8 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   struct domain *domain = current_domain();
   if (domain == NULL || cell_current_thread_internal() == NULL) { return false; }
 
-  struct user_address_space old_as = domain->as;
-  struct vma_list old_vmas = domain->vmas;
+  struct process_mm *new_mm = cell_mm_from_owned(as, vmas);
+  if (new_mm == NULL) { return false; }
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
@@ -239,14 +264,10 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
       domain->fd_flags[i] = 0;
     }
   }
-  domain->as = *as;
-  domain->vmas = *vmas;
-  vma_list_init(vmas);
+  cell_domain_set_mm(domain, new_mm);
   kmemset(domain->signal_actions, 0, sizeof(domain->signal_actions));
   cell_set_domain_identity(domain, path, argv, argc);
-  vmm_install_user(&domain->as);
-  vmm_destroy(&old_as);
-  vma_list_destroy(&old_vmas);
+  vmm_install_user(cell_domain_as(domain));
 
   kmemset(frame, 0, sizeof(*frame));
   frame->elr_el1 = entry;

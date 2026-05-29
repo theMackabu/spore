@@ -36,11 +36,13 @@ int snapshot_create_current(void) {
   struct domain *domain = cell_current_domain_internal();
   struct snapshot *snap = alloc_snapshot();
   if (domain == NULL || snap == NULL) { return -12; }
-  if (!vmm_clone_cow(&snap->as, &domain->as, 0)) {
+  struct user_address_space *as = cell_domain_as(domain);
+  struct vma_list *vmas = cell_domain_vmas(domain);
+  if (as == NULL || vmas == NULL || !vmm_clone_cow(&snap->as, as, 0)) {
     snap->used = false;
     return -12;
   }
-  if (!vma_clone(&snap->vmas, &domain->vmas)) {
+  if (!vma_clone(&snap->vmas, vmas)) {
     vmm_destroy(&snap->as);
     snap->used = false;
     return -12;
@@ -58,13 +60,24 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
     child_domain->used = false;
     return -12;
   }
-  if (!vmm_clone_cow(&child_domain->as, &snap->as, 0)) {
+  struct user_address_space child_as;
+  struct vma_list child_vmas;
+  if (!vmm_clone_cow(&child_as, &snap->as, 0)) {
     child_thread->state = THREAD_UNUSED;
     child_domain->used = false;
     return -12;
   }
-  if (!vma_clone(&child_domain->vmas, &snap->vmas)) {
-    vmm_destroy(&child_domain->as);
+  if (!vma_clone(&child_vmas, &snap->vmas)) {
+    vmm_destroy(&child_as);
+    child_thread->state = THREAD_UNUSED;
+    child_domain->used = false;
+    return -12;
+  }
+  struct process_mm *child_mm = cell_mm_from_owned(&child_as, &child_vmas);
+  if (child_mm == NULL || !cell_domain_set_mm(child_domain, child_mm)) {
+    if (child_mm != NULL) { cell_mm_release(child_mm); }
+    vmm_destroy(&child_as);
+    vma_list_destroy(&child_vmas);
     child_thread->state = THREAD_UNUSED;
     child_domain->used = false;
     return -12;

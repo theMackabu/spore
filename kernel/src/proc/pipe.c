@@ -71,7 +71,9 @@ static uint8_t *pipe_data_ptr(const struct pipe_obj *pipe, const struct domain *
   uint64_t page = pos / PAGE_SIZE;
   uint64_t off = pos % PAGE_SIZE;
   if (page >= PIPE_PAGES || pipe->pages[page] == 0) { return NULL; }
-  return (uint8_t *)(uintptr_t)(domain->as.hhdm_offset + pipe->pages[page] + off);
+  const struct user_address_space *as = cell_domain_as_const(domain);
+  if (as == NULL) { return NULL; }
+  return (uint8_t *)(uintptr_t)(as->hhdm_offset + pipe->pages[page] + off);
 }
 
 int cell_alloc_pipe_obj(uint64_t fifo_ino) {
@@ -245,7 +247,7 @@ int64_t cell_pipe_write_id_from_domain(struct domain *domain, uint8_t pipe_id, u
     if (chunk > page_room) { chunk = page_room; }
     if (chunk > target - done) { chunk = target - done; }
     uint8_t *dst = pipe_data_ptr(pipe, domain, tail);
-    if (dst == NULL || !vmm_copy_from_user(&domain->as, dst, buf + done, (size_t)chunk)) { return -EFAULT; }
+    if (dst == NULL || !vmm_copy_from_user(cell_domain_as(domain), dst, buf + done, (size_t)chunk)) { return -EFAULT; }
     pipe->len += chunk;
     done += chunk;
   }
@@ -269,7 +271,7 @@ int64_t cell_pipe_read_id_to_domain(struct domain *domain, uint8_t pipe_id, uint
     if (chunk > page_room) { chunk = page_room; }
     if (chunk > target - done) { chunk = target - done; }
     uint8_t *src = pipe_data_ptr(pipe, domain, pipe->head);
-    if (src == NULL || !vmm_copy_to_user(&domain->as, buf + done, src, (size_t)chunk)) { return -EFAULT; }
+    if (src == NULL || !vmm_copy_to_user(cell_domain_as(domain), buf + done, src, (size_t)chunk)) { return -EFAULT; }
     pipe->head = (pipe->head + chunk) % PIPE_CAP;
     pipe->len -= chunk;
     done += chunk;

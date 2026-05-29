@@ -180,6 +180,13 @@ struct fp_state {
   uint64_t fpsr;
 } __attribute__((aligned(16)));
 
+struct process_mm {
+  bool used;
+  uint16_t refcount;
+  struct user_address_space as;
+  struct vma_list vmas;
+};
+
 struct domain {
   int id;
   int parent_id;
@@ -202,8 +209,7 @@ struct domain {
   uint64_t last_unsupported_syscall;
   uint64_t unsupported_ioctls;
   uint64_t last_unsupported_ioctl;
-  struct user_address_space as;
-  struct vma_list vmas;
+  struct process_mm *mm;
   struct open_file *fds[MAX_FDS];
   uint8_t fd_flags[MAX_FDS];
   char name[32];
@@ -296,6 +302,16 @@ struct cell_peer_cred {
 void cell_system_init(uint64_t hhdm_offset);
 bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp);
 struct user_address_space *cell_current_as(void);
+struct user_address_space *cell_domain_as(struct domain *domain);
+const struct user_address_space *cell_domain_as_const(const struct domain *domain);
+struct vma_list *cell_domain_vmas(struct domain *domain);
+const struct vma_list *cell_domain_vmas_const(const struct domain *domain);
+void cell_mm_reset(void);
+struct process_mm *cell_mm_from_owned(struct user_address_space *as, struct vma_list *vmas);
+struct process_mm *cell_mm_clone_cow(struct process_mm *src);
+struct process_mm *cell_mm_retain(struct process_mm *mm);
+void cell_mm_release(struct process_mm *mm);
+bool cell_domain_set_mm(struct domain *domain, struct process_mm *mm);
 int cell_current_pid(void);
 int cell_current_tid(void);
 int cell_current_ppid(void);
@@ -328,7 +344,7 @@ int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t
 int cell_rt_sigreturn(struct trap_frame *frame);
 void cell_dump_current_fault(const struct trap_frame *frame, uint64_t far);
 int cell_fork_current(struct trap_frame *frame);
-int cell_vfork_current(struct trap_frame *frame);
+int cell_vfork_current(struct trap_frame *frame, uint64_t newsp);
 int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid,
                               uint64_t tls, uint64_t child_tid);
 int cell_getpgid(int pid);

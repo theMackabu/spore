@@ -22,6 +22,7 @@ static struct domain *current_domain(void) {
 
 void cell_system_init(uint64_t hhdm_offset) {
   vma_set_hhdm_offset(hhdm_offset);
+  cell_mm_reset();
   cell_domain_reset();
   cell_thread_reset();
   cell_snapshot_reset();
@@ -49,20 +50,26 @@ bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint
   (void)cell_tty_set_foreground_pgrp(domain->pgrp_id);
   static const char *init_argv[] = {"/sbin/init"};
   cell_set_domain_identity(domain, "/sbin/init", init_argv, 1);
-  domain->as = *as;
-  domain->as.asid = 0;
-  domain->vmas = *vmas;
-  vma_list_init(vmas);
-  if (!vma_insert(&domain->vmas, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP, VMM_USER_READ | VMM_USER_WRITE, 0,
+  struct process_mm *mm = cell_mm_from_owned(as, vmas);
+  if (mm == NULL || !cell_domain_set_mm(domain, mm)) {
+    if (mm != NULL) { cell_mm_release(mm); }
+    thread->state = THREAD_UNUSED;
+    domain->used = false;
+    return false;
+  }
+  if (!vma_insert(cell_domain_vmas(domain), USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP,
+                  VMM_USER_READ | VMM_USER_WRITE, 0,
                   VMA_STACK)) {
     thread->state = THREAD_UNUSED;
-    vma_list_destroy(&domain->vmas);
+    cell_mm_release(domain->mm);
+    domain->mm = NULL;
     domain->used = false;
     return false;
   }
   if (!cell_init_stdio(domain)) {
     thread->state = THREAD_UNUSED;
-    vma_list_destroy(&domain->vmas);
+    cell_mm_release(domain->mm);
+    domain->mm = NULL;
     domain->used = false;
     return false;
   }

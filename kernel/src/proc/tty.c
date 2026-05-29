@@ -96,7 +96,7 @@ void cell_tty_set_erase_char(uint8_t ch) {
 int64_t cell_tty_write_console_from_user(struct domain *domain, uint64_t buf, uint64_t len) {
   for (uint64_t i = 0; i < len; ++i) {
     char c;
-    if (!vmm_copy_from_user(&domain->as, &c, buf + i, 1)) { return -14; }
+    if (!vmm_copy_from_user(cell_domain_as(domain), &c, buf + i, 1)) { return -14; }
     pl011_putc(c);
     if (c == '\r' || c == '\n') {
       tty_output_line_len = 0;
@@ -313,7 +313,7 @@ int64_t cell_tty_read_to_user(struct domain *domain, uint64_t buf, uint64_t len)
       if (tty_pending_signal != 0) { return -EINTR; }
       if (!tty_ready_pop(&c)) { break; }
     }
-    if (!vmm_copy_to_user(&domain->as, buf + n, &c, 1)) { return -14; }
+    if (!vmm_copy_to_user(cell_domain_as(domain), buf + n, &c, 1)) { return -14; }
     ++n;
     if (tty_canonical() && c == '\n') { break; }
   }
