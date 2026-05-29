@@ -85,6 +85,10 @@ static const char *signal_message(int sig) {
   return "Signaled";
 }
 
+static bool should_report_signal(int sig) {
+  return sig != SIGINT;
+}
+
 static void remember_job(pid_t pid, char **argv) {
   for (size_t i = 0; i < JOB_CAP; ++i) {
     if (jobs[i].pid == 0 || (!jobs[i].running && jobs[i].reported)) {
@@ -294,7 +298,7 @@ static int wait_status(pid_t pid) {
   }
   if (WIFEXITED(status)) { return WEXITSTATUS(status); }
   if (WIFSIGNALED(status)) {
-    puts(signal_message(WTERMSIG(status)));
+    if (should_report_signal(WTERMSIG(status))) { puts(signal_message(WTERMSIG(status))); }
     return 128 + WTERMSIG(status);
   }
   return 128;
@@ -467,7 +471,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
       continue;
     }
     if (i + 1 == count) {
-      if (WIFSIGNALED(status)) { puts(signal_message(WTERMSIG(status))); }
+      if (WIFSIGNALED(status) && should_report_signal(WTERMSIG(status))) { puts(signal_message(WTERMSIG(status))); }
       result = status_code(status);
     }
   }
