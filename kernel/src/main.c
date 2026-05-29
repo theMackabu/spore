@@ -1,4 +1,5 @@
 #include "arch/aarch64/exceptions.h"
+#include "arch/aarch64/smp.h"
 #include "arch/aarch64/timer.h"
 #include "boot_info.h"
 #include "cell.h"
@@ -326,6 +327,7 @@ void finish_enter_el0(struct user_address_space *as, struct vma_list *vmas, uint
       __asm__ volatile("wfe");
     }
   }
+  smp_start_scheduler_cpus();
   syscall_set_address_space(cell_current_as());
   vmm_enable_ttbr0();
   vmm_install_user(cell_current_as());
@@ -358,6 +360,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   (void)virtio_console_init(boot->hhdm_offset);
   kprintf("[kernel] booted at EL%u\n", (unsigned)current_el());
   exceptions_init();
+  smp_boot_parked_secondaries(boot->kernel_phys_base, boot->kernel_virt_base);
   timer_init(boot->hhdm_offset);
   if (virtio_blk_init(boot->hhdm_offset)) { probe_ext2_root(); }
   if (virtio_net_init(boot->hhdm_offset)) {

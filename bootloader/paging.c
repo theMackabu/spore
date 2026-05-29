@@ -24,6 +24,28 @@ static uint64_t *ensure_table(uint64_t *table, uint64_t index) {
     uint64_t *child = new_page_table();
     if (child == NULL) { return NULL; }
     table[index] = table_desc(child);
+  } else if ((table[index] & 3u) != 3u) {
+    return NULL;
+  }
+  return (uint64_t *)(uintptr_t)(table[index] & 0x0000fffffffff000ull);
+}
+
+static uint64_t *ensure_l3_table(uint64_t *table, uint64_t index) {
+  if ((table[index] & 1u) == 0) {
+    uint64_t *child = new_page_table();
+    if (child == NULL) { return NULL; }
+    table[index] = table_desc(child);
+  } else if ((table[index] & 3u) != 3u) {
+    uint64_t block = table[index];
+    uint64_t block_base = block & 0x0000ffffffe00000ull;
+    uint64_t attrs = block & ~0x0000ffffffe00000ull;
+    attrs &= ~0x3ull;
+    uint64_t *child = new_page_table();
+    if (child == NULL) { return NULL; }
+    for (uint64_t i = 0; i < PT_ENTRIES; ++i) {
+      child[i] = (block_base + i * PAGE_SIZE) | attrs | 0x3ull;
+    }
+    table[index] = table_desc(child);
   }
   return (uint64_t *)(uintptr_t)(table[index] & 0x0000fffffffff000ull);
 }
@@ -33,7 +55,7 @@ static int map_page(uint64_t *root_table, uint64_t va, uint64_t pa, uint64_t att
   if (l1 == NULL) { return 0; }
   uint64_t *l2 = ensure_table(l1, pt_index(va, 30));
   if (l2 == NULL) { return 0; }
-  uint64_t *l3 = ensure_table(l2, pt_index(va, 21));
+  uint64_t *l3 = ensure_l3_table(l2, pt_index(va, 21));
   if (l3 == NULL) { return 0; }
   l3[pt_index(va, 12)] = (pa & 0x0000fffffffff000ull) | attrs | 0x3ull;
   return 1;
@@ -49,11 +71,16 @@ void install_ttbr1(uint64_t root_pa) {
   uint64_t mair = 0xffull | (0x00ull << 16);
   uint64_t tcr;
   __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
-  uint64_t clear = (0x3full << 16) | (1ull << 23) | (3ull << 24) | (3ull << 26) | (3ull << 28) | (3ull << 30);
+  uint64_t clear = 0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) |
+                   (0x3full << 16) | (1ull << 23) | (3ull << 24) | (3ull << 26) | (3ull << 28) | (3ull << 30);
+  clear |= 7ull << 32;
   tcr &= ~clear;
+  tcr |= 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12);
   tcr |= (16ull << 16) | (1ull << 24) | (1ull << 26) | (3ull << 28) | (2ull << 30);
+  tcr |= 1ull << 32;
   __asm__ volatile("msr mair_el1, %0\n"
                    "msr tcr_el1, %1\n"
+                   "msr ttbr0_el1, %2\n"
                    "msr ttbr1_el1, %2\n"
                    "dsb ishst\n"
                    "tlbi vmalle1\n"
@@ -105,6 +132,10 @@ int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint
     uint64_t attrs = off < 0x100000ull ? kernel_rx : kernel_rw_nx;
     if (!map_page(root_table, kernel_virt_base + off, kernel_phys_base + off, attrs)) {
       uefi_puts(u"spore-boot: kernel map failed\r\n");
+      return 0;
+    }
+    if (!map_page(root_table, kernel_phys_base + off, kernel_phys_base + off, attrs)) {
+      uefi_puts(u"spore-boot: kernel identity map failed\r\n");
       return 0;
     }
   }

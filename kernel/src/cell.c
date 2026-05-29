@@ -1,5 +1,6 @@
 #include "cell.h"
 
+#include "arch/aarch64/smp.h"
 #include "exec/stack.h"
 #include "kprintf.h"
 #include "net.h"
@@ -15,6 +16,8 @@
 
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_idle_ticks;
+static uint64_t scheduler_cpu_busy_ticks[SPORE_MAX_CPUS];
+static uint64_t scheduler_cpu_idle_ticks[SPORE_MAX_CPUS];
 static uint64_t boot_epoch_sec;
 static struct domain *current_domain(void) {
   return cell_current_domain_internal();
@@ -30,10 +33,14 @@ void cell_system_init(uint64_t hhdm_offset) {
   cell_pipe_reset();
   scheduler_ticks = 0;
   scheduler_idle_ticks = 0;
+  for (size_t i = 0; i < SPORE_MAX_CPUS; ++i) {
+    scheduler_cpu_busy_ticks[i] = 0;
+    scheduler_cpu_idle_ticks[i] = 0;
+  }
   cell_tty_reset();
   // v2 Phase A object model: domains own isolation/policy state, threads own
-  // EL0 execution state. The kernel remains run-to-completion on one core, so
-  // these tables intentionally have no locks until a later SMP/preemptive goal.
+  // EL0 execution state. Kernel mutation is serialized by the big kernel lock;
+  // user execution may run on multiple CPUs.
 }
 
 bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp) {
@@ -90,11 +97,21 @@ uint64_t cell_realtime_seconds(void) {
 }
 
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
-  ++scheduler_ticks;
-  if (cell_scheduler_waiting_for_interrupt()) { ++scheduler_idle_ticks; }
-  cell_wake_sleep_waiters(scheduler_ticks);
-  net_poll();
-  cell_wake_poll_waiters_internal();
+  uint32_t cpu = smp_current_cpu();
+  if (cpu < SPORE_MAX_CPUS) {
+    if (from_lower_el) {
+      ++scheduler_cpu_busy_ticks[cpu];
+    } else if (cell_scheduler_waiting_for_interrupt()) {
+      ++scheduler_cpu_idle_ticks[cpu];
+    }
+  }
+  if (cpu == 0) {
+    ++scheduler_ticks;
+    if (cell_scheduler_waiting_for_interrupt()) { ++scheduler_idle_ticks; }
+    cell_wake_sleep_waiters(scheduler_ticks);
+    net_poll();
+    cell_wake_poll_waiters_internal();
+  }
   struct domain *domain = current_domain();
   if (domain == NULL) { return; }
   if (from_lower_el) { ++domain->cpu_ticks; }
@@ -111,7 +128,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
       return;
     }
   }
-  if (from_lower_el) { cell_schedule(frame); }
+  if (from_lower_el && domain->zombie) { cell_schedule(frame); }
 }
 
 uint64_t cell_uptime_ticks(void) {
@@ -120,6 +137,14 @@ uint64_t cell_uptime_ticks(void) {
 
 uint64_t cell_idle_ticks(void) {
   return scheduler_idle_ticks;
+}
+
+uint64_t cell_cpu_busy_ticks(uint32_t cpu) {
+  return cpu < SPORE_MAX_CPUS ? scheduler_cpu_busy_ticks[cpu] : 0;
+}
+
+uint64_t cell_cpu_idle_ticks(uint32_t cpu) {
+  return cpu < SPORE_MAX_CPUS ? scheduler_cpu_idle_ticks[cpu] : 0;
 }
 
 uint64_t cell_boot_epoch_seconds(void) {

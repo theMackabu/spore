@@ -84,24 +84,30 @@ vectors:
 
 lower_sync_exception:
     save_trap_frame
+    bl smp_kernel_lock
     mov x0, sp
     bl handle_lower_sync
+    bl smp_kernel_unlock
     restore_trap_frame
     eret
 
 current_irq_exception:
     save_trap_frame
+    bl smp_kernel_lock
     mov x0, sp
     mov x1, #0
     bl handle_irq
+    bl smp_kernel_unlock
     restore_trap_frame
     eret
 
 lower_irq_exception:
     save_trap_frame
+    bl smp_kernel_lock
     mov x0, sp
     mov x1, #1
     bl handle_irq
+    bl smp_kernel_unlock
     restore_trap_frame
     eret
 

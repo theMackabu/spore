@@ -309,6 +309,7 @@ int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t t
     return (int)ready;
   }
   thread->state = THREAD_BLOCKED;
+  thread->running_cpu = -1;
   thread->wait_reason = WAIT_POLL;
   thread->poll_has_deadline = has_timeout;
   thread->poll_deadline_tick = cell_uptime_ticks() + timeout_ticks;
@@ -334,6 +335,7 @@ int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, ui
     return (int)ready;
   }
   thread->state = THREAD_BLOCKED;
+  thread->running_cpu = -1;
   thread->wait_reason = WAIT_POLL;
   thread->poll_has_deadline = has_timeout;
   thread->poll_deadline_tick = cell_uptime_ticks() + timeout_ticks;
@@ -407,6 +409,7 @@ int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int t
   struct thread *thread = cell_current_thread_internal();
   cell_save_current(frame);
   thread->state = THREAD_BLOCKED;
+  thread->running_cpu = -1;
   thread->wait_reason = WAIT_EPOLL;
   thread->epoll_fd = epfd;
   thread->epoll_events = events_addr;

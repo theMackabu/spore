@@ -94,6 +94,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   child_thread->tf.x[1] = (uint64_t)child_domain->id;
   child_thread->tf.spsr_el1 &= ~(1ull << 7);
   child_thread->tpidr_el0 = cell_current_thread_internal()->tpidr_el0;
+  __asm__ volatile("sev" : : : "memory");
   return child_domain->id;
 }
 

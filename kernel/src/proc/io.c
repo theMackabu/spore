@@ -32,9 +32,8 @@ enum {
 };
 
 /*
- * Spore is single-core/run-to-completion, so a shared kernel scratch page is safe
- * for synchronous VFS/device copies and avoids placing a 4 KiB buffer on the
- * exception stack for every read/write syscall.
+ * The big kernel lock serializes synchronous VFS/device copies, so one shared
+ * scratch page avoids placing a 4 KiB buffer on every exception stack.
  */
 static uint8_t file_io_tmp[FILE_IO_CHUNK];
 
@@ -142,6 +141,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     if (frame == NULL) { return 0; }
     cell_save_current(frame);
     cell_current_thread_internal()->state = THREAD_BLOCKED;
+    cell_current_thread_internal()->running_cpu = -1;
     cell_current_thread_internal()->wait_reason = WAIT_STDIN;
     cell_current_thread_internal()->stdin_buf = buf;
     cell_current_thread_internal()->stdin_len = len;
@@ -296,6 +296,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     if (frame == NULL) { return 0; }
     cell_save_current(frame);
     cell_current_thread_internal()->state = THREAD_BLOCKED;
+    cell_current_thread_internal()->running_cpu = -1;
     cell_current_thread_internal()->wait_reason = WAIT_STDIN;
     cell_current_thread_internal()->stdin_buf = buf;
     cell_current_thread_internal()->stdin_len = len;

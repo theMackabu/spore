@@ -36,7 +36,7 @@ static void flush_all_user_tlb(void) {
   return;
 #else
   __asm__ volatile("dsb ishst\n"
-                   "tlbi vmalle1\n"
+                   "tlbi vmalle1is\n"
                    "dsb ish\n"
                    "isb\n"
                    :
@@ -84,6 +84,7 @@ bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint3
   uint64_t ap = (flags & VMM_USER_WRITE) != 0 ? PTE_AP_USER_RW : PTE_AP_USER_RO;
   uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
   l3[pt_index(va, 12)] = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_AF | PTE_SH_INNER | ap | PTE_PXN | xn;
+  vmm_flush_user_va(va);
   return true;
 }
 
@@ -143,7 +144,8 @@ bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *sr
   dst->mmap_base = src->mmap_base;
   dst->asid = asid;
 
-  // v1 is cooperative and uniprocessor, so source PTE downgrades need no lock.
+  // The big kernel lock serializes page-table mutation; broadcast TLB flushes
+  // make source PTE downgrades visible to every CPU that may have cached them.
   // Hardware DBM is left off; CoW is represented only by AP[2] + PTE_COW.
   bool ok = clone_table_cow(dst, src, root, src->root_pa, 0);
   flush_all_user_tlb();
@@ -385,9 +387,10 @@ void vmm_enable_ttbr0(void) {
 #else
   uint64_t tcr;
   __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
-  const uint64_t clear = 0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14);
+  const uint64_t clear =
+    0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) | (7ull << 32);
   tcr &= ~clear;
-  tcr |= 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12);
+  tcr |= 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12) | (1ull << 32);
   __asm__ volatile("msr tcr_el1, %0\n"
                    "isb\n"
                    :

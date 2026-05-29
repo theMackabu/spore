@@ -1,5 +1,6 @@
 #include "proc/thread.h"
 
+#include "arch/aarch64/smp.h"
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/vmm.h"
@@ -13,9 +14,9 @@ enum {
 };
 
 static struct thread threads[MAX_THREADS];
-static struct thread *current_thread;
+static struct thread *current_threads[SPORE_MAX_CPUS];
 static int next_thread_id = 1;
-static volatile bool scheduler_waiting_for_interrupt;
+static volatile bool scheduler_waiting_for_interrupt[SPORE_MAX_CPUS];
 
 static void poweroff(void) {
   __asm__ volatile("mov x0, #0x0008\n"
@@ -28,25 +29,32 @@ static void poweroff(void) {
 
 void cell_thread_reset(void) {
   kmemset(threads, 0, sizeof(threads));
-  current_thread = NULL;
+  kmemset(current_threads, 0, sizeof(current_threads));
+  kmemset((void *)scheduler_waiting_for_interrupt, 0, sizeof(scheduler_waiting_for_interrupt));
   next_thread_id = 1;
-  scheduler_waiting_for_interrupt = false;
 }
 
 struct domain *cell_current_domain_internal(void) {
+  struct thread *current_thread = cell_current_thread_internal();
   return current_thread == NULL ? NULL : current_thread->domain;
 }
 
 struct thread *cell_current_thread_internal(void) {
-  return current_thread;
+  uint32_t cpu = smp_current_cpu();
+  return cpu < SPORE_MAX_CPUS ? current_threads[cpu] : NULL;
 }
 
 void cell_set_current_thread(struct thread *thread) {
-  current_thread = thread;
+  uint32_t cpu = smp_current_cpu();
+  if (cpu < SPORE_MAX_CPUS) {
+    current_threads[cpu] = thread;
+    if (thread != NULL) { thread->running_cpu = (int)cpu; }
+  }
 }
 
 bool cell_scheduler_waiting_for_interrupt(void) {
-  return scheduler_waiting_for_interrupt;
+  uint32_t cpu = smp_current_cpu();
+  return cpu < SPORE_MAX_CPUS && scheduler_waiting_for_interrupt[cpu];
 }
 
 struct thread *cell_thread_slot(size_t index) {
@@ -62,6 +70,7 @@ struct thread *cell_alloc_thread(struct domain *domain) {
     if (threads[i].state == THREAD_UNUSED) {
       kmemset(&threads[i], 0, sizeof(threads[i]));
       threads[i].tid = next_thread_id++;
+      threads[i].running_cpu = -1;
       threads[i].domain = domain;
       threads[i].wait_reason = WAIT_NONE;
       threads[i].wait_target = -1;
@@ -77,8 +86,11 @@ void cell_release_thread(struct thread *thread) {
   struct domain *domain = thread->domain;
   if (domain->refcount > 0) { --domain->refcount; }
   thread->state = THREAD_UNUSED;
+  thread->running_cpu = -1;
   thread->domain = NULL;
-  if (current_thread == thread) { current_thread = NULL; }
+  for (uint32_t cpu = 0; cpu < SPORE_MAX_CPUS; ++cpu) {
+    if (current_threads[cpu] == thread) { current_threads[cpu] = NULL; }
+  }
 }
 
 struct thread *cell_thread_for_domain(struct domain *domain) {
@@ -129,6 +141,7 @@ void cell_wake_sleep_waiters(uint64_t scheduler_ticks) {
 }
 
 void cell_save_current(const struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
   if (current_thread == NULL) { return; }
   current_thread->tf = *frame;
   arch_fp_save(&current_thread->fp);
@@ -148,6 +161,7 @@ static void cleanup_reaped_current_domain(struct domain *old_domain, struct thre
 }
 
 void cell_restore_current(struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
   if (current_thread == NULL) { return; }
   vmm_install_user(cell_domain_as(current_thread->domain));
   arch_fp_restore(&current_thread->fp);
@@ -156,6 +170,8 @@ void cell_restore_current(struct trap_frame *frame) {
 }
 
 void cell_schedule(struct trap_frame *frame) {
+  uint32_t cpu = smp_current_cpu();
+  struct thread *current_thread = cell_current_thread_internal();
   struct domain *old_domain = cell_current_domain_internal();
   cell_save_current(frame);
   size_t start = current_thread == NULL ? 0 : cell_thread_index(current_thread) + 1;
@@ -163,8 +179,13 @@ void cell_schedule(struct trap_frame *frame) {
     if (current_thread != NULL && current_thread->state == THREAD_RUNNABLE) {
       for (size_t n = 0; n < MAX_THREADS; ++n) {
         struct thread *candidate = cell_thread_slot((start + n) % MAX_THREADS);
-        if (candidate != NULL && candidate->state == THREAD_RUNNABLE) {
-          current_thread = candidate;
+        if (candidate != NULL && candidate->state == THREAD_RUNNABLE &&
+            (candidate->running_cpu < 0 || candidate->running_cpu == (int)cpu)) {
+          if (current_thread != NULL && current_thread != candidate && current_thread->running_cpu == (int)cpu) {
+            current_thread->running_cpu = -1;
+          }
+          current_threads[cpu] = candidate;
+          candidate->running_cpu = (int)cpu;
           cleanup_reaped_current_domain(old_domain, candidate);
           restore_thread(candidate, frame, old_domain);
           return;
@@ -173,8 +194,10 @@ void cell_schedule(struct trap_frame *frame) {
     }
     for (size_t n = 0; n < MAX_THREADS; ++n) {
       struct thread *candidate = cell_thread_slot((start + n) % MAX_THREADS);
-      if (candidate != NULL && candidate->state == THREAD_RUNNABLE) {
-        current_thread = candidate;
+      if (candidate != NULL && candidate->state == THREAD_RUNNABLE && candidate->running_cpu < 0) {
+        if (current_thread != NULL && current_thread->running_cpu == (int)cpu) { current_thread->running_cpu = -1; }
+        current_threads[cpu] = candidate;
+        candidate->running_cpu = (int)cpu;
         cleanup_reaped_current_domain(old_domain, candidate);
         restore_thread(candidate, frame, old_domain);
         return;
@@ -182,22 +205,41 @@ void cell_schedule(struct trap_frame *frame) {
     }
 
     bool has_blocked = false;
+    bool has_running_elsewhere = false;
     for (size_t i = 0; i < MAX_THREADS; ++i) {
       struct thread *thread = cell_thread_slot(i);
       if (thread != NULL && thread->state == THREAD_BLOCKED) {
         has_blocked = true;
-        break;
+      }
+      if (thread != NULL && thread->state == THREAD_RUNNABLE && thread->running_cpu >= 0 &&
+          thread->running_cpu != (int)cpu) {
+        has_running_elsewhere = true;
       }
     }
+    if (!has_blocked && has_running_elsewhere) {
+      if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = true; }
+      smp_kernel_unlock();
+      __asm__ volatile("msr daifclr, #2\n"
+                       "wfi\n"
+                       "msr daifset, #2\n"
+                       :
+                       :
+                       : "memory");
+      smp_kernel_lock();
+      if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = false; }
+      continue;
+    }
     if (!has_blocked) { break; }
-    scheduler_waiting_for_interrupt = true;
+    if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = true; }
+    smp_kernel_unlock();
     __asm__ volatile("msr daifclr, #2\n"
                      "wfi\n"
                      "msr daifset, #2\n"
                      :
                      :
                      : "memory");
-    scheduler_waiting_for_interrupt = false;
+    smp_kernel_lock();
+    if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = false; }
   }
   kprintf("[kernel] no runnable threads\n");
   poweroff();
@@ -207,7 +249,9 @@ void cell_schedule(struct trap_frame *frame) {
 }
 
 int cell_block_current_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
   cell_save_current(frame);
+  current_thread->running_cpu = -1;
   current_thread->state = THREAD_BLOCKED;
   current_thread->wait_reason = WAIT_PIPE;
   current_thread->wait_target = fd;
@@ -219,7 +263,9 @@ int cell_block_current_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, s
 }
 
 int cell_block_current_on_sleep(uint64_t deadline_tick, struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
   cell_save_current(frame);
+  current_thread->running_cpu = -1;
   current_thread->state = THREAD_BLOCKED;
   current_thread->wait_reason = WAIT_SLEEP;
   current_thread->sleep_deadline_tick = deadline_tick;
@@ -229,7 +275,9 @@ int cell_block_current_on_sleep(uint64_t deadline_tick, struct trap_frame *frame
 
 int cell_block_current_on_socket(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
                                  struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
   cell_save_current(frame);
+  current_thread->running_cpu = -1;
   current_thread->state = THREAD_BLOCKED;
   current_thread->wait_reason = WAIT_SOCKET;
   current_thread->wait_target = fd;

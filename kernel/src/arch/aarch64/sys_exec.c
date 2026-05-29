@@ -154,8 +154,8 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
   if (!copy_exec_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
   if (!cell_fs_path_allowed(path, CELL_FS_EXEC)) { return -(int64_t)EPERM; }
 
-  // Large argv/env scratch is static because the v2 run-to-completion kernel
-  // never re-enters sys_execve concurrently on this single CPU.
+  // Large argv/env scratch is static because the big kernel lock serializes
+  // syscall handlers.
   static char argv_store[MAX_EXEC_ARGS][MAX_EXEC_STRING];
   static char env_store[MAX_EXEC_ENVS][MAX_EXEC_STRING];
   const char *argv[MAX_EXEC_ARGS];

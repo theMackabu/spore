@@ -1,5 +1,6 @@
 #include "arch/aarch64/timer.h"
 
+#include "arch/aarch64/smp.h"
 #include "cell.h"
 #include "kprintf.h"
 #include "pl011.h"
@@ -49,21 +50,31 @@ static void gic_dist_init(void) {
   gic_wait_rwp();
 }
 
-static void gic_redist_init(void) {
-  uint32_t waker = mmio_read32(GICR_BASE + GICR_WAKER);
+static uint64_t gic_redist_base(uint32_t cpu) {
+  return GICR_BASE + (uint64_t)cpu * 0x20000ull;
+}
+
+static uint64_t gic_sgi_base(uint32_t cpu) {
+  return gic_redist_base(cpu) + 0x10000ull;
+}
+
+static void gic_redist_init(uint32_t cpu) {
+  uint64_t redist = gic_redist_base(cpu);
+  uint64_t sgi = gic_sgi_base(cpu);
+  uint32_t waker = mmio_read32(redist + GICR_WAKER);
   waker &= ~(1u << 1);
-  mmio_write32(GICR_BASE + GICR_WAKER, waker);
-  while ((mmio_read32(GICR_BASE + GICR_WAKER) & (1u << 2)) != 0) {}
+  mmio_write32(redist + GICR_WAKER, waker);
+  while ((mmio_read32(redist + GICR_WAKER) & (1u << 2)) != 0) {}
 
-  mmio_write32(GICR_SGI_BASE + GICR_IGROUPR0, 1u << VIRTUAL_TIMER_INTID);
+  mmio_write32(sgi + GICR_IGROUPR0, 1u << VIRTUAL_TIMER_INTID);
 
-  uint64_t priority_reg = GICR_SGI_BASE + GICR_IPRIORITYR + (VIRTUAL_TIMER_INTID & ~3u);
+  uint64_t priority_reg = sgi + GICR_IPRIORITYR + (VIRTUAL_TIMER_INTID & ~3u);
   uint32_t priority = mmio_read32(priority_reg);
   priority &= ~(0xffu << ((VIRTUAL_TIMER_INTID & 3u) * 8u));
   priority |= 0x80u << ((VIRTUAL_TIMER_INTID & 3u) * 8u);
   mmio_write32(priority_reg, priority);
 
-  mmio_write32(GICR_SGI_BASE + GICR_ISENABLER0, 1u << VIRTUAL_TIMER_INTID);
+  mmio_write32(sgi + GICR_ISENABLER0, 1u << VIRTUAL_TIMER_INTID);
 }
 
 static void gic_enable_spi(uint32_t intid) {
@@ -113,7 +124,7 @@ void timer_init(uint64_t hhdm_offset) {
   timer_interval = (uint32_t)(freq / 100);
   if (timer_interval == 0) { timer_interval = 1; }
   gic_dist_init();
-  gic_redist_init();
+  gic_redist_init(0);
   gic_enable_spi(PL011_INTID);
   gic_cpu_init();
   pl011_enable_rx_irq();
@@ -124,6 +135,30 @@ void timer_init(uint64_t hhdm_offset) {
                    : "r"((uint64_t)timer_interval), "r"(1ull)
                    : "memory");
   kprintf("[spore] scheduler 100Hz, gicv3 up\n");
+}
+
+void timer_cpu_init(uint32_t cpu) {
+  uint64_t cntkctl;
+  __asm__ volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
+  cntkctl |= 3ull;
+  __asm__ volatile("msr cntkctl_el1, %0" : : "r"(cntkctl) : "memory");
+  uint64_t cpacr;
+  __asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+  cpacr |= 3ull << 20;
+  __asm__ volatile("msr cpacr_el1, %0\nisb" : : "r"(cpacr) : "memory");
+  uint64_t sctlr;
+  __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+  sctlr |= 1ull << 15;
+  sctlr |= 1ull << 26;
+  __asm__ volatile("msr sctlr_el1, %0\nisb" : : "r"(sctlr) : "memory");
+  gic_redist_init(cpu);
+  gic_cpu_init();
+  __asm__ volatile("msr cntv_tval_el0, %0\n"
+                   "msr cntv_ctl_el0, %1\n"
+                   "isb\n"
+                   :
+                   : "r"((uint64_t)timer_interval), "r"(1ull)
+                   : "memory");
 }
 
 static uint64_t irq_ack(void) {

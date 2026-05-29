@@ -32,6 +32,8 @@ endif
 kernel_sources = files(
   'src/arch/aarch64/boot.S',
   'src/arch/aarch64/exceptions.c',
+  'src/arch/aarch64/smp.S',
+  'src/arch/aarch64/smp.c',
   'src/arch/aarch64/sys_context.c',
   'src/arch/aarch64/sys_exec.c',
   'src/arch/aarch64/sys_file.c',

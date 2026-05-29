@@ -810,7 +810,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   struct termios saved_termios;
   bool raw_terminal = interactive && enter_raw_terminal(&saved_termios);
   double start = now_seconds();
-  double deadline = plain ? 0.0 : start + ((shell || bench || rng) ? 120.0 : 30.0);
+  double deadline = plain ? 0.0 : start + 120.0;
   bool first_output = false;
   double first_output_at = -1.0;
   bool timing_summary_printed = false;

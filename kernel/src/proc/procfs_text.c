@@ -1,5 +1,6 @@
 #include "proc/procfs_text.h"
 
+#include "arch/aarch64/smp.h"
 #include "cell.h"
 #include "ext2.h"
 #include "kprintf.h"
@@ -219,31 +220,37 @@ size_t proc_cpuinfo_text(char *dst, size_t cap) {
   uint64_t revision = midr & 0xf;
   const char *model = cpu_model_name(implementer, part);
 
-  proc_append_str(dst, cap, &len, "processor\t: 0\nvendor_id\t: ");
-  proc_append_str(dst, cap, &len, cpu_implementer_name(implementer));
-  proc_append_str(dst, cap, &len, "\nmodel name\t: ");
-  proc_append_str(dst, cap, &len, model);
-  proc_append_str(dst, cap, &len, "\nBogoMIPS\t: ");
-  proc_append_u64(dst, cap, &len, cntfrq / 500000);
-  proc_append_str(dst, cap, &len, ".00\nFeatures\t: ");
-  proc_append_cpu_features(dst, cap, &len, pfr0, isar0);
-  proc_append_str(dst, cap, &len, "\nCPU implementer\t: ");
-  proc_append_hex(dst, cap, &len, implementer, 2);
-  proc_append_str(dst, cap, &len, "\nCPU architecture: ");
-  proc_append_u64(dst, cap, &len, linux_architecture);
-  proc_append_str(dst, cap, &len, "\nCPU variant\t: ");
-  proc_append_hex(dst, cap, &len, variant, 1);
-  proc_append_str(dst, cap, &len, "\nCPU part\t: ");
-  proc_append_hex(dst, cap, &len, part, 3);
-  proc_append_str(dst, cap, &len, "\nCPU revision\t: ");
-  proc_append_u64(dst, cap, &len, revision);
-  proc_append_str(dst, cap, &len, "\nHardware\t: ");
-  proc_append_str(dst, cap, &len, model);
-  proc_append_str(dst, cap, &len, "\ncpu MHz\t\t: ");
-  proc_append_u64(dst, cap, &len, cntfrq / 1000000);
-  proc_append_char(dst, cap, &len, '.');
-  proc_append_u64_pad(dst, cap, &len, (cntfrq % 1000000) / 1000, 3);
-  proc_append_char(dst, cap, &len, '\n');
+  uint32_t online = smp_online_cpu_count();
+  if (online == 0) { online = 1; }
+  for (uint32_t cpu = 0; cpu < online; ++cpu) {
+    proc_append_str(dst, cap, &len, "processor\t: ");
+    proc_append_u64(dst, cap, &len, cpu);
+    proc_append_str(dst, cap, &len, "\nvendor_id\t: ");
+    proc_append_str(dst, cap, &len, cpu_implementer_name(implementer));
+    proc_append_str(dst, cap, &len, "\nmodel name\t: ");
+    proc_append_str(dst, cap, &len, model);
+    proc_append_str(dst, cap, &len, "\nBogoMIPS\t: ");
+    proc_append_u64(dst, cap, &len, cntfrq / 500000);
+    proc_append_str(dst, cap, &len, ".00\nFeatures\t: ");
+    proc_append_cpu_features(dst, cap, &len, pfr0, isar0);
+    proc_append_str(dst, cap, &len, "\nCPU implementer\t: ");
+    proc_append_hex(dst, cap, &len, implementer, 2);
+    proc_append_str(dst, cap, &len, "\nCPU architecture: ");
+    proc_append_u64(dst, cap, &len, linux_architecture);
+    proc_append_str(dst, cap, &len, "\nCPU variant\t: ");
+    proc_append_hex(dst, cap, &len, variant, 1);
+    proc_append_str(dst, cap, &len, "\nCPU part\t: ");
+    proc_append_hex(dst, cap, &len, part, 3);
+    proc_append_str(dst, cap, &len, "\nCPU revision\t: ");
+    proc_append_u64(dst, cap, &len, revision);
+    proc_append_str(dst, cap, &len, "\nHardware\t: ");
+    proc_append_str(dst, cap, &len, model);
+    proc_append_str(dst, cap, &len, "\ncpu MHz\t\t: ");
+    proc_append_u64(dst, cap, &len, cntfrq / 1000000);
+    proc_append_char(dst, cap, &len, '.');
+    proc_append_u64_pad(dst, cap, &len, (cntfrq % 1000000) / 1000, 3);
+    proc_append_str(dst, cap, &len, "\n\n");
+  }
   return len;
 }
 
@@ -430,8 +437,14 @@ static uint64_t total_domain_cpu_ticks(void) {
 
 size_t proc_stat_text(char *dst, size_t cap) {
   size_t len = 0;
-  uint64_t idle_ticks = cell_idle_ticks() > cell_uptime_ticks() ? cell_uptime_ticks() : cell_idle_ticks();
-  uint64_t busy_ticks = cell_uptime_ticks() - idle_ticks;
+  uint32_t online = smp_online_cpu_count();
+  if (online == 0) { online = 1; }
+  uint64_t idle_ticks = 0;
+  uint64_t busy_ticks = 0;
+  for (uint32_t cpu = 0; cpu < online; ++cpu) {
+    idle_ticks += cell_cpu_idle_ticks(cpu);
+    busy_ticks += cell_cpu_busy_ticks(cpu);
+  }
   uint64_t running = 0;
   uint64_t blocked = 0;
   for (size_t i = 0; i < MAX_THREADS; ++i) {
@@ -446,11 +459,17 @@ size_t proc_stat_text(char *dst, size_t cap) {
   proc_append_u64(dst, cap, &len, busy_ticks);
   proc_append_str(dst, cap, &len, " 0 0 ");
   proc_append_u64(dst, cap, &len, idle_ticks);
-  proc_append_str(dst, cap, &len, " 0 0 0 0 0 0\ncpu0 ");
-  proc_append_u64(dst, cap, &len, busy_ticks);
-  proc_append_str(dst, cap, &len, " 0 0 ");
-  proc_append_u64(dst, cap, &len, idle_ticks);
-  proc_append_str(dst, cap, &len, " 0 0 0 0 0 0\nctxt ");
+  proc_append_str(dst, cap, &len, " 0 0 0 0 0 0\n");
+  for (uint32_t cpu = 0; cpu < online; ++cpu) {
+    proc_append_str(dst, cap, &len, "cpu");
+    proc_append_u64(dst, cap, &len, cpu);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, cell_cpu_busy_ticks(cpu));
+    proc_append_str(dst, cap, &len, " 0 0 ");
+    proc_append_u64(dst, cap, &len, cell_cpu_idle_ticks(cpu));
+    proc_append_str(dst, cap, &len, " 0 0 0 0 0 0\n");
+  }
+  proc_append_str(dst, cap, &len, "ctxt ");
   proc_append_u64(dst, cap, &len, cell_uptime_ticks());
   proc_append_str(dst, cap, &len, "\nbtime ");
   proc_append_u64(dst, cap, &len, cell_boot_epoch_seconds());

@@ -200,8 +200,7 @@ uint64_t pmm_alloc_zero_page(void) {
 void pmm_free_page(uint64_t pa) {
   if ((pa % PAGE_SIZE) != 0) { return; }
 
-  // v1 is cooperative and uniprocessor; refcounts are intentionally unlocked.
-  // Preemptive/SMP v2 must revisit this.
+  // PMM callers run under the big kernel lock; refcounts stay plain scalars.
   uint64_t page = pa / PAGE_SIZE;
   if (!valid_page(page)) { return; }
   if (refcounts[page] == 0) { return; }
@@ -215,7 +214,7 @@ void pmm_free_page(uint64_t pa) {
 bool pmm_share_page(uint64_t pa) {
   if ((pa % PAGE_SIZE) != 0) { return false; }
 
-  // v1 is cooperative and uniprocessor; refcounts are intentionally unlocked.
+  // PMM callers run under the big kernel lock; refcounts stay plain scalars.
   uint64_t page = pa / PAGE_SIZE;
   if (!valid_page(page)) { return false; }
   if (refcounts[page] == 0 || refcounts[page] == UINT16_MAX) { return false; }

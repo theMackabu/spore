@@ -53,7 +53,10 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
   cell_close_all_fds(domain);
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread != NULL && thread->domain == domain) { thread->state = THREAD_ZOMBIE; }
+    if (thread != NULL && thread->domain == domain) {
+      thread->state = THREAD_ZOMBIE;
+      if (thread->running_cpu < 0) { thread->running_cpu = -1; }
+    }
   }
   cell_wake_parent_of(domain);
 }

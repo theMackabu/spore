@@ -81,6 +81,7 @@ int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, struct trap_frame
   if (actual != expected) { return -EAGAIN; }
   cell_save_current(frame);
   thread->state = THREAD_BLOCKED;
+  thread->running_cpu = -1;
   thread->wait_reason = WAIT_FUTEX;
   thread->futex_addr = uaddr;
   cell_schedule(frame);

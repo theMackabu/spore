@@ -227,6 +227,7 @@ struct domain {
 
 struct thread {
   int tid;
+  int running_cpu;
   struct domain *domain;
   enum thread_state state;
   struct trap_frame tf;
@@ -436,6 +437,8 @@ bool cell_memory_accounting(const struct domain *domain, struct cell_memory_acco
 size_t cell_proc_info(struct proc_info *out, size_t max);
 uint64_t cell_uptime_ticks(void);
 uint64_t cell_idle_ticks(void);
+uint64_t cell_cpu_busy_ticks(uint32_t cpu);
+uint64_t cell_cpu_idle_ticks(uint32_t cpu);
 uint64_t cell_boot_epoch_seconds(void);
 uint32_t cell_tty_lflag(void);
 void cell_tty_set_lflag(uint32_t lflag);
