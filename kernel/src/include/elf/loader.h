@@ -1,7 +1,7 @@
 #pragma once
 
-#include "mm/vmm.h"
 #include "mm/vma.h"
+#include "mm/vmm.h"
 #include "vfs.h"
 
 #include <stddef.h>

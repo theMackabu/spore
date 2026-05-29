@@ -146,8 +146,9 @@ static long load_procs(struct proc_row *infos, size_t cap) {
   (void)fgets(header, sizeof(header), f);
   long n = 0;
   while ((size_t)n < cap &&
-         fscanf(f, "%u %u %15s %15s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %31s %127s %63s "
-                   "%159[^\n]\n",
+         fscanf(f,
+                "%u %u %15s %15s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %31s %127s %63s "
+                "%159[^\n]\n",
                 &infos[n].pid, &infos[n].ppid, infos[n].state, infos[n].wait, &infos[n].vsz_pages, &infos[n].rss_pages,
                 &infos[n].minflt, &infos[n].majflt, &infos[n].cpu_ticks, &infos[n].age_ticks,
                 &infos[n].budget_remaining, &infos[n].budget_max, &infos[n].unsupported_syscalls,

@@ -372,9 +372,7 @@ bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t
     if (chunk > len - done) { chunk = len - done; }
 
     uint64_t pa = user_to_phys_checked(as, va, VMM_ACCESS_READ);
-    if (pa == 0) {
-      return false;
-    }
+    if (pa == 0) { return false; }
     kmemcpy(d + done, (const void *)(uintptr_t)(as->hhdm_offset + pa), chunk);
     done += chunk;
   }

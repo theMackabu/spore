@@ -1,8 +1,8 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <signal.h>
-#include <stdbool.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -972,7 +972,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
             printf("[bench] running %-18s\n", bench_commands[bench_done].label);
             fflush(stdout);
             bench_started_at = now_seconds();
-            write_serial_input(in_pipe[1], bench_commands[bench_done].command, strlen(bench_commands[bench_done].command));
+            write_serial_input(in_pipe[1], bench_commands[bench_done].command,
+                               strlen(bench_commands[bench_done].command));
             bench_waiting = true;
           } else if (!bench_shutdown_sent) {
             write_serial_input(in_pipe[1], "sudo shutdown\n", strlen("sudo shutdown\n"));

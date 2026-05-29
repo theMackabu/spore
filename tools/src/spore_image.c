@@ -335,9 +335,7 @@ static void compile_or_copy_userland(const char *source_root, const char *source
     argv[argc++] = "-std=c23";
     argv[argc++] = "-D_GNU_SOURCE";
     argv[argc++] = "-s";
-    if (!static_binary) {
-      argv[argc++] = "-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1";
-    }
+    if (!static_binary) { argv[argc++] = "-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1"; }
     argv[argc++] = include;
     for (size_t i = 0; i < source_count; ++i) {
       argv[argc++] = source_files[i];
@@ -550,8 +548,9 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   char block_count_arg[32];
   snprintf(block_size_arg, sizeof(block_size_arg), "%u", ROOT_EXT2_BLOCK_SIZE);
   snprintf(block_count_arg, sizeof(block_count_arg), "%llu", (unsigned long long)ROOT_EXT2_BLOCKS);
-  char *const mkfs_argv[] = {"mke2fs", "-q", "-t", "ext2", "-b", block_size_arg, "-d", (char *)rootfs_dir,
-                             (char *)output_root, block_count_arg, NULL};
+  char *const mkfs_argv[] = {
+    "mke2fs",        "-q", "-t", "ext2", "-b", block_size_arg, "-d", (char *)rootfs_dir, (char *)output_root,
+    block_count_arg, NULL};
   unlink(output_root);
   run_argv(mkfs_argv, false);
 

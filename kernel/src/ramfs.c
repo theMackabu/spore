@@ -224,9 +224,10 @@ static bool device_is_readonly_text(enum ramfs_device device) {
          device == RAMFS_DEV_CPUINFO || device == RAMFS_DEV_UPTIME || device == RAMFS_DEV_MOUNTS ||
          device == RAMFS_DEV_STAT || device == RAMFS_DEV_KMSG || device == RAMFS_DEV_FILESYSTEMS ||
          device == RAMFS_DEV_PARTITIONS || device == RAMFS_DEV_DEVICES || device == RAMFS_DEV_FSSTATS ||
-         device == RAMFS_DEV_PROC_PID_STAT || device == RAMFS_DEV_PROC_PID_STATUS || device == RAMFS_DEV_PROC_PID_CMDLINE ||
-         device == RAMFS_DEV_PROC_PID_STATM || device == RAMFS_DEV_PROC_PID_COMM ||
-         device == RAMFS_DEV_PROC_PID_MOUNTS || device == RAMFS_DEV_PROC_PID_CWD || device == RAMFS_DEV_PROC_PID_EXE;
+         device == RAMFS_DEV_PROC_PID_STAT || device == RAMFS_DEV_PROC_PID_STATUS ||
+         device == RAMFS_DEV_PROC_PID_CMDLINE || device == RAMFS_DEV_PROC_PID_STATM ||
+         device == RAMFS_DEV_PROC_PID_COMM || device == RAMFS_DEV_PROC_PID_MOUNTS || device == RAMFS_DEV_PROC_PID_CWD ||
+         device == RAMFS_DEV_PROC_PID_EXE;
 }
 
 static void set_mount(struct ramfs *fs, int index, enum ramfs_mount mount) {

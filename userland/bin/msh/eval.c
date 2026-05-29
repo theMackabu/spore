@@ -22,10 +22,22 @@ struct job {
   char cmd[128];
 };
 
+enum exec_kind {
+  EXEC_NONE,
+  EXEC_DIRECT,
+  EXEC_MSH_SCRIPT,
+};
+
+struct resolved_exec {
+  enum exec_kind kind;
+  char path[160];
+};
+
 static struct job jobs[JOB_CAP];
 
 static int run_builtin(struct command *cmd, int last_status, bool *handled);
 static void resolve_exec_rule_path(const char *cmd, char *out, size_t cap);
+static bool resolve_exec_path(const char *cmd, struct resolved_exec *out);
 static bool is_name_char(char c, bool first);
 
 static const char *command_name(char **argv) {
@@ -200,29 +212,38 @@ static int run_builtin_with_redirs(struct command *cmd, int last_status, bool *h
   return status;
 }
 
-static void exec_search(char **argv) {
-  char path[160];
-  char *script_argv[ARG_CAP + 1];
-  const char *name = basename(argv[0]);
-  size_t name_len = strlen(name);
-  bool shell_script = (name_len > 4 && strcmp(name + name_len - 4, ".msh") == 0) ||
-                      (name_len > 3 && strcmp(name + name_len - 3, ".sh") == 0);
+static bool shell_script_name(const char *path) {
+  const char *name = basename(path);
+  size_t len = strlen(name);
+  return (len > 4 && strcmp(name + len - 4, ".msh") == 0) || (len > 3 && strcmp(name + len - 3, ".sh") == 0);
+}
 
-  if (shell_script) {
-    script_argv[0] = "/bin/msh";
-    script_argv[1] = argv[0];
-    int i = 1;
-    for (; argv[i] != NULL && i + 1 < ARG_CAP; ++i) {
-      script_argv[i + 1] = argv[i];
-    }
-    script_argv[i + 1] = NULL;
-  }
+static bool regular_file(const char *path) {
+  struct stat st;
+  return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
 
-  if (strchr(argv[0], '/') != NULL) {
-    execve(argv[0], argv, environ);
-    if (shell_script && access(argv[0], R_OK) == 0) { execve("/bin/msh", script_argv, environ); }
-    return;
+static bool resolve_candidate(const char *path, struct resolved_exec *out) {
+  if (!regular_file(path)) { return false; }
+  if (access(path, X_OK) == 0) {
+    out->kind = EXEC_DIRECT;
+    snprintf(out->path, sizeof(out->path), "%s", path);
+    return true;
   }
+  if (shell_script_name(path) && access(path, R_OK) == 0) {
+    out->kind = EXEC_MSH_SCRIPT;
+    snprintf(out->path, sizeof(out->path), "%s", path);
+    return true;
+  }
+  return false;
+}
+
+static bool resolve_exec_path(const char *cmd, struct resolved_exec *out) {
+  out->kind = EXEC_NONE;
+  out->path[0] = '\0';
+  if (cmd == NULL || cmd[0] == '\0') { return false; }
+
+  if (strchr(cmd, '/') != NULL) { return resolve_candidate(cmd, out); }
 
   const char *path_env = getenv("PATH");
   if (path_env == NULL || path_env[0] == '\0') { path_env = "/bin"; }
@@ -230,19 +251,39 @@ static void exec_search(char **argv) {
   while (*p != '\0') {
     const char *end = strchr(p, ':');
     size_t len = end == NULL ? strlen(p) : (size_t)(end - p);
+    char path[sizeof(out->path)];
     if (len == 0) {
-      snprintf(path, sizeof(path), "./%s", argv[0]);
+      snprintf(path, sizeof(path), "./%s", cmd);
     } else {
-      snprintf(path, sizeof(path), "%.*s/%s", (int)len, p, argv[0]);
+      snprintf(path, sizeof(path), "%.*s/%s", (int)len, p, cmd);
     }
-    execve(path, argv, environ);
-    if (shell_script && access(path, R_OK) == 0) {
-      script_argv[1] = path;
-      execve("/bin/msh", script_argv, environ);
-    }
+    if (resolve_candidate(path, out)) { return true; }
     if (end == NULL) { break; }
     p = end + 1;
   }
+  return false;
+}
+
+static void exec_resolved(const struct resolved_exec *exec, char **argv) {
+  char *script_argv[ARG_CAP + 1];
+  bool shell_script = exec->kind == EXEC_MSH_SCRIPT || shell_script_name(exec->path);
+  if (shell_script) {
+    script_argv[0] = "/bin/msh";
+    script_argv[1] = (char *)exec->path;
+    int i = 1;
+    for (; argv[i] != NULL && i + 1 < ARG_CAP; ++i) {
+      script_argv[i + 1] = argv[i];
+    }
+    script_argv[i + 1] = NULL;
+  }
+
+  if (exec->kind == EXEC_DIRECT) {
+    execve(exec->path, argv, environ);
+    if (shell_script && access(exec->path, R_OK) == 0) { execve("/bin/msh", script_argv, environ); }
+    return;
+  }
+
+  if (exec->kind == EXEC_MSH_SCRIPT) { execve("/bin/msh", script_argv, environ); }
 }
 
 static int wait_status(pid_t pid) {
@@ -311,6 +352,12 @@ static int wait_foreground(pid_t pgrp, pid_t pid) {
 }
 
 static int run_external(struct command *cmd) {
+  struct resolved_exec exec;
+  if (!resolve_exec_path(cmd->argv[0], &exec)) {
+    fprintf(stderr, "%s: No such file or directory\n", cmd->argv[0]);
+    return 127;
+  }
+
   pid_t pid = fork();
   if (pid < 0) {
     perror("fork");
@@ -323,7 +370,7 @@ static int run_external(struct command *cmd) {
       _exit(126);
     }
     apply_env_assignments(cmd);
-    exec_search(cmd->argv);
+    exec_resolved(&exec, cmd->argv);
     perror(cmd->argv[0]);
     _exit(127);
   }
@@ -391,7 +438,8 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
       bool handled = false;
       int builtin_status = run_builtin(&stages[i], last_status, &handled);
       if (handled) { _exit(builtin_status); }
-      exec_search(stages[i].argv);
+      struct resolved_exec exec;
+      if (resolve_exec_path(stages[i].argv[0], &exec)) { exec_resolved(&exec, stages[i].argv); }
       fprintf(stderr, "%s: not found\n", stages[i].argv[0]);
       _exit(127);
     }
@@ -456,7 +504,8 @@ static int run_confined(const char *manifest, char **argv, const struct redirs *
       puts("spore: spawn rejected: requested caps exceed parent");
       _exit(126);
     }
-    exec_search(argv);
+    struct resolved_exec exec;
+    if (resolve_exec_path(argv[0], &exec)) { exec_resolved(&exec, argv); }
     _exit(127);
   }
   sh_job_parent_setup(pid, pid);
@@ -485,6 +534,17 @@ static bool all_assignments(struct command *cmd) {
     }
   }
   return true;
+}
+
+static bool is_builtin_name(const char *name) {
+  static const char *builtins[] = {
+    ".",    ":",    "[",   "cd",   "command", "confine", "exit",   "export", "fg",    "help",
+    "jobs", "kill", "pwd", "runc", "select",  "set",     "source", "test",   "unset", "wait",
+  };
+  for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); ++i) {
+    if (streq(name, builtins[i])) { return true; }
+  }
+  return false;
 }
 
 static int test_integer_compare(const char *a, const char *op, const char *b) {
@@ -616,8 +676,21 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   }
   if (streq(cmd->argv[0], "exit")) { exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : 0); }
   if (streq(cmd->argv[0], ":")) { return 0; }
+  if (streq(cmd->argv[0], "command")) {
+    if (cmd->argc == 3 && streq(cmd->argv[1], "-v")) {
+      if (is_builtin_name(cmd->argv[2])) {
+        puts(cmd->argv[2]);
+        return 0;
+      }
+      struct resolved_exec exec;
+      if (!resolve_exec_path(cmd->argv[2], &exec)) { return 1; }
+      puts(exec.path);
+      return 0;
+    }
+    return usage("command", "-v NAME");
+  }
   if (streq(cmd->argv[0], "help")) {
-    puts("builtins: . source cd pwd exit help export unset set select jobs wait fg kill test [ confine runc");
+    puts("builtins: . source cd pwd exit command help export unset set select jobs wait fg kill test [ confine runc");
     puts("syntax: NAME=value words quotes $VAR $? ; && || & < > >> if/then/else/fi while/do/done");
     puts("prompts: PS1 primary, PS2 continuation, PS3 select, PS4 trace");
     return 0;

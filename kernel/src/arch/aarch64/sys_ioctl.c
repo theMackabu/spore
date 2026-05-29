@@ -9,6 +9,7 @@
 enum {
   EFAULT = 14,
   EINVAL = 22,
+  ENOTTY = 25,
   O_NONBLOCK = 04000,
   TCGETS = 0x5401,
   TCSETS = 0x5402,
@@ -40,16 +41,24 @@ struct winsize64 {
   uint16_t ws_ypixel;
 };
 
+static int64_t require_tty_fd(uint64_t fd) {
+  int tty = cell_fd_is_tty((int)fd);
+  if (tty < 0) { return tty; }
+  return tty != 0 ? 0 : -(int64_t)ENOTTY;
+}
+
 int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
-  (void)fd;
   if (request == TIOCGPGRP) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
     int pgrp = cell_tty_foreground_pgrp();
-    return syscall_user_writable(arg, sizeof(pgrp)) &&
-               vmm_copy_to_user(syscall_active_as(), arg, &pgrp, sizeof(pgrp))
+    return syscall_user_writable(arg, sizeof(pgrp)) && vmm_copy_to_user(syscall_active_as(), arg, &pgrp, sizeof(pgrp))
              ? 0
              : -(int64_t)EFAULT;
   }
   if (request == TIOCSPGRP) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
     int pgrp = 0;
     if (!syscall_user_readable(arg, sizeof(pgrp)) ||
         !vmm_copy_from_user(syscall_active_as(), &pgrp, arg, sizeof(pgrp))) {
@@ -59,6 +68,8 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     return rc == 0 ? 0 : (int64_t)rc;
   }
   if (request == TIOCGWINSZ) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
     uint16_t rows = 0;
     uint16_t cols = 0;
     pl011_get_winsize(&rows, &cols);
@@ -72,11 +83,10 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TIOCSWINSZ) { return 0; }
+  if (request == TIOCSWINSZ) { return require_tty_fd(fd); }
   if (request == FIONBIO) {
     int on = 0;
-    if (!syscall_user_readable(arg, sizeof(on)) ||
-        !vmm_copy_from_user(syscall_active_as(), &on, arg, sizeof(on))) {
+    if (!syscall_user_readable(arg, sizeof(on)) || !vmm_copy_from_user(syscall_active_as(), &on, arg, sizeof(on))) {
       return -(int64_t)EFAULT;
     }
     int flags = cell_fd_get_flags((int)fd);
@@ -89,6 +99,8 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     return cell_fd_set_flags((int)fd, flags);
   }
   if (request == TCGETS) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
     struct termios64 tio = {
       .c_iflag = 0,
       .c_oflag = 0,
@@ -110,9 +122,10 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              : -(int64_t)EFAULT;
   }
   if (request == TCSETS || request == TCSETSW || request == TCSETSF) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
     struct termios64 tio;
-    if (!syscall_user_readable(arg, sizeof(tio)) ||
-        !vmm_copy_from_user(syscall_active_as(), &tio, arg, sizeof(tio))) {
+    if (!syscall_user_readable(arg, sizeof(tio)) || !vmm_copy_from_user(syscall_active_as(), &tio, arg, sizeof(tio))) {
       return -(int64_t)EFAULT;
     }
     cell_tty_set_lflag(tio.c_lflag);

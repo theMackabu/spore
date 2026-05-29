@@ -3,6 +3,7 @@
 #include "kprintf.h"
 #include "mem.h"
 #include "proc/domain.h"
+#include "proc/fd.h"
 #include "proc/memory.h"
 #include "proc/process.h"
 #include "proc/thread.h"
@@ -49,6 +50,7 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
   domain->exit_status = 128 + signal;
   domain->term_signal = signal;
   domain->zombie = true;
+  cell_close_all_fds(domain);
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) { thread->state = THREAD_ZOMBIE; }
@@ -88,7 +90,6 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   frame.magic = 0x5350475349474652ull; // "SPGSIGFR"
   frame.signal = (uint64_t)signal;
   frame.saved = thread->tf;
-  frame.saved.x[0] = (uint64_t)(-(int64_t)EINTR);
 
   uint64_t frame_addr = (thread->tf.sp_el0 - sizeof(frame)) & ~15ull;
   if (!cell_domain_ensure_user_range(domain, frame_addr, sizeof(frame), VMM_ACCESS_WRITE) ||
@@ -162,19 +163,50 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
   return 0;
 }
 
-void cell_dump_current_fault(uint64_t esr, uint64_t elr, uint64_t far) {
+void cell_dump_current_fault(const struct trap_frame *frame, uint64_t far) {
   struct domain *domain = current_domain();
   struct thread *thread = cell_current_thread_internal();
   if (domain == NULL || thread == NULL) {
-    kprintf("[kernel] fault: no current domain esr=%x elr=%p far=%p\n", (unsigned)esr, (void *)(uintptr_t)elr,
-            (void *)(uintptr_t)far);
+    kprintf("[kernel] fault: no current domain esr=%x elr=%p far=%p\n", frame == NULL ? 0 : (unsigned)frame->esr_el1,
+            frame == NULL ? NULL : (void *)(uintptr_t)frame->elr_el1, (void *)(uintptr_t)far);
     return;
   }
-  kprintf("[kernel] fault: pid=%d tid=%d cmd=%s cwd=%s esr=%x elr=%p far=%p sp=%p x0=%p x1=%p x2=%p x3=%p\n",
-          domain->id, thread->tid, domain->cmdline[0] != '\0' ? domain->cmdline : domain->name,
-          domain->cwd[0] != '\0' ? domain->cwd : "/", (unsigned)esr, (void *)(uintptr_t)elr, (void *)(uintptr_t)far,
-          (void *)(uintptr_t)thread->tf.sp_el0, (void *)(uintptr_t)thread->tf.x[0], (void *)(uintptr_t)thread->tf.x[1],
-          (void *)(uintptr_t)thread->tf.x[2], (void *)(uintptr_t)thread->tf.x[3]);
+  kprintf(
+    "[kernel] fault: pid=%d tid=%d cmd=%s cwd=%s esr=%x elr=%p far=%p sp=%p x0=%p x1=%p x2=%p x3=%p x8=%p x16=%p "
+    "x17=%p x19=%p x20=%p x21=%p x22=%p x29=%p x30=%p\n",
+    domain->id, thread->tid, domain->cmdline[0] != '\0' ? domain->cmdline : domain->name,
+    domain->cwd[0] != '\0' ? domain->cwd : "/", frame == NULL ? 0 : (unsigned)frame->esr_el1,
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->elr_el1, (void *)(uintptr_t)far,
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->sp_el0, frame == NULL ? NULL : (void *)(uintptr_t)frame->x[0],
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->x[1], frame == NULL ? NULL : (void *)(uintptr_t)frame->x[2],
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->x[3], frame == NULL ? NULL : (void *)(uintptr_t)frame->x[8],
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->x[16], frame == NULL ? NULL : (void *)(uintptr_t)frame->x[17],
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->x[19], frame == NULL ? NULL : (void *)(uintptr_t)frame->x[20],
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->x[21], frame == NULL ? NULL : (void *)(uintptr_t)frame->x[22],
+    frame == NULL ? NULL : (void *)(uintptr_t)frame->x[29], frame == NULL ? NULL : (void *)(uintptr_t)frame->x[30]);
+  if (frame != NULL) {
+    uint64_t words[4] = {0};
+    if (vmm_copy_from_user(&domain->as, words, frame->sp_el0, sizeof(words))) {
+      kprintf("[kernel] fault stack: %p %p %p %p\n", (void *)(uintptr_t)words[0], (void *)(uintptr_t)words[1],
+              (void *)(uintptr_t)words[2], (void *)(uintptr_t)words[3]);
+    }
+    if (frame->x[19] != 0 && vmm_copy_from_user(&domain->as, words, frame->x[19], sizeof(words))) {
+      kprintf("[kernel] fault x19 mem: %p %p %p %p\n", (void *)(uintptr_t)words[0], (void *)(uintptr_t)words[1],
+              (void *)(uintptr_t)words[2], (void *)(uintptr_t)words[3]);
+    }
+    for (size_t i = 0; i < vma_capacity(&domain->vmas); ++i) {
+      const struct vma *vma = vma_at(&domain->vmas, i);
+      if (vma == NULL || !vma->used) { continue; }
+      bool interesting = (frame->sp_el0 >= vma->start && frame->sp_el0 < vma->end) ||
+                         (frame->elr_el1 >= vma->start && frame->elr_el1 < vma->end) ||
+                         (frame->x[19] >= vma->start && frame->x[19] < vma->end) ||
+                         (far >= vma->start && far < vma->end);
+      if (interesting) {
+        kprintf("[kernel] fault vma: %p-%p prot=%x type=%d\n", (void *)(uintptr_t)vma->start,
+                (void *)(uintptr_t)vma->end, (unsigned)vma->prot, (int)vma->type);
+      }
+    }
+  }
 }
 
 int cell_kill(int pid, int signal) {
@@ -245,7 +277,9 @@ int cell_tgkill(int pid, int tid, int signal) {
   }
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state == THREAD_UNUSED || thread->tid != tid || thread->domain != domain) { continue; }
+    if (thread == NULL || thread->state == THREAD_UNUSED || thread->tid != tid || thread->domain != domain) {
+      continue;
+    }
     (void)cell_deliver_signal_to_thread(thread, signal);
     return 0;
   }

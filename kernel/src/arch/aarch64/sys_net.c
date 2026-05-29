@@ -93,9 +93,7 @@ static bool copy_sockaddr_family(uint64_t addr, uint64_t len, uint16_t *family) 
 static bool copy_sockaddr_un(uint64_t addr, uint64_t len, struct sockaddr_un64 *out) {
   if (addr == 0 || len < 3 || len > sizeof(*out) || !syscall_user_readable(addr, len)) { return false; }
   kmemset(out, 0, sizeof(*out));
-  if (!vmm_copy_from_user(syscall_active_as(), out, addr, (size_t)len) || out->sun_family != AF_UNIX) {
-    return false;
-  }
+  if (!vmm_copy_from_user(syscall_active_as(), out, addr, (size_t)len) || out->sun_family != AF_UNIX) { return false; }
   out->sun_path[sizeof(out->sun_path) - 1] = '\0';
   return out->sun_path[0] == '/';
 }

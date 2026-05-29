@@ -8,8 +8,8 @@
 #include "proc/procfs_format.h"
 #include "proc/thread.h"
 #include "ramfs.h"
-#include "virtio_net.h"
 #include "vfs.h"
+#include "virtio_net.h"
 
 #include <stdbool.h>
 #include <stddef.h>

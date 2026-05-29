@@ -18,7 +18,7 @@ enum {
   MAX_SNAPSHOTS = 8,
   MAX_FDS = 32,
   MAX_OPEN_FILES = 64,
-  CELL_TCP_RX_CAP = 32768,
+  CELL_TCP_RX_CAP = 262144,
   CELL_MAX_POLL_FDS = 64,
   CELL_SWITCHED = -0x40000000,
 };
@@ -72,6 +72,7 @@ enum open_file_type {
   OPEN_EVENTFD,
 };
 
+enum { CELL_PATH_MAX = 256 };
 enum { CELL_EPOLL_WATCH_CAP = 16 };
 enum { CELL_FS_RULE_CAP = 8 };
 
@@ -87,7 +88,7 @@ enum cell_cap_flag {
 };
 
 struct fs_rule {
-  char path[128];
+  char path[CELL_PATH_MAX];
   uint8_t rights;
 };
 
@@ -115,7 +116,7 @@ struct open_file {
   uint32_t unix_peer_uid;
   uint32_t unix_peer_gid;
   char unix_path[108];
-  char path[128];
+  char path[CELL_PATH_MAX];
   struct vfs_node node;
   uint8_t socket_proto;
   uint32_t udp_remote_ip;
@@ -132,9 +133,15 @@ struct open_file {
   uint16_t tcp_local_port;
   uint16_t tcp_remote_port;
   uint32_t tcp_rx_len;
+  uint32_t tcp_ooo_seq[8];
+  uint32_t tcp_ooo_len[8];
   uint8_t tcp_state;
   uint8_t tcp_error;
   bool tcp_fin;
+  bool tcp_fin_pending;
+  bool tcp_ooo_used[8];
+  uint32_t tcp_fin_seq;
+  uint8_t tcp_ooo[8][1460];
   uint8_t tcp_rx[CELL_TCP_RX_CAP];
   struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
   uint64_t eventfd_value;
@@ -198,13 +205,14 @@ struct domain {
   struct user_address_space as;
   struct vma_list vmas;
   struct open_file *fds[MAX_FDS];
+  uint8_t fd_flags[MAX_FDS];
   char name[32];
-  char exec_path[128];
+  char exec_path[CELL_PATH_MAX];
   char argv0[64];
   char cmdline[160];
-  char cwd[128];
-  char fs_root[128];
-  char chroot[128];
+  char cwd[CELL_PATH_MAX];
+  char fs_root[CELL_PATH_MAX];
+  char chroot[CELL_PATH_MAX];
   struct capability_set caps;
   struct cpu_budget budget;
   struct signal_action signal_actions[65];
@@ -318,7 +326,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame);
 void cell_signal_current(int signal, struct trap_frame *frame);
 int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t sigset_size);
 int cell_rt_sigreturn(struct trap_frame *frame);
-void cell_dump_current_fault(uint64_t esr, uint64_t elr, uint64_t far);
+void cell_dump_current_fault(const struct trap_frame *frame, uint64_t far);
 int cell_fork_current(struct trap_frame *frame);
 int cell_vfork_current(struct trap_frame *frame);
 int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid,
@@ -386,6 +394,7 @@ int cell_fd_set_flags(int fd, int flags);
 int cell_fd_get_fd_flags(int fd);
 int cell_fd_set_fd_flags(int fd, int flags);
 int cell_fd_close(int fd);
+int cell_fd_is_tty(int fd);
 bool cell_fd_stat(int fd, struct vfs_node *out);
 bool cell_fd_is_dir(int fd);
 bool cell_fd_path(int fd, char *out, size_t cap);
@@ -395,6 +404,7 @@ uint64_t cell_fd_dir_offset(int fd);
 void cell_fd_set_dir_offset(int fd, uint64_t offset);
 bool cell_handle_cow_fault(uint64_t far);
 bool cell_handle_translation_fault(uint64_t far, enum vmm_access access);
+bool cell_handle_permission_fault(uint64_t far, enum vmm_access access);
 bool cell_ensure_user_range(uint64_t va, size_t len, enum vmm_access access);
 bool cell_vma_overlaps(uint64_t start, uint64_t end);
 bool cell_vma_lookup_range(uint64_t start, uint64_t end, struct vma *out);

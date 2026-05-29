@@ -2,8 +2,6 @@ apk_patch_files = files(
   'patches/0001-use-fork-for-url-fetcher.patch',
   'patches/0002-wget-skip-empty-timeout.patch',
   'patches/0003-libfetch-accept-mbedtls-dependency-list.patch',
-  'patches/0004-wget-fetch-to-tempfile.patch',
-  'patches/0005-wget-unlink-tempfile-on-close.patch',
 )
 
 userland_apk = custom_target('userland-apk',

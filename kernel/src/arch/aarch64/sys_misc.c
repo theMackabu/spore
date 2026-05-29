@@ -91,7 +91,8 @@ int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, uint6
     out.rlim_cur = USER_STACK_TOP;
     out.rlim_max = USER_STACK_TOP;
   }
-  return syscall_user_writable(old_limit, sizeof(out)) && vmm_copy_to_user(syscall_active_as(), old_limit, &out, sizeof(out))
+  return syscall_user_writable(old_limit, sizeof(out)) &&
+             vmm_copy_to_user(syscall_active_as(), old_limit, &out, sizeof(out))
            ? 0
            : -(int64_t)EFAULT;
 }
@@ -123,9 +124,7 @@ int64_t sys_uname(uint64_t buf) {
 
 int64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
   if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
-  if (len == 0 || len >= sizeof(kernel_hostname) || !syscall_user_readable(name_addr, len)) {
-    return -(int64_t)EINVAL;
-  }
+  if (len == 0 || len >= sizeof(kernel_hostname) || !syscall_user_readable(name_addr, len)) { return -(int64_t)EINVAL; }
   if (!vmm_copy_from_user(syscall_active_as(), kernel_hostname, name_addr, (size_t)len)) { return -(int64_t)EFAULT; }
   kernel_hostname[len] = '\0';
   return 0;
@@ -155,8 +154,7 @@ int64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, 
     char name[16];
     if (arg2 == 0) { return -(int64_t)EFAULT; }
     for (size_t i = 0; i < sizeof(name); ++i) {
-      if (!syscall_user_readable(arg2 + i, 1) ||
-          !vmm_copy_from_user(syscall_active_as(), &name[i], arg2 + i, 1)) {
+      if (!syscall_user_readable(arg2 + i, 1) || !vmm_copy_from_user(syscall_active_as(), &name[i], arg2 + i, 1)) {
         return -(int64_t)EFAULT;
       }
       if (name[i] == '\0') {

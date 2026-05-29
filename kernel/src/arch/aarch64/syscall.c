@@ -48,6 +48,8 @@ enum {
   SYS_WRITE = 64,
   SYS_READV = 65,
   SYS_WRITEV = 66,
+  SYS_PREAD64 = 67,
+  SYS_PWRITE64 = 68,
   SYS_PSELECT6 = 72,
   SYS_PPOLL = 73,
   SYS_READLINKAT = 78,
@@ -143,6 +145,7 @@ enum {
   F_DUPFD = 0,
   F_GETFD = 1,
   F_SETFD = 2,
+  F_DUPFD_CLOEXEC = 1030,
   F_GETFL = 3,
   F_SETFL = 4,
   FD_CLOEXEC = 1,
@@ -242,6 +245,8 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_WRITE] = &&l_write,
     [SYS_READV] = &&l_readv,
     [SYS_WRITEV] = &&l_writev,
+    [SYS_PREAD64] = &&l_pread64,
+    [SYS_PWRITE64] = &&l_pwrite64,
     [SYS_PSELECT6] = &&l_pselect6,
     [SYS_PPOLL] = &&l_ppoll,
     [SYS_READLINKAT] = &&l_readlinkat,
@@ -266,7 +271,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_TGKILL] = &&l_tgkill,
     [SYS_SIGALTSTACK] = &&l_sigaltstack,
     [SYS_RT_SIGACTION] = &&l_rt_sigaction,
-    [SYS_RT_SIGPROCMASK] = &&l_zero,
+    [SYS_RT_SIGPROCMASK] = &&l_rt_sigprocmask,
     [SYS_RT_SIGRETURN] = &&l_rt_sigreturn,
     [SYS_TIMES] = &&l_times,
     [SYS_SETGID] = &&l_setgid,
@@ -372,6 +377,10 @@ l_readv:
   return sys_readv(f, a0, a1, a2);
 l_writev:
   return sys_writev(f, a0, a1, a2);
+l_pread64:
+  return sys_pread64(f, a0, a1, a2, a3);
+l_pwrite64:
+  return sys_pwrite64(f, a0, a1, a2, a3);
 l_pselect6:
   return sys_pselect6(f, a0, a1, a2, a3, a4);
 l_ppoll:
@@ -459,6 +468,8 @@ l_tgkill:
   return cell_tgkill((int)a0, (int)a1, (int)a2);
 l_rt_sigaction:
   return cell_rt_sigaction((int)a0, a1, a2, a3);
+l_rt_sigprocmask:
+  return sys_rt_sigprocmask(a0, a1, a2, a3);
 l_rt_sigreturn:
   return cell_rt_sigreturn(f) == 0 ? SYSCALL_SWITCHED : -(int64_t)EFAULT;
 l_sigaltstack:
@@ -502,7 +513,8 @@ l_spore_procinfo: {
   struct proc_info infos[MAX_THREADS];
   size_t count = cell_proc_info(infos, max);
   size_t copy = count < max ? count : max;
-  return syscall_user_writable(a0, copy * sizeof(infos[0])) && vmm_copy_to_user(syscall_active_as(), a0, infos, copy * sizeof(infos[0]))
+  return syscall_user_writable(a0, copy * sizeof(infos[0])) &&
+             vmm_copy_to_user(syscall_active_as(), a0, infos, copy * sizeof(infos[0]))
            ? (int64_t)count
            : -(int64_t)EFAULT;
 }
@@ -516,8 +528,9 @@ l_spore_fsinfo: {
     .inode_count = raw.inode_count,
     .free_inodes = raw.free_inodes,
   };
-  return syscall_user_writable(a0, sizeof(info)) && vmm_copy_to_user(syscall_active_as(), a0, &info, sizeof(info)) ? 0
-                                                                                                   : -(int64_t)EFAULT;
+  return syscall_user_writable(a0, sizeof(info)) && vmm_copy_to_user(syscall_active_as(), a0, &info, sizeof(info))
+           ? 0
+           : -(int64_t)EFAULT;
 }
 l_spore_mountinfo: {
   size_t max = a1 / sizeof(struct mount_info64);
@@ -535,7 +548,8 @@ l_spore_mountinfo: {
     out[i].block_count = raw[i].block_count;
     out[i].free_blocks = raw[i].free_blocks;
   }
-  return syscall_user_writable(a0, copy * sizeof(out[0])) && vmm_copy_to_user(syscall_active_as(), a0, out, copy * sizeof(out[0]))
+  return syscall_user_writable(a0, copy * sizeof(out[0])) &&
+             vmm_copy_to_user(syscall_active_as(), a0, out, copy * sizeof(out[0]))
            ? (int64_t)count
            : -(int64_t)EFAULT;
 }
@@ -603,6 +617,14 @@ l_dup3:
   return cell_fd_dup3((int)a0, (int)a1, (int)a2);
 l_fcntl:
   if (a1 == F_DUPFD) { return cell_fd_dup((int)a0, (int)a2); }
+  if (a1 == F_DUPFD_CLOEXEC) {
+    int fd = cell_fd_dup((int)a0, (int)a2);
+    if (fd >= 0) {
+      int rc = cell_fd_set_fd_flags(fd, 1);
+      if (rc < 0) { return rc; }
+    }
+    return fd;
+  }
   if (a1 == F_GETFD) { return cell_fd_get_fd_flags((int)a0); }
   if (a1 == F_SETFD) { return cell_fd_set_fd_flags((int)a0, (int)a2); }
   if (a1 == F_GETFL) {
@@ -678,15 +700,14 @@ l_ftruncate:
   return sys_ftruncate(a0, a1);
 l_chdir:
   return sys_chdir(a0);
-l_fchdir:
-  {
-    struct vfs_node node;
-    if (!cell_fd_stat((int)a0, &node)) { return -(int64_t)EBADF; }
-    if (!node.is_dir) { return -(int64_t)ENOTDIR; }
-    char path[128];
-    if (!cell_fd_path((int)a0, path, sizeof(path))) { return -(int64_t)EBADF; }
-    return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
-  }
+l_fchdir: {
+  struct vfs_node node;
+  if (!cell_fd_stat((int)a0, &node)) { return -(int64_t)EBADF; }
+  if (!node.is_dir) { return -(int64_t)ENOTDIR; }
+  char path[CELL_PATH_MAX];
+  if (!cell_fd_path((int)a0, path, sizeof(path))) { return -(int64_t)EBADF; }
+  return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
+}
 l_fsync:
   return 0;
 l_getrandom:
@@ -722,17 +743,20 @@ void handle_lower_sync(struct trap_frame *frame) {
     uint64_t iss = frame->esr_el1 & 0x1ffffff;
     uint64_t dfsc = iss & 0x3f;
     bool write = (iss & (1u << 6)) != 0;
-    if (ec == 0x20 && dfsc >= 0x04 && dfsc <= 0x07 && cell_handle_translation_fault(far, VMM_ACCESS_EXEC)) {
-      return;
-    }
+    if (ec == 0x20 && dfsc >= 0x04 && dfsc <= 0x07 && cell_handle_translation_fault(far, VMM_ACCESS_EXEC)) { return; }
+    if (ec == 0x20 && dfsc >= 0x0c && dfsc <= 0x0f && cell_handle_permission_fault(far, VMM_ACCESS_EXEC)) { return; }
     if (ec == 0x24 && dfsc >= 0x04 && dfsc <= 0x07 &&
         cell_handle_translation_fault(far, write ? VMM_ACCESS_WRITE : VMM_ACCESS_READ)) {
       return;
     }
     if (ec == 0x24 && write && dfsc >= 0x0c && dfsc <= 0x0f && cell_handle_cow_fault(far)) { return; }
+    if (ec == 0x24 && dfsc >= 0x0c && dfsc <= 0x0f &&
+        cell_handle_permission_fault(far, write ? VMM_ACCESS_WRITE : VMM_ACCESS_READ)) {
+      return;
+    }
     kprintf("[kernel] lower sync fault ec=%x dfsc=%x write=%u esr=%x elr=%p far=%p\n", (unsigned)ec, (unsigned)dfsc,
             write ? 1u : 0u, (unsigned)frame->esr_el1, (void *)(uintptr_t)frame->elr_el1, (void *)(uintptr_t)far);
-    cell_dump_current_fault(frame->esr_el1, frame->elr_el1, far);
+    cell_dump_current_fault(frame, far);
     cell_signal_current(11, frame);
     return;
   }

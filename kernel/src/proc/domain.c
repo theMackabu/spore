@@ -3,6 +3,7 @@
 #include "kstr.h"
 #include "mem.h"
 #include "proc/fd.h"
+#include "proc/process.h"
 #include "proc/thread.h"
 #include "proc/tty.h"
 
@@ -91,6 +92,15 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
 }
 
 void cell_destroy_domain(struct domain *domain) {
+  int reparent_to = (domain != NULL && domain->id != 1 && cell_find_domain(1) != NULL) ? 1 : 0;
+  if (domain != NULL) {
+    for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+      struct domain *child = cell_domain_slot(i);
+      if (child == NULL || !child->used || child->parent_id != domain->id) { continue; }
+      child->parent_id = reparent_to;
+      if (child->zombie && reparent_to != 0) { cell_wake_parent_of(child); }
+    }
+  }
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) {

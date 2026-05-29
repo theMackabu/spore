@@ -264,6 +264,31 @@ bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   return read_inode(fs, ino, out);
 }
 
+static uint32_t count_indirect_tree_blocks(struct ext2_fs *fs, uint32_t block, uint32_t depth) {
+  if (block == 0) { return 0; }
+  uint32_t count = 1;
+  uint8_t buf[4096];
+  if (depth == 0 || fs->block_size > sizeof(buf) || !read_block(fs, block, buf)) { return count; }
+  const uint32_t *entries = (const uint32_t *)buf;
+  uint32_t n = fs->block_size / sizeof(uint32_t);
+  for (uint32_t i = 0; i < n; ++i) {
+    if (entries[i] == 0) { continue; }
+    count += depth == 1 ? 1 : count_indirect_tree_blocks(fs, entries[i], depth - 1);
+  }
+  return count;
+}
+
+static uint32_t count_allocated_blocks(struct ext2_fs *fs, const struct ext2_node *node) {
+  uint32_t count = 0;
+  for (size_t i = 0; i < 12; ++i) {
+    if (node->blocks[i] != 0) { ++count; }
+  }
+  count += count_indirect_tree_blocks(fs, node->blocks[12], 1);
+  count += count_indirect_tree_blocks(fs, node->blocks[13], 2);
+  count += count_indirect_tree_blocks(fs, node->blocks[14], 3);
+  return count;
+}
+
 static bool write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   if (fs->write == NULL || node->ino == 0 || node->ino > fs->inode_count) { return false; }
   uint32_t index = node->ino - 1;
@@ -284,7 +309,7 @@ static bool write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   inode.links_count = node->links_count;
   inode.sectors_count = ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)
                           ? 0
-                          : ((node->size + 511) / 512);
+                          : count_allocated_blocks(fs, node) * (fs->block_size / 512);
   for (size_t i = 0; i < 15; ++i) {
     inode.block[i] = node->blocks[i];
   }
@@ -486,18 +511,6 @@ static uint8_t dirent_type_for_node(const struct ext2_node *node) {
   return EXT2_FT_REG_FILE;
 }
 
-static bool bitmap_set(struct ext2_fs *fs, uint32_t bitmap_block, uint32_t bit, bool used) {
-  uint8_t block[4096];
-  if (fs->block_size > sizeof(block) || !read_block(fs, bitmap_block, block)) { return false; }
-  uint8_t mask = (uint8_t)(1u << (bit % 8u));
-  if (used) {
-    block[bit / 8u] |= mask;
-  } else {
-    block[bit / 8u] &= (uint8_t)~mask;
-  }
-  return write_block(fs, bitmap_block, block);
-}
-
 static bool alloc_block(struct ext2_fs *fs, uint32_t *out) {
   uint8_t bitmap[4096];
   if (fs->block_size > sizeof(bitmap)) { return false; }
@@ -533,12 +546,20 @@ static bool alloc_block(struct ext2_fs *fs, uint32_t *out) {
 }
 
 static bool free_block(struct ext2_fs *fs, uint32_t block) {
-  if (block < fs->first_data_block) { return false; }
+  if (block < fs->first_data_block || block >= fs->block_count) { return false; }
   uint32_t rel = block - fs->first_data_block;
   uint32_t group = rel / fs->blocks_per_group;
   uint32_t bit = rel % fs->blocks_per_group;
+  if (group >= fs->group_count) { return false; }
   struct ext2_group_desc gd;
-  if (!read_group_desc(fs, group, &gd) || !bitmap_set(fs, gd.block_bitmap, bit, false)) { return false; }
+  uint8_t bitmap[4096];
+  if (fs->block_size > sizeof(bitmap) || !read_group_desc(fs, group, &gd) || !read_block(fs, gd.block_bitmap, bitmap)) {
+    return false;
+  }
+  uint8_t mask = (uint8_t)(1u << (bit % 8u));
+  if ((bitmap[bit / 8u] & mask) == 0) { return false; }
+  bitmap[bit / 8u] &= (uint8_t)~mask;
+  if (!write_block(fs, gd.block_bitmap, bitmap)) { return false; }
   ++gd.free_blocks_count;
   (void)write_group_desc(fs, group, &gd);
   struct ext2_super sb;
@@ -581,8 +602,21 @@ static bool free_inode(struct ext2_fs *fs, uint32_t ino) {
   uint32_t index = ino - 1;
   uint32_t group = index / fs->inodes_per_group;
   uint32_t bit = index % fs->inodes_per_group;
+  uint32_t local = index % fs->inodes_per_group;
   struct ext2_group_desc gd;
-  if (!read_group_desc(fs, group, &gd) || !bitmap_set(fs, gd.inode_bitmap, bit, false)) { return false; }
+  uint8_t bitmap[4096];
+  if (fs->block_size > sizeof(bitmap) || !read_group_desc(fs, group, &gd) || !read_block(fs, gd.inode_bitmap, bitmap)) {
+    return false;
+  }
+  uint8_t mask = (uint8_t)(1u << (bit % 8u));
+  if ((bitmap[bit / 8u] & mask) == 0) { return false; }
+  uint8_t zero_inode[256];
+  if (fs->inode_size > sizeof(zero_inode)) { return false; }
+  kmemset(zero_inode, 0, fs->inode_size);
+  uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)local * fs->inode_size;
+  if (!write_bytes(fs, off, zero_inode, fs->inode_size)) { return false; }
+  bitmap[bit / 8u] &= (uint8_t)~mask;
+  if (!write_block(fs, gd.inode_bitmap, bitmap)) { return false; }
   ++gd.free_inodes_count;
   (void)write_group_desc(fs, group, &gd);
   struct ext2_super sb;
@@ -591,6 +625,23 @@ static bool free_inode(struct ext2_fs *fs, uint32_t ino) {
     (void)write_super(fs, &sb);
   }
   return true;
+}
+
+static bool adjust_group_used_dirs(struct ext2_fs *fs, uint32_t ino, int delta) {
+  if (ino < 12 || ino > fs->inode_count) { return false; }
+  uint32_t group = (ino - 1) / fs->inodes_per_group;
+  struct ext2_group_desc gd;
+  if (!read_group_desc(fs, group, &gd)) { return false; }
+  if (delta < 0) {
+    uint32_t dec = (uint32_t)(-delta);
+    if (gd.used_dirs_count < dec) { return false; }
+    gd.used_dirs_count = (uint16_t)(gd.used_dirs_count - dec);
+  } else if (delta > 0) {
+    uint32_t inc = (uint32_t)delta;
+    if ((uint32_t)gd.used_dirs_count + inc > UINT16_MAX) { return false; }
+    gd.used_dirs_count = (uint16_t)(gd.used_dirs_count + inc);
+  }
+  return write_group_desc(fs, group, &gd);
 }
 
 static bool file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32_t file_block_index,
@@ -667,8 +718,9 @@ int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off
     uint32_t chunk = fs->block_size - within;
     if ((uint64_t)chunk > len - done) { chunk = (uint32_t)(len - done); }
     uint32_t disk_block = 0;
-    if (!file_block_for_write(fs, node, file_block_index, &disk_block) || !read_block(fs, disk_block, block)) {
-      return -1;
+    if (!file_block_for_write(fs, node, file_block_index, &disk_block)) { return -1; }
+    if (within != 0 || chunk != fs->block_size) {
+      if (!read_block(fs, disk_block, block)) { return -1; }
     }
     kmemcpy(block + within, in + done, chunk);
     if (!write_block(fs, disk_block, block)) { return -1; }
@@ -687,6 +739,14 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
   if (fs->write == NULL) { return false; }
   if (size != 0) {
     node->size = (uint32_t)size;
+    uint32_t now = now_sec();
+    node->mtime = now;
+    node->ctime = now;
+    return write_inode(fs, node);
+  }
+  if (ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)) {
+    kmemset(node->blocks, 0, sizeof(node->blocks));
+    node->size = 0;
     uint32_t now = now_sec();
     node->mtime = now;
     node->ctime = now;
@@ -1029,17 +1089,35 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_nod
   if (dir) {
     uint32_t block = 0;
     uint8_t buf[4096];
-    if (fs->block_size > sizeof(buf) || !alloc_block(fs, &block)) { return false; }
+    if (fs->block_size > sizeof(buf) || !alloc_block(fs, &block)) {
+      (void)free_inode(fs, ino);
+      return false;
+    }
     node.blocks[0] = block;
     node.size = fs->block_size;
     kmemset(buf, 0, fs->block_size);
     write_dir_record(buf, ino, rec_len_for(1), 1, EXT2_FT_DIR, ".");
     write_dir_record(buf + rec_len_for(1), parent.ino, (uint16_t)(fs->block_size - rec_len_for(1)), 2, EXT2_FT_DIR,
                      "..");
-    if (!write_block(fs, block, buf)) { return false; }
+    if (!write_block(fs, block, buf)) {
+      node.blocks[0] = 0;
+      node.size = 0;
+      (void)free_block(fs, block);
+      (void)free_inode(fs, ino);
+      return false;
+    }
   }
   if (!write_inode(fs, &node) || !add_dirent(fs, &parent, name, ino, dir ? EXT2_FT_DIR : EXT2_FT_REG_FILE)) {
+    (void)ext2_truncate(fs, &node, 0);
+    (void)free_inode(fs, ino);
     return false;
+  }
+  if (dir) {
+    if (parent.links_count != UINT16_MAX) { ++parent.links_count; }
+    parent.mtime = now;
+    parent.ctime = now;
+    (void)write_inode(fs, &parent);
+    (void)adjust_group_used_dirs(fs, ino, 1);
   }
   if (out != NULL) { *out = node; }
   return true;
@@ -1158,12 +1236,19 @@ bool ext2_unlink(struct ext2_fs *fs, const char *path) {
     }
   }
   if (!remove_dirent(fs, &parent, name, NULL)) { return false; }
-  if (node.links_count > 1) {
+  if (!ext2_is_dir(&node) && node.links_count > 1) {
     --node.links_count;
     node.ctime = now_sec();
     return write_inode(fs, &node);
   }
   (void)ext2_truncate(fs, &node, 0);
+  if (ext2_is_dir(&node)) {
+    if (parent.links_count > 2) { --parent.links_count; }
+    parent.mtime = now_sec();
+    parent.ctime = parent.mtime;
+    (void)write_inode(fs, &parent);
+    (void)adjust_group_used_dirs(fs, node.ino, -1);
+  }
   (void)free_inode(fs, node.ino);
   return true;
 }
@@ -1196,9 +1281,7 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
     if (!ext2_unlink(fs, new_path)) { return false; }
     if (!read_inode(fs, new_parent.ino, &new_parent)) { return false; }
   }
-  if (!add_dirent(fs, &new_parent, new_name, node.ino, dirent_type_for_node(&node))) {
-    return false;
-  }
+  if (!add_dirent(fs, &new_parent, new_name, node.ino, dirent_type_for_node(&node))) { return false; }
   node.ctime = now_sec();
   (void)write_inode(fs, &node);
   if (remove_dirent(fs, &old_parent, old_name, NULL)) { return true; }

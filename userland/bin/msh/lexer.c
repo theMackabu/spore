@@ -202,8 +202,7 @@ static bool assignment_syntax(const char *word) {
   if (eq == NULL || eq == word) { return false; }
   for (const char *p = word; p < eq; ++p) {
     bool first = p == word;
-    if (!(*p == '_' || (!first && *p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') ||
-          (*p >= 'a' && *p <= 'z'))) {
+    if (!(*p == '_' || (!first && *p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))) {
       return false;
     }
   }
@@ -215,8 +214,7 @@ static int add_redir(struct command *cmd, enum redir_op op, int fd, const char *
     eprintf("sh: too many redirections\n");
     return -1;
   }
-  cmd->redir.actions[cmd->redir.count++] =
-    (struct redir_action){.op = op, .fd = fd, .dup_fd = dup_fd, .path = path};
+  cmd->redir.actions[cmd->redir.count++] = (struct redir_action){.op = op, .fd = fd, .dup_fd = dup_fd, .path = path};
   return 0;
 }
 

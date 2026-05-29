@@ -287,6 +287,7 @@ static void handle_udp(uint32_t src_ip, const uint8_t *udp, size_t len) {
 
 static void handle_tcp(uint32_t src_ip, const uint8_t *tcp, size_t len) {
   if (len < TCP_HEADER_LEN) { return; }
+  if (tcp_checksum(src_ip, local_ip, tcp, len) != 0) { return; }
   size_t offset = (size_t)(tcp[12] >> 4) * 4;
   if (offset < TCP_HEADER_LEN || offset > len) { return; }
   uint16_t src_port = load_be16(tcp);

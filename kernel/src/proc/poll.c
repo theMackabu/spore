@@ -46,6 +46,8 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
 
   struct open_file *file = domain->fds[fd];
   int revents = 0;
+  if (file->type == OPEN_PIPE && cell_pipe_file_hup(file)) { revents |= CELL_POLLHUP; }
+  if (file->type == OPEN_UNIX_STREAM && cell_pipe_id_hup(file->unix_rx_pipe)) { revents |= CELL_POLLHUP; }
   if ((events & CELL_POLLIN) != 0) {
     if (file->type == OPEN_STDIN ||
         (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE))) {
@@ -348,8 +350,9 @@ int cell_fd_epoll_create(int flags) {
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
   file->type = OPEN_EPOLL;
-  file->flags = (uint32_t)flags;
+  file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
   domain->fds[fd] = file;
+  domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
   return fd;
 }
 

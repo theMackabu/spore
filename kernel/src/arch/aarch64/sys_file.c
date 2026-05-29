@@ -125,8 +125,8 @@ struct linux_dirent64_header {
 } __attribute__((packed));
 
 int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
-  char path[128];
-  char virtual_path[128];
+  char path[CELL_PATH_MAX];
+  char virtual_path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   path_rc = syscall_copy_virtual_path_at(dirfd, path_addr, virtual_path, sizeof(virtual_path));
@@ -251,13 +251,14 @@ int64_t sys_fstat(uint64_t fd, uint64_t stat_addr) {
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
   struct stat64_aarch64 st;
   fill_stat(&st, &node);
-  return syscall_user_writable(stat_addr, sizeof(st)) && vmm_copy_to_user(syscall_active_as(), stat_addr, &st, sizeof(st))
+  return syscall_user_writable(stat_addr, sizeof(st)) &&
+             vmm_copy_to_user(syscall_active_as(), stat_addr, &st, sizeof(st))
            ? 0
            : -(int64_t)EFAULT;
 }
 
 int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr) {
-  char path[128];
+  char path[CELL_PATH_MAX];
   if (!syscall_copy_resolved_path(path_addr, path, sizeof(path))) {
     return syscall_path_policy_denied() ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
@@ -265,7 +266,8 @@ int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr) {
   if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
   struct statfs64_aarch64 st;
   fill_statfs(&st, path);
-  return syscall_user_writable(statfs_addr, sizeof(st)) && vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
+  return syscall_user_writable(statfs_addr, sizeof(st)) &&
+             vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
            ? 0
            : -(int64_t)EFAULT;
 }
@@ -275,7 +277,8 @@ int64_t sys_fstatfs(uint64_t fd, uint64_t statfs_addr) {
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
   struct statfs64_aarch64 st;
   fill_statfs(&st, node.backend == VFS_RAMFS ? "/tmp" : "/");
-  return syscall_user_writable(statfs_addr, sizeof(st)) && vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
+  return syscall_user_writable(statfs_addr, sizeof(st)) &&
+             vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
            ? 0
            : -(int64_t)EFAULT;
 }
@@ -288,7 +291,7 @@ int64_t sys_statx(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t m
     if (!vmm_copy_from_user(syscall_active_as(), empty, path_addr, 1)) { return -(int64_t)EFAULT; }
     if (empty[0] == '\0') {
       if ((int64_t)dirfd == AT_FDCWD) {
-        char cwd[128];
+        char cwd[CELL_PATH_MAX];
         if (!syscall_normalize_path("/", cell_current_cwd(), cwd, sizeof(cwd)) || !vfs_lookup(cwd, &node)) {
           return -(int64_t)ENOENT;
         }
@@ -297,25 +300,27 @@ int64_t sys_statx(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t m
       }
       struct statx64 st;
       fill_statx(&st, &node);
-      return syscall_user_writable(statx_addr, sizeof(st)) && vmm_copy_to_user(syscall_active_as(), statx_addr, &st, sizeof(st))
+      return syscall_user_writable(statx_addr, sizeof(st)) &&
+                 vmm_copy_to_user(syscall_active_as(), statx_addr, &st, sizeof(st))
                ? 0
                : -(int64_t)EFAULT;
     }
   }
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   bool nofollow = (flags & AT_SYMLINK_NOFOLLOW) != 0;
   if (!(nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node))) { return -(int64_t)ENOENT; }
   struct statx64 st;
   fill_statx(&st, &node);
-  return syscall_user_writable(statx_addr, sizeof(st)) && vmm_copy_to_user(syscall_active_as(), statx_addr, &st, sizeof(st))
+  return syscall_user_writable(statx_addr, sizeof(st)) &&
+             vmm_copy_to_user(syscall_active_as(), statx_addr, &st, sizeof(st))
            ? 0
            : -(int64_t)EFAULT;
 }
 
 int64_t sys_newfstatat(uint64_t dirfd, uint64_t path_addr, uint64_t stat_addr, uint64_t flags) {
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   struct vfs_node node;
@@ -323,7 +328,8 @@ int64_t sys_newfstatat(uint64_t dirfd, uint64_t path_addr, uint64_t stat_addr, u
   if (!(nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node))) { return -(int64_t)ENOENT; }
   struct stat64_aarch64 st;
   fill_stat(&st, &node);
-  return syscall_user_writable(stat_addr, sizeof(st)) && vmm_copy_to_user(syscall_active_as(), stat_addr, &st, sizeof(st))
+  return syscall_user_writable(stat_addr, sizeof(st)) &&
+             vmm_copy_to_user(syscall_active_as(), stat_addr, &st, sizeof(st))
            ? 0
            : -(int64_t)EFAULT;
 }
@@ -337,7 +343,7 @@ int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_
     if (!vmm_copy_from_user(syscall_active_as(), empty, path_addr, 1)) { return -(int64_t)EFAULT; }
     if (empty[0] == '\0') {
       if ((int64_t)dirfd == AT_FDCWD) {
-        char cwd[128];
+        char cwd[CELL_PATH_MAX];
         if (!syscall_normalize_path("/", cell_current_cwd(), cwd, sizeof(cwd)) || !vfs_lookup(cwd, &node)) {
           return -(int64_t)ENOENT;
         }
@@ -347,7 +353,7 @@ int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_
       return syscall_node_access_allowed(&node, mode) ? 0 : -(int64_t)EACCES;
     }
   }
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   bool nofollow = (flags & AT_SYMLINK_NOFOLLOW) != 0;
@@ -396,8 +402,8 @@ int64_t sys_getcwd(uint64_t buf, uint64_t len) {
 }
 
 int64_t sys_chdir(uint64_t path_addr) {
-  char virtual_path[128];
-  char path[128];
+  char virtual_path[CELL_PATH_MAX];
+  char path[CELL_PATH_MAX];
   if (!syscall_copy_virtual_path(path_addr, virtual_path, sizeof(virtual_path)) ||
       !syscall_copy_resolved_path(path_addr, path, sizeof(path))) {
     return syscall_path_policy_denied() ? -(int64_t)EPERM : -(int64_t)EFAULT;
@@ -409,7 +415,7 @@ int64_t sys_chdir(uint64_t path_addr) {
 }
 
 int64_t sys_chroot(uint64_t path_addr) {
-  char path[128];
+  char path[CELL_PATH_MAX];
   if (!syscall_copy_resolved_path(path_addr, path, sizeof(path))) {
     return syscall_path_policy_denied() ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
@@ -421,7 +427,7 @@ int64_t sys_chroot(uint64_t path_addr) {
 }
 
 int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr) {
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   if (!vfs_mkdir(path)) { return -(int64_t)EINVAL; }
@@ -430,7 +436,7 @@ int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr) {
 }
 
 int64_t sys_mknodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   if ((mode & S_IFMT) != S_IFIFO) { return -(int64_t)EINVAL; }
@@ -441,7 +447,7 @@ int64_t sys_mknodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
 }
 
 int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr) {
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   struct vfs_node node;
@@ -450,8 +456,8 @@ int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr) {
 }
 
 int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr) {
-  char old_path[128];
-  char new_path[128];
+  char old_path[CELL_PATH_MAX];
+  char new_path[CELL_PATH_MAX];
   int64_t old_rc = syscall_copy_resolved_path_at(old_dirfd, old_path_addr, old_path, sizeof(old_path));
   if (old_rc != 0) { return old_rc; }
   int64_t new_rc = syscall_copy_resolved_path_at(new_dirfd, new_path_addr, new_path, sizeof(new_path));
@@ -460,10 +466,10 @@ int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_di
 }
 
 int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr,
-                          uint64_t flags) {
+                   uint64_t flags) {
   if (flags != 0) { return -(int64_t)EINVAL; }
-  char old_path[128];
-  char new_path[128];
+  char old_path[CELL_PATH_MAX];
+  char new_path[CELL_PATH_MAX];
   int64_t old_rc = syscall_copy_resolved_path_at(old_dirfd, old_path_addr, old_path, sizeof(old_path));
   if (old_rc != 0) { return old_rc; }
   int64_t new_rc = syscall_copy_resolved_path_at(new_dirfd, new_path_addr, new_path, sizeof(new_path));
@@ -472,8 +478,8 @@ int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirf
 }
 
 int64_t sys_symlinkat(uint64_t target_addr, uint64_t new_dirfd, uint64_t link_path_addr) {
-  char target[128];
-  char link_path[128];
+  char target[CELL_PATH_MAX];
+  char link_path[CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(target_addr, target, sizeof(target))) {
     return syscall_path_policy_denied() ? -(int64_t)EPERM : -(int64_t)EFAULT;
   }
@@ -483,8 +489,8 @@ int64_t sys_symlinkat(uint64_t target_addr, uint64_t new_dirfd, uint64_t link_pa
 }
 
 int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf, uint64_t len) {
-  char path[128];
-  char target[128];
+  char path[CELL_PATH_MAX];
+  char target[CELL_PATH_MAX];
   size_t target_len = 0;
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
@@ -502,7 +508,7 @@ int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, u
     return fd_flags < 0 ? fd_flags : 0;
   }
 
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   if (!cell_fs_path_allowed(path, CELL_FS_WRITE)) { return -(int64_t)EPERM; }
@@ -515,7 +521,7 @@ int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, u
 
 int64_t sys_fchmodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_t flags) {
   if ((flags & ~0x100ull) != 0) { return -(int64_t)EINVAL; }
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   return vfs_chmod(path, (uint32_t)mode) ? 0 : -(int64_t)ENOENT;
@@ -536,7 +542,7 @@ static bool chown_ids(const struct vfs_node *node, uint64_t uid_arg, uint64_t gi
 int64_t sys_fchownat(uint64_t dirfd, uint64_t path_addr, uint64_t uid_arg, uint64_t gid_arg, uint64_t flags) {
   if ((flags & ~AT_SYMLINK_NOFOLLOW) != 0) { return -(int64_t)EINVAL; }
   if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
-  char path[128];
+  char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   struct vfs_node node;

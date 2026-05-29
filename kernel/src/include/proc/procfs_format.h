@@ -56,4 +56,3 @@ static inline void proc_append_hex(char *dst, size_t cap, size_t *len, uint64_t 
     proc_append_char(dst, cap, len, hex[(value >> shift) & 0xf]);
   }
 }
-

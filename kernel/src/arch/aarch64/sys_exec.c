@@ -5,7 +5,6 @@
 #include "exec/stack.h"
 #include "kprintf.h"
 #include "mem.h"
-#include "mm/pmm.h"
 #include "mm/vma.h"
 #include "mm/vmm.h"
 #include "vfs.h"
@@ -27,6 +26,7 @@ enum {
 };
 
 #define INTERP_LOAD_BASE 0x0000006000000000ull
+#define EXEC_LOAD_BASE 0x0000004000000000ull
 
 static bool streq(const char *a, const char *b) {
   while (*a != '\0' && *b != '\0') {
@@ -36,8 +36,8 @@ static bool streq(const char *a, const char *b) {
 }
 
 static bool copy_exec_path(uint64_t path_addr, char *out, size_t cap) {
-  char raw[128];
-  char virtual_path[128];
+  char raw[CELL_PATH_MAX];
+  char virtual_path[CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw)) ||
       !syscall_normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
     return false;
@@ -150,7 +150,7 @@ static bool parse_shebang_node(const struct vfs_node *node, char *interp, size_t
 }
 
 int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
-  char path[128];
+  char path[CELL_PATH_MAX];
   if (!copy_exec_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
   if (!cell_fs_path_allowed(path, CELL_FS_EXEC)) { return -(int64_t)EPERM; }
 
@@ -232,7 +232,7 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
   uint64_t hhdm_offset = syscall_active_as()->hhdm_offset;
   vma_list_init(&new_vmas);
   if (!vmm_user_init(&new_as, hhdm_offset)) { return -12; }
-  if (!elf_load_aarch64(&new_as, &new_vmas, &exec_reader, 0, &elf)) {
+  if (!elf_load_aarch64(&new_as, &new_vmas, &exec_reader, EXEC_LOAD_BASE, &elf)) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
     return -(int64_t)EINVAL;
@@ -279,4 +279,3 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
   cell_apply_exec_creds(exec_node.mode, exec_node.uid, exec_node.gid);
   return 0;
 }
-

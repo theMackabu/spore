@@ -8,6 +8,7 @@
 #include "proc/pipe.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
+#include "random.h"
 #include "vfs.h"
 
 enum {
@@ -44,12 +45,130 @@ struct unix_pending_conn {
 };
 
 static struct unix_pending_conn unix_pending[16];
-static uint16_t next_tcp_port = 49152;
 static uint16_t next_udp_port = 49152;
 
 static uint16_t tcp_window(const struct open_file *file) {
   uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
   return room > UINT16_MAX ? UINT16_MAX : (uint16_t)room;
+}
+
+static uint32_t tcp_append_rx(struct open_file *file, const uint8_t *data, uint32_t len) {
+  uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
+  uint32_t n = len < room ? len : room;
+  if (n == 0) { return 0; }
+  kmemcpy(file->tcp_rx + file->tcp_rx_len, data, (size_t)n);
+  file->tcp_rx_len += n;
+  file->tcp_ack += n;
+  return n;
+}
+
+static bool seq_before(uint32_t a, uint32_t b) {
+  return (int32_t)(a - b) < 0;
+}
+
+static bool seq_after(uint32_t a, uint32_t b) {
+  return (int32_t)(a - b) > 0;
+}
+
+static void tcp_clear_ooo(struct open_file *file) {
+  for (size_t i = 0; i < sizeof(file->tcp_ooo_used) / sizeof(file->tcp_ooo_used[0]); ++i) {
+    file->tcp_ooo_used[i] = false;
+    file->tcp_ooo_len[i] = 0;
+  }
+}
+
+static bool tcp_accept_pending_fin(struct open_file *file) {
+  if (!file->tcp_fin_pending || file->tcp_fin_seq != file->tcp_ack) { return false; }
+  file->tcp_fin_pending = false;
+  file->tcp_fin = true;
+  file->tcp_ack = file->tcp_fin_seq + 1;
+  return true;
+}
+
+static void tcp_record_fin(struct open_file *file, uint32_t fin_seq) {
+  if (seq_before(fin_seq, file->tcp_ack)) { return; }
+  file->tcp_fin_pending = true;
+  file->tcp_fin_seq = fin_seq;
+}
+
+static void tcp_store_ooo(struct open_file *file, uint32_t seq, const uint8_t *data, uint32_t len) {
+  if (len == 0) { return; }
+  uint32_t end = seq + len;
+  if (!seq_after(end, file->tcp_ack)) { return; }
+  if (seq_before(seq, file->tcp_ack)) {
+    uint32_t skip = file->tcp_ack - seq;
+    if (skip >= len) { return; }
+    seq += skip;
+    data += skip;
+    len -= skip;
+  }
+  uint32_t n = len < sizeof(file->tcp_ooo[0]) ? len : (uint32_t)sizeof(file->tcp_ooo[0]);
+  size_t slot = sizeof(file->tcp_ooo_used) / sizeof(file->tcp_ooo_used[0]);
+  for (size_t i = 0; i < sizeof(file->tcp_ooo_used) / sizeof(file->tcp_ooo_used[0]); ++i) {
+    if (!file->tcp_ooo_used[i]) {
+      slot = i;
+      break;
+    }
+    if (file->tcp_ooo_seq[i] == seq) {
+      if (file->tcp_ooo_len[i] >= n) { return; }
+      slot = i;
+      break;
+    }
+  }
+  if (slot == sizeof(file->tcp_ooo_used) / sizeof(file->tcp_ooo_used[0])) { return; }
+  kmemcpy(file->tcp_ooo[slot], data, (size_t)n);
+  file->tcp_ooo_seq[slot] = seq;
+  file->tcp_ooo_len[slot] = n;
+  file->tcp_ooo_used[slot] = true;
+}
+
+static int tcp_next_ooo_slot(const struct open_file *file) {
+  int best = -1;
+  for (size_t i = 0; i < sizeof(file->tcp_ooo_used) / sizeof(file->tcp_ooo_used[0]); ++i) {
+    if (!file->tcp_ooo_used[i]) { continue; }
+    if (best < 0 || seq_before(file->tcp_ooo_seq[i], file->tcp_ooo_seq[best])) { best = (int)i; }
+  }
+  return best;
+}
+
+static void tcp_drain_ooo(struct open_file *file) {
+  for (;;) {
+    int slot = tcp_next_ooo_slot(file);
+    if (slot < 0) { return; }
+    uint32_t seq = file->tcp_ooo_seq[slot];
+    uint32_t len = file->tcp_ooo_len[slot];
+    if (seq_before(seq, file->tcp_ack)) {
+      uint32_t skip = file->tcp_ack - seq;
+      if (skip >= len) {
+        file->tcp_ooo_used[slot] = false;
+        file->tcp_ooo_len[slot] = 0;
+        continue;
+      }
+      uint32_t remaining = len - skip;
+      for (uint32_t i = 0; i < remaining; ++i) {
+        file->tcp_ooo[slot][i] = file->tcp_ooo[slot][skip + i];
+      }
+      file->tcp_ooo_seq[slot] += skip;
+      file->tcp_ooo_len[slot] = remaining;
+      seq = file->tcp_ooo_seq[slot];
+      len = file->tcp_ooo_len[slot];
+    }
+    if (seq != file->tcp_ack) { return; }
+    uint32_t n = tcp_append_rx(file, file->tcp_ooo[slot], len);
+    if (n == 0) { return; }
+    (void)tcp_accept_pending_fin(file);
+    if (n == len) {
+      file->tcp_ooo_used[slot] = false;
+      file->tcp_ooo_len[slot] = 0;
+      continue;
+    }
+    uint32_t remaining = len - n;
+    for (uint32_t i = 0; i < remaining; ++i) {
+      file->tcp_ooo[slot][i] = file->tcp_ooo[slot][n + i];
+    }
+    file->tcp_ooo_seq[slot] += n;
+    file->tcp_ooo_len[slot] = remaining;
+  }
 }
 
 int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
@@ -74,7 +193,9 @@ int64_t cell_socket_tcp_read_to_domain(struct domain *domain, struct open_file *
   if (!vmm_copy_to_user(&domain->as, buf, file->tcp_rx, (size_t)n)) { return -EFAULT; }
   if (n < file->tcp_rx_len) {
     uint32_t remaining = file->tcp_rx_len - (uint32_t)n;
-    for (uint32_t i = 0; i < remaining; ++i) { file->tcp_rx[i] = file->tcp_rx[n + i]; }
+    for (uint32_t i = 0; i < remaining; ++i) {
+      file->tcp_rx[i] = file->tcp_rx[n + i];
+    }
   }
   file->tcp_rx_len -= (uint32_t)n;
   if (file->tcp_state == TCP_ESTABLISHED || file->tcp_state == TCP_FIN_WAIT) {
@@ -101,6 +222,7 @@ int cell_fd_socket_inet(uint8_t proto) {
   file->socket_proto = proto;
   file->udp_local_port = (uint16_t)(40000 + fd);
   domain->fds[fd] = file;
+  domain->fd_flags[fd] = 0;
   return fd;
 }
 
@@ -116,6 +238,7 @@ int cell_fd_socket_unix(void) {
   file->unix_owner_uid = domain->euid;
   file->unix_owner_gid = domain->egid;
   domain->fds[fd] = file;
+  domain->fd_flags[fd] = 0;
   return fd;
 }
 
@@ -193,6 +316,7 @@ int cell_socket_take_pending_unix(struct domain *domain, struct open_file *liste
   for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
     if (!unix_pending[i].used || unix_pending[i].listener != listener) { continue; }
     domain->fds[fd] = unix_pending[i].server_end;
+    domain->fd_flags[fd] = 0;
     unix_pending[i] = (struct unix_pending_conn){0};
     return fd;
   }
@@ -307,8 +431,38 @@ static struct open_file *tcp_socket_for_fd(struct domain *domain, int fd) {
 }
 
 static uint32_t tcp_initial_seq(struct domain *domain, int fd) {
-  uint32_t pid = domain == NULL ? 0 : (uint32_t)domain->id;
-  return 0x50000000u + pid * 4096u + (uint32_t)fd * 97u;
+  (void)domain;
+  (void)fd;
+  uint32_t seq = 0;
+  random_bytes(&seq, sizeof(seq));
+  return seq;
+}
+
+static bool tcp_local_port_in_use(uint16_t port) {
+  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+    struct domain *domain = cell_domain_slot(d);
+    if (domain == NULL || !domain->used) { continue; }
+    for (size_t fd = 0; fd < MAX_FDS; ++fd) {
+      struct open_file *file = domain->fds[fd];
+      if (file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
+          file->tcp_state != TCP_CLOSED && file->tcp_local_port == port) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static uint16_t tcp_ephemeral_port(void) {
+  uint16_t seed = 0;
+  random_bytes(&seed, sizeof(seed));
+  uint16_t first = (uint16_t)(49152u + (seed % (65535u - 49152u)));
+  uint16_t port = first;
+  do {
+    if (!tcp_local_port_in_use(port)) { return port; }
+    port = port == 65534u ? 49152u : (uint16_t)(port + 1u);
+  } while (port != first);
+  return 0;
 }
 
 int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *frame) {
@@ -320,12 +474,15 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
   if (file->tcp_state == TCP_CLOSED) {
     file->tcp_remote_ip = ip;
     file->tcp_remote_port = port;
-    file->tcp_local_port = next_tcp_port++;
-    if (next_tcp_port < 49152) { next_tcp_port = 49152; }
+    file->tcp_local_port = tcp_ephemeral_port();
+    if (file->tcp_local_port == 0) { return -EIO; }
     file->tcp_seq = tcp_initial_seq(domain, fd);
     file->tcp_ack = 0;
     file->tcp_error = 0;
     file->tcp_fin = false;
+    file->tcp_fin_pending = false;
+    file->tcp_fin_seq = 0;
+    tcp_clear_ooo(file);
     file->tcp_state = TCP_SYN_SENT;
     if (!net_tcp_send_segment(file->tcp_local_port, ip, port, file->tcp_seq, 0, tcp_window(file), 0x02, NULL, 0)) {
       file->tcp_state = TCP_CLOSED;
@@ -485,13 +642,35 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
         cell_socket_wake_file(file);
         return;
       }
+      uint32_t packet_fin_seq = seq + (uint32_t)len;
       if (len != 0) {
-        uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
-        uint64_t n = len < room ? len : room;
+        const uint8_t *data = payload;
+        uint32_t data_len = (uint32_t)len;
+        if (seq_before(seq, file->tcp_ack)) {
+          uint32_t skip = file->tcp_ack - seq;
+          if (skip >= data_len) {
+            (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
+                                       file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
+            cell_socket_wake_file(file);
+            return;
+          }
+          data += skip;
+          data_len -= skip;
+          seq = file->tcp_ack;
+        }
+        if (seq != file->tcp_ack) {
+          tcp_store_ooo(file, seq, data, data_len);
+          if ((flags & 0x01) != 0) { tcp_record_fin(file, packet_fin_seq); }
+          (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
+                                     file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
+          cell_socket_wake_file(file);
+          return;
+        }
+        uint32_t n = tcp_append_rx(file, data, data_len);
         if (n != 0) {
-          kmemcpy(file->tcp_rx + file->tcp_rx_len, payload, (size_t)n);
-          file->tcp_rx_len += (uint32_t)n;
-          file->tcp_ack = seq + (uint32_t)n;
+          tcp_drain_ooo(file);
+          if ((flags & 0x01) != 0) { tcp_record_fin(file, packet_fin_seq); }
+          (void)tcp_accept_pending_fin(file);
           (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
                                      file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
         } else {
@@ -500,10 +679,11 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
         }
       }
       if ((flags & 0x01) != 0) {
-        file->tcp_fin = true;
-        file->tcp_ack = seq + (uint32_t)len + 1;
-        (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
-                                   file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
+        tcp_record_fin(file, packet_fin_seq);
+        if (tcp_accept_pending_fin(file)) {
+          (void)net_tcp_send_segment(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port, file->tcp_seq,
+                                     file->tcp_ack, tcp_window(file), 0x10, NULL, 0);
+        }
       }
       cell_socket_wake_file(file);
       return;

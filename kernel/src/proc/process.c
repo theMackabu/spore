@@ -26,14 +26,19 @@ void cell_wake_parent_of(struct domain *child) {
   struct thread *parent = parent_domain == NULL ? NULL : cell_thread_for_domain(parent_domain);
   if (parent != NULL && parent->state == THREAD_BLOCKED && parent->wait_reason == WAIT_CHILD &&
       (parent->wait_target < 0 || parent->wait_target == child->id)) {
+    bool child_is_current = child == current_domain();
     int status = child->exit_status << 8;
     if (child->term_signal != 0) { status = child->term_signal; }
     uint64_t status_addr = parent->tf.x[1];
     if (status_addr != 0) { (void)vmm_copy_to_user(&parent_domain->as, status_addr, &status, sizeof(status)); }
     parent->tf.x[0] = (uint64_t)child->id;
     struct thread *child_thread = cell_thread_for_domain(child);
-    if (child_thread != NULL) { child_thread->state = THREAD_UNUSED; }
-    cell_destroy_domain(child);
+    if (child_thread != NULL) { child_thread->state = child_is_current ? THREAD_ZOMBIE : THREAD_UNUSED; }
+    if (child_is_current) {
+      child->parent_id = 0;
+    } else {
+      cell_destroy_domain(child);
+    }
     parent->state = THREAD_RUNNABLE;
     parent->wait_reason = WAIT_NONE;
     parent->wait_target = -1;
@@ -53,6 +58,7 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
     domain->exit_status = status;
     domain->term_signal = 0;
     domain->zombie = true;
+    cell_close_all_fds(domain);
     cell_current_thread_internal()->state = THREAD_ZOMBIE;
     cell_wake_parent_of(domain);
     cell_schedule(frame);
@@ -69,6 +75,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   domain->exit_status = status;
   domain->term_signal = 0;
   domain->zombie = true;
+  cell_close_all_fds(domain);
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
@@ -226,9 +233,10 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
     }
   }
   for (size_t i = 0; i < MAX_FDS; ++i) {
-    if (domain->fds[i] != NULL && (domain->fds[i]->flags & CELL_O_CLOEXEC) != 0) {
+    if (domain->fds[i] != NULL && domain->fd_flags[i] != 0) {
       cell_release_open_file(domain->fds[i]);
       domain->fds[i] = NULL;
+      domain->fd_flags[i] = 0;
     }
   }
   domain->as = *as;

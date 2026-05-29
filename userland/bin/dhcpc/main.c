@@ -1,7 +1,7 @@
-#include <spore.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <spore.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>

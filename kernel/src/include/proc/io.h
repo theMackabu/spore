@@ -6,3 +6,5 @@
 
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
+int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame);
+int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame);

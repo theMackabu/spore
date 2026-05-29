@@ -103,8 +103,7 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   kmemset(random, 0, sizeof(random));
 
   const uint64_t hwcap = AARCH64_HWCAP_FP | AARCH64_HWCAP_ASIMD | AARCH64_HWCAP_AES | AARCH64_HWCAP_PMULL |
-                         AARCH64_HWCAP_SHA1 | AARCH64_HWCAP_SHA2 | AARCH64_HWCAP_CRC32 |
-                         AARCH64_HWCAP_ATOMICS;
+                         AARCH64_HWCAP_SHA1 | AARCH64_HWCAP_SHA2 | AARCH64_HWCAP_CRC32 | AARCH64_HWCAP_ATOMICS;
   const uint64_t aux[][2] = {
     {AT_PHDR, elf->phdr},
     {AT_PHENT, elf->phent},

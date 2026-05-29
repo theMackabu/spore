@@ -3,6 +3,7 @@
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/vmm.h"
+#include "proc/domain.h"
 
 extern void arch_fp_save(struct fp_state *state);
 extern void arch_fp_restore(const struct fp_state *state);
@@ -141,6 +142,11 @@ static void restore_thread(struct thread *thread, struct trap_frame *frame, stru
   *frame = thread->tf;
 }
 
+static void cleanup_reaped_current_domain(struct domain *old_domain, struct thread *next) {
+  if (old_domain == NULL || old_domain == next->domain || !old_domain->zombie || old_domain->parent_id != 0) { return; }
+  cell_destroy_domain(old_domain);
+}
+
 void cell_restore_current(struct trap_frame *frame) {
   if (current_thread == NULL) { return; }
   vmm_install_user(&current_thread->domain->as);
@@ -159,6 +165,7 @@ void cell_schedule(struct trap_frame *frame) {
         struct thread *candidate = cell_thread_slot((start + n) % MAX_THREADS);
         if (candidate != NULL && candidate->state == THREAD_RUNNABLE) {
           current_thread = candidate;
+          cleanup_reaped_current_domain(old_domain, candidate);
           restore_thread(candidate, frame, old_domain);
           return;
         }
@@ -168,6 +175,7 @@ void cell_schedule(struct trap_frame *frame) {
       struct thread *candidate = cell_thread_slot((start + n) % MAX_THREADS);
       if (candidate != NULL && candidate->state == THREAD_RUNNABLE) {
         current_thread = candidate;
+        cleanup_reaped_current_domain(old_domain, candidate);
         restore_thread(candidate, frame, old_domain);
         return;
       }

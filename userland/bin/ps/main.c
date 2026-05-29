@@ -74,8 +74,9 @@ static int load_rows(struct proc_row *rows, size_t cap) {
   (void)fgets(header, sizeof(header), f);
   int n = 0;
   while ((size_t)n < cap &&
-         fscanf(f, "%u %u %15s %15s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %31s %127s %63s "
-                   "%159[^\n]\n",
+         fscanf(f,
+                "%u %u %15s %15s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %31s %127s %63s "
+                "%159[^\n]\n",
                 &rows[n].pid, &rows[n].ppid, rows[n].state, rows[n].wait, &rows[n].vsz_pages, &rows[n].rss_pages,
                 &rows[n].minflt, &rows[n].majflt, &rows[n].cpu_ticks, &rows[n].age_ticks, &rows[n].budget_remaining,
                 &rows[n].budget_max, &rows[n].unsupported_syscalls, &rows[n].last_unsupported_syscall,

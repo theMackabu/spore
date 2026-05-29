@@ -82,10 +82,10 @@ static bool caps_subset(const struct capability_set *requested, const struct cap
       bool covered = false;
       for (uint8_t j = 0; j < parent->fs_rule_count; ++j) {
         size_t parent_len = kstrlen(parent->fs_rules[j].path);
-        bool path_covered = str_eq(parent->fs_rules[j].path, "/") ||
-                            (starts_with(requested->fs_rules[i].path, parent->fs_rules[j].path) &&
-                             (requested->fs_rules[i].path[parent_len] == '\0' ||
-                              requested->fs_rules[i].path[parent_len] == '/'));
+        bool path_covered =
+          str_eq(parent->fs_rules[j].path, "/") ||
+          (starts_with(requested->fs_rules[i].path, parent->fs_rules[j].path) &&
+           (requested->fs_rules[i].path[parent_len] == '\0' || requested->fs_rules[i].path[parent_len] == '/'));
         bool rights_covered = (requested->fs_rules[i].rights & ~parent->fs_rules[j].rights) == 0;
         if (path_covered && rights_covered) {
           covered = true;
@@ -104,11 +104,9 @@ static void cap_allow(struct capability_set *caps, uint64_t nr) {
 
 static void cap_allow_common(struct capability_set *caps) {
   static const uint16_t common[] = {
-    17,  19,  23,  24,  25,  29,  57,  59,  63,  64,  65,  66,  72,  73,  80,  93,  94,  96,  98,  99,
-    101, 103, 48,
-    113, 115, 123, 124, 134, 135, 144, 146, 160, 161, 172, 173, 174, 175, 176, 177, 178, 179, 198,
-    200, 203, 204, 206, 207, 208, 209, 211, 212, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261,
-    278, 439,
+    17,  19,  23,  24,  25,  29,  57,  59,  63,  64,  65,  66,  72,  73,  80,  93,  94,  96,  98,  99,  101,
+    103, 48,  113, 115, 123, 124, 134, 135, 144, 146, 160, 161, 172, 173, 174, 175, 176, 177, 178, 179, 198,
+    200, 203, 204, 206, 207, 208, 209, 211, 212, 214, 215, 216, 220, 221, 222, 226, 233, 260, 261, 278, 439,
   };
   for (size_t i = 0; i < sizeof(common) / sizeof(common[0]); ++i) {
     cap_allow(caps, common[i]);

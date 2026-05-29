@@ -173,9 +173,7 @@ int64_t sys_getrusage(int who, uint64_t usage_addr) {
     RUSAGE_CHILDREN = -1,
     RUSAGE_THREAD = 1,
   };
-  if (usage_addr == 0 || !syscall_user_writable(usage_addr, sizeof(struct rusage64))) {
-    return -(int64_t)EFAULT;
-  }
+  if (usage_addr == 0 || !syscall_user_writable(usage_addr, sizeof(struct rusage64))) { return -(int64_t)EFAULT; }
   if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN && who != RUSAGE_THREAD) { return -(int64_t)EINVAL; }
 
   struct rusage64 usage;

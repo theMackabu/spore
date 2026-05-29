@@ -1,18 +1,23 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 4 ]; then
-  echo "usage: build.sh SOURCE_ROOT BUILD_DIR PROJECT_BUILD_ROOT OUTPUT" >&2
+if [ "$#" -ne 5 ]; then
+  echo "usage: build.sh SOURCE_ROOT BUILD_DIR PROJECT_BUILD_ROOT WGET_OUTPUT WHICH_OUTPUT" >&2
   exit 2
 fi
 
 root=$1
 build=$2
 _project_build=$3
-out=$4
-case "$out" in
+wget_out=$4
+which_out=$5
+case "$wget_out" in
   /*) ;;
-  *) out="$PWD/$out" ;;
+  *) wget_out="$PWD/$wget_out" ;;
+esac
+case "$which_out" in
+  /*) ;;
+  *) which_out="$PWD/$which_out" ;;
 esac
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
@@ -28,7 +33,7 @@ mkdir -p "$build"
   aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
 } >"$stamp_new"
 
-if [ -f "$out" ] && [ -f "$stamp" ] && cmp -s "$stamp_new" "$stamp"; then
+if [ -f "$wget_out" ] && [ -f "$which_out" ] && [ -f "$stamp" ] && cmp -s "$stamp_new" "$stamp"; then
   rm -f "$stamp_new"
   exit 0
 fi
@@ -60,10 +65,12 @@ enable FEATURE_WGET_AUTHENTICATION
 enable FEATURE_WGET_TIMEOUT
 enable FEATURE_WGET_HTTPS
 enable TLS
+enable WHICH
 
 sed -i.bak 's/^CONFIG_CROSS_COMPILER_PREFIX=.*/CONFIG_CROSS_COMPILER_PREFIX="aarch64-unknown-linux-musl-"/' "$cfg"
 rm -f "$cfg.bak"
 yes '' | make -C "$busybox_src" O="$busybox_build" oldconfig >/dev/null
 make -C "$busybox_src" O="$busybox_build" -j"$jobs" busybox >/dev/null
-aarch64-unknown-linux-musl-strip -o "$out" "$busybox_build/busybox"
+aarch64-unknown-linux-musl-strip -o "$wget_out" "$busybox_build/busybox"
+cp "$wget_out" "$which_out"
 mv "$stamp_new" "$stamp"

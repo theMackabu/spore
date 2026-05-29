@@ -183,8 +183,8 @@ static bool resolve_virtual_path(const char *virtual_path, char *out, size_t cap
 
 static bool copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
   path_policy_denied = false;
-  char raw[128];
-  char virtual_path[128];
+  char raw[CELL_PATH_MAX];
+  char virtual_path[CELL_PATH_MAX];
   if (!copy_string_from_user(path_addr, raw, sizeof(raw)) ||
       !normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
     return false;
@@ -202,15 +202,15 @@ bool syscall_path_policy_denied(void) {
 
 static int64_t copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
   path_policy_denied = false;
-  char raw[128];
+  char raw[CELL_PATH_MAX];
   if (!copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
   if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
     return copy_resolved_path(path_addr, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
   }
 
   if (!cell_fd_is_dir((int)dirfd)) { return cell_fd_path((int)dirfd, out, cap) ? -(int64_t)ENOTDIR : -(int64_t)EBADF; }
-  char base[128];
-  char virtual_path[128];
+  char base[CELL_PATH_MAX];
+  char virtual_path[CELL_PATH_MAX];
   if (!cell_fd_path((int)dirfd, base, sizeof(base))) { return -(int64_t)EBADF; }
   if (!normalize_path(base, raw, virtual_path, sizeof(virtual_path))) { return -(int64_t)ENAMETOOLONG; }
   return resolve_virtual_path(virtual_path, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
@@ -221,7 +221,7 @@ int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *
 }
 
 static bool copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
-  char raw[128];
+  char raw[CELL_PATH_MAX];
   return copy_string_from_user(path_addr, raw, sizeof(raw)) && normalize_path(cell_current_cwd(), raw, out, cap);
 }
 
@@ -230,13 +230,13 @@ bool syscall_copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
 }
 
 static int64_t copy_virtual_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
-  char raw[128];
+  char raw[CELL_PATH_MAX];
   if (!copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
   if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
     return normalize_path(cell_current_cwd(), raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
   }
   if (!cell_fd_is_dir((int)dirfd)) { return cell_fd_path((int)dirfd, out, cap) ? -(int64_t)ENOTDIR : -(int64_t)EBADF; }
-  char base[128];
+  char base[CELL_PATH_MAX];
   if (!cell_fd_path((int)dirfd, base, sizeof(base))) { return -(int64_t)EBADF; }
   return normalize_path(base, raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
 }

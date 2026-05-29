@@ -82,8 +82,8 @@ static void handle_client(int fd, mbedtls_x509_crt *trust) {
     if (parse != 0) { goto out; }
   }
 
-  rc = mbedtls_x509_crt_verify_with_profile(&chain, trust, NULL, &mbedtls_x509_crt_profile_next, host, &flags, NULL,
-                                            NULL);
+  rc =
+    mbedtls_x509_crt_verify_with_profile(&chain, trust, NULL, &mbedtls_x509_crt_profile_next, host, &flags, NULL, NULL);
 
 out:
   reply(fd, rc, flags);

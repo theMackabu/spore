@@ -47,6 +47,8 @@ struct trap_frame;
 
 int64_t sys_read(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len);
 int64_t sys_write(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len);
+int64_t sys_pread64(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len, uint64_t off);
+int64_t sys_pwrite64(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len, uint64_t off);
 int64_t sys_readv(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt);
 int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt);
 int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags);
@@ -81,12 +83,13 @@ int64_t sys_clock_nanosleep(struct trap_frame *frame, uint64_t clock_id, uint64_
                             uint64_t rem_addr);
 int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
                   uint64_t sigsetsize);
-int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, uint64_t writefds,
-                     uint64_t exceptfds, uint64_t timeout_addr);
+int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds,
+                     uint64_t timeout_addr);
 int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr);
 int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
                         uint64_t timeout_ms, uint64_t sigmask, uint64_t sigsetsize);
 int64_t sys_sigaltstack(uint64_t new_addr, uint64_t old_addr);
+int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set, uint64_t oldset, uint64_t sigsetsize);
 int64_t sys_clone(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
                   uint64_t child_tid);
 int64_t sys_futex(struct trap_frame *frame, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout);

@@ -386,7 +386,8 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   struct loaded_elf elf;
   uint64_t user_sp;
   vma_list_init(&vmas);
-  if (!vmm_user_init(&as, boot->hhdm_offset) || !elf_load_aarch64(&as, &vmas, &init_reader, 0, &elf)) {
+  if (!vmm_user_init(&as, boot->hhdm_offset) ||
+      !elf_load_aarch64(&as, &vmas, &init_reader, 0x0000004000000000ull, &elf)) {
     kprintf("[kernel] failed to prepare /sbin/init\n");
     for (;;) {
       __asm__ volatile("wfe");

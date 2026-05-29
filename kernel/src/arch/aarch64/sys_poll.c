@@ -90,8 +90,8 @@ int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_
   return cell_ppoll_current(fds, nfds, has_timeout, timeout_ticks, frame);
 }
 
-int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, uint64_t writefds,
-                     uint64_t exceptfds, uint64_t timeout_addr) {
+int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds,
+                     uint64_t timeout_addr) {
   struct timespec64 timeout = {.tv_sec = 0, .tv_nsec = 0};
   bool has_timeout = timeout_addr != 0;
   uint64_t timeout_ticks = 0;

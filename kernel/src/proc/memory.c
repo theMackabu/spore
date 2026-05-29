@@ -119,6 +119,16 @@ bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
   return true;
 }
 
+bool cell_handle_permission_fault(uint64_t far, enum vmm_access access) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return false; }
+  uint64_t va = far & ~(uint64_t)(PAGE_SIZE - 1);
+  const struct vma *vma = vma_lookup(&domain->vmas, va);
+  if (vma == NULL || !access_allowed(vma, access) || !vmm_is_mapped(&domain->as, va)) { return false; }
+  vmm_protect_range(&domain->as, va, va + PAGE_SIZE, vma->prot);
+  return vmm_user_range_accessible(&domain->as, va, 1, access);
+}
+
 bool cell_ensure_user_range(uint64_t va, size_t len, enum vmm_access access) {
   return cell_domain_ensure_user_range(cell_current_domain_internal(), va, len, access);
 }
@@ -135,8 +145,8 @@ bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t fl
 bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
                        uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
   struct domain *domain = cell_current_domain_internal();
-  return domain != NULL && vma_insert_file(&domain->vmas, start, end, prot, flags, node, file_start, file_offset,
-                                           file_size);
+  return domain != NULL &&
+         vma_insert_file(&domain->vmas, start, end, prot, flags, node, file_start, file_offset, file_size);
 }
 
 bool cell_vma_overlaps(uint64_t start, uint64_t end) {

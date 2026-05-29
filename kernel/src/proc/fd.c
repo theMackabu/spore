@@ -74,6 +74,7 @@ void cell_close_all_fds(struct domain *domain) {
   for (size_t i = 0; i < MAX_FDS; ++i) {
     cell_release_open_file(domain->fds[i]);
     domain->fds[i] = NULL;
+    domain->fd_flags[i] = 0;
   }
 }
 
@@ -93,12 +94,16 @@ bool cell_init_stdio(struct domain *domain) {
   domain->fds[0] = in;
   domain->fds[1] = out;
   domain->fds[2] = err;
+  domain->fd_flags[0] = 0;
+  domain->fd_flags[1] = 0;
+  domain->fd_flags[2] = 0;
   return true;
 }
 
 void cell_copy_fd_table(struct domain *dst, const struct domain *src) {
   for (size_t i = 0; i < MAX_FDS; ++i) {
     dst->fds[i] = src->fds[i];
+    dst->fd_flags[i] = src->fd_flags[i];
     cell_retain_open_file(dst->fds[i]);
   }
 }
@@ -140,10 +145,11 @@ int cell_fd_eventfd(uint64_t initval, int flags) {
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
   file->type = OPEN_EVENTFD;
-  file->flags = (uint32_t)flags;
+  file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
   file->eventfd_value = initval;
   file->eventfd_semaphore = (flags & EFD_SEMAPHORE) != 0;
   domain->fds[fd] = file;
+  domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
   return fd;
 }
 
@@ -190,13 +196,18 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
     struct open_file *file = cell_alloc_open_file();
     if (file == NULL) { return -12; }
     file->type = OPEN_PIPE;
-    file->flags = flags;
+    file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
     file->node = *node;
     cell_copy_open_path(file, path);
     file->pipe_id = (uint8_t)pipe_id;
     file->pipe_write_end = write_end;
-    if (write_end) { cell_pipe_add_writer((uint8_t)pipe_id); } else { cell_pipe_add_reader((uint8_t)pipe_id); }
+    if (write_end) {
+      cell_pipe_add_writer((uint8_t)pipe_id);
+    } else {
+      cell_pipe_add_reader((uint8_t)pipe_id);
+    }
     domain->fds[fd] = file;
+    domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
     cell_pipe_notify();
     return fd;
   }
@@ -211,11 +222,12 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
   file->type = OPEN_RAMFS;
-  file->flags = flags;
+  file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   file->node = *node;
   cell_copy_open_path(file, path);
   if ((flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
   domain->fds[fd] = file;
+  domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
   return fd;
 }
 
@@ -242,11 +254,11 @@ int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
   cell_pipe_add_writer((uint8_t)pipe_id);
 
   read_file->type = OPEN_PIPE;
-  read_file->flags = (uint32_t)flags;
+  read_file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
   read_file->pipe_id = (uint8_t)pipe_id;
   read_file->pipe_write_end = false;
   write_file->type = OPEN_PIPE;
-  write_file->flags = (uint32_t)flags;
+  write_file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
   write_file->pipe_id = (uint8_t)pipe_id;
   write_file->pipe_write_end = true;
 
@@ -258,6 +270,8 @@ int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
   }
   domain->fds[read_fd] = read_file;
   domain->fds[write_fd] = write_file;
+  domain->fd_flags[read_fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
+  domain->fd_flags[write_fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
   return 0;
 }
 
@@ -269,6 +283,7 @@ int cell_fd_dup(int oldfd, int minfd) {
   for (int fd = minfd; fd < MAX_FDS; ++fd) {
     if (domain->fds[fd] == NULL) {
       domain->fds[fd] = domain->fds[oldfd];
+      domain->fd_flags[fd] = 0;
       cell_retain_open_file(domain->fds[fd]);
       return fd;
     }
@@ -287,14 +302,14 @@ int cell_fd_dup3(int oldfd, int newfd, int flags) {
   cell_retain_open_file(file);
   if (domain->fds[newfd] != NULL) { cell_release_open_file(domain->fds[newfd]); }
   domain->fds[newfd] = file;
-  if ((flags & CELL_O_CLOEXEC) != 0) { file->flags |= CELL_O_CLOEXEC; }
+  domain->fd_flags[newfd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
   return newfd;
 }
 
 int cell_fd_get_flags(int fd) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  return (int)(domain->fds[fd]->flags & ~(uint32_t)CELL_O_CLOEXEC);
+  return (int)domain->fds[fd]->flags;
 }
 
 int cell_fd_set_flags(int fd, int flags) {
@@ -310,17 +325,13 @@ int cell_fd_set_flags(int fd, int flags) {
 int cell_fd_get_fd_flags(int fd) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  return (domain->fds[fd]->flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
+  return domain->fd_flags[fd] != 0 ? 1 : 0;
 }
 
 int cell_fd_set_fd_flags(int fd, int flags) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  if ((flags & 1) != 0) {
-    domain->fds[fd]->flags |= CELL_O_CLOEXEC;
-  } else {
-    domain->fds[fd]->flags &= ~(uint32_t)CELL_O_CLOEXEC;
-  }
+  domain->fd_flags[fd] = (flags & 1) != 0 ? 1 : 0;
   return 0;
 }
 
@@ -329,6 +340,18 @@ int cell_fd_close(int fd) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   cell_release_open_file(domain->fds[fd]);
   domain->fds[fd] = NULL;
+  domain->fd_flags[fd] = 0;
+  return 0;
+}
+
+int cell_fd_is_tty(int fd) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
+  struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_STDIN || file->type == OPEN_STDOUT) { return 1; }
+  if (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_CONSOLE || file->node.device == RAMFS_DEV_TTY)) {
+    return 1;
+  }
   return 0;
 }
 
@@ -381,9 +404,7 @@ bool cell_fd_is_dir(int fd) {
 
 bool cell_fd_path(int fd, char *out, size_t cap) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || out == NULL || cap == 0 || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) {
-    return false;
-  }
+  if (domain == NULL || out == NULL || cap == 0 || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
   if (file->path[0] == '\0') { return false; }
   size_t len = kstrlen(file->path);

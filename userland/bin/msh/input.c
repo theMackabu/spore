@@ -20,8 +20,8 @@ struct completion {
 };
 
 static const char *builtins[] = {
-  ".",   "cd",   "confine", "exit", "export", "fg",   "help",  "jobs", "kill",
-  "pwd", "runc", "select",  "set",  "source", "test", "unset", "wait",
+  ".",    "cd",  "command", "confine", "exit", "export", "fg",   "help",  "jobs",
+  "kill", "pwd", "runc",    "select",  "set",  "source", "test", "unset", "wait",
 };
 
 static bool path_has_prefix_dir(const char *path, const char *prefix) {
