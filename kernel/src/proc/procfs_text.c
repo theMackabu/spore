@@ -245,6 +245,10 @@ size_t proc_cpuinfo_text(char *dst, size_t cap) {
     proc_append_u64(dst, cap, &len, revision);
     proc_append_str(dst, cap, &len, "\nHardware\t: ");
     proc_append_str(dst, cap, &len, model);
+    proc_append_str(dst, cap, &len, "\nMPIDR\t\t: ");
+    proc_append_hex(dst, cap, &len, smp_cpu_mpidr(cpu), 8);
+    proc_append_str(dst, cap, &len, "\nonline\t\t: ");
+    proc_append_u64(dst, cap, &len, smp_cpu_online(cpu) ? 1 : 0);
     proc_append_str(dst, cap, &len, "\ncpu MHz\t\t: ");
     proc_append_u64(dst, cap, &len, cntfrq / 1000000);
     proc_append_char(dst, cap, &len, '.');
@@ -293,6 +297,7 @@ size_t proc_mounts_text(char *dst, size_t cap) {
                   "bootfs /dev/fs/boot fat16 ro 0 0\n"
                   "ramfs /dev/fs/ram0 ramfs ro 0 0\n"
                   "proc /proc proc ro 0 0\n"
+                  "sysfs /sys sysfs ro 0 0\n"
                   "dev /dev devfs rw 0 0\n");
   return len;
 }
@@ -471,6 +476,12 @@ size_t proc_stat_text(char *dst, size_t cap) {
   }
   proc_append_str(dst, cap, &len, "ctxt ");
   proc_append_u64(dst, cap, &len, cell_uptime_ticks());
+  proc_append_str(dst, cap, &len, "\ncpu_possible ");
+  proc_append_u64(dst, cap, &len, smp_possible_cpu_count());
+  proc_append_str(dst, cap, &len, "\ncpu_present ");
+  proc_append_u64(dst, cap, &len, smp_present_cpu_count());
+  proc_append_str(dst, cap, &len, "\ncpu_online ");
+  proc_append_u64(dst, cap, &len, smp_online_cpu_count());
   proc_append_str(dst, cap, &len, "\nbtime ");
   proc_append_u64(dst, cap, &len, cell_boot_epoch_seconds());
   proc_append_str(dst, cap, &len, "\nprocesses ");

@@ -82,6 +82,10 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_FS_BOOT:
   case RAMFS_DEV_FS_RAM0:
   case RAMFS_DEV_FS_TMP:
+  case RAMFS_DEV_SYS_CPU_POSSIBLE:
+  case RAMFS_DEV_SYS_CPU_PRESENT:
+  case RAMFS_DEV_SYS_CPU_ONLINE:
+  case RAMFS_DEV_SYS_CPU_CORE_ONLINE:
   case RAMFS_DEV_BLK_BOOT:
     return -22;
   case RAMFS_DEV_BLK_ROOT: {
@@ -173,6 +177,10 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_FS_BOOT:
   case RAMFS_DEV_FS_RAM0:
   case RAMFS_DEV_FS_TMP:
+  case RAMFS_DEV_SYS_CPU_POSSIBLE:
+  case RAMFS_DEV_SYS_CPU_PRESENT:
+  case RAMFS_DEV_SYS_CPU_ONLINE:
+  case RAMFS_DEV_SYS_CPU_CORE_ONLINE:
     return cell_procfs_read_device(file, domain, buf, len);
   case RAMFS_DEV_BLK_ROOT: {
     uint64_t done = 0;

@@ -16,8 +16,6 @@
 
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_idle_ticks;
-static uint64_t scheduler_cpu_busy_ticks[SPORE_MAX_CPUS];
-static uint64_t scheduler_cpu_idle_ticks[SPORE_MAX_CPUS];
 static uint64_t boot_epoch_sec;
 static struct domain *current_domain(void) {
   return cell_current_domain_internal();
@@ -33,10 +31,6 @@ void cell_system_init(uint64_t hhdm_offset) {
   cell_pipe_reset();
   scheduler_ticks = 0;
   scheduler_idle_ticks = 0;
-  for (size_t i = 0; i < SPORE_MAX_CPUS; ++i) {
-    scheduler_cpu_busy_ticks[i] = 0;
-    scheduler_cpu_idle_ticks[i] = 0;
-  }
   cell_tty_reset();
   // v2 Phase A object model: domains own isolation/policy state, threads own
   // EL0 execution state. Kernel mutation is serialized by the big kernel lock;
@@ -98,12 +92,10 @@ uint64_t cell_realtime_seconds(void) {
 
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   uint32_t cpu = smp_current_cpu();
-  if (cpu < SPORE_MAX_CPUS) {
-    if (from_lower_el) {
-      ++scheduler_cpu_busy_ticks[cpu];
-    } else if (cell_scheduler_waiting_for_interrupt()) {
-      ++scheduler_cpu_idle_ticks[cpu];
-    }
+  if (from_lower_el) {
+    smp_note_cpu_busy_tick(cpu);
+  } else if (cell_scheduler_waiting_for_interrupt()) {
+    smp_note_cpu_idle_tick(cpu);
   }
   if (cpu == 0) {
     ++scheduler_ticks;
@@ -140,11 +132,11 @@ uint64_t cell_idle_ticks(void) {
 }
 
 uint64_t cell_cpu_busy_ticks(uint32_t cpu) {
-  return cpu < SPORE_MAX_CPUS ? scheduler_cpu_busy_ticks[cpu] : 0;
+  return smp_cpu_busy_ticks(cpu);
 }
 
 uint64_t cell_cpu_idle_ticks(uint32_t cpu) {
-  return cpu < SPORE_MAX_CPUS ? scheduler_cpu_idle_ticks[cpu] : 0;
+  return smp_cpu_idle_ticks(cpu);
 }
 
 uint64_t cell_boot_epoch_seconds(void) {

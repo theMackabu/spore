@@ -55,6 +55,11 @@ typedef struct EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;
 typedef struct EFI_RUNTIME_SERVICES EFI_RUNTIME_SERVICES;
 
 typedef struct {
+  EFI_GUID vendor_guid;
+  void *vendor_table;
+} EFI_CONFIGURATION_TABLE;
+
+typedef struct {
   UINT16 year;
   UINT8 month;
   UINT8 day;
@@ -140,6 +145,8 @@ struct EFI_SYSTEM_TABLE {
   EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *std_err;
   EFI_RUNTIME_SERVICES *runtime_services;
   EFI_BOOT_SERVICES *boot_services;
+  UINTN number_of_table_entries;
+  EFI_CONFIGURATION_TABLE *configuration_table;
 };
 
 typedef struct {
@@ -199,3 +206,9 @@ static const EFI_GUID EFI_FILE_INFO_GUID = {
 
 static const EFI_GUID EFI_GLOBAL_VARIABLE_GUID = {
   0x8be4df61, 0x93ca, 0x11d2, {0xaa, 0x0d, 0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c}};
+
+static const EFI_GUID EFI_ACPI_20_TABLE_GUID = {
+  0x8868e871, 0xe4f1, 0x11d3, {0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
+
+static const EFI_GUID EFI_ACPI_10_TABLE_GUID = {
+  0xeb9d2d30, 0x2d88, 0x11d3, {0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}};

@@ -121,6 +121,7 @@ boot_efi = custom_target('BOOTAA64.EFI',
     '../bootloader/elf.c',
     '../bootloader/paging.c',
     '../bootloader/handoff.c',
+    '../bootloader/topology.c',
   ),
   output: 'BOOTAA64.EFI',
   command: [

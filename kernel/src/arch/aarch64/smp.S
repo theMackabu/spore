@@ -2,104 +2,45 @@
 .global smp_secondary_entry
 .type smp_secondary_entry, %function
 smp_secondary_entry:
-    mov x20, x0
-    cmp x20, #8
-    b.hs 3f
+    mov x21, x0
+    cbz x21, 3f
+    ldr x20, [x21, #0]
+    ldr x19, [x21, #16]
+    ldr x1, [x21, #8]
+    cbz x1, 3f
+    mov sp, x1
 
-    mrs x6, CurrentEL
-    lsr x6, x6, #2
-    adrp x5, smp_ap_el
-    add x5, x5, :lo12:smp_ap_el
-    add x5, x5, x20
-    strb w6, [x5]
-    adrp x5, smp_ap_parked
-    add x5, x5, :lo12:smp_ap_parked
-    add x5, x5, x20
-    mov w6, #1
-    strb w6, [x5]
+    ldr x2, [x21, #24]
     dsb sy
-
-    adrp x1, smp_secondary_stacks
-    add x1, x1, :lo12:smp_secondary_stacks
-    mov x2, #0x10000
-    madd x1, x20, x2, x1
-    add sp, x1, x2
-
-    adrp x1, smp_boot_ttbr_pa
-    add x1, x1, :lo12:smp_boot_ttbr_pa
-    ldr x2, [x1]
-    mov w6, #2
-    strb w6, [x5]
-    dsb sy
-    adrp x1, smp_boot_mair
-    add x1, x1, :lo12:smp_boot_mair
-    ldr x3, [x1]
+    ldr x3, [x21, #40]
     msr mair_el1, x3
-    mov w6, #3
-    strb w6, [x5]
     dsb sy
-    adrp x1, smp_boot_tcr
-    add x1, x1, :lo12:smp_boot_tcr
-    ldr x3, [x1]
+    ldr x3, [x21, #32]
     msr tcr_el1, x3
-    mov w6, #4
-    strb w6, [x5]
     dsb sy
     msr ttbr0_el1, x2
     msr ttbr1_el1, x2
-    mov w6, #5
-    strb w6, [x5]
     dsb sy
     isb
     dsb ishst
     tlbi vmalle1
     dsb ish
     isb
-    mov w6, #6
-    strb w6, [x5]
     dsb sy
 
-    mrs x3, sctlr_el1
-    and x4, x3, #1
-    adrp x1, smp_ap_sctlr_m
-    add x1, x1, :lo12:smp_ap_sctlr_m
-    add x1, x1, x20
-    strb w4, [x1]
-    mov w6, #7
-    strb w6, [x5]
-    dsb sy
-    adrp x1, smp_boot_sctlr
-    add x1, x1, :lo12:smp_boot_sctlr
-    ldr x3, [x1]
+    ldr x3, [x21, #48]
     orr x3, x3, #1
     msr sctlr_el1, x3
-    mov w6, #8
-    strb w6, [x5]
     dsb sy
     isb
-    mov w6, #9
-    strb w6, [x5]
-    dsb sy
 
-    adrp x1, smp_kernel_va_offset
-    add x1, x1, :lo12:smp_kernel_va_offset
-    ldr x2, [x1]
+    ldr x2, [x21, #56]
     adr x3, 1f
     add x3, x3, x2
     br x3
 
 1:
-    adrp x5, smp_ap_parked
-    add x5, x5, :lo12:smp_ap_parked
-    add x5, x5, x20
-    mov w6, #10
-    strb w6, [x5]
-    dsb sy
-    adrp x1, smp_secondary_stacks
-    add x1, x1, :lo12:smp_secondary_stacks
-    mov x2, #0x10000
-    madd x1, x20, x2, x1
-    add sp, x1, x2
+    mov sp, x19
     mov x0, x20
     bl smp_secondary_main
 

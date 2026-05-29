@@ -120,7 +120,7 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
   uint64_t copy_start = page > vma->file_start ? page : vma->file_start;
   uint64_t copy_end = page_end < file_end ? page_end : file_end;
   if (copy_start < copy_end) {
-    static uint8_t cached_page[PAGE_SIZE];
+    uint8_t cached_page[PAGE_SIZE];
     uint64_t copied = 0;
     while (copied < copy_end - copy_start) {
       uint64_t read_off = vma->file_offset + (copy_start - vma->file_start) + copied;

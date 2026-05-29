@@ -194,6 +194,9 @@ static uint64_t statfs_magic_for_path(const char *path) {
   if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' && (path[4] == '\0' || path[4] == '/')) {
     return DEVFS_SUPER_MAGIC;
   }
+  if (path[0] == '/' && path[1] == 's' && path[2] == 'y' && path[3] == 's' && (path[4] == '\0' || path[4] == '/')) {
+    return 0x62656572u;
+  }
   if (path[0] == '/' && path[1] == 't' && path[2] == 'm' && path[3] == 'p' && (path[4] == '\0' || path[4] == '/')) {
     return TMPFS_MAGIC;
   }

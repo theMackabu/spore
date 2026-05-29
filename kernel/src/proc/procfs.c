@@ -4,6 +4,7 @@
 #include "proc/procfs_text.h"
 
 #include "kstr.h"
+#include "arch/aarch64/smp.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
@@ -296,6 +297,92 @@ static int64_t read_generated_device(struct open_file *file, struct domain *doma
   return (int64_t)chunk;
 }
 
+static int64_t read_text_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
+                                const char *text, size_t text_len) {
+  if (file->offset >= text_len) { return 0; }
+  size_t chunk = text_len - (size_t)file->offset;
+  if (chunk > len) { chunk = (size_t)len; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, text + file->offset, chunk)) { return -14; }
+  file->offset += chunk;
+  return (int64_t)chunk;
+}
+
+static bool sys_cpu_in_set(uint32_t cpu, enum ramfs_device device) {
+  switch (device) {
+  case RAMFS_DEV_SYS_CPU_POSSIBLE:
+    return cpu < smp_possible_cpu_count();
+  case RAMFS_DEV_SYS_CPU_PRESENT:
+    return smp_cpu_present(cpu);
+  case RAMFS_DEV_SYS_CPU_ONLINE:
+    return smp_cpu_online(cpu);
+  default:
+    return false;
+  }
+}
+
+static size_t sys_cpu_list_text(char *dst, size_t cap, enum ramfs_device device) {
+  size_t len = 0;
+  uint32_t limit = smp_possible_cpu_count();
+  if (limit == 0) { limit = 1; }
+  if (limit > SPORE_BOOT_CPU_MAX) { limit = SPORE_BOOT_CPU_MAX; }
+
+  bool first = true;
+  uint32_t range_start = 0;
+  bool in_range = false;
+  for (uint32_t cpu = 0; cpu <= limit; ++cpu) {
+    bool included = cpu < limit && sys_cpu_in_set(cpu, device);
+    if (included && !in_range) {
+      range_start = cpu;
+      in_range = true;
+    }
+    if ((!included || cpu == limit) && in_range) {
+      uint32_t range_end = cpu - 1u;
+      if (!first) { proc_append_char(dst, cap, &len, ','); }
+      proc_append_u64(dst, cap, &len, range_start);
+      if (range_end != range_start) {
+        proc_append_char(dst, cap, &len, '-');
+        proc_append_u64(dst, cap, &len, range_end);
+      }
+      first = false;
+      in_range = false;
+    }
+  }
+  if (first) { proc_append_char(dst, cap, &len, '0'); }
+  proc_append_char(dst, cap, &len, '\n');
+  return len;
+}
+
+static bool path_digit(char c) {
+  return c >= '0' && c <= '9';
+}
+
+static bool sys_cpu_id_from_online_path(const char *path, uint32_t *out) {
+  for (size_t i = 0; path[i] != '\0'; ++i) {
+    if (path[i] != 'c' || path[i + 1] != 'p' || path[i + 2] != 'u' || !path_digit(path[i + 3])) { continue; }
+    size_t j = i + 3;
+    uint32_t value = 0;
+    while (path_digit(path[j])) {
+      value = value * 10u + (uint32_t)(path[j] - '0');
+      ++j;
+    }
+    if (path[j] == '/' && path[j + 1] == 'o' && path[j + 2] == 'n' && path[j + 3] == 'l' && path[j + 4] == 'i' &&
+        path[j + 5] == 'n' && path[j + 6] == 'e' && path[j + 7] == '\0') {
+      *out = value;
+      return true;
+    }
+  }
+  return false;
+}
+
+static size_t sys_cpu_core_online_text(char *dst, size_t cap, const char *path) {
+  size_t len = 0;
+  uint32_t cpu = 0;
+  bool online = sys_cpu_id_from_online_path(path, &cpu) && smp_cpu_online(cpu);
+  proc_append_char(dst, cap, &len, online ? '1' : '0');
+  proc_append_char(dst, cap, &len, '\n');
+  return len;
+}
+
 static int64_t read_generated_pid_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                                          size_t (*fill)(char *, size_t, int)) {
   char text[4096] = {0};
@@ -399,6 +486,18 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
     return read_generated_device(file, domain, buf, len, proc_fs_ram0_text);
   case RAMFS_DEV_FS_TMP:
     return read_generated_device(file, domain, buf, len, proc_fs_tmp_text);
+  case RAMFS_DEV_SYS_CPU_POSSIBLE:
+  case RAMFS_DEV_SYS_CPU_PRESENT:
+  case RAMFS_DEV_SYS_CPU_ONLINE: {
+    char text[128] = {0};
+    size_t text_len = sys_cpu_list_text(text, sizeof(text), file->node.device);
+    return read_text_device(file, domain, buf, len, text, text_len);
+  }
+  case RAMFS_DEV_SYS_CPU_CORE_ONLINE: {
+    char text[4] = {0};
+    size_t text_len = sys_cpu_core_online_text(text, sizeof(text), file->path);
+    return read_text_device(file, domain, buf, len, text, text_len);
+  }
   default:
     return -22;
   }

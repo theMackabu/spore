@@ -37,10 +37,12 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   }
 
   struct spore_boot_module *modules = NULL;
+  struct spore_cpu_entry *cpu_entries = NULL;
   struct spore_memmap_entry *memmap = NULL;
   EFI_MEMORY_DESCRIPTOR *efi_map = NULL;
   struct spore_boot_info *boot = NULL;
   if (EFI_ERROR(alloc_pages(pages_for(sizeof(struct spore_boot_module) * MAX_MODULES), (void **)&modules)) ||
+      EFI_ERROR(alloc_pages(pages_for(sizeof(struct spore_cpu_entry) * SPORE_BOOT_CPU_MAX), (void **)&cpu_entries)) ||
       EFI_ERROR(alloc_pages(pages_for(sizeof(struct spore_memmap_entry) * MAX_MEMMAP), (void **)&memmap)) ||
       EFI_ERROR(alloc_pages(16, (void **)&efi_map)) || EFI_ERROR(alloc_pages(1, (void **)&boot))) {
     uefi_puts(u"spore-boot: metadata alloc failed\r\n");
@@ -52,6 +54,12 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   if (EFI_ERROR(status)) {
     uefi_puts(u"spore-boot: module load failed\r\n");
     return status;
+  }
+
+  uint32_t cpu_count = discover_cpu_topology(cpu_entries, SPORE_BOOT_CPU_MAX);
+  if (cpu_count == 0) {
+    uefi_puts(u"spore-boot: cpu topology failed\r\n");
+    return EFI_LOAD_ERROR;
   }
 
   uint64_t highest_usable = 0;
@@ -84,7 +92,9 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   boot->version = SPORE_BOOT_VERSION;
   boot->memmap_phys = (uint64_t)(uintptr_t)memmap;
   boot->module_count = module_count;
+  boot->cpu_count = cpu_count;
   boot->modules_phys = (uint64_t)(uintptr_t)modules;
+  boot->cpu_entries_phys = (uint64_t)(uintptr_t)cpu_entries;
   boot->hhdm_offset = HHDM_OFFSET;
   boot->kernel_phys_base = kernel_phys_base;
   boot->kernel_virt_base = kernel_virt_base;

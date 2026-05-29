@@ -53,3 +53,4 @@ int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint
 EFI_STATUS memory_map_highest_usable(EFI_MEMORY_DESCRIPTOR *efi_map, UINTN efi_map_capacity, uint64_t *highest_out);
 EFI_STATUS final_memory_map(struct spore_memmap_entry *out, uint32_t *out_count, EFI_MEMORY_DESCRIPTOR *efi_map,
                             UINTN efi_map_capacity, EFI_HANDLE image);
+uint32_t discover_cpu_topology(struct spore_cpu_entry *out, uint32_t cap);

@@ -55,6 +55,7 @@ enum {
   VFS_DEV_RAM0 = 0x0010,
   VFS_DEV_TMPFS = 0x0011,
   VFS_DEV_RUNFS = 0x0012,
+  VFS_DEV_SYSFS = 0x0013,
 };
 
 static bool starts_with(const char *s, const char *prefix) {
@@ -71,13 +72,15 @@ static bool path_is_mount(const char *path, const char *mount) {
 }
 
 static bool ramfs_route(const char *path) {
-  return path_is_mount(path, "/dev") || path_is_mount(path, "/proc") || path_is_mount(path, "/tmp") ||
+  return path_is_mount(path, "/dev") || path_is_mount(path, "/proc") || path_is_mount(path, "/sys") ||
+         path_is_mount(path, "/tmp") ||
          path_is_mount(path, "/run");
 }
 
 static bool same_ramfs_route(const char *a, const char *b) {
   return (path_is_mount(a, "/dev") && path_is_mount(b, "/dev")) ||
          (path_is_mount(a, "/proc") && path_is_mount(b, "/proc")) ||
+         (path_is_mount(a, "/sys") && path_is_mount(b, "/sys")) ||
          (path_is_mount(a, "/tmp") && path_is_mount(b, "/tmp")) ||
          (path_is_mount(a, "/run") && path_is_mount(b, "/run"));
 }
@@ -96,6 +99,8 @@ static uint64_t ramfs_mount_dev_id(enum ramfs_mount mount) {
     return VFS_DEV_DEVFS;
   case RAMFS_MOUNT_PROC:
     return VFS_DEV_PROC;
+  case RAMFS_MOUNT_SYS:
+    return VFS_DEV_SYSFS;
   case RAMFS_MOUNT_TMP:
     return VFS_DEV_TMPFS;
   case RAMFS_MOUNT_RUN:
@@ -877,7 +882,7 @@ static void set_mount_info(struct vfs_mount_info *out, const char *source, const
 }
 
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
-  enum { MOUNT_COUNT = 7 };
+  enum { MOUNT_COUNT = 8 };
   if (out == NULL || cap == 0) { return MOUNT_COUNT; }
 
   size_t n = 0;
@@ -896,6 +901,7 @@ size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
   }
   if (n < cap) { set_mount_info(&out[n++], "ramfs", "/dev/fs/ram0", "ramfs", 1024, 0, 0); }
   if (n < cap) { set_mount_info(&out[n++], "proc", "/proc", "proc", 1024, 0, 0); }
+  if (n < cap) { set_mount_info(&out[n++], "sysfs", "/sys", "sysfs", 1024, 0, 0); }
   if (n < cap) { set_mount_info(&out[n++], "devfs", "/dev", "devfs", 1024, 0, 0); }
   return MOUNT_COUNT;
 }

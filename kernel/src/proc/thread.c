@@ -14,9 +14,7 @@ enum {
 };
 
 static struct thread threads[MAX_THREADS];
-static struct thread *current_threads[SPORE_MAX_CPUS];
 static int next_thread_id = 1;
-static volatile bool scheduler_waiting_for_interrupt[SPORE_MAX_CPUS];
 
 static void poweroff(void) {
   __asm__ volatile("mov x0, #0x0008\n"
@@ -29,8 +27,6 @@ static void poweroff(void) {
 
 void cell_thread_reset(void) {
   kmemset(threads, 0, sizeof(threads));
-  kmemset(current_threads, 0, sizeof(current_threads));
-  kmemset((void *)scheduler_waiting_for_interrupt, 0, sizeof(scheduler_waiting_for_interrupt));
   next_thread_id = 1;
 }
 
@@ -41,20 +37,17 @@ struct domain *cell_current_domain_internal(void) {
 
 struct thread *cell_current_thread_internal(void) {
   uint32_t cpu = smp_current_cpu();
-  return cpu < SPORE_MAX_CPUS ? current_threads[cpu] : NULL;
+  return smp_current_thread_slot(cpu);
 }
 
 void cell_set_current_thread(struct thread *thread) {
   uint32_t cpu = smp_current_cpu();
-  if (cpu < SPORE_MAX_CPUS) {
-    current_threads[cpu] = thread;
-    if (thread != NULL) { thread->running_cpu = (int)cpu; }
-  }
+  smp_set_current_thread_slot(cpu, thread);
+  if (thread != NULL) { thread->running_cpu = (int)cpu; }
 }
 
 bool cell_scheduler_waiting_for_interrupt(void) {
-  uint32_t cpu = smp_current_cpu();
-  return cpu < SPORE_MAX_CPUS && scheduler_waiting_for_interrupt[cpu];
+  return smp_scheduler_waiting(smp_current_cpu());
 }
 
 struct thread *cell_thread_slot(size_t index) {
@@ -88,8 +81,8 @@ void cell_release_thread(struct thread *thread) {
   thread->state = THREAD_UNUSED;
   thread->running_cpu = -1;
   thread->domain = NULL;
-  for (uint32_t cpu = 0; cpu < SPORE_MAX_CPUS; ++cpu) {
-    if (current_threads[cpu] == thread) { current_threads[cpu] = NULL; }
+  for (uint32_t cpu = 0; cpu < smp_present_cpu_count(); ++cpu) {
+    smp_clear_current_thread_if(cpu, thread);
   }
 }
 
@@ -157,6 +150,10 @@ static void restore_thread(struct thread *thread, struct trap_frame *frame, stru
 
 static void cleanup_reaped_current_domain(struct domain *old_domain, struct thread *next) {
   if (old_domain == NULL || old_domain == next->domain || !old_domain->zombie || old_domain->parent_id != 0) { return; }
+  for (size_t i = 0; i < MAX_THREADS; ++i) {
+    struct thread *thread = cell_thread_slot(i);
+    if (thread != NULL && thread->domain == old_domain && thread->running_cpu >= 0) { return; }
+  }
   cell_destroy_domain(old_domain);
 }
 
@@ -184,7 +181,7 @@ void cell_schedule(struct trap_frame *frame) {
           if (current_thread != NULL && current_thread != candidate && current_thread->running_cpu == (int)cpu) {
             current_thread->running_cpu = -1;
           }
-          current_threads[cpu] = candidate;
+          smp_set_current_thread_slot(cpu, candidate);
           candidate->running_cpu = (int)cpu;
           cleanup_reaped_current_domain(old_domain, candidate);
           restore_thread(candidate, frame, old_domain);
@@ -196,7 +193,7 @@ void cell_schedule(struct trap_frame *frame) {
       struct thread *candidate = cell_thread_slot((start + n) % MAX_THREADS);
       if (candidate != NULL && candidate->state == THREAD_RUNNABLE && candidate->running_cpu < 0) {
         if (current_thread != NULL && current_thread->running_cpu == (int)cpu) { current_thread->running_cpu = -1; }
-        current_threads[cpu] = candidate;
+        smp_set_current_thread_slot(cpu, candidate);
         candidate->running_cpu = (int)cpu;
         cleanup_reaped_current_domain(old_domain, candidate);
         restore_thread(candidate, frame, old_domain);
@@ -217,7 +214,7 @@ void cell_schedule(struct trap_frame *frame) {
       }
     }
     if (!has_blocked && has_running_elsewhere) {
-      if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = true; }
+      smp_set_scheduler_waiting(cpu, true);
       smp_kernel_unlock();
       __asm__ volatile("msr daifclr, #2\n"
                        "wfi\n"
@@ -226,11 +223,11 @@ void cell_schedule(struct trap_frame *frame) {
                        :
                        : "memory");
       smp_kernel_lock();
-      if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = false; }
+      smp_set_scheduler_waiting(cpu, false);
       continue;
     }
     if (!has_blocked) { break; }
-    if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = true; }
+    smp_set_scheduler_waiting(cpu, true);
     smp_kernel_unlock();
     __asm__ volatile("msr daifclr, #2\n"
                      "wfi\n"
@@ -239,7 +236,7 @@ void cell_schedule(struct trap_frame *frame) {
                      :
                      : "memory");
     smp_kernel_lock();
-    if (cpu < SPORE_MAX_CPUS) { scheduler_waiting_for_interrupt[cpu] = false; }
+    smp_set_scheduler_waiting(cpu, false);
   }
   kprintf("[kernel] no runnable threads\n");
   poweroff();

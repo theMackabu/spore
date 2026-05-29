@@ -337,7 +337,8 @@ void finish_enter_el0(struct user_address_space *as, struct vma_list *vmas, uint
 
 void kernel_main(const struct spore_boot_info *boot_info) {
   if (boot_info == NULL || boot_info->magic != SPORE_BOOT_MAGIC || boot_info->version != SPORE_BOOT_VERSION ||
-      boot_info->hhdm_offset == 0 || boot_info->memmap_phys == 0 || boot_info->modules_phys == 0) {
+      boot_info->hhdm_offset == 0 || boot_info->memmap_phys == 0 || boot_info->modules_phys == 0 ||
+      boot_info->cpu_entries_phys == 0 || boot_info->cpu_count == 0) {
     for (;;) {
       __asm__ volatile("wfe");
     }
@@ -351,8 +352,11 @@ void kernel_main(const struct spore_boot_info *boot_info) {
     (const struct spore_memmap_entry *)(uintptr_t)(boot->hhdm_offset + boot->memmap_phys);
   const struct spore_boot_module *modules =
     (const struct spore_boot_module *)(uintptr_t)(boot->hhdm_offset + boot->modules_phys);
+  const struct spore_cpu_entry *cpu_entries =
+    (const struct spore_cpu_entry *)(uintptr_t)(boot->hhdm_offset + boot->cpu_entries_phys);
 
   pmm_init(boot->hhdm_offset, memmap, boot->memmap_count);
+  smp_init_topology(boot->hhdm_offset, cpu_entries, boot->cpu_count);
   syscall_set_boot_time(boot->realtime_epoch_sec);
   cell_set_boot_epoch(boot->realtime_epoch_sec);
   random_init(boot->realtime_epoch_sec ^ boot->hhdm_offset ^ boot->memmap_phys ^ boot->modules_phys);

@@ -534,14 +534,17 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   char dev_dir[MAX_PATH];
   char etc_dir[MAX_PATH];
   char proc_dir[MAX_PATH];
+  char sys_dir[MAX_PATH];
   char tmp_dir[MAX_PATH];
   path_join(dev_dir, sizeof(dev_dir), rootfs_dir, "dev");
   path_join(etc_dir, sizeof(etc_dir), rootfs_dir, "etc");
   path_join(proc_dir, sizeof(proc_dir), rootfs_dir, "proc");
+  path_join(sys_dir, sizeof(sys_dir), rootfs_dir, "sys");
   path_join(tmp_dir, sizeof(tmp_dir), rootfs_dir, "tmp");
   ensure_dir(dev_dir);
   ensure_dir(etc_dir);
   ensure_dir(proc_dir);
+  ensure_dir(sys_dir);
   ensure_dir(tmp_dir);
 
   char block_size_arg[16];

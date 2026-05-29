@@ -95,10 +95,14 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
-      thread->state = THREAD_UNUSED;
-      thread->running_cpu = -1;
-      thread->domain = NULL;
-      if (domain->refcount > 0) { --domain->refcount; }
+      if (thread->running_cpu >= 0) {
+        thread->state = THREAD_ZOMBIE;
+      } else {
+        thread->state = THREAD_UNUSED;
+        thread->running_cpu = -1;
+        thread->domain = NULL;
+        if (domain->refcount > 0) { --domain->refcount; }
+      }
     }
   }
   cell_current_thread_internal()->state = THREAD_ZOMBIE;

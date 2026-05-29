@@ -4,8 +4,11 @@
 
 #if __STDC_HOSTED__
 #include <stdlib.h>
+static uint32_t ramfs_smp_possible_cpu_count(void) { return 1; }
 #else
+#include "arch/aarch64/smp.h"
 #include "mm/pmm.h"
+static uint32_t ramfs_smp_possible_cpu_count(void) { return smp_possible_cpu_count(); }
 #endif
 
 struct ramfs_backing_page {
@@ -227,7 +230,9 @@ static bool device_is_readonly_text(enum ramfs_device device) {
          device == RAMFS_DEV_PROC_PID_STAT || device == RAMFS_DEV_PROC_PID_STATUS ||
          device == RAMFS_DEV_PROC_PID_CMDLINE || device == RAMFS_DEV_PROC_PID_STATM ||
          device == RAMFS_DEV_PROC_PID_COMM || device == RAMFS_DEV_PROC_PID_MOUNTS || device == RAMFS_DEV_PROC_PID_CWD ||
-         device == RAMFS_DEV_PROC_PID_EXE;
+         device == RAMFS_DEV_PROC_PID_EXE || device == RAMFS_DEV_SYS_CPU_POSSIBLE ||
+         device == RAMFS_DEV_SYS_CPU_PRESENT || device == RAMFS_DEV_SYS_CPU_ONLINE ||
+         device == RAMFS_DEV_SYS_CPU_CORE_ONLINE;
 }
 
 static void set_mount(struct ramfs *fs, int index, enum ramfs_mount mount) {
@@ -283,6 +288,65 @@ static bool add_device(struct ramfs *fs, const char *path, enum ramfs_device dev
   return true;
 }
 
+static size_t append_dec(char *dst, size_t cap, size_t len, uint64_t value) {
+  char tmp[20];
+  size_t n = 0;
+  if (value == 0) {
+    tmp[n++] = '0';
+  } else {
+    while (value != 0 && n < sizeof(tmp)) {
+      tmp[n++] = (char)('0' + (value % 10));
+      value /= 10;
+    }
+  }
+  while (n > 0 && len + 1 < cap) {
+    dst[len++] = tmp[--n];
+  }
+  if (cap != 0) { dst[len] = '\0'; }
+  return len;
+}
+
+static int ensure_child_dir(struct ramfs *fs, int parent, const char *name) {
+  int index = find_child(fs, parent, name);
+  if (index >= 0) { return fs->nodes[index].is_dir ? index : -1; }
+  return add_node(fs, parent, name, true, true);
+}
+
+static void add_sys_cpu_topology(struct ramfs *fs) {
+  uint32_t possible = ramfs_smp_possible_cpu_count();
+  if (possible == 0) { possible = 1; }
+  if (possible > SPORE_BOOT_CPU_MAX) { possible = SPORE_BOOT_CPU_MAX; }
+
+  int sys = lookup_index(fs, "/sys");
+  if (sys < 0) { return; }
+  int devices = ensure_child_dir(fs, sys, "devices");
+  int system = ensure_child_dir(fs, devices, "system");
+  int cpu_root = ensure_child_dir(fs, system, "cpu");
+  if (cpu_root < 0) { return; }
+
+  (void)add_device(fs, "/sys/devices/system/cpu/possible", RAMFS_DEV_SYS_CPU_POSSIBLE);
+  (void)add_device(fs, "/sys/devices/system/cpu/present", RAMFS_DEV_SYS_CPU_PRESENT);
+  (void)add_device(fs, "/sys/devices/system/cpu/online", RAMFS_DEV_SYS_CPU_ONLINE);
+
+  for (uint32_t cpu = 0; cpu < possible; ++cpu) {
+    char path[96] = "/sys/devices/system/cpu/cpu";
+    size_t path_len = kstrlen(path);
+    path_len = append_dec(path, sizeof(path), path_len, cpu);
+    path[path_len] = '\0';
+    const char *name = path + sizeof("/sys/devices/system/cpu/") - 1;
+    if (ensure_child_dir(fs, cpu_root, name) < 0) { continue; }
+
+    size_t cpu_path_len = path_len;
+    const char *suffix = "/online";
+    for (size_t i = 0; suffix[i] != '\0' && path_len + 1 < sizeof(path); ++i) {
+      path[path_len++] = suffix[i];
+    }
+    path[path_len] = '\0';
+    (void)add_device(fs, path, RAMFS_DEV_SYS_CPU_CORE_ONLINE);
+    path[cpu_path_len] = '\0';
+  }
+}
+
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
                 uint64_t hhdm_offset) {
   kmemset(fs, 0, sizeof(*fs));
@@ -298,17 +362,20 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
 
   int dev = add_node(fs, root, "dev", true, true);
   int proc = add_node(fs, root, "proc", true, true);
+  int sys = add_node(fs, root, "sys", true, true);
   int tmp = add_node(fs, root, "tmp", true, true);
   int run = add_node(fs, root, "run", true, true);
 
   set_mount(fs, dev, RAMFS_MOUNT_DEV);
   set_mount(fs, proc, RAMFS_MOUNT_PROC);
+  set_mount(fs, sys, RAMFS_MOUNT_SYS);
   set_mount(fs, tmp, RAMFS_MOUNT_TMP);
   set_mount(fs, run, RAMFS_MOUNT_RUN);
 
   (void)add_node(fs, dev, "fs", true, true);
   (void)add_node(fs, dev, "blk", true, true);
   (void)add_node(fs, proc, "net", true, true);
+  add_sys_cpu_topology(fs);
 
   (void)add_device(fs, "/dev/null", RAMFS_DEV_NULL);
   (void)add_device(fs, "/dev/zero", RAMFS_DEV_ZERO);
@@ -412,8 +479,9 @@ bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out) {
   static const struct ramfs_dirent entries[] = {
     {.name = "dev", .ino = 2, .is_dir = true},
     {.name = "proc", .ino = 3, .is_dir = true},
-    {.name = "tmp", .ino = 4, .is_dir = true},
-    {.name = "run", .ino = 5, .is_dir = true},
+    {.name = "sys", .ino = 4, .is_dir = true},
+    {.name = "tmp", .ino = 5, .is_dir = true},
+    {.name = "run", .ino = 6, .is_dir = true},
   };
   if (index >= sizeof(entries) / sizeof(entries[0])) { return false; }
   *out = entries[index];
