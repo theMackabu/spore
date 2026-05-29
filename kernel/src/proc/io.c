@@ -241,7 +241,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
       if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
       if (!vmm_copy_from_user(&domain->as, file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
       int64_t wrote = vfs_write(&file->node, file->offset, file_io_tmp, chunk);
-      if (wrote < 0) { return -28; }
+      if (wrote < 0) { return done == 0 ? wrote : (int64_t)done; }
       if (wrote == 0) { return done == 0 ? -28 : (int64_t)done; }
       file->offset += (uint64_t)wrote;
       done += (uint64_t)wrote;
@@ -351,7 +351,7 @@ int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct 
     if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
     if (!vmm_copy_from_user(&domain->as, file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
     int64_t wrote = vfs_write(&file->node, off + done, file_io_tmp, chunk);
-    if (wrote < 0) { return -28; }
+    if (wrote < 0) { return done == 0 ? wrote : (int64_t)done; }
     if (wrote == 0) { return done == 0 ? -28 : (int64_t)done; }
     done += (uint64_t)wrote;
     (void)vfs_refresh(&file->node, &file->node);

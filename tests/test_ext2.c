@@ -44,6 +44,30 @@ static void assert_readlink(struct ext2_fs *fs, const char *path, const char *wa
   assert(strcmp(got, want) == 0);
 }
 
+static void test_large_file_write(struct ext2_fs *fs) {
+  struct ext2_node node;
+  assert(ext2_create(fs, "/large-write.bin", false, &node));
+
+  uint32_t entries_per_block = fs->block_size / sizeof(uint32_t);
+  uint64_t double_indirect_offset = (12ull + entries_per_block) * fs->block_size;
+  const char payload[] = "crossed into double indirect allocation\n";
+
+  int64_t wrote = ext2_write_file(fs, &node, double_indirect_offset, payload, sizeof(payload) - 1);
+  assert(wrote == (int64_t)(sizeof(payload) - 1));
+
+  struct ext2_node fresh;
+  assert(ext2_lookup(fs, "/large-write.bin", &fresh));
+  assert(fresh.size == double_indirect_offset + sizeof(payload) - 1);
+
+  char got[sizeof(payload)] = {0};
+  uint32_t read = 0;
+  assert(ext2_read_file(fs, &fresh, double_indirect_offset, got, sizeof(payload) - 1, &read));
+  assert(read == sizeof(payload) - 1);
+  assert(strcmp(got, payload) == 0);
+
+  assert(ext2_unlink(fs, "/large-write.bin"));
+}
+
 static void test_mutations(const char *image_path) {
   char tmp_path[256];
   snprintf(tmp_path, sizeof(tmp_path), "/tmp/spore-ext2-test-%ld.img", (long)getpid());
@@ -53,6 +77,7 @@ static void test_mutations(const char *image_path) {
   assert(f != NULL);
   struct ext2_fs fs;
   assert(ext2_mount_rw(&fs, file_read, file_write, f));
+  test_large_file_write(&fs);
 
   assert(ext2_create(&fs, "/apkdir", true, NULL));
   for (int i = 0; i < 128; ++i) {

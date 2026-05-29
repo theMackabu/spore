@@ -65,7 +65,7 @@ done
 # tracks newer mbedTLS, so apk gets a private static mbedTLS 3 build here.
 (
   cd "$mbedtls_build"
-  cmake "$mbedtls_work" \
+  cmake -Wno-dev "$mbedtls_work" \
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
     -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \

@@ -1,0 +1,100 @@
+diff --git a/src/apk.c b/src/apk.c
+index 95f5db5..22057b3 100644
+--- a/src/apk.c
++++ b/src/apk.c
+@@ -36,7 +36,7 @@ int apk_argc;
+ 
+ static void version(struct apk_out *out, const char *prefix)
+ {
+-	apk_out_fmt(out, prefix, "apk-tools " APK_VERSION ", compiled for " APK_DEFAULT_ARCH ".");
++	apk_out_fmt(out, prefix, "spm " APK_VERSION ", compiled for " APK_DEFAULT_ARCH ".");
+ }
+ 
+ #define GLOBAL_OPTIONS(OPT) \
+@@ -653,7 +653,7 @@ int main(int argc, char **argv)
+ 
+ 	if (applet == NULL) {
+ 		if (apk_array_len(args)) {
+-			apk_err(out, "'%s' is not an apk command. See 'apk --help'.", args->item[0]);
++			apk_err(out, "'%s' is not an spm command. See 'spm --help'.", args->item[0]);
+ 			return 1;
+ 		}
+ 		return usage(out);
+diff --git a/src/app_add.c b/src/app_add.c
+index 1567065..7260200 100644
+--- a/src/app_add.c
++++ b/src/app_add.c
+@@ -69,7 +69,7 @@ static int non_repository_check(struct apk_database *db)
+ 	apk_err(&db->ctx->out,
+ 		"You tried to add a non-repository package to system, "
+ 		"but it would be lost on next reboot. Enable package caching "
+-		"(apk cache --help) or use --force-non-repository "
++		"(spm cache --help) or use --force-non-repository "
+ 		"if you know what you are doing.");
+ 	return 1;
+ }
+@@ -207,4 +207,16 @@ static struct apk_applet apk_add = {
+ 	.main = add_main,
+ };
+ 
++static struct apk_applet apk_install = {
++	.name = "install",
++	.options_desc = add_options_desc,
++	.optgroup_commit = 1,
++	.open_flags = APK_OPENF_WRITE,
++	.remove_empty_arguments = 1,
++	.context_size = sizeof(struct add_ctx),
++	.parse = add_parse_option,
++	.main = add_main,
++};
++
+ APK_DEFINE_APPLET(apk_add);
++APK_DEFINE_APPLET(apk_install);
+diff --git a/src/applet.c b/src/applet.c
+index c5f350f..ec6a9a5 100644
+--- a/src/applet.c
++++ b/src/applet.c
+@@ -84,6 +84,6 @@ void apk_applet_help(struct apk_applet *applet, struct apk_out *out)
+ void apk_applet_help(struct apk_applet *applet, struct apk_out *out)
+ {
+ 	fputc('\n', stdout);
+-	apk_err(out, "This apk-tools has been built without help");
++	apk_err(out, "spm has been built without help");
+ }
+ #endif
+diff --git a/src/database.c b/src/database.c
+index 9f6328a..bd95b7e 100644
+--- a/src/database.c
++++ b/src/database.c
+@@ -1050,8 +1050,8 @@ static int read_info_line(void *pctx, apk_blob_t line)
+ 	if (is->err < 0) goto err_fmt;
+ 	goto done;
+ old_apk_tools:
+ 	/* Installed db should not have unsupported fields */
+-	apk_err(out, "This apk-tools is too old to handle installed packages");
++	apk_err(out, "This spm is too old to handle installed packages");
+ 	goto err_fmt;
+ bad_entry:
+ 	apk_err(out, "FDB format error (line %d, entry '%c')", lineno, field);
+@@ -2182,7 +2182,7 @@ int apk_db_open(struct apk_database *db)
+ 
+ 	if (db->compat_newfeatures) {
+ 		apk_warn(out,
+-			"This apk-tools is OLD! Some packages %s.",
++			"This spm is OLD! Some packages %s.",
+ 			db->compat_notinstallable ? "are not installable" : "might not function properly");
+ 	}
+ 	if (db->compat_depversions) {
+diff --git a/src/app_upgrade.c b/src/app_upgrade.c
+index 0e049ce..72ee962 100644
+--- a/src/app_upgrade.c
++++ b/src/app_upgrade.c
+@@ -170,7 +170,7 @@ static int upgrade_main(void *pctx, struct apk_ctx *ac, struct apk_string_array
+ 	argv[apk_argc] = "--no-self-upgrade";
+ 	argv[apk_argc+1] = NULL;
+ 	execvp(argv[0], argv);
+-	apk_err(out, "PANIC! Failed to re-execute new apk-tools!");
++	apk_err(out, "PANIC! Failed to re-execute new spm!");
+ 	exit(1);
+ 
+ ret:
