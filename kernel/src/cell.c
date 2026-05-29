@@ -120,7 +120,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
       return;
     }
   }
-  if (from_lower_el && domain->zombie) { cell_schedule(frame); }
+  if (from_lower_el) { cell_schedule(frame); }
 }
 
 uint64_t cell_uptime_ticks(void) {

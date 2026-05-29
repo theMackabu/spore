@@ -135,6 +135,7 @@ subdir('usr/local/bin/tcc')
 subdir('usr/local/bin/vim')
 
 subdir('demos/spinner')
+subdir('demos/cpuburn')
 subdir('demos/peeker')
 subdir('demos/writer')
 subdir('demos/memhog')

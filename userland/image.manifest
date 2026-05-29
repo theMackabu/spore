@@ -123,6 +123,7 @@ userland/libexec/spore-test/uds-server /libexec/spore-test/uds-server
 userland/libexec/spore-test/uds-client /libexec/spore-test/uds-client
 
 userland/demos/spinner /home/spore/demos/spinner
+userland/demos/cpuburn /home/spore/demos/cpuburn
 userland/demos/peeker /home/spore/demos/peeker
 userland/demos/writer /home/spore/demos/writer
 userland/demos/memhog /home/spore/demos/memhog
