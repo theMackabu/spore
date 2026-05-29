@@ -5,6 +5,7 @@ EFI_BOOT_SERVICES *bs;
 EFI_FILE_PROTOCOL *root;
 uint64_t (*page_table_pool)[PT_ENTRIES];
 uint32_t page_table_pool_used;
+uint32_t page_table_pool_count;
 
 typedef void (*kernel_entry_t)(const struct spore_boot_info *);
 
@@ -41,12 +42,10 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   struct spore_boot_info *boot = NULL;
   if (EFI_ERROR(alloc_pages(pages_for(sizeof(struct spore_boot_module) * MAX_MODULES), (void **)&modules)) ||
       EFI_ERROR(alloc_pages(pages_for(sizeof(struct spore_memmap_entry) * MAX_MEMMAP), (void **)&memmap)) ||
-      EFI_ERROR(alloc_pages(16, (void **)&efi_map)) || EFI_ERROR(alloc_pages(1, (void **)&boot)) ||
-      EFI_ERROR(alloc_pages(PAGE_TABLE_POOL_PAGES, (void **)&page_table_pool))) {
+      EFI_ERROR(alloc_pages(16, (void **)&efi_map)) || EFI_ERROR(alloc_pages(1, (void **)&boot))) {
     uefi_puts(u"spore-boot: metadata alloc failed\r\n");
     return EFI_LOAD_ERROR;
   }
-  page_table_pool_used = 0;
 
   uint32_t module_count = 0;
   status = load_modules(modules, &module_count);
@@ -55,8 +54,28 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     return status;
   }
 
+  uint64_t highest_usable = 0;
+  status = memory_map_highest_usable(efi_map, 16 * PAGE_SIZE, &highest_usable);
+  if (EFI_ERROR(status) || highest_usable == 0) {
+    uefi_puts(u"spore-boot: memory map failed\r\n");
+    return EFI_ERROR(status) ? status : EFI_LOAD_ERROR;
+  }
+  uint64_t hhdm_size = align_up(highest_usable, 0x40000000ull);
+  if (hhdm_size < HHDM_MIN_SIZE) { hhdm_size = HHDM_MIN_SIZE; }
+
+  uint64_t hhdm_gib = hhdm_size / 0x40000000ull;
+  uint64_t pool_pages = hhdm_gib + 16;
+  if (pool_pages < PAGE_TABLE_POOL_MIN_PAGES) { pool_pages = PAGE_TABLE_POOL_MIN_PAGES; }
+  if (pool_pages > UINT32_MAX) { return EFI_LOAD_ERROR; }
+  page_table_pool_count = (uint32_t)pool_pages;
+  if (EFI_ERROR(alloc_pages(pool_pages, (void **)&page_table_pool))) {
+    uefi_puts(u"spore-boot: page table pool alloc failed\r\n");
+    return EFI_LOAD_ERROR;
+  }
+  page_table_pool_used = 0;
+
   uint64_t ttbr1 = 0;
-  if (!build_page_tables(kernel_phys_base, kernel_virt_base, kernel_span, entry, &ttbr1)) {
+  if (!build_page_tables(kernel_phys_base, kernel_virt_base, kernel_span, entry, hhdm_size, &ttbr1)) {
     uefi_puts(u"spore-boot: page tables failed\r\n");
     return EFI_LOAD_ERROR;
   }

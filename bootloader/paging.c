@@ -2,7 +2,7 @@
 
 static uint64_t *new_page_table(void) {
   if (page_table_pool == NULL) { return NULL; }
-  if (page_table_pool_used >= PAGE_TABLE_POOL_PAGES) {
+  if (page_table_pool_used >= page_table_pool_count) {
     uefi_puts(u"spore-boot: page table pool exhausted\r\n");
     return NULL;
   }
@@ -65,7 +65,7 @@ void install_ttbr1(uint64_t root_pa) {
 }
 
 int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint64_t kernel_span, uint64_t entry,
-                      uint64_t *ttbr1_out) {
+                      uint64_t hhdm_size, uint64_t *ttbr1_out) {
   (void)entry;
   uint64_t *root_table = new_page_table();
   if (root_table == NULL) {
@@ -87,7 +87,7 @@ int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint
     return 0;
   }
   root_table[pt_index(HHDM_OFFSET, 39)] = table_desc(hhdm_l1);
-  for (uint64_t gb = 0; gb < HHDM_SIZE; gb += 0x40000000ull) {
+  for (uint64_t gb = 0; gb < hhdm_size; gb += 0x40000000ull) {
     uint64_t *l2 = new_page_table();
     if (l2 == NULL) {
       uefi_puts(u"spore-boot: hhdm map failed\r\n");

@@ -6,12 +6,12 @@
 #define PAGE_SIZE 4096ull
 #define PT_ENTRIES 512u
 #define HHDM_OFFSET 0xffff000000000000ull
-#define HHDM_SIZE 0x180000000ull
+#define HHDM_MIN_SIZE 0x40000000ull
 #define PL011_PHYS 0x09000000ull
 #define MAX_MODULES 64u
 #define MAX_MEMMAP 256u
 #define MODULE_TEXT_MAX 8192u
-#define PAGE_TABLE_POOL_PAGES 64u
+#define PAGE_TABLE_POOL_MIN_PAGES 64u
 
 struct loaded_file {
   void *data;
@@ -24,6 +24,7 @@ extern EFI_BOOT_SERVICES *bs;
 extern EFI_FILE_PROTOCOL *root;
 extern uint64_t (*page_table_pool)[PT_ENTRIES];
 extern uint32_t page_table_pool_used;
+extern uint32_t page_table_pool_count;
 
 void *memset(void *dst, int c, uint64_t n);
 void *memcpy(void *dst, const void *src, uint64_t n);
@@ -47,7 +48,8 @@ EFI_STATUS load_kernel(struct loaded_file *kernel_file, uint64_t *kernel_phys_ba
 uint64_t current_el(void);
 void install_ttbr1(uint64_t root_pa);
 int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint64_t kernel_span, uint64_t entry,
-                      uint64_t *ttbr1_out);
+                      uint64_t hhdm_size, uint64_t *ttbr1_out);
 
+EFI_STATUS memory_map_highest_usable(EFI_MEMORY_DESCRIPTOR *efi_map, UINTN efi_map_capacity, uint64_t *highest_out);
 EFI_STATUS final_memory_map(struct spore_memmap_entry *out, uint32_t *out_count, EFI_MEMORY_DESCRIPTOR *efi_map,
                             UINTN efi_map_capacity, EFI_HANDLE image);

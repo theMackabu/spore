@@ -53,5 +53,15 @@ int main(void) {
   assert(stats.alloc_successes == 3);
   assert(stats.alloc_failures == 0);
 
+  struct spore_memmap_entry high_memmap[] = {{
+    .base = 9ull * 1024 * 1024 * 1024,
+    .length = 2 * PAGE_SIZE,
+    .type = SPORE_MEMMAP_USABLE,
+  }};
+  pmm_init(0, high_memmap, 1);
+  assert(pmm_free_pages() == 2);
+  assert(pmm_tracked_pages() == ((9ull * 1024 * 1024 * 1024) / PAGE_SIZE) + 2);
+  assert(pmm_alloc_page() == 9ull * 1024 * 1024 * 1024);
+
   return 0;
 }
