@@ -1,4 +1,5 @@
 apk_patch_files = files(
+  'patches/0003-stream-url-fetches-with-curl.patch',
   'patches/0004-spm-brand-and-install-alias.patch',
   'patches/0005-abort-on-extract-error.patch',
 )

@@ -1,0 +1,32 @@
+diff --git a/src/io_url_wget.c b/src/io_url_wget.c
+--- a/src/io_url_wget.c
++++ b/src/io_url_wget.c
+@@ -19,20 +19,20 @@ struct apk_istream *apk_io_url_istream(const char *url, time_t since)
+ 	char *argv[16];
+ 	int i = 0;
+ 
+-	argv[i++] = "wget";
+-	argv[i++] = "-q";
+-	argv[i++] = "-T";
+-	argv[i++] = wget_timeout;
+-	if (wget_no_check_certificate) argv[i++] = "--no-check-certificate";
++	(void) since;
++	argv[i++] = "curl";
++	argv[i++] = "-f";
++	argv[i++] = "-s";
++	argv[i++] = "-S";
++	argv[i++] = "-L";
++	if (wget_no_check_certificate) argv[i++] = "-k";
+ 	argv[i++] = (char *) url;
+-	argv[i++] = "-O";
+-	argv[i++] = "-";
+ 	argv[i++] = 0;
+ 
+-	return apk_process_istream(argv, wget_out, "wget");
++	return apk_process_istream(argv, wget_out, "curl");
+ }
+ 
+ void apk_io_url_check_certificate(bool check_cert)
+ {
+ 	wget_no_check_certificate = !check_cert;
+ }

@@ -216,7 +216,7 @@ static bool rw_sectors(uint64_t sector, void *buf, uint32_t bytes, bool write) {
   avail_idx = avail->idx;
   write32(VIRTIO_MMIO_QUEUE_NOTIFY, 0);
 
-  for (uint32_t spin = 0; spin < 10000000; ++spin) {
+  for (;;) {
     __asm__ volatile("dsb sy" : : : "memory");
     if (used->idx != used_idx) {
       ++used_idx;
@@ -227,7 +227,6 @@ static bool rw_sectors(uint64_t sector, void *buf, uint32_t bytes, bool write) {
       return true;
     }
   }
-  return false;
 }
 
 static bool read_sector(uint64_t sector, void *dst) {

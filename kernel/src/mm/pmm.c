@@ -2,7 +2,7 @@
 
 #include "mem.h"
 
-#define PMM_MAX_PHYS (2ull * 1024 * 1024 * 1024)
+#define PMM_MAX_PHYS (8ull * 1024 * 1024 * 1024)
 #define PMM_MAX_PAGES (PMM_MAX_PHYS / PAGE_SIZE)
 #define BITS_PER_WORD 64
 #define PMM_BITMAP_WORDS (PMM_MAX_PAGES / BITS_PER_WORD)

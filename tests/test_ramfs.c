@@ -84,14 +84,15 @@ int main(void) {
   assert(strcmp(buf, "hello") == 0);
   assert(ramfs_unlink(&fs, "/tmp/d/link"));
   assert(ramfs_lookup_node(&fs, "/tmp/d/a", &node));
-  assert(ramfs_write(&fs, node.index, RAMFS_FILE_CAP - 5, "tail", 4) == 4);
+  uint64_t sparse_tail = 256ull * 1024ull * 1024ull;
+  assert(ramfs_write(&fs, node.index, sparse_tail, "tail", 4) == 4);
   memset(buf, 0xff, sizeof(buf));
   assert(ramfs_read(&fs, node.index, 8192, buf, sizeof(buf)) == sizeof(buf));
   for (size_t i = 0; i < sizeof(buf); ++i) {
     assert(buf[i] == 0);
   }
   memset(buf, 0, sizeof(buf));
-  assert(ramfs_read(&fs, node.index, RAMFS_FILE_CAP - 5, buf, 4) == 4);
+  assert(ramfs_read(&fs, node.index, sparse_tail, buf, 4) == 4);
   assert(memcmp(buf, "tail", 4) == 0);
   assert(ramfs_truncate(&fs, node.index, 5));
   assert(ramfs_rename(&fs, "/tmp/d/a", "/tmp/d/b"));

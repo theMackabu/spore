@@ -9,4 +9,5 @@ int64_t cell_socket_tcp_read_to_domain(struct domain *domain, struct open_file *
 bool cell_socket_copy_udp_source_to_domain(struct domain *domain, const struct open_file *file, uint64_t addr,
                                            uint64_t addrlen);
 void cell_socket_release_listener(struct open_file *file);
+void cell_socket_release_file(struct open_file *file);
 void cell_socket_wake_file(struct open_file *file);

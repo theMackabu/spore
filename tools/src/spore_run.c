@@ -501,7 +501,9 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
   argv[i++] = "-cpu";
   argv[i++] = (char *)cpu;
   argv[i++] = "-m";
-  argv[i++] = "512M";
+  argv[i++] = "4G";
+  argv[i++] = "-smp";
+  argv[i++] = "4";
   argv[i++] = "-global";
   argv[i++] = "virtio-mmio.force-legacy=false";
   argv[i++] = "-netdev";

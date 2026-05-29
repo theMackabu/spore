@@ -44,6 +44,59 @@ static void assert_readlink(struct ext2_fs *fs, const char *path, const char *wa
   assert(strcmp(got, want) == 0);
 }
 
+static void make_ext2_image(char *path, size_t path_cap, uint32_t block_size, uint32_t blocks,
+                            uint32_t blocks_per_group) {
+  snprintf(path, path_cap, "/tmp/spore-ext2-fresh-%ld.img", (long)getpid());
+  unlink(path);
+  char cmd[512];
+  if (blocks_per_group != 0) {
+    snprintf(cmd, sizeof(cmd), "mke2fs -q -t ext2 -b %u -g %u %s %u", block_size, blocks_per_group, path, blocks);
+  } else {
+    snprintf(cmd, sizeof(cmd), "mke2fs -q -t ext2 -b %u %s %u", block_size, path, blocks);
+  }
+  assert(system(cmd) == 0);
+}
+
+static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks, uint32_t blocks_per_group,
+                                      uint32_t write_blocks) {
+  char path[256];
+  make_ext2_image(path, sizeof(path), block_size, image_blocks, blocks_per_group);
+  FILE *f = fopen(path, "r+b");
+  assert(f != NULL);
+
+  struct ext2_fs fs;
+  assert(ext2_mount_rw(&fs, file_read, file_write, f));
+  assert(fs.block_size == block_size);
+
+  struct ext2_node node;
+  assert(ext2_create(&fs, "/group-cross.bin", false, &node));
+
+  uint8_t block[4096];
+  assert(block_size <= sizeof(block));
+  for (uint32_t i = 0; i < write_blocks; ++i) {
+    memset(block, (int)(i & 0xffu), block_size);
+    assert(ext2_write_file(&fs, &node, (uint64_t)i * block_size, block, block_size) == (int64_t)block_size);
+  }
+
+  struct ext2_node fresh;
+  assert(ext2_lookup(&fs, "/group-cross.bin", &fresh));
+  assert(fresh.size == write_blocks * block_size);
+
+  uint8_t got[4096];
+  uint32_t read = 0;
+  assert(ext2_read_file(&fs, &fresh, 100u * block_size, got, block_size, &read));
+  assert(read == block_size);
+  for (size_t i = 0; i < block_size; ++i) { assert(got[i] == (uint8_t)100); }
+
+  uint32_t late_block = write_blocks - 200;
+  assert(ext2_read_file(&fs, &fresh, (uint64_t)late_block * block_size, got, block_size, &read));
+  assert(read == block_size);
+  for (size_t i = 0; i < block_size; ++i) { assert(got[i] == (uint8_t)(late_block & 0xffu)); }
+
+  assert(fclose(f) == 0);
+  assert(remove(path) == 0);
+}
+
 static void test_large_file_write(struct ext2_fs *fs) {
   struct ext2_node node;
   assert(ext2_create(fs, "/large-write.bin", false, &node));
@@ -131,6 +184,9 @@ static void test_mutations(const char *image_path) {
 
 int main(int argc, char **argv) {
   assert(argc == 2);
+  test_block_group_boundary(1024, 20000, 0, 8500);
+  test_block_group_boundary(4096, 8192, 2048, 3000);
+
   FILE *f = fopen(argv[1], "rb");
   assert(f != NULL);
 

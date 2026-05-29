@@ -27,6 +27,7 @@ enum {
   EINPROGRESS = 115,
   ENOTCONN = 107,
   EPIPE = 32,
+  ECONNRESET = 104,
   ECONNREFUSED = 111,
   EADDRINUSE = 98,
 };
@@ -38,6 +39,8 @@ enum tcp_socket_state {
   TCP_FIN_WAIT,
 };
 
+enum { TCP_RX_BUFFER_SLOTS = 16 };
+
 struct unix_pending_conn {
   bool used;
   struct open_file *listener;
@@ -45,15 +48,41 @@ struct unix_pending_conn {
 };
 
 static struct unix_pending_conn unix_pending[16];
+static uint8_t tcp_rx_buffers[TCP_RX_BUFFER_SLOTS][CELL_TCP_RX_CAP];
+static bool tcp_rx_used[TCP_RX_BUFFER_SLOTS];
 static uint16_t next_udp_port = 49152;
 
+static bool tcp_alloc_rx(struct open_file *file) {
+  if (file == NULL) { return false; }
+  if (file->tcp_rx != NULL) { return true; }
+  for (size_t i = 0; i < TCP_RX_BUFFER_SLOTS; ++i) {
+    if (tcp_rx_used[i]) { continue; }
+    tcp_rx_used[i] = true;
+    file->tcp_rx_slot = (uint8_t)(i + 1);
+    file->tcp_rx = tcp_rx_buffers[i];
+    file->tcp_rx_len = 0;
+    return true;
+  }
+  return false;
+}
+
+static void tcp_free_rx(struct open_file *file) {
+  if (file == NULL || file->tcp_rx_slot == 0) { return; }
+  size_t slot = (size_t)file->tcp_rx_slot - 1;
+  if (slot < TCP_RX_BUFFER_SLOTS) { tcp_rx_used[slot] = false; }
+  file->tcp_rx_slot = 0;
+  file->tcp_rx = NULL;
+  file->tcp_rx_len = 0;
+}
+
 static uint16_t tcp_window(const struct open_file *file) {
-  uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
+  uint32_t room = file->tcp_rx == NULL || file->tcp_rx_len >= CELL_TCP_RX_CAP ? 0 : CELL_TCP_RX_CAP - file->tcp_rx_len;
   return room > UINT16_MAX ? UINT16_MAX : (uint16_t)room;
 }
 
 static uint32_t tcp_append_rx(struct open_file *file, const uint8_t *data, uint32_t len) {
-  uint32_t room = sizeof(file->tcp_rx) - file->tcp_rx_len;
+  if (file->tcp_rx == NULL) { return 0; }
+  uint32_t room = file->tcp_rx_len >= CELL_TCP_RX_CAP ? 0 : CELL_TCP_RX_CAP - file->tcp_rx_len;
   uint32_t n = len < room ? len : room;
   if (n == 0) { return 0; }
   kmemcpy(file->tcp_rx + file->tcp_rx_len, data, (size_t)n);
@@ -187,8 +216,11 @@ int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_fil
 }
 
 int64_t cell_socket_tcp_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
-  if (file->tcp_rx_len == 0) { return file->tcp_fin ? 0 : -EAGAIN; }
+  if (file->tcp_rx_len == 0) {
+    if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
+    return file->tcp_fin ? 0 : -EAGAIN;
+  }
+  if (file->tcp_rx == NULL) { return -EIO; }
   uint64_t n = file->tcp_rx_len < len ? file->tcp_rx_len : len;
   if (!vmm_copy_to_user(cell_domain_as(domain), buf, file->tcp_rx, (size_t)n)) { return -EFAULT; }
   if (n < file->tcp_rx_len) {
@@ -220,6 +252,10 @@ int cell_fd_socket_inet(uint8_t proto) {
   if (file == NULL) { return -12; }
   file->type = OPEN_SOCKET;
   file->socket_proto = proto;
+  if (proto == IPPROTO_TCP && !tcp_alloc_rx(file)) {
+    cell_release_open_file(file);
+    return -12;
+  }
   file->udp_local_port = (uint16_t)(40000 + fd);
   domain->fds[fd] = file;
   domain->fd_flags[fd] = 0;
@@ -289,6 +325,11 @@ void cell_socket_release_listener(struct open_file *file) {
       unix_pending[i] = (struct unix_pending_conn){0};
     }
   }
+}
+
+void cell_socket_release_file(struct open_file *file) {
+  if (file == NULL || file->type != OPEN_SOCKET) { return; }
+  if (file->socket_proto == IPPROTO_TCP) { tcp_free_rx(file); }
 }
 
 int cell_fd_unix_bind(int fd, const char *path) {
@@ -636,12 +677,13 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
         cell_socket_wake_file(file);
         return;
       }
-      if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { return; }
       if ((flags & 0x04) != 0) {
-        file->tcp_error = ECONNREFUSED;
+        file->tcp_error = file->tcp_state == TCP_SYN_SENT ? ECONNREFUSED : ECONNRESET;
+        file->tcp_state = TCP_CLOSED;
         cell_socket_wake_file(file);
         return;
       }
+      if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { return; }
       uint32_t packet_fin_seq = seq + (uint32_t)len;
       if (len != 0) {
         const uint8_t *data = payload;

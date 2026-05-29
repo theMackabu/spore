@@ -460,7 +460,7 @@ bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
 
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || size > RAMFS_FILE_CAP) {
+      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || size > RAMFS_MAX_FILE_SIZE) {
     return false;
   }
   uint64_t keep_pages = (size + RAMFS_PAGE_SIZE - 1) / RAMFS_PAGE_SIZE;
@@ -594,8 +594,8 @@ uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64
 
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || off > RAMFS_FILE_CAP ||
-      len > RAMFS_FILE_CAP - off) {
+      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || off > RAMFS_MAX_FILE_SIZE ||
+      len > RAMFS_MAX_FILE_SIZE - off) {
     return -1;
   }
   const uint8_t *in = src;

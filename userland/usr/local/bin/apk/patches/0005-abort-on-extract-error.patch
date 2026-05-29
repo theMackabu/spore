@@ -1,5 +1,5 @@
 diff --git a/src/database.c b/src/database.c
-index 9f6328a..8842a51 100644
+index 9f6328a..1b8d35e 100644
 --- a/src/database.c
 +++ b/src/database.c
 @@ -2918,14 +2918,13 @@ static int apk_db_install_file(struct apk_extract_ctx *ectx, const struct apk_fi
@@ -14,7 +14,59 @@ index 9f6328a..8842a51 100644
  			ipkg->broken_files = file->broken = 1;
  			apk_err(out, PKG_VER_FMT ": failed to extract %s: %s",
  				PKG_VER_PRINTF(pkg), ae->name, apk_error_str(r));
-+			ret = r;
++			return r;
  			break;
  		}
  	} else {
+diff --git a/src/commit.c b/src/commit.c
+index c6f2c1d..f7268d2 100644
+--- a/src/commit.c
++++ b/src/commit.c
+@@ -491,12 +491,14 @@ int apk_solver_commit_changeset(struct apk_database *db,
+ 				change->new_pkg->ipkg->repository_tag = change->new_repository_tag;
+ 		}
+ 		errors += r;
+ 		count_change(change, &prog.done);
++		if (r) break;
+ 	}
+ 	apk_progress_end(&prog.prog);
+ 	db->indent_level = 0;
++	if (errors) return -errors;
+ 
+ 	errors += db->num_dir_update_errors;
+ 	errors += run_triggers(db, changeset);
+ 
+ all_done:
+diff --git a/src/process.c b/src/process.c
+index d82eb7c..0907ad5 100644
+--- a/src/process.c
++++ b/src/process.c
+@@ -156,20 +156,14 @@ pid_t apk_process_fork(struct apk_process *p)
+ 
+ int apk_process_spawn(struct apk_process *p, const char *path, char * const* argv, char * const* env)
+ {
+-	posix_spawn_file_actions_t act;
+-	int r;
+-
+-	posix_spawn_file_actions_init(&act);
+-	posix_spawn_file_actions_adddup2(&act, p->pipe_stdin[0], STDIN_FILENO);
+-	posix_spawn_file_actions_adddup2(&act, p->pipe_stdout[1], STDOUT_FILENO);
+-	posix_spawn_file_actions_adddup2(&act, p->pipe_stderr[1], STDERR_FILENO);
+-	r = posix_spawnp(&p->pid, path, &act, 0, argv, env ?: environ);
+-	posix_spawn_file_actions_destroy(&act);
+-
+-	close_fd(&p->pipe_stdin[0]);
+-	close_fd(&p->pipe_stdout[1]);
+-	close_fd(&p->pipe_stderr[1]);
+-	return -r;
++	pid_t pid = apk_process_fork(p);
++	if (pid < 0) return -errno;
++	if (pid == 0) {
++		if (env) environ = (char **)env;
++		execvp(path, argv);
++		_exit(127);
++	}
++	return 0;
+ }
+ 
+ static int apk_process_handle(struct apk_process *p, bool break_on_stdout)

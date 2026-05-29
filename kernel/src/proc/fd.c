@@ -65,6 +65,8 @@ void cell_release_open_file(struct open_file *file) {
       cell_socket_wake_file(file);
     } else if (file->type == OPEN_UNIX_LISTENER) {
       cell_socket_release_listener(file);
+    } else if (file->type == OPEN_SOCKET) {
+      cell_socket_release_file(file);
     }
     file->used = false;
   }

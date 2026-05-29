@@ -1,6 +1,7 @@
 #include "vfs.h"
 
 #include "mem.h"
+#include "mm/pmm.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -885,15 +886,13 @@ size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
     set_mount_info(&out[n++], "ext2-root", "/", "ext2", root.block_size, root.block_count, root.free_blocks);
   }
 
-  uint64_t tmp_blocks = RAMFS_FILE_CAP / RAMFS_PAGE_SIZE;
-  uint64_t tmp_used = ramfs_backing_used_pages();
+  uint64_t tmp_blocks = pmm_total_pages();
+  uint64_t tmp_free = pmm_free_pages();
   if (n < cap) {
-    set_mount_info(&out[n++], "tmpfs", "/tmp", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks,
-                   tmp_used < tmp_blocks ? tmp_blocks - tmp_used : 0);
+    set_mount_info(&out[n++], "tmpfs", "/tmp", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free);
   }
   if (n < cap) {
-    set_mount_info(&out[n++], "runfs", "/run", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks,
-                   tmp_used < tmp_blocks ? tmp_blocks - tmp_used : 0);
+    set_mount_info(&out[n++], "runfs", "/run", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free);
   }
   if (n < cap) {
     uint64_t boot_blocks = BOOT_IMAGE_BYTES / 1024;

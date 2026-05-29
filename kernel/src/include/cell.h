@@ -16,8 +16,8 @@ enum {
   MAX_THREADS = 16,
   MAX_CELLS = MAX_THREADS,
   MAX_SNAPSHOTS = 8,
-  MAX_FDS = 32,
-  MAX_OPEN_FILES = 64,
+  MAX_FDS = 64,
+  MAX_OPEN_FILES = 256,
   CELL_TCP_RX_CAP = 262144,
   CELL_MAX_POLL_FDS = 64,
   CELL_SWITCHED = -0x40000000,
@@ -137,12 +137,13 @@ struct open_file {
   uint32_t tcp_ooo_len[8];
   uint8_t tcp_state;
   uint8_t tcp_error;
+  uint8_t tcp_rx_slot;
   bool tcp_fin;
   bool tcp_fin_pending;
   bool tcp_ooo_used[8];
   uint32_t tcp_fin_seq;
   uint8_t tcp_ooo[8][1460];
-  uint8_t tcp_rx[CELL_TCP_RX_CAP];
+  uint8_t *tcp_rx;
   struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
   uint64_t eventfd_value;
   bool eventfd_semaphore;
