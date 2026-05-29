@@ -29,9 +29,10 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
                   uint64_t child_tid) {
   const uint64_t signal_mask = 0xff;
   if ((flags & CLONE_VFORK) != 0) {
-    const uint64_t allowed_vfork_flags = CLONE_VM | CLONE_VFORK;
+    const uint64_t allowed_vfork_flags = CLONE_VM | CLONE_VFORK | CLONE_SETTLS | CLONE_PARENT_SETTID |
+                                         CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID;
     if ((flags & ~(allowed_vfork_flags | signal_mask)) != 0) { return -(int64_t)ENOSYS; }
-    return cell_vfork_current(f, newsp);
+    return cell_vfork_current(f, newsp, flags, parent_tid, tls, child_tid);
   }
   if ((flags & CLONE_VM) == 0) {
     if (newsp != 0) { return -(int64_t)ENOSYS; }

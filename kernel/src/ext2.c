@@ -1161,7 +1161,7 @@ bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
   return ext2_lookup_inner(fs, path, out, false, 0);
 }
 
-bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_node *out) {
+bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out) {
   char parent_path[256];
   char name[EXT2_NAME_MAX + 1];
   if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) { return false; }
@@ -1176,7 +1176,7 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_nod
   if (!alloc_inode(fs, &ino)) { return false; }
   struct ext2_node node = {
     .ino = ino,
-    .mode = (uint16_t)(dir ? (EXT2_S_IFDIR | 0755) : (EXT2_S_IFREG | 0755)),
+    .mode = (uint16_t)((dir ? EXT2_S_IFDIR : EXT2_S_IFREG) | (mode & 07777u)),
     .links_count = (uint16_t)(dir ? 2 : 1),
     .uid = 0,
     .gid = 0,

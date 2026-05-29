@@ -73,7 +73,7 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
                     uint32_t *read_out);
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len);
 bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size);
-bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, struct ext2_node *out);
+bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out);
 bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path);
 bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path);
 bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out);

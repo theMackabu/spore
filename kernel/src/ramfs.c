@@ -488,10 +488,13 @@ bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out) {
   return true;
 }
 
-bool ramfs_mkdir(struct ramfs *fs, const char *path) {
+bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode) {
   int parent;
   const char *name;
-  return split_parent(fs, path, &parent, &name) && add_node(fs, parent, name, true, true) >= 0;
+  int index = split_parent(fs, path, &parent, &name) ? add_node(fs, parent, name, true, true) : -1;
+  if (index < 0) { return false; }
+  fs->nodes[index].mode = (uint16_t)(0040000u | (mode & 07777u));
+  return true;
 }
 
 bool ramfs_create(struct ramfs *fs, const char *path, struct ramfs_node *out) {

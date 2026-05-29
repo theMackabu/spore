@@ -12,8 +12,13 @@ extern void arch_fp_restore(const struct fp_state *state);
 
 enum {
   ECHILD = 10,
+  EFAULT = 14,
   WNOHANG = 1,
   CELL_O_CLOEXEC = 02000000,
+  CLONE_SETTLS = 0x00080000,
+  CLONE_PARENT_SETTID = 0x00100000,
+  CLONE_CHILD_CLEARTID = 0x00200000,
+  CLONE_CHILD_SETTID = 0x01000000,
 };
 
 static struct domain *current_domain(void) {
@@ -88,6 +93,14 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
 void cell_exit_group_current(int status, struct trap_frame *frame) {
   if (cell_current_thread_internal() == NULL) { return; }
   struct domain *domain = cell_current_thread_internal()->domain;
+  if (cell_current_thread_internal()->clear_child_tid != 0) {
+    uint32_t zero = 0;
+    struct user_address_space *as = cell_domain_as(domain);
+    if (as != NULL) {
+      (void)vmm_copy_to_user(as, cell_current_thread_internal()->clear_child_tid, &zero, sizeof(zero));
+    }
+    (void)cell_futex_wake_domain(domain, cell_current_thread_internal()->clear_child_tid, 1);
+  }
   domain->exit_status = status;
   domain->term_signal = 0;
   domain->zombie = true;
@@ -141,7 +154,8 @@ int cell_fork_current(struct trap_frame *frame) {
   return child_domain->id;
 }
 
-int cell_vfork_current(struct trap_frame *frame, uint64_t newsp) {
+int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags, uint64_t parent_tid, uint64_t tls,
+                       uint64_t child_tid) {
   struct domain *parent = current_domain();
   if (parent == NULL || parent->mm == NULL) { return -12; }
   struct domain *child = cell_alloc_domain();
@@ -165,7 +179,26 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp) {
   child_thread->fp = cell_current_thread_internal()->fp;
   child_thread->tf.x[0] = 0;
   if (newsp != 0 && child_thread != NULL) { child_thread->tf.sp_el0 = newsp; }
-  child_thread->tpidr_el0 = cell_current_thread_internal()->tpidr_el0;
+  child_thread->tpidr_el0 = ((flags & CLONE_SETTLS) != 0) ? tls : cell_current_thread_internal()->tpidr_el0;
+  child_thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
+  if ((flags & CLONE_PARENT_SETTID) != 0 && parent_tid != 0) {
+    uint32_t pid = (uint32_t)child->id;
+    struct user_address_space *as = cell_domain_as(parent);
+    if (as == NULL || !vmm_copy_to_user(as, parent_tid, &pid, sizeof(pid))) {
+      cell_release_thread(child_thread);
+      cell_destroy_domain(child);
+      return -EFAULT;
+    }
+  }
+  if ((flags & CLONE_CHILD_SETTID) != 0 && child_tid != 0) {
+    uint32_t pid = (uint32_t)child->id;
+    struct user_address_space *as = cell_domain_as(child);
+    if (as == NULL || !vmm_copy_to_user(as, child_tid, &pid, sizeof(pid))) {
+      cell_release_thread(child_thread);
+      cell_destroy_domain(child);
+      return -EFAULT;
+    }
+  }
   cell_current_thread_internal()->tf.x[0] = (uint64_t)child->id;
   copy_cstr(child->name, sizeof(child->name), parent->name);
   cell_current_thread_internal()->state = THREAD_BLOCKED;

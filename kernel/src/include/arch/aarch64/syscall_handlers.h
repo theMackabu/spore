@@ -62,7 +62,7 @@ int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len);
 int64_t sys_getcwd(uint64_t buf, uint64_t len);
 int64_t sys_chdir(uint64_t path_addr);
 int64_t sys_chroot(uint64_t path_addr);
-int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr);
+int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode);
 int64_t sys_mknodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode);
 int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr);
 int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr);

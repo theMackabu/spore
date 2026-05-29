@@ -69,7 +69,7 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
   assert(fs.block_size == block_size);
 
   struct ext2_node node;
-  assert(ext2_create(&fs, "/group-cross.bin", false, &node));
+  assert(ext2_create(&fs, "/group-cross.bin", false, 0755, &node));
 
   uint8_t block[4096];
   assert(block_size <= sizeof(block));
@@ -103,7 +103,7 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
 
 static void test_large_file_write(struct ext2_fs *fs) {
   struct ext2_node node;
-  assert(ext2_create(fs, "/large-write.bin", false, &node));
+  assert(ext2_create(fs, "/large-write.bin", false, 0755, &node));
 
   uint32_t entries_per_block = fs->block_size / sizeof(uint32_t);
   uint64_t double_indirect_offset = (12ull + entries_per_block) * fs->block_size;
@@ -127,10 +127,10 @@ static void test_large_file_write(struct ext2_fs *fs) {
 
 static void test_relative_symlink_with_dotdot(struct ext2_fs *fs) {
   struct ext2_node node;
-  assert(ext2_create(fs, "/symlink-bin", true, NULL));
-  assert(ext2_create(fs, "/symlink-lib", true, NULL));
-  assert(ext2_create(fs, "/symlink-lib/llvm", true, NULL));
-  assert(ext2_create(fs, "/symlink-lib/llvm/tool-real", false, &node));
+  assert(ext2_create(fs, "/symlink-bin", true, 0755, NULL));
+  assert(ext2_create(fs, "/symlink-lib", true, 0755, NULL));
+  assert(ext2_create(fs, "/symlink-lib/llvm", true, 0755, NULL));
+  assert(ext2_create(fs, "/symlink-lib/llvm/tool-real", false, 0755, &node));
   const char payload[] = "real tool\n";
   assert(ext2_write_file(fs, &node, 0, payload, sizeof(payload) - 1) == (int64_t)(sizeof(payload) - 1));
   assert(ext2_symlink(fs, "../symlink-lib/llvm/tool", "/symlink-bin/tool"));
@@ -154,7 +154,7 @@ static void test_mutations(const char *image_path) {
   test_large_file_write(&fs);
   test_relative_symlink_with_dotdot(&fs);
 
-  assert(ext2_create(&fs, "/apkdir", true, NULL));
+  assert(ext2_create(&fs, "/apkdir", true, 0755, NULL));
   for (int i = 0; i < 128; ++i) {
     char tmp[128];
     char final[128];

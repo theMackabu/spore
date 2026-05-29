@@ -70,7 +70,10 @@ int main(void) {
   assert(ramfs_lookup_node(&fs, "/dev/procinfo", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_PROCINFO);
 
-  assert(ramfs_mkdir(&fs, "/tmp/d"));
+  assert(ramfs_mkdir(&fs, "/tmp/d", 0700));
+  assert(ramfs_lookup_node(&fs, "/tmp/d", &node));
+  assert((node.mode & 0170000u) == 0040000u);
+  assert((node.mode & 07777u) == 0700);
   assert(ramfs_mkfifo(&fs, "/run/f", 0666, &node));
   assert((node.mode & 0170000u) == 0010000u);
   assert(ramfs_mksock(&fs, "/run/s", 0666, &node));

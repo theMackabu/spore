@@ -671,7 +671,7 @@ l_ioctl:
 l_mknodat:
   return sys_mknodat(a0, a1, a2);
 l_mkdirat:
-  return sys_mkdirat(a0, a1);
+  return sys_mkdirat(a0, a1, a2);
 l_linkat:
   return sys_linkat(a0, a1, a2, a3, a4);
 l_symlinkat:

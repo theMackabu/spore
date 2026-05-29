@@ -129,7 +129,7 @@ bool ramfs_lookup(const struct ramfs *fs, const char *path, struct ramfs_file *o
 bool ramfs_lookup_node(const struct ramfs *fs, const char *path, struct ramfs_node *out);
 bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out);
 bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ramfs_dirent *out);
-bool ramfs_mkdir(struct ramfs *fs, const char *path);
+bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode);
 bool ramfs_create(struct ramfs *fs, const char *path, struct ramfs_node *out);
 bool ramfs_mkfifo(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);
 bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);

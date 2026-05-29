@@ -560,14 +560,14 @@ bool vfs_lstat(const char *path, struct vfs_node *out) {
   return true;
 }
 
-bool vfs_mkdir(const char *path) {
+bool vfs_mkdir(const char *path, uint32_t mode) {
   update_time_sources();
   bool ok = false;
   if (root_ext2 != NULL && !ramfs_route(path)) {
     struct ext2_node node;
-    ok = ext2_create(root_ext2, path, true, &node);
+    ok = ext2_create(root_ext2, path, true, (uint16_t)mode, &node);
   } else {
-    ok = root_ramfs != NULL && ramfs_mkdir(root_ramfs, path);
+    ok = root_ramfs != NULL && ramfs_mkdir(root_ramfs, path, (uint16_t)mode);
   }
   if (ok) { lookup_cache_invalidate_all(); }
   return ok;
@@ -577,7 +577,7 @@ bool vfs_create(const char *path, struct vfs_node *out) {
   update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(path)) {
     struct ext2_node node;
-    if (!ext2_create(root_ext2, path, false, &node)) { return false; }
+    if (!ext2_create(root_ext2, path, false, 0755, &node)) { return false; }
     from_ext2(&node, out);
     out->writable = true;
     lookup_cache_invalidate_all();
