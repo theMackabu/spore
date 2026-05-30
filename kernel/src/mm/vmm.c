@@ -381,16 +381,20 @@ bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t
   return true;
 }
 
+uint64_t vmm_tcr_with_ttbr0(uint64_t tcr) {
+  const uint64_t clear =
+    0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) | (7ull << 32);
+  tcr &= ~clear;
+  return tcr | 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12) | (1ull << 32);
+}
+
 void vmm_enable_ttbr0(void) {
 #if defined(__STDC_HOSTED__) && __STDC_HOSTED__
   return;
 #else
   uint64_t tcr;
   __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
-  const uint64_t clear =
-    0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) | (7ull << 32);
-  tcr &= ~clear;
-  tcr |= 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12) | (1ull << 32);
+  tcr = vmm_tcr_with_ttbr0(tcr);
   __asm__ volatile("msr tcr_el1, %0\n"
                    "isb\n"
                    :

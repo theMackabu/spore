@@ -81,6 +81,7 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
     domain->zombie = true;
     cell_close_all_fds(domain);
     cell_current_thread_internal()->state = THREAD_ZOMBIE;
+    cell_current_thread_internal()->running_cpu = -1;
     cell_wake_parent_of(domain);
     cell_schedule(frame);
     return;
@@ -119,6 +120,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
     }
   }
   cell_current_thread_internal()->state = THREAD_ZOMBIE;
+  cell_current_thread_internal()->running_cpu = -1;
   cell_wake_parent_of(domain);
   cell_schedule(frame);
 }
@@ -200,6 +202,7 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
     }
   }
   cell_current_thread_internal()->tf.x[0] = (uint64_t)child->id;
+  frame->x[0] = (uint64_t)child->id;
   copy_cstr(child->name, sizeof(child->name), parent->name);
   cell_current_thread_internal()->state = THREAD_BLOCKED;
   cell_current_thread_internal()->running_cpu = -1;

@@ -14,11 +14,22 @@ enum {
 
 static uint8_t stack_mem[TEST_STACK_SIZE];
 static bool mapped[TEST_STACK_SIZE / PAGE_SIZE];
+static uint8_t pmm_scratch[PAGE_SIZE * 4] __attribute__((aligned(PAGE_SIZE)));
 
 static uint64_t stack_offset(uint64_t va) {
   assert(va >= TEST_STACK_TOP - TEST_STACK_SIZE);
   assert(va < TEST_STACK_TOP);
   return va - (TEST_STACK_TOP - TEST_STACK_SIZE);
+}
+
+uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
+  assert(count <= 4);
+  return (uint64_t)(uintptr_t)pmm_scratch;
+}
+
+void pmm_free_page(uint64_t pa) {
+  assert(pa >= (uint64_t)(uintptr_t)pmm_scratch);
+  assert(pa < (uint64_t)(uintptr_t)pmm_scratch + sizeof(pmm_scratch));
 }
 
 bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags) {

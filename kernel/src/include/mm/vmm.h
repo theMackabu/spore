@@ -41,5 +41,6 @@ bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va,
 bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len);
 bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t src, size_t len);
 void vmm_install_user(const struct user_address_space *as);
+uint64_t vmm_tcr_with_ttbr0(uint64_t tcr);
 void vmm_enable_ttbr0(void);
 void vmm_flush_user_va(uint64_t va);

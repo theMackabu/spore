@@ -61,6 +61,12 @@ static bool stack_write_u64(struct user_address_space *as, uint64_t va, uint64_t
   return stack_copy_to_user(as, va, &value, sizeof(value));
 }
 
+static void free_pages(uint64_t pa, uint64_t pages) {
+  for (uint64_t i = 0; i < pages; ++i) {
+    pmm_free_page(pa + i * PAGE_SIZE);
+  }
+}
+
 bool build_initial_stack(struct user_address_space *as, const struct loaded_elf *elf, uint64_t *stack_pointer) {
   const char *argv[] = {"/sbin/init"};
   const struct exec_stack_credentials creds = {0};
@@ -71,35 +77,51 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
                               uint64_t argc, const char *const envp[], uint64_t envc,
                               const struct exec_stack_credentials *creds, uint64_t *stack_pointer) {
   uint64_t cursor = USER_STACK_TOP;
-  uint64_t argv_va[64];
-  uint64_t envp_va[64];
+  uint64_t *argv_va = NULL;
+  uint64_t *envp_va = NULL;
+  uint64_t ptr_pa = 0;
+  uint64_t ptr_pages = 0;
+  bool ok = false;
 
-  if (creds == NULL || argc > 64 || envc > 64) return false;
+  if (creds == NULL) return false;
+  if ((argc != 0 && argv == NULL) || (envc != 0 && envp == NULL)) return false;
+
+  uint64_t total_ptrs = argc + envc;
+  if (total_ptrs < argc) return false;
+  if (total_ptrs != 0) {
+    uint64_t ptr_bytes = total_ptrs * sizeof(uint64_t);
+    if (ptr_bytes / sizeof(uint64_t) != total_ptrs || ptr_bytes > USER_STACK_SIZE) return false;
+    ptr_pages = (ptr_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+    ptr_pa = pmm_alloc_contiguous_pages(ptr_pages);
+    if (ptr_pa == 0) return false;
+    argv_va = (uint64_t *)(uintptr_t)(as->hhdm_offset + ptr_pa);
+    envp_va = argv_va + argc;
+  }
 
   for (uint64_t i = 0; i < argc; ++i) {
     size_t len = kstrlen(argv[i]) + 1;
     cursor -= len;
     argv_va[i] = cursor;
-    if (!stack_copy_to_user(as, argv_va[i], argv[i], len)) { return false; }
+    if (!stack_copy_to_user(as, argv_va[i], argv[i], len)) { goto out; }
   }
 
   for (uint64_t i = 0; i < envc; ++i) {
     size_t len = kstrlen(envp[i]) + 1;
     cursor -= len;
     envp_va[i] = cursor;
-    if (!stack_copy_to_user(as, envp_va[i], envp[i], len)) { return false; }
+    if (!stack_copy_to_user(as, envp_va[i], envp[i], len)) { goto out; }
   }
 
   static const char platform[] = "aarch64";
   cursor -= sizeof(platform);
   uint64_t platform_va = cursor;
-  if (!stack_copy_to_user(as, platform_va, platform, sizeof(platform))) { return false; }
+  if (!stack_copy_to_user(as, platform_va, platform, sizeof(platform))) { goto out; }
 
   cursor = align_down(cursor - 16, 16);
   uint64_t random_va = cursor;
   uint8_t random[16];
   random_bytes(random, sizeof(random));
-  if (!stack_copy_to_user(as, random_va, random, sizeof(random))) { return false; }
+  if (!stack_copy_to_user(as, random_va, random, sizeof(random))) { goto out; }
   kmemset(random, 0, sizeof(random));
 
   const uint64_t hwcap = AARCH64_HWCAP_FP | AARCH64_HWCAP_ASIMD | AARCH64_HWCAP_AES | AARCH64_HWCAP_PMULL |
@@ -130,26 +152,29 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   uint64_t sp = align_down(cursor - slots * sizeof(uint64_t), 16);
   uint64_t p = sp;
 
-  if (!stack_write_u64(as, p, argc)) { return false; }
+  if (!stack_write_u64(as, p, argc)) { goto out; }
   p += 8;
   for (uint64_t i = 0; i < argc; ++i) {
-    if (!stack_write_u64(as, p, argv_va[i])) { return false; }
+    if (!stack_write_u64(as, p, argv_va[i])) { goto out; }
     p += 8;
   }
-  if (!stack_write_u64(as, p, 0)) { return false; }
+  if (!stack_write_u64(as, p, 0)) { goto out; }
   p += 8;
   for (uint64_t i = 0; i < envc; ++i) {
-    if (!stack_write_u64(as, p, envp_va[i])) { return false; }
+    if (!stack_write_u64(as, p, envp_va[i])) { goto out; }
     p += 8;
   }
-  if (!stack_write_u64(as, p, 0)) { return false; }
+  if (!stack_write_u64(as, p, 0)) { goto out; }
   p += 8;
 
   for (size_t i = 0; i < sizeof(aux) / sizeof(aux[0]); ++i) {
-    if (!stack_write_u64(as, p, aux[i][0]) || !stack_write_u64(as, p + 8, aux[i][1])) { return false; }
+    if (!stack_write_u64(as, p, aux[i][0]) || !stack_write_u64(as, p + 8, aux[i][1])) { goto out; }
     p += 16;
   }
 
   *stack_pointer = sp;
-  return true;
+  ok = true;
+out:
+  if (ptr_pa != 0) { free_pages(ptr_pa, ptr_pages); }
+  return ok;
 }

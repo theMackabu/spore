@@ -20,6 +20,9 @@ enum {
   TIOCGPGRP = 0x540F,
   TIOCSPGRP = 0x5410,
   FIONBIO = 0x5421,
+  FIONCLEX = 0x5450,
+  FIOCLEX = 0x5451,
+  FD_CLOEXEC = 1,
   NCCS = 32,
 };
 
@@ -97,6 +100,16 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
       flags &= ~O_NONBLOCK;
     }
     return cell_fd_set_flags((int)fd, flags);
+  }
+  if (request == FIOCLEX || request == FIONCLEX) {
+    int flags = cell_fd_get_fd_flags((int)fd);
+    if (flags < 0) { return flags; }
+    if (request == FIOCLEX) {
+      flags |= FD_CLOEXEC;
+    } else {
+      flags &= ~FD_CLOEXEC;
+    }
+    return cell_fd_set_fd_flags((int)fd, flags);
   }
   if (request == TCGETS) {
     int64_t tty = require_tty_fd(fd);

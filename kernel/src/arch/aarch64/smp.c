@@ -7,6 +7,7 @@
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/pmm.h"
+#include "mm/vmm.h"
 #include <stddef.h>
 
 enum {
@@ -162,7 +163,7 @@ void smp_boot_parked_secondaries(uint64_t kernel_phys_base, uint64_t kernel_virt
   for (uint32_t cpu = 1; cpu < smp_present_count; ++cpu) {
     smp_cpus[cpu].started = 0;
     smp_boot_records[cpu].ttbr_pa = boot_ttbr_pa;
-    smp_boot_records[cpu].tcr = boot_tcr;
+    smp_boot_records[cpu].tcr = vmm_tcr_with_ttbr0(boot_tcr);
     smp_boot_records[cpu].mair = boot_mair;
     smp_boot_records[cpu].sctlr = boot_sctlr;
     smp_boot_records[cpu].kernel_va_offset = kernel_va_offset;

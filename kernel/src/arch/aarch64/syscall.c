@@ -130,6 +130,7 @@ enum {
   SYS_IO_URING_ENTER = 426,
   SYS_IO_URING_REGISTER = 427,
   SYS_CLONE3 = 435,
+  SYS_CLOSE_RANGE = 436,
   SYS_FACCESSAT2 = 439,
   SYS_SPORE_SNAPSHOT = 0x4000,
   SYS_SPORE_SPAWN = 0x4001,
@@ -159,6 +160,7 @@ enum {
   ENOTDIR = 20,
   ENOSYS = 38,
   ENAMETOOLONG = 36,
+  EOPNOTSUPP = 95,
 };
 
 #define SYSCALL_SWITCHED ((int64_t)CELL_SWITCHED)
@@ -327,6 +329,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_IO_URING_ENTER] = &&l_probe_enosys,
     [SYS_IO_URING_REGISTER] = &&l_probe_enosys,
     [SYS_CLONE3] = &&l_enosys,
+    [SYS_CLOSE_RANGE] = &&l_close_range,
     [SYS_FACCESSAT2] = &&l_faccessat2,
   };
   static const void *spore_dispatch[] = {
@@ -593,6 +596,22 @@ l_openat:
   return sys_openat(a0, a1, a2);
 l_close:
   return cell_fd_close((int)a0);
+l_close_range: {
+  const uint64_t close_range_unshare = 1u << 1;
+  const uint64_t close_range_cloexec = 1u << 2;
+  if (a0 > a1) { return -(int64_t)EINVAL; }
+  if ((a2 & ~(close_range_unshare | close_range_cloexec)) != 0) { return -(int64_t)EINVAL; }
+  if ((a2 & close_range_unshare) != 0) { return -(int64_t)EOPNOTSUPP; }
+  uint64_t last = a1 >= MAX_FDS ? MAX_FDS - 1 : a1;
+  for (uint64_t fd = a0; fd <= last; ++fd) {
+    if ((a2 & close_range_cloexec) != 0) {
+      if (cell_fd_get_fd_flags((int)fd) >= 0) { (void)cell_fd_set_fd_flags((int)fd, FD_CLOEXEC); }
+    } else {
+      (void)cell_fd_close((int)fd);
+    }
+  }
+  return 0;
+}
 l_pipe2:
   return cell_fd_pipe2(a0, (int)a1);
 l_lseek:
