@@ -29,6 +29,7 @@
 #define SYS_EXIT 93
 #define SYS_EXIT_GROUP 94
 #define SYS_FUTEX 98
+#define SYS_CLOCK_NANOSLEEP 115
 #define SYS_GETTID 178
 
 #define CLONE_VM 0x00000100
@@ -483,6 +484,19 @@ static uint64_t usec_now(void) {
   return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
 }
 
+static int absolute_sleep_regression(void) {
+  struct timespec deadline;
+  clock_gettime(CLOCK_MONOTONIC, &deadline);
+  deadline.tv_nsec += 1000000;
+  if (deadline.tv_nsec >= 1000000000) {
+    ++deadline.tv_sec;
+    deadline.tv_nsec -= 1000000000;
+  }
+  long rc = raw_syscall4(SYS_CLOCK_NANOSLEEP, CLOCK_MONOTONIC, TIMER_ABSTIME, (long)&deadline, 0);
+  printf("[spore] absolute clock_nanosleep: %s rc=%ld\n", rc == 0 ? "PASS" : "FAIL", rc);
+  return rc == 0;
+}
+
 static int fork_latency_profile(void) {
   enum { SAMPLES = 4 };
   uint64_t start = usec_now();
@@ -608,6 +622,7 @@ int main(void) {
   ok_all = ok_all && ok_v3e;
   int ok_v3f = phase_f_egress_demo();
   ok_all = ok_all && ok_v3f;
+  ok_all = ok_all && absolute_sleep_regression();
   ok_all = ok_all && fork_latency_profile();
 
   if (after_touch <= before || after_free >= after_touch) { ok_all = 0; }
