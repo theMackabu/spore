@@ -97,6 +97,7 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
     assert(got[i] == (uint8_t)(late_block & 0xffu));
   }
 
+  assert(ext2_drop_cache(&fs));
   assert(fclose(f) == 0);
   assert(remove(path) == 0);
 }
@@ -182,6 +183,7 @@ static void test_mutations(const char *image_path) {
     assert(!ext2_lstat(&fs, "/apkdir/.apk.replace", &node));
   }
 
+  assert(ext2_drop_cache(&fs));
   assert(fclose(f) == 0);
   assert(remove(tmp_path) == 0);
 }
@@ -237,6 +239,7 @@ int main(int argc, char **argv) {
   assert(ext2_lookup(&fs, "/lib/libc.so", &libc));
   assert(ext2_is_regular(&libc));
 
+  assert(ext2_drop_cache(&fs));
   fclose(f);
   test_mutations(argv[1]);
   return 0;

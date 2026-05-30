@@ -103,3 +103,4 @@ bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_di
 bool vfs_fs_info(struct vfs_fs_info *out);
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);
 struct vfs_stats vfs_get_stats(void);
+bool vfs_sync(void);

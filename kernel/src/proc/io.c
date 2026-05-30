@@ -18,7 +18,7 @@
 #include <stddef.h>
 
 enum {
-  FILE_IO_CHUNK = 4096,
+  FILE_IO_CHUNK = 128 * 1024,
   CELL_O_ACCMODE = 3,
   CELL_O_WRONLY = 1,
   CELL_O_RDWR = 2,

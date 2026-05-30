@@ -19,6 +19,7 @@ enum {
   BLOCK_CACHE_ENTRIES = 32,
   SYMLINK_DEPTH_MAX = 8,
   EXT2_DIRECT_READ_MAX = 128 * 1024,
+  EXT2_DIRECT_WRITE_MAX = 128 * 1024,
   EXT2_EIO = 5,
   EXT2_EFBIG = 27,
   EXT2_ENOSPC = 28,
@@ -87,6 +88,7 @@ struct ext2_inode_disk {
 
 struct block_cache_entry {
   bool valid;
+  bool dirty;
   struct ext2_fs *fs;
   uint32_t block;
   uint64_t age;
@@ -110,10 +112,41 @@ static uint32_t div_round_up(uint32_t a, uint32_t b) {
   return (a + b - 1) / b;
 }
 
-static void cache_reset(struct ext2_fs *fs) {
-  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
-    if (block_cache[i].fs == fs) { block_cache[i].valid = false; }
+static bool cache_flush_entry(struct block_cache_entry *entry) {
+  if (!entry->valid || !entry->dirty) { return true; }
+  if (entry->fs == NULL || entry->fs->write == NULL) { return false; }
+  if (!entry->fs->write(entry->fs->ctx, (uint64_t)entry->block * entry->fs->block_size, entry->data,
+                        entry->fs->block_size)) {
+    return false;
   }
+  entry->dirty = false;
+  ++ext2_stat_counters.block_cache_flushes;
+  return true;
+}
+
+bool ext2_flush(struct ext2_fs *fs) {
+  bool ok = true;
+  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
+    if (block_cache[i].fs == fs && !cache_flush_entry(&block_cache[i])) { ok = false; }
+  }
+  return ok;
+}
+
+bool ext2_drop_cache(struct ext2_fs *fs) {
+  bool ok = true;
+  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
+    if (block_cache[i].fs == fs) {
+      if (!cache_flush_entry(&block_cache[i])) { ok = false; }
+      block_cache[i].valid = false;
+      block_cache[i].dirty = false;
+      block_cache[i].fs = NULL;
+    }
+  }
+  return ok;
+}
+
+static void cache_reset(struct ext2_fs *fs) {
+  (void)ext2_drop_cache(fs);
 }
 
 uint64_t ext2_cache_used_pages(void) {
@@ -135,13 +168,34 @@ static struct block_cache_entry *cache_find(struct ext2_fs *fs, uint32_t block) 
   return NULL;
 }
 
-static struct block_cache_entry *cache_victim(void) {
+static bool cache_victim(struct block_cache_entry **out) {
   struct block_cache_entry *victim = &block_cache[0];
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
-    if (!block_cache[i].valid) { return &block_cache[i]; }
+    if (!block_cache[i].valid) {
+      *out = &block_cache[i];
+      return true;
+    }
     if (block_cache[i].age < victim->age) { victim = &block_cache[i]; }
   }
-  return victim;
+  if (!cache_flush_entry(victim)) { return false; }
+  *out = victim;
+  return true;
+}
+
+static void cache_update_clean(struct ext2_fs *fs, uint32_t block, const void *src) {
+  struct block_cache_entry *entry = cache_find(fs, block);
+  if (entry == NULL) { return; }
+  kmemcpy(entry->data, src, fs->block_size);
+  entry->dirty = false;
+  entry->age = ++block_cache_clock;
+}
+
+static bool cache_range_has_dirty(struct ext2_fs *fs, uint32_t first_block, uint32_t block_count) {
+  for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
+    if (!block_cache[i].valid || !block_cache[i].dirty || block_cache[i].fs != fs) { continue; }
+    if (block_cache[i].block >= first_block && block_cache[i].block - first_block < block_count) { return true; }
+  }
+  return false;
 }
 
 static bool read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
@@ -149,9 +203,10 @@ static bool read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
     ++ext2_stat_counters.block_cache_misses;
-    entry = cache_victim();
+    if (!cache_victim(&entry)) { return false; }
     if (!fs->read(fs->ctx, (uint64_t)block * fs->block_size, entry->data, fs->block_size)) { return false; }
     entry->valid = true;
+    entry->dirty = false;
     entry->fs = fs;
     entry->block = block;
   } else {
@@ -164,17 +219,30 @@ static bool read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
 
 static bool write_block(struct ext2_fs *fs, uint32_t block, const void *src) {
   if (block >= fs->block_count || fs->write == NULL || fs->block_size > sizeof(block_cache[0].data)) { return false; }
-  if (!fs->write(fs->ctx, (uint64_t)block * fs->block_size, src, fs->block_size)) { return false; }
   ++ext2_stat_counters.block_cache_writes;
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
-    entry = cache_victim();
+    if (!cache_victim(&entry)) { return false; }
     entry->valid = true;
+    entry->dirty = false;
     entry->fs = fs;
     entry->block = block;
   }
   entry->age = ++block_cache_clock;
   kmemcpy(entry->data, src, fs->block_size);
+  entry->dirty = true;
+  return true;
+}
+
+static bool write_blocks_direct(struct ext2_fs *fs, uint32_t first_block, const void *src, uint32_t block_count) {
+  if (block_count == 0) { return true; }
+  uint32_t bytes = block_count * fs->block_size;
+  if (!fs->write(fs->ctx, (uint64_t)first_block * fs->block_size, src, bytes)) { return false; }
+  const uint8_t *in = src;
+  for (uint32_t i = 0; i < block_count; ++i) {
+    cache_update_clean(fs, first_block + i, in + (uint64_t)i * fs->block_size);
+  }
+  ++ext2_stat_counters.block_cache_flushes;
   return true;
 }
 
@@ -408,6 +476,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   fs->first_data_block = sb.first_data_block;
   fs->inode_count = sb.inodes_count;
   fs->block_count = sb.blocks_count;
+  fs->next_alloc_block = sb.first_data_block;
   fs->group_count = div_round_up(sb.blocks_count - sb.first_data_block, sb.blocks_per_group);
   cache_reset(fs);
   return fs->inodes_per_group != 0 && fs->blocks_per_group != 0 && fs->group_count != 0;
@@ -472,7 +541,8 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
         ++run_blocks;
         run_bytes += fs->block_size;
       }
-      if (run_blocks > 1 && fs->read(fs->ctx, (uint64_t)disk_block * fs->block_size, out + done, run_bytes)) {
+      if (run_blocks > 1 && !cache_range_has_dirty(fs, disk_block, run_blocks) &&
+          fs->read(fs->ctx, (uint64_t)disk_block * fs->block_size, out + done, run_bytes)) {
         done += run_bytes;
         off += run_bytes;
         continue;
@@ -514,16 +584,23 @@ static uint8_t dirent_type_for_node(const struct ext2_node *node) {
   return EXT2_FT_REG_FILE;
 }
 
-static int alloc_block(struct ext2_fs *fs, uint32_t *out) {
+static int alloc_block_maybe_zero(struct ext2_fs *fs, uint32_t *out, bool zero_block) {
   uint8_t bitmap[4096];
   if (fs->block_size > sizeof(bitmap)) { return -EXT2_EIO; }
-  for (uint32_t group = 0; group < fs->group_count; ++group) {
+  uint32_t start = fs->next_alloc_block;
+  if (start < fs->first_data_block || start >= fs->block_count) { start = fs->first_data_block; }
+  uint32_t start_group = start / fs->blocks_per_group;
+  uint32_t start_bit = start % fs->blocks_per_group;
+  for (uint32_t group_step = 0; group_step < fs->group_count; ++group_step) {
+    uint32_t group = (start_group + group_step) % fs->group_count;
     struct ext2_group_desc gd;
     if (!read_group_desc(fs, group, &gd)) { return -EXT2_EIO; }
+    if (gd.free_blocks_count == 0) { continue; }
     if (!read_block(fs, gd.block_bitmap, bitmap)) { return -EXT2_EIO; }
     uint32_t group_first = group * fs->blocks_per_group;
     if (group_first >= fs->block_count) { continue; }
-    for (uint32_t bit = 0; bit < fs->blocks_per_group; ++bit) {
+    for (uint32_t bit_step = 0; bit_step < fs->blocks_per_group; ++bit_step) {
+      uint32_t bit = group == start_group ? (start_bit + bit_step) % fs->blocks_per_group : bit_step;
       uint32_t block = group_first + bit;
       if (block < fs->first_data_block || block >= fs->block_count) { continue; }
       if ((bitmap[bit / 8u] & (1u << (bit % 8u))) != 0) { continue; }
@@ -536,14 +613,22 @@ static int alloc_block(struct ext2_fs *fs, uint32_t *out) {
         --sb.free_blocks_count;
         (void)write_super(fs, &sb);
       }
-      uint8_t zero[4096];
-      kmemset(zero, 0, fs->block_size);
-      if (!write_block(fs, block, zero)) { return -EXT2_EIO; }
+      if (zero_block) {
+        uint8_t zero[4096];
+        kmemset(zero, 0, fs->block_size);
+        if (!write_block(fs, block, zero)) { return -EXT2_EIO; }
+      }
       *out = block;
+      fs->next_alloc_block = block + 1;
+      if (fs->next_alloc_block >= fs->block_count) { fs->next_alloc_block = fs->first_data_block; }
       return 0;
     }
   }
   return -EXT2_ENOSPC;
+}
+
+static int alloc_block(struct ext2_fs *fs, uint32_t *out) {
+  return alloc_block_maybe_zero(fs, out, true);
 }
 
 static bool free_block(struct ext2_fs *fs, uint32_t block) {
@@ -645,7 +730,7 @@ static bool adjust_group_used_dirs(struct ext2_fs *fs, uint32_t ino, int delta) 
 }
 
 static int file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32_t file_block_index,
-                                uint32_t *block_out) {
+                                uint32_t *block_out, bool zero_data_block) {
   uint32_t entries_per_block = fs->block_size / sizeof(uint32_t);
   uint8_t block[4096];
   uint8_t block2[4096];
@@ -653,7 +738,7 @@ static int file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint
 
   if (file_block_index < 12) {
     if (node->blocks[file_block_index] == 0) {
-      int rc = alloc_block(fs, &node->blocks[file_block_index]);
+      int rc = alloc_block_maybe_zero(fs, &node->blocks[file_block_index], zero_data_block);
       if (rc != 0) { return rc; }
     }
     *block_out = node->blocks[file_block_index];
@@ -669,7 +754,7 @@ static int file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint
     if (!read_block(fs, node->blocks[12], block)) { return -EXT2_EIO; }
     uint32_t *entries = (uint32_t *)block;
     if (entries[file_block_index] == 0) {
-      int rc = alloc_block(fs, &entries[file_block_index]);
+      int rc = alloc_block_maybe_zero(fs, &entries[file_block_index], zero_data_block);
       if (rc != 0) { return rc; }
       if (!write_block(fs, node->blocks[12], block)) { return -EXT2_EIO; }
     }
@@ -697,7 +782,7 @@ static int file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint
     if (!read_block(fs, inner_block, block)) { return -EXT2_EIO; }
     uint32_t *inner = (uint32_t *)block;
     if (inner[inner_index] == 0) {
-      int rc = alloc_block(fs, &inner[inner_index]);
+      int rc = alloc_block_maybe_zero(fs, &inner[inner_index], zero_data_block);
       if (rc != 0) { return rc; }
       if (!write_block(fs, inner_block, block)) { return -EXT2_EIO; }
     }
@@ -735,7 +820,7 @@ static int file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint
   if (!read_block(fs, inner_block, block)) { return -EXT2_EIO; }
   uint32_t *inner = (uint32_t *)block;
   if (inner[inner_index] == 0) {
-    int rc = alloc_block(fs, &inner[inner_index]);
+    int rc = alloc_block_maybe_zero(fs, &inner[inner_index], zero_data_block);
     if (rc != 0) { return rc; }
     if (!write_block(fs, inner_block, block)) { return -EXT2_EIO; }
   }
@@ -772,8 +857,29 @@ int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off
     uint32_t within = (uint32_t)(off % fs->block_size);
     uint32_t chunk = fs->block_size - within;
     if ((uint64_t)chunk > len - done) { chunk = (uint32_t)(len - done); }
+    if (within == 0 && len - done >= fs->block_size) {
+      uint32_t max_blocks = (uint32_t)((len - done) / fs->block_size);
+      uint32_t max_direct_blocks = EXT2_DIRECT_WRITE_MAX / fs->block_size;
+      if (max_blocks > max_direct_blocks) { max_blocks = max_direct_blocks; }
+      uint32_t first_disk_block = 0;
+      int rc = file_block_for_write(fs, node, file_block_index, &first_disk_block, false);
+      if (rc != 0) { return rc; }
+      uint32_t run_blocks = 1;
+      while (run_blocks < max_blocks) {
+        uint32_t disk_block = 0;
+        rc = file_block_for_write(fs, node, file_block_index + run_blocks, &disk_block, false);
+        if (rc != 0) { break; }
+        if (disk_block != first_disk_block + run_blocks) { break; }
+        ++run_blocks;
+      }
+      uint32_t bytes = run_blocks * fs->block_size;
+      if (!write_blocks_direct(fs, first_disk_block, in + done, run_blocks)) { return -EXT2_EIO; }
+      done += bytes;
+      off += bytes;
+      continue;
+    }
     uint32_t disk_block = 0;
-    int rc = file_block_for_write(fs, node, file_block_index, &disk_block);
+    int rc = file_block_for_write(fs, node, file_block_index, &disk_block, true);
     if (rc != 0) { return rc; }
     if (within != 0 || chunk != fs->block_size) {
       if (!read_block(fs, disk_block, block)) { return -EXT2_EIO; }
@@ -1044,7 +1150,7 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
   }
 
   uint32_t new_block = 0;
-  if (file_block_for_write(fs, dir, blocks, &new_block) != 0 || !read_block(fs, new_block, block)) { return false; }
+  if (file_block_for_write(fs, dir, blocks, &new_block, true) != 0 || !read_block(fs, new_block, block)) { return false; }
   kmemset(block, 0, fs->block_size);
   write_dir_record(block, ino, (uint16_t)fs->block_size, name_len, type, name);
   dir->size += fs->block_size;

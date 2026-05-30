@@ -402,6 +402,8 @@ size_t proc_fsstats_text(char *dst, size_t cap) {
   proc_append_u64(dst, cap, &len, ext2.block_cache_misses);
   proc_append_str(dst, cap, &len, "\next2.block_cache_writes ");
   proc_append_u64(dst, cap, &len, ext2.block_cache_writes);
+  proc_append_str(dst, cap, &len, "\next2.block_cache_flushes ");
+  proc_append_u64(dst, cap, &len, ext2.block_cache_flushes);
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }

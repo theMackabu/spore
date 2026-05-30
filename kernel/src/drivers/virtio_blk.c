@@ -46,7 +46,8 @@ enum {
   VIRTIO_BLK_T_IN = 0,
   VIRTIO_BLK_T_OUT = 1,
   SECTOR_SIZE = 512,
-  MAX_IO_SIZE = 4096,
+  MAX_IO_SIZE = 128 * 1024,
+  IO_BUFFER_PAGES = MAX_IO_SIZE / 4096,
 };
 
 struct virtq_desc {
@@ -129,6 +130,17 @@ static uint64_t alloc_zero_page(void **virt) {
   return pa;
 }
 
+static uint64_t alloc_zero_contiguous(uint64_t pages, void **virt) {
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) {
+    *virt = NULL;
+    return 0;
+  }
+  *virt = (void *)(uintptr_t)(hhdm + pa);
+  kmemset(*virt, 0, pages * 4096);
+  return pa;
+}
+
 static void write_pa_pair(uint64_t low_reg, uint64_t pa) {
   write32(low_reg, (uint32_t)pa);
   write32(low_reg + 4, (uint32_t)(pa >> 32));
@@ -156,7 +168,7 @@ static bool setup_device(uint64_t base) {
   if (avail_pa == 0) { avail_pa = alloc_zero_page((void **)&avail); }
   if (used_pa == 0) { used_pa = alloc_zero_page((void **)&used); }
   if (req_pa == 0) { req_pa = alloc_zero_page((void **)&req); }
-  if (sector_pa == 0) { sector_pa = alloc_zero_page((void **)&sector_buf); }
+  if (sector_pa == 0) { sector_pa = alloc_zero_contiguous(IO_BUFFER_PAGES, (void **)&sector_buf); }
   if (status_pa == 0) { status_pa = alloc_zero_page((void **)&status_buf); }
   if (desc_pa == 0 || avail_pa == 0 || used_pa == 0 || req_pa == 0 || sector_pa == 0 || status_pa == 0) {
     return false;
@@ -165,7 +177,7 @@ static bool setup_device(uint64_t base) {
   kmemset(avail, 0, 4096);
   kmemset((void *)used, 0, 4096);
   kmemset(req, 0, 4096);
-  kmemset(sector_buf, 0, 4096);
+  kmemset(sector_buf, 0, MAX_IO_SIZE);
   *(uint8_t *)status_buf = 0;
 
   write32(VIRTIO_MMIO_QUEUE_SEL, 0);

@@ -153,6 +153,7 @@ enum {
   DT_FIFO = 1,
   ENOENT = 2,
   EPERM = 1,
+  EIO = 5,
   EBADF = 9,
   EACCES = 13,
   EFAULT = 14,
@@ -502,6 +503,7 @@ l_spore_shutdown:
     kprintf("[kernel] shutdown denied uid=%d euid=%d\n", (int)cell_current_uid(), (int)cell_current_euid());
     return -(int64_t)EPERM;
   }
+  (void)vfs_sync();
   if (a0 == 1) {
     kprintf("[kernel] reboot\n");
     system_reboot();
@@ -728,7 +730,7 @@ l_fchdir: {
   return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
 }
 l_fsync:
-  return 0;
+  return vfs_sync() ? 0 : -(int64_t)EIO;
 l_getrandom:
   return sys_getrandom(a0, a1);
 l_clock_gettime:

@@ -23,6 +23,7 @@ struct ext2_fs {
   uint32_t group_count;
   uint32_t inode_count;
   uint32_t block_count;
+  uint32_t next_alloc_block;
 };
 
 struct __attribute__((aligned(8))) ext2_node {
@@ -61,6 +62,7 @@ struct ext2_stats {
   uint64_t block_cache_hits;
   uint64_t block_cache_misses;
   uint64_t block_cache_writes;
+  uint64_t block_cache_flushes;
 };
 
 bool ext2_mount(struct ext2_fs *fs, ext2_read_fn read, void *ctx);
@@ -89,5 +91,7 @@ bool ext2_is_dir(const struct ext2_node *node);
 bool ext2_is_regular(const struct ext2_node *node);
 bool ext2_is_symlink(const struct ext2_node *node);
 bool ext2_info(struct ext2_fs *fs, struct ext2_info *out);
+bool ext2_flush(struct ext2_fs *fs);
+bool ext2_drop_cache(struct ext2_fs *fs);
 uint64_t ext2_cache_used_pages(void);
 struct ext2_stats ext2_get_stats(void);

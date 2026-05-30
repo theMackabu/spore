@@ -227,6 +227,12 @@ struct vfs_stats vfs_get_stats(void) {
   return stats;
 }
 
+bool vfs_sync(void) {
+  bool ok = true;
+  if (root_ext2 != NULL && !ext2_flush(root_ext2)) { ok = false; }
+  return ok;
+}
+
 static bool copy_cache_path(char *dst, const char *path) {
   size_t len = kstrlen(path);
   if (len > VFS_LOOKUP_CACHE_PATH_MAX) { return false; }
