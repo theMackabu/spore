@@ -72,6 +72,7 @@ struct vfs_stats {
   uint64_t page_cache_misses;
   uint64_t page_cache_loads;
   uint64_t page_cache_invalidations;
+  uint64_t page_cache_pages;
 };
 
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset);
@@ -94,6 +95,7 @@ bool vfs_rename(const char *old_path, const char *new_path);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
 bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst);
+bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out);
 void vfs_page_cache_invalidate(const struct vfs_node *node);
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out);

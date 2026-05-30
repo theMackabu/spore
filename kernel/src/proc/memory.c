@@ -116,11 +116,26 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
       ((vma->prot & VMM_USER_EXEC) == 0 || vmm_user_range_accessible(as, page, 1, VMM_ACCESS_EXEC))) {
     return true;
   }
+  uint64_t page_end = page + PAGE_SIZE;
+  uint64_t file_end = vma->file_start + vma->file_size;
+  if (page >= vma->file_start && page_end <= file_end) {
+    uint64_t read_off = vma->file_offset + (page - vma->file_start);
+    if ((read_off & (PAGE_SIZE - 1)) != 0) { goto private_copy; }
+    uint64_t pa = 0;
+    if (!vfs_retain_page_cached(&vma->file_node, read_off, &pa)) { return false; }
+    bool mapped = (vma->prot & VMM_USER_WRITE) != 0 ? vmm_map_page_cow(as, page, pa, vma->prot)
+                                                    : vmm_map_page(as, page, pa, vma->prot);
+    if (!mapped) {
+      pmm_free_page(pa);
+      return false;
+    }
+    return true;
+  }
+
+private_copy:
   uint64_t pa = pmm_alloc_zero_page();
   if (pa == 0) { return false; }
   uint8_t *dst = (uint8_t *)(uintptr_t)(as->hhdm_offset + pa);
-  uint64_t page_end = page + PAGE_SIZE;
-  uint64_t file_end = vma->file_start + vma->file_size;
   uint64_t copy_start = page > vma->file_start ? page : vma->file_start;
   uint64_t copy_end = page_end < file_end ? page_end : file_end;
   if (copy_start < copy_end) {

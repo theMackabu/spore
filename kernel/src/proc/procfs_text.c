@@ -143,15 +143,16 @@ size_t proc_meminfo_text(char *dst, size_t cap) {
   uint64_t free_pages = pmm_free_pages();
   uint64_t used_pages = total_pages > free_pages ? total_pages - free_pages : 0;
   uint64_t buffer_pages = ext2_cache_used_pages();
+  uint64_t cached_pages = vfs_get_stats().page_cache_pages;
   uint64_t shmem_pages = ramfs_backing_used_pages();
-  uint64_t reclaimable_pages = buffer_pages;
+  uint64_t reclaimable_pages = buffer_pages + cached_pages;
   uint64_t inactive_pages = reclaimable_pages + shmem_pages;
   uint64_t active_pages = used_pages > inactive_pages ? used_pages - inactive_pages : 0;
   uint64_t total_kib = total_pages * 4;
   uint64_t free_kib = free_pages * 4;
   uint64_t used_kib = used_pages * 4;
   uint64_t buffer_kib = buffer_pages * 4;
-  uint64_t cached_kib = 0;
+  uint64_t cached_kib = cached_pages * 4;
   uint64_t shmem_kib = shmem_pages * 4;
   uint64_t reclaimable_kib = reclaimable_pages * 4;
   uint64_t active_kib = active_pages * 4;
@@ -385,6 +386,8 @@ size_t proc_fsstats_text(char *dst, size_t cap) {
   proc_append_u64(dst, cap, &len, vfs.page_cache_loads);
   proc_append_str(dst, cap, &len, "\nvfs.page_cache_invalidations ");
   proc_append_u64(dst, cap, &len, vfs.page_cache_invalidations);
+  proc_append_str(dst, cap, &len, "\nvfs.page_cache_pages ");
+  proc_append_u64(dst, cap, &len, vfs.page_cache_pages);
   proc_append_str(dst, cap, &len, "\next2.lookup ");
   proc_append_u64(dst, cap, &len, ext2.lookup_count);
   proc_append_str(dst, cap, &len, "\next2.lstat ");

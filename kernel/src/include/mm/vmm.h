@@ -27,6 +27,7 @@ struct user_address_space {
 
 bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset);
 bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags);
+bool vmm_map_page_cow(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags);
 bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags);
 bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src, uint16_t asid);
 void vmm_destroy(struct user_address_space *as);
