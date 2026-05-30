@@ -1053,6 +1053,15 @@ static struct child_parent_cache_entry *child_parent_cache_find(struct ext2_fs *
   return NULL;
 }
 
+static struct child_parent_cache_entry *child_parent_cache_alloc_slot(void) {
+  struct child_parent_cache_entry *entry = &child_parent_cache[0];
+  for (size_t i = 0; i < CHILD_PARENT_CACHE_ENTRIES; ++i) {
+    if (!child_parent_cache[i].valid) { return &child_parent_cache[i]; }
+    if (child_parent_cache[i].age < entry->age) { entry = &child_parent_cache[i]; }
+  }
+  return entry;
+}
+
 static bool child_parent_cache_complete(struct ext2_fs *fs, uint32_t parent_ino) {
   struct child_parent_cache_entry *entry = child_parent_cache_find(fs, parent_ino);
   if (entry == NULL || !entry->complete) { return false; }
@@ -1062,16 +1071,7 @@ static bool child_parent_cache_complete(struct ext2_fs *fs, uint32_t parent_ino)
 
 static void child_parent_cache_set(struct ext2_fs *fs, uint32_t parent_ino, bool complete) {
   struct child_parent_cache_entry *entry = child_parent_cache_find(fs, parent_ino);
-  if (entry == NULL) {
-    entry = &child_parent_cache[0];
-    for (size_t i = 0; i < CHILD_PARENT_CACHE_ENTRIES; ++i) {
-      if (!child_parent_cache[i].valid) {
-        entry = &child_parent_cache[i];
-        break;
-      }
-      if (child_parent_cache[i].age < entry->age) { entry = &child_parent_cache[i]; }
-    }
-  }
+  if (entry == NULL) { entry = child_parent_cache_alloc_slot(); }
   entry->valid = true;
   entry->complete = complete;
   entry->fs = fs;
@@ -1079,23 +1079,21 @@ static void child_parent_cache_set(struct ext2_fs *fs, uint32_t parent_ino, bool
   entry->age = ++child_cache_clock;
 }
 
+static struct child_cache_entry *child_cache_alloc_slot(void) {
+  struct child_cache_entry *entry = &child_cache[0];
+  for (size_t i = 0; i < CHILD_CACHE_ENTRIES; ++i) {
+    if (!child_cache[i].valid) { return &child_cache[i]; }
+    if (child_cache[i].age < entry->age) { entry = &child_cache[i]; }
+  }
+  child_parent_cache_set(entry->fs, entry->parent_ino, false);
+  return entry;
+}
+
 static bool child_cache_store(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t name_len,
                               uint32_t ino, const struct ext2_node *node) {
   if (name_len > EXT2_NAME_MAX) { return false; }
   struct child_cache_entry *entry = child_cache_find(fs, parent_ino, name, name_len);
-  if (entry == NULL) {
-    entry = &child_cache[0];
-    bool found_slot = false;
-    for (size_t i = 0; i < CHILD_CACHE_ENTRIES; ++i) {
-      if (!child_cache[i].valid) {
-        entry = &child_cache[i];
-        found_slot = true;
-        break;
-      }
-      if (child_cache[i].age < entry->age) { entry = &child_cache[i]; }
-    }
-    if (!found_slot && entry->valid) { child_parent_cache_set(entry->fs, entry->parent_ino, false); }
-  }
+  if (entry == NULL) { entry = child_cache_alloc_slot(); }
   entry->valid = true;
   entry->fs = fs;
   entry->parent_ino = parent_ino;
@@ -1106,6 +1104,22 @@ static bool child_cache_store(struct ext2_fs *fs, uint32_t parent_ino, const cha
   entry->node_valid = node != NULL;
   if (node != NULL) { entry->node = *node; }
   entry->age = ++child_cache_clock;
+  return true;
+}
+
+static void child_cache_store_loaded(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t name_len,
+                                     uint32_t ino) {
+  struct ext2_node node;
+  if (read_inode(fs, ino, &node)) { (void)child_cache_store(fs, parent_ino, name, name_len, ino, &node); }
+}
+
+static bool child_cache_read_entry(struct ext2_fs *fs, struct child_cache_entry *entry, struct ext2_node *out) {
+  entry->age = ++child_cache_clock;
+  if (!entry->node_valid) {
+    if (!read_inode(fs, entry->ino, &entry->node)) { return false; }
+    entry->node_valid = true;
+  }
+  *out = entry->node;
   return true;
 }
 
@@ -1131,17 +1145,7 @@ static bool lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const 
                          struct ext2_node *out) {
   ++ext2_stat_counters.lookup_child_count;
   struct child_cache_entry *cached = child_cache_find(fs, dir->ino, name, name_len);
-  if (cached != NULL) {
-    cached->age = ++child_cache_clock;
-    if (cached->node_valid) {
-      *out = cached->node;
-      return true;
-    }
-    if (!read_inode(fs, cached->ino, out)) { return false; }
-    cached->node = *out;
-    cached->node_valid = true;
-    return true;
-  }
+  if (cached != NULL) { return child_cache_read_entry(fs, cached, out); }
   if (child_parent_cache_complete(fs, dir->ino)) { return false; }
   struct ext2_dirent ent;
   uint64_t cursor = 0;
@@ -1149,11 +1153,10 @@ static bool lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const 
   bool found = false;
   while (ext2_next_dirent(fs, dir, &cursor, &ent)) {
     if (!child_cache_store(fs, dir->ino, ent.name, kstrlen(ent.name), ent.ino, NULL)) { overflow = true; }
-    if (name_equals(name, name_len, ent.name)) {
-      if (read_inode(fs, ent.ino, out)) {
-        (void)child_cache_store(fs, dir->ino, ent.name, kstrlen(ent.name), ent.ino, out);
-        found = true;
-      }
+    if (!name_equals(name, name_len, ent.name)) { continue; }
+    if (read_inode(fs, ent.ino, out)) {
+      (void)child_cache_store(fs, dir->ino, ent.name, kstrlen(ent.name), ent.ino, out);
+      found = true;
     }
   }
   child_parent_cache_set(fs, dir->ino, !overflow);
@@ -1302,10 +1305,7 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
         dir->mtime = now;
         dir->ctime = now;
         bool ok = write_block(fs, disk_block, block) && write_inode(fs, dir);
-        if (ok) {
-          struct ext2_node added;
-          if (read_inode(fs, ino, &added)) { (void)child_cache_store(fs, dir->ino, name, name_len, ino, &added); }
-        }
+        if (ok) { child_cache_store_loaded(fs, dir->ino, name, name_len, ino); }
         return ok;
       }
       off += rec_len;
@@ -1321,10 +1321,7 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
   dir->mtime = now;
   dir->ctime = now;
   bool ok = write_block(fs, new_block, block) && write_inode(fs, dir);
-  if (ok) {
-    struct ext2_node added;
-    if (read_inode(fs, ino, &added)) { (void)child_cache_store(fs, dir->ino, name, name_len, ino, &added); }
-  }
+  if (ok) { child_cache_store_loaded(fs, dir->ino, name, name_len, ino); }
   return ok;
 }
 
