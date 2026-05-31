@@ -20,6 +20,9 @@ enum {
   SYS_DUP = 23,
   SYS_DUP3 = 24,
   SYS_FCNTL = 25,
+  SYS_INOTIFY_INIT1 = 26,
+  SYS_INOTIFY_ADD_WATCH = 27,
+  SYS_INOTIFY_RM_WATCH = 28,
   SYS_FLOCK = 32,
   SYS_IOCTL = 29,
   SYS_MKNODAT = 33,
@@ -223,6 +226,9 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_DUP] = &&l_dup,
     [SYS_DUP3] = &&l_dup3,
     [SYS_FCNTL] = &&l_fcntl,
+    [SYS_INOTIFY_INIT1] = &&l_inotify_init1,
+    [SYS_INOTIFY_ADD_WATCH] = &&l_inotify_add_watch,
+    [SYS_INOTIFY_RM_WATCH] = &&l_inotify_rm_watch,
     [SYS_FLOCK] = &&l_flock,
     [SYS_IOCTL] = &&l_ioctl,
     [SYS_MKDIRAT] = &&l_mkdirat,
@@ -403,6 +409,12 @@ l_epoll_ctl:
   return sys_epoll_ctl(a0, a1, a2, a3);
 l_epoll_pwait:
   return sys_epoll_pwait(f, a0, a1, a2, a3, a4, a5);
+l_inotify_init1:
+  return sys_inotify_init1(a0);
+l_inotify_add_watch:
+  return sys_inotify_add_watch(a0, a1, a2);
+l_inotify_rm_watch:
+  return sys_inotify_rm_watch(a0, a1);
 l_nanosleep:
   return sys_nanosleep(f, a0, a1);
 l_clock_nanosleep:

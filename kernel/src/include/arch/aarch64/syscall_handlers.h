@@ -51,6 +51,9 @@ int64_t sys_pread64(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_
 int64_t sys_pwrite64(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len, uint64_t off);
 int64_t sys_readv(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt);
 int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt);
+int64_t sys_inotify_init1(uint64_t flags);
+int64_t sys_inotify_add_watch(uint64_t fd, uint64_t path_addr, uint64_t mask);
+int64_t sys_inotify_rm_watch(uint64_t fd, uint64_t wd);
 int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags);
 int64_t sys_fstat(uint64_t fd, uint64_t stat_addr);
 int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr);

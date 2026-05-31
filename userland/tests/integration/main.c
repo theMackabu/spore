@@ -41,6 +41,9 @@
 #define SYS_SPORE_APPLY_POLICY 0x4005
 #define SYS_EXIT 93
 #define SYS_EXIT_GROUP 94
+#define SYS_INOTIFY_INIT1 26
+#define SYS_INOTIFY_ADD_WATCH 27
+#define SYS_INOTIFY_RM_WATCH 28
 #define SYS_FUTEX 98
 #define SYS_CLOCK_NANOSLEEP 115
 #define SYS_GETTID 178
@@ -60,6 +63,12 @@
 #endif
 #ifndef SOCK_CLOEXEC
 #define SOCK_CLOEXEC 02000000
+#endif
+#ifndef IN_NONBLOCK
+#define IN_NONBLOCK 04000
+#endif
+#ifndef IN_CLOEXEC
+#define IN_CLOEXEC 02000000
 #endif
 #ifndef MSG_WAITALL
 #define MSG_WAITALL 0x100
@@ -1771,6 +1780,18 @@ static int phase_d_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
+  int ifd = (int)syscall(SYS_INOTIFY_INIT1, IN_NONBLOCK | IN_CLOEXEC);
+  if (ifd < 0) {
+    ok = 0;
+  } else {
+    int wd = (int)syscall(SYS_INOTIFY_ADD_WATCH, ifd, "/tmp", 0xffffffffu);
+    if (wd <= 0) { ok = 0; }
+    errno = 0;
+    char event_buf[32];
+    if (read(ifd, event_buf, sizeof(event_buf)) != -1 || errno != EAGAIN) { ok = 0; }
+    if (wd > 0 && syscall(SYS_INOTIFY_RM_WATCH, ifd, wd) != 0) { ok = 0; }
+    close(ifd);
+  }
   if (unlink("b") != 0) { ok = 0; }
   if (chdir("/") != 0) { ok = 0; }
   (void)syscall(35, AT_FDCWD, "/tmp/spore-demo-d", 0x200);

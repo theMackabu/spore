@@ -15,6 +15,8 @@ enum {
   CELL_O_APPEND = 02000,
   CELL_O_CLOEXEC = 02000000,
   EFD_SEMAPHORE = 1,
+  IN_NONBLOCK = 04000,
+  IN_CLOEXEC = 02000000,
   EAGAIN = 11,
   EFAULT = 14,
   EINVAL = 22,
@@ -178,6 +180,48 @@ int cell_fd_eventfd(uint64_t initval, int flags) {
   domain->fds[fd] = file;
   domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
   return fd;
+}
+
+int cell_fd_inotify_init1(int flags) {
+  if ((flags & ~(IN_CLOEXEC | IN_NONBLOCK)) != 0) { return -EINVAL; }
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return -12; }
+  int fd = cell_find_free_fd(domain, 0);
+  if (fd < 0) { return -24; }
+  struct open_file *file = cell_alloc_open_file();
+  if (file == NULL) { return -12; }
+  file->type = OPEN_INOTIFY;
+  file->flags = (uint32_t)(flags & ~IN_CLOEXEC);
+  file->inotify_next_wd = 1;
+  domain->fds[fd] = file;
+  domain->fd_flags[fd] = (flags & IN_CLOEXEC) != 0 ? 1 : 0;
+  return fd;
+}
+
+int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask) {
+  (void)mask;
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL || path == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL ||
+      domain->fds[fd]->type != OPEN_INOTIFY) {
+    return -9;
+  }
+  struct open_file *file = domain->fds[fd];
+  int wd = (int)file->inotify_next_wd++;
+  if (wd <= 0) { return -EINVAL; }
+  ++file->inotify_watch_count;
+  cell_copy_open_path(file, path);
+  return wd;
+}
+
+int cell_fd_inotify_rm_watch(int fd, int wd) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL ||
+      domain->fds[fd]->type != OPEN_INOTIFY) {
+    return -9;
+  }
+  if (wd <= 0 || domain->fds[fd]->inotify_watch_count == 0) { return -EINVAL; }
+  --domain->fds[fd]->inotify_watch_count;
+  return 0;
 }
 
 int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len) {
@@ -419,6 +463,18 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
       out->links_count = 1;
       out->dev_id = 0x0012;
     }
+    return true;
+  }
+  if (file->type == OPEN_INOTIFY) {
+    *out = (struct vfs_node){
+      .backend = VFS_RAMFS,
+      .ino = 30,
+      .is_dir = false,
+      .device = RAMFS_DEV_NONE,
+      .mode = 0100600u,
+      .links_count = 1,
+      .dev_id = 0x0005,
+    };
     return true;
   }
   return vfs_refresh(&file->node, out);

@@ -3,12 +3,14 @@
 #include "cell.h"
 #include "mem.h"
 #include "proc/io.h"
+#include "vfs.h"
 
 #include <stdint.h>
 
 enum {
   EFAULT = 14,
   EINVAL = 22,
+  ENOENT = 2,
   MAX_IOVCNT = 1024,
 };
 
@@ -80,4 +82,20 @@ int64_t sys_readv(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t 
     if ((uint64_t)got != v.len) { break; }
   }
   return total;
+}
+
+int64_t sys_inotify_init1(uint64_t flags) {
+  return cell_fd_inotify_init1((int)flags);
+}
+
+int64_t sys_inotify_add_watch(uint64_t fd, uint64_t path_addr, uint64_t mask) {
+  char path[CELL_PATH_MAX];
+  if (!syscall_copy_resolved_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
+  return cell_fd_inotify_add_watch((int)fd, path, (uint32_t)mask);
+}
+
+int64_t sys_inotify_rm_watch(uint64_t fd, uint64_t wd) {
+  return cell_fd_inotify_rm_watch((int)fd, (int)wd);
 }

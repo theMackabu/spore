@@ -211,6 +211,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
     int64_t wrote = cell_eventfd_write_from_domain(domain, file, buf, len);
     return wrote == -EAGAIN && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL ? -EAGAIN : wrote;
   }
+  if (file->type == OPEN_INOTIFY) { return -22; }
   if (file->type == OPEN_PIPE) {
     int64_t wrote = cell_pipe_write_from_domain(domain, file, buf, len);
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
@@ -262,6 +263,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     int64_t got = cell_eventfd_read_to_domain(domain, file, buf, len);
     return got == -EAGAIN && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL ? -EAGAIN : got;
   }
+  if (file->type == OPEN_INOTIFY) { return -EAGAIN; }
   if (file->type == OPEN_PIPE) {
     int64_t got = cell_pipe_read_to_domain(domain, file, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }

@@ -72,6 +72,7 @@ enum open_file_type {
   OPEN_UNIX_LISTENER,
   OPEN_EPOLL,
   OPEN_EVENTFD,
+  OPEN_INOTIFY,
 };
 
 enum { CELL_PATH_MAX = 256 };
@@ -196,6 +197,8 @@ struct open_file {
   struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
   uint64_t eventfd_value;
   bool eventfd_semaphore;
+  uint32_t inotify_next_wd;
+  uint32_t inotify_watch_count;
 };
 
 struct capability_set {
@@ -487,6 +490,9 @@ int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data);
 int cell_fd_epoll_wait(int epfd, uint64_t events_addr, int maxevents);
 int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, struct trap_frame *frame);
 int cell_fd_eventfd(uint64_t initval, int flags);
+int cell_fd_inotify_init1(int flags);
+int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask);
+int cell_fd_inotify_rm_watch(int fd, int wd);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);
 int cell_fd_get_flags(int fd);
