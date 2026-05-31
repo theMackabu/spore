@@ -1223,6 +1223,83 @@ static int tcp_loopback_accept_regression(void) {
   return ok;
 }
 
+static int tcp_bulk_send_regression(void) {
+  enum { BULK_LEN = 65536 };
+  int client = -1;
+  int accepted = -1;
+  if (!open_tcp_loopback_pair(45694, &client, &accepted)) {
+    printf("[spore] tcp bulk send: FAIL pair\n");
+    return 0;
+  }
+
+  char *send_buf = malloc(BULK_LEN);
+  char *recv_buf = malloc(BULK_LEN);
+  if (send_buf == NULL || recv_buf == NULL) {
+    free(send_buf);
+    free(recv_buf);
+    close(client);
+    close(accepted);
+    printf("[spore] tcp bulk send: FAIL alloc\n");
+    return 0;
+  }
+  for (size_t i = 0; i < BULK_LEN; ++i) {
+    send_buf[i] = (char)('a' + (i % 26));
+    recv_buf[i] = 0;
+  }
+
+  ssize_t first = send(client, send_buf, BULK_LEN, 0);
+  size_t received = 0;
+  while (first > 0 && received < (size_t)first) {
+    ssize_t n = recv(accepted, recv_buf + received, (size_t)first - received, 0);
+    if (n <= 0) { break; }
+    received += (size_t)n;
+  }
+  int ok = first > 1460 && received == (size_t)first && memcmp(send_buf, recv_buf, received) == 0;
+
+  free(send_buf);
+  free(recv_buf);
+  close(client);
+  close(accepted);
+  int msg_client = -1;
+  int msg_accepted = -1;
+  ssize_t msg_first = -1;
+  size_t msg_received = 0;
+  if (ok && open_tcp_loopback_pair(45695, &msg_client, &msg_accepted)) {
+    enum { MSG_BULK_LEN = 32768 };
+    char *msg_send = malloc(MSG_BULK_LEN);
+    char *msg_recv = malloc(MSG_BULK_LEN);
+    ok = msg_send != NULL && msg_recv != NULL;
+    if (ok) {
+      for (size_t i = 0; i < MSG_BULK_LEN; ++i) {
+        msg_send[i] = (char)('A' + (i % 26));
+        msg_recv[i] = 0;
+      }
+      struct iovec iov[2] = {
+          {.iov_base = msg_send, .iov_len = MSG_BULK_LEN / 2},
+          {.iov_base = msg_send + MSG_BULK_LEN / 2, .iov_len = MSG_BULK_LEN / 2},
+      };
+      struct msghdr msg = {.msg_iov = iov, .msg_iovlen = 2};
+      msg_first = sendmsg(msg_client, &msg, 0);
+      while (msg_first > 0 && msg_received < (size_t)msg_first) {
+        ssize_t n = recv(msg_accepted, msg_recv + msg_received, (size_t)msg_first - msg_received, 0);
+        if (n <= 0) { break; }
+        msg_received += (size_t)n;
+      }
+      ok = msg_first > 1460 && msg_received == (size_t)msg_first && memcmp(msg_send, msg_recv, msg_received) == 0;
+    }
+    free(msg_send);
+    free(msg_recv);
+  } else {
+    ok = 0;
+  }
+  if (msg_client >= 0) { close(msg_client); }
+  if (msg_accepted >= 0) { close(msg_accepted); }
+
+  printf("[spore] tcp bulk send: %s send=%ld/%zu sendmsg=%ld/%zu\n", ok ? "PASS" : "FAIL", (long)first,
+         received, (long)msg_first, msg_received);
+  return ok;
+}
+
 static int tcp_fin_eof_regression(void) {
   int client = -1;
   int accepted = -1;
@@ -1750,6 +1827,7 @@ int main(void) {
   ok_all = ok_all && socket_shutdown_regression();
   ok_all = ok_all && tcp_sigpipe_regression();
   ok_all = ok_all && tcp_loopback_accept_regression();
+  ok_all = ok_all && tcp_bulk_send_regression();
   ok_all = ok_all && tcp_fin_eof_regression();
   ok_all = ok_all && tcp_refused_poll_error_regression();
   ok_all = ok_all && tcp_send_timeout_regression();

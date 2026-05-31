@@ -82,11 +82,11 @@ enum tcp_socket_state {
 };
 
 enum { TCP_RX_BUFFER_SLOTS = 16 };
-enum { TCP_TX_BUFFER_SLOTS = 64 };
+enum { TCP_TX_BUFFER_SLOTS = 1024 };
 enum { DGRAM_RX_BUFFER_SLOTS = 64 };
 enum { TCP_RCV_WINDOW_SCALE = 2 };
 enum { TCP_DEFAULT_REMOTE_WINDOW = 65535 };
-enum { TCP_DEFAULT_MSS = 1460, TCP_MIN_MSS = 536, TCP_SEND_STACK_CHUNK = 1400 };
+enum { TCP_DEFAULT_MSS = 1460, TCP_MIN_MSS = 536, TCP_SEND_STACK_CHUNK = 1460 };
 enum {
   TCP_INITIAL_RTO_TICKS = 100,
   TCP_MIN_RTO_TICKS = 10,
@@ -197,7 +197,7 @@ static int tcp_alloc_tx_slot(void) {
   return -1;
 }
 
-static void tcp_free_tx_slot(uint8_t slot) {
+static void tcp_free_tx_slot(uint16_t slot) {
   if (slot < TCP_TX_BUFFER_SLOTS) { tcp_tx_used[slot] = false; }
 }
 
@@ -567,7 +567,7 @@ static bool tcp_tx_track_segment(struct open_file *file, uint32_t seq, const uin
   int slot = tcp_alloc_tx_slot();
   if (slot < 0) { return false; }
   uint8_t index = tcp_tx_queue_index(file, file->tcp_tx_count);
-  file->tcp_tx_slot[index] = (uint8_t)slot;
+  file->tcp_tx_slot[index] = (uint16_t)slot;
   file->tcp_tx_len[index] = len;
   file->tcp_tx_seq[index] = seq;
   file->tcp_tx_retries[index] = 0;
@@ -716,16 +716,6 @@ static void tcp_drain_ooo(struct open_file *file) {
   }
 }
 
-int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  if (domain == NULL || file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
-  uint8_t tmp[TCP_SEND_STACK_CHUNK];
-  uint64_t limit = tcp_send_chunk_limit(file);
-  if (len != 0 && limit == 0) { return -EAGAIN; }
-  uint64_t chunk = len > limit ? limit : len;
-  if (chunk != 0 && !vmm_copy_from_user(cell_domain_as(domain), tmp, buf, (size_t)chunk)) { return -EFAULT; }
-  return cell_socket_tcp_write_from_kernel(file, tmp, chunk);
-}
-
 static bool tcp_send_would_block(const struct open_file *file) {
   return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
          file->tcp_state == TCP_ESTABLISHED && file->tcp_error == 0 && !file->tcp_fin_sent &&
@@ -740,7 +730,7 @@ bool cell_tcp_socket_writable(const struct open_file *file) {
          tcp_send_buffer_available(file) != 0;
 }
 
-static int64_t cell_socket_tcp_write_from_kernel(struct open_file *file, const void *buf, uint64_t len) {
+static int64_t tcp_write_one_from_kernel(struct open_file *file, const void *buf, uint64_t len) {
   if (file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
   if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
   if (file->tcp_fin_sent) { return -EPIPE; }
@@ -762,6 +752,45 @@ static int64_t cell_socket_tcp_write_from_kernel(struct open_file *file, const v
   }
   file->tcp_seq += (uint32_t)chunk;
   return (int64_t)chunk;
+}
+
+static int64_t cell_socket_tcp_write_from_kernel(struct open_file *file, const void *buf, uint64_t len) {
+  if (len == 0) { return tcp_write_one_from_kernel(file, buf, 0); }
+  uint64_t sent = 0;
+  while (sent < len) {
+    int64_t n = tcp_write_one_from_kernel(file, (const uint8_t *)buf + sent, len - sent);
+    if (n < 0) { return sent != 0 ? (int64_t)sent : n; }
+    if (n == 0) { break; }
+    sent += (uint64_t)n;
+    if (!cell_tcp_socket_writable(file)) { break; }
+  }
+  return (int64_t)sent;
+}
+
+int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
+  if (domain == NULL || file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
+  if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
+  if (file->tcp_fin_sent) { return -EPIPE; }
+  if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
+  if (len == 0) { return 0; }
+
+  uint8_t tmp[TCP_SEND_STACK_CHUNK];
+  uint64_t sent = 0;
+  while (sent < len) {
+    uint64_t limit = tcp_send_chunk_limit(file);
+    if (limit == 0) { return sent != 0 ? (int64_t)sent : -EAGAIN; }
+    uint64_t chunk = len - sent;
+    if (chunk > limit) { chunk = limit; }
+    if (!vmm_copy_from_user(cell_domain_as(domain), tmp, buf + sent, (size_t)chunk)) {
+      return sent != 0 ? (int64_t)sent : -EFAULT;
+    }
+    int64_t n = tcp_write_one_from_kernel(file, tmp, chunk);
+    if (n < 0) { return sent != 0 ? (int64_t)sent : n; }
+    if (n == 0) { break; }
+    sent += (uint64_t)n;
+    if ((uint64_t)n < chunk || !cell_tcp_socket_writable(file)) { break; }
+  }
+  return (int64_t)sent;
 }
 
 static int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf,
@@ -1826,28 +1855,30 @@ static int socket_iovecs_capacity(struct domain *domain, uint64_t iov_addr, int3
   return 0;
 }
 
-static int socket_gather_iovecs(struct domain *domain, uint64_t iov_addr, int32_t iovlen, uint8_t *dst, size_t cap,
-                                uint64_t *total_len, size_t *copied) {
-  if (domain == NULL || dst == NULL || total_len == NULL || copied == NULL || iovlen < 0 ||
-      iovlen > SOCKET_MAX_IOVCNT) {
-    return -EINVAL;
-  }
+static int socket_copy_iovecs_at(struct domain *domain, uint64_t iov_addr, int32_t iovlen, uint64_t offset,
+                                 uint8_t *dst, size_t len) {
+  if (domain == NULL || dst == NULL || iovlen < 0 || iovlen > SOCKET_MAX_IOVCNT) { return -EINVAL; }
   if (iovlen > 0 && iov_addr == 0) { return -EFAULT; }
-  *total_len = 0;
-  *copied = 0;
-  for (int32_t i = 0; i < iovlen; ++i) {
+  uint64_t base = 0;
+  size_t done = 0;
+  for (int32_t i = 0; i < iovlen && done < len; ++i) {
     struct socket_iovec64 iov;
     int rc = socket_copy_iov_at(domain, iov_addr, iovlen, i, &iov);
     if (rc < 0) { return rc; }
-    if (UINT64_MAX - *total_len < iov.len) { return -EINVAL; }
-    *total_len += iov.len;
-    if (*copied >= cap || iov.len == 0) { continue; }
-    uint64_t room = cap - *copied;
-    size_t n = (size_t)(iov.len < room ? iov.len : room);
-    if (!vmm_copy_from_user(cell_domain_as(domain), dst + *copied, iov.base, n)) { return -EFAULT; }
-    *copied += n;
+    if (UINT64_MAX - base < iov.len) { return -EINVAL; }
+    uint64_t end = base + iov.len;
+    if (offset >= end) {
+      base = end;
+      continue;
+    }
+    uint64_t start = offset > base ? offset - base : 0;
+    uint64_t available = iov.len - start;
+    size_t n = (size_t)(available < (uint64_t)(len - done) ? available : (uint64_t)(len - done));
+    if (n != 0 && !vmm_copy_from_user(cell_domain_as(domain), dst + done, iov.base + start, n)) { return -EFAULT; }
+    done += n;
+    base = end;
   }
-  return 0;
+  return done == len ? 0 : -EFAULT;
 }
 
 static int socket_scatter_iovecs(struct domain *domain, uint64_t iov_addr, int32_t iovlen, const uint8_t *src,
@@ -1903,11 +1934,28 @@ static int64_t socket_sendmsg_tcp_from_domain(struct domain *domain, struct open
   if (!vmm_copy_from_user(cell_domain_as(domain), &msg, msg_addr, sizeof(msg))) { return -EFAULT; }
   uint8_t tmp[CELL_TCP_TX_CAP];
   uint64_t total_len = 0;
-  size_t copied = 0;
-  int rc = socket_gather_iovecs(domain, msg.iov, msg.iovlen, tmp, sizeof(tmp), &total_len, &copied);
+  int rc = socket_iovecs_capacity(domain, msg.iov, msg.iovlen, &total_len);
   if (rc < 0) { return rc; }
   if (total_len == 0) { return 0; }
-  return cell_socket_tcp_write_from_kernel(file, tmp, copied);
+  if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
+  if (file->tcp_fin_sent) { return -EPIPE; }
+  if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
+
+  uint64_t sent = 0;
+  while (sent < total_len) {
+    uint64_t limit = tcp_send_chunk_limit(file);
+    if (limit == 0) { return sent != 0 ? (int64_t)sent : -EAGAIN; }
+    uint64_t chunk = total_len - sent;
+    if (chunk > limit) { chunk = limit; }
+    rc = socket_copy_iovecs_at(domain, msg.iov, msg.iovlen, sent, tmp, (size_t)chunk);
+    if (rc < 0) { return sent != 0 ? (int64_t)sent : rc; }
+    int64_t n = tcp_write_one_from_kernel(file, tmp, chunk);
+    if (n < 0) { return sent != 0 ? (int64_t)sent : n; }
+    if (n == 0) { break; }
+    sent += (uint64_t)n;
+    if ((uint64_t)n < chunk || !cell_tcp_socket_writable(file)) { break; }
+  }
+  return (int64_t)sent;
 }
 
 int64_t cell_fd_socket_sendmsg(int fd, uint64_t msg_addr, bool dontwait, struct trap_frame *frame) {
@@ -2442,7 +2490,7 @@ void cell_socket_timer_tick(uint64_t now_ticks) {
         tcp_close_timed_out(file);
         continue;
       }
-      uint8_t slot = file->tcp_tx_slot[index];
+      uint16_t slot = file->tcp_tx_slot[index];
       if (!net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                         socket_effective_ttl(file), (uint8_t)file->ip_tos, file->tcp_tx_seq[index],
                                         file->tcp_ack, tcp_window(file), TCP_PSH | TCP_ACK, tcp_tx_buffers[slot],

@@ -42,7 +42,7 @@ enum {
   VIRTIO_F_VERSION_1_BIT = 0,
   RX_QUEUE = 0,
   TX_QUEUE = 1,
-  QUEUE_SIZE = 64,
+  QUEUE_SIZE = 128,
   NET_HDR_SIZE = 12,
   FRAME_BUFFER_SIZE = 2048,
   VIRTQ_DESC_F_NEXT = 1,
@@ -93,8 +93,10 @@ static struct virtq rxq;
 static struct virtq txq;
 static uint64_t rx_pa[QUEUE_SIZE];
 static uint8_t *rx_buf[QUEUE_SIZE];
-static uint64_t tx_pa;
-static uint8_t *tx_buf;
+static uint64_t tx_pa[QUEUE_SIZE];
+static uint8_t *tx_buf[QUEUE_SIZE];
+static bool tx_inflight[QUEUE_SIZE];
+static uint32_t tx_len[QUEUE_SIZE];
 static uint64_t tx_packets;
 static uint64_t rx_packets;
 static uint64_t tx_bytes;
@@ -164,6 +166,26 @@ static void rx_refill(uint16_t id) {
   rxq.avail_idx = rxq.avail->idx;
 }
 
+static void tx_reap(void) {
+  while (txq.used->idx != txq.used_idx) {
+    __asm__ volatile("dsb sy" : : : "memory");
+    struct virtq_used_elem elem = txq.used->ring[txq.used_idx % QUEUE_SIZE];
+    txq.used_idx++;
+    if (elem.id >= QUEUE_SIZE || !tx_inflight[elem.id]) { continue; }
+    tx_inflight[elem.id] = false;
+    ++tx_packets;
+    tx_bytes += tx_len[elem.id];
+    tx_len[elem.id] = 0;
+  }
+}
+
+static int tx_free_desc(void) {
+  for (uint16_t i = 0; i < QUEUE_SIZE; ++i) {
+    if (!tx_inflight[i]) { return (int)i; }
+  }
+  return -1;
+}
+
 bool virtio_net_init(uint64_t hhdm_offset) {
   hhdm = hhdm_offset;
   net_ready = false;
@@ -216,10 +238,12 @@ bool virtio_net_init(uint64_t hhdm_offset) {
       return false;
     }
   }
-  tx_pa = alloc_zero_page((void **)&tx_buf);
-  if (tx_pa == 0) {
-    kprintf("[spore] virtio-net: tx buffer allocation failed\n");
-    return false;
+  for (uint16_t i = 0; i < QUEUE_SIZE; ++i) {
+    tx_pa[i] = alloc_zero_page((void **)&tx_buf[i]);
+    if (tx_pa[i] == 0) {
+      kprintf("[spore] virtio-net: tx buffer allocation failed\n");
+      return false;
+    }
   }
 
   if (!setup_queue(RX_QUEUE, &rxq) || !setup_queue(TX_QUEUE, &txq)) {
@@ -237,6 +261,10 @@ bool virtio_net_init(uint64_t hhdm_offset) {
   rx_packets = 0;
   tx_bytes = 0;
   rx_bytes = 0;
+  for (uint16_t i = 0; i < QUEUE_SIZE; ++i) {
+    tx_inflight[i] = false;
+    tx_len[i] = 0;
+  }
   kprintf("[spore] virtio-net: mmio %p up rxq=%u txq=%u\n", (void *)(uintptr_t)mmio_base, (unsigned)QUEUE_SIZE,
           (unsigned)QUEUE_SIZE);
   return true;
@@ -246,6 +274,7 @@ void virtio_net_poll(void) {
   if (!net_ready) { return; }
   uint32_t isr = read32(VIRTIO_MMIO_INTERRUPT_STATUS);
   if (isr != 0) { write32(VIRTIO_MMIO_INTERRUPT_ACK, isr); }
+  tx_reap();
   for (;;) {
     __asm__ volatile("dsb sy" : : : "memory");
     if (rxq.used->idx == rxq.used_idx) { break; }
@@ -264,30 +293,32 @@ void virtio_net_poll(void) {
 
 bool virtio_net_send_frame(const void *frame, uint32_t len) {
   if (!net_ready || len + NET_HDR_SIZE > FRAME_BUFFER_SIZE) { return false; }
-  while (txq.used->idx != txq.used_idx) {
-    txq.used_idx++;
+  tx_reap();
+  int id = tx_free_desc();
+  if (id < 0) {
+    for (uint32_t spin = 0; spin < 100000; ++spin) {
+      __asm__ volatile("dsb sy" : : : "memory");
+      tx_reap();
+      id = tx_free_desc();
+      if (id >= 0) { break; }
+    }
   }
-  kmemset(tx_buf, 0, NET_HDR_SIZE);
-  kmemcpy(tx_buf + NET_HDR_SIZE, frame, len);
-  txq.desc[0].addr = tx_pa;
-  txq.desc[0].len = len + NET_HDR_SIZE;
-  txq.desc[0].flags = 0;
-  txq.desc[0].next = 0;
-  txq.avail->ring[txq.avail_idx % QUEUE_SIZE] = 0;
+  if (id < 0) { return false; }
+
+  kmemset(tx_buf[id], 0, NET_HDR_SIZE);
+  kmemcpy(tx_buf[id] + NET_HDR_SIZE, frame, len);
+  txq.desc[id].addr = tx_pa[id];
+  txq.desc[id].len = len + NET_HDR_SIZE;
+  txq.desc[id].flags = 0;
+  txq.desc[id].next = 0;
+  tx_inflight[id] = true;
+  tx_len[id] = len;
+  txq.avail->ring[txq.avail_idx % QUEUE_SIZE] = (uint16_t)id;
   __asm__ volatile("dsb sy" : : : "memory");
   txq.avail->idx = (uint16_t)(txq.avail_idx + 1u);
   txq.avail_idx = txq.avail->idx;
   write32(VIRTIO_MMIO_QUEUE_NOTIFY, TX_QUEUE);
-  for (uint32_t spin = 0; spin < 1000000; ++spin) {
-    __asm__ volatile("dsb sy" : : : "memory");
-    if (txq.used->idx != txq.used_idx) {
-      txq.used_idx++;
-      ++tx_packets;
-      tx_bytes += len;
-      return true;
-    }
-  }
-  return false;
+  return true;
 }
 
 bool virtio_net_smoke_tx(void) {

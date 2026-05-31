@@ -20,7 +20,7 @@ enum {
   MAX_OPEN_FILES = 256,
   CELL_TCP_RX_CAP = 262144,
   CELL_TCP_TX_CAP = 1460,
-  CELL_TCP_TX_QUEUE_CAP = 8,
+  CELL_TCP_TX_QUEUE_CAP = 128,
   CELL_DGRAM_RX_CAP = 1472,
   CELL_DGRAM_RX_QUEUE_CAP = 8,
   CELL_MAX_POLL_FDS = 64,
@@ -172,7 +172,7 @@ struct open_file {
   uint32_t tcp_rx_len;
   uint8_t tcp_tx_head;
   uint8_t tcp_tx_count;
-  uint8_t tcp_tx_slot[CELL_TCP_TX_QUEUE_CAP];
+  uint16_t tcp_tx_slot[CELL_TCP_TX_QUEUE_CAP];
   uint16_t tcp_tx_len[CELL_TCP_TX_QUEUE_CAP];
   uint32_t tcp_tx_seq[CELL_TCP_TX_QUEUE_CAP];
   uint8_t tcp_tx_retries[CELL_TCP_TX_QUEUE_CAP];
