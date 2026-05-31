@@ -64,7 +64,8 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
       if (file->socket_proto == IPPROTO_TCP) {
         if (file->tcp_state == TCP_LISTEN) {
           if (cell_tcp_listener_readable(file)) { revents |= CELL_POLLIN; }
-        } else if (file->tcp_rx_len != 0 || file->tcp_fin || file->tcp_error != 0) {
+        } else if (file->tcp_rx_len >= (file->so_rcvlowat == 0 ? 1u : file->so_rcvlowat) || file->tcp_fin ||
+                   file->tcp_error != 0) {
           revents |= CELL_POLLIN;
         }
       } else if (file->dgram_rx_count != 0) {

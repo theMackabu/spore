@@ -67,6 +67,12 @@ static const char *shell_commands[] = {
   "nslookup example.com\n",
   "printf '10.0.2.2 example.test\\n' | sudo tee -a /etc/hosts\n",
   "curl http://example.test:8080/\n",
+  "curl -sS https://example.com/ > /tmp/https-example\n",
+  "grep 'Example Domain' /tmp/https-example\n",
+  "p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_BADCERT_ACCEPTED__; curl -fsS https://expired.badssl.com/ >/tmp/badcert 2>/tmp/badcert.err && echo \"$p$q\"\n",
+  "/bin/dash -c 'grep certificate /tmp/badcert.err || { p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_BADCERT_REASON__; echo \"$p$q\"; }'\n",
+  "p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_HOSTNAME_ACCEPTED__; curl -fsS https://wrong.host.badssl.com/ >/tmp/badhost 2>/tmp/badhost.err && echo \"$p$q\"\n",
+  "/bin/dash -c 'grep certificate /tmp/badhost.err || { p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_HOSTNAME_REASON__; echo \"$p$q\"; }'\n",
   "confine net:none curl http://example.test:8080/\n",
   "confine net:tcp:10.0.2.2:8080 curl http://example.test:8080/\n",
   "confine net:dns nslookup example.com\n",
@@ -215,6 +221,7 @@ static const struct bench_command bench_commands[] = {
   {"ls -l usr/local", "time ls -l /usr/local/bin > /dev/null\n"},
   {"dynamic opens", "time curl -V > /dev/null\n"},
   {"curl http", "time curl -s http://10.0.2.2:8080/ > /dev/null\n"},
+  {"curl https", "time curl -sS https://example.com/ > /dev/null\n"},
   {"nano --version", "time nano --version > /dev/null\n"},
   {"fs stats", "cat /proc/fsstats\n"},
 };
@@ -823,6 +830,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   size_t len = 0;
   size_t sent = 0;
   bool stdin_sent = false;
+  bool shell_check_failed = false;
   bool shell_size_sent = false;
   enum scripted_input scripted_input = SCRIPT_NONE;
   int ant_ctrl_c_stage = 0;
@@ -881,6 +889,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
         (void)kill(http_pid, SIGTERM);
         (void)waitpid(http_pid, NULL, 0);
       }
+      if (shell_check_failed) { rc = 1; }
       return finish_harness(rc, raw_terminal, &saved_termios);
     }
     if (!plain && now_seconds() > deadline) {
@@ -935,6 +944,10 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
         }
       }
       if (len > 0) {
+        if (shell && contains(buf, "__SPORE_SHELL_CHECK_FAIL_")) {
+          shell_check_failed = true;
+          kill(pid, SIGTERM);
+        }
         if (!shell_size_sent && find_shell_prompt(buf, len) >= 0) {
           send_terminal_size(in_pipe[1]);
           shell_size_sent = true;

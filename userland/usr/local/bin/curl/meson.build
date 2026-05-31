@@ -1,5 +1,6 @@
 userland_curl = custom_target('userland-curl',
   output: 'curl',
+  depend_files: files('patches/0001-spore-trustd-mbedtls.patch'),
   command: [
     files('build.sh'),
     meson.project_source_root(),

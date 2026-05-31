@@ -7,10 +7,12 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <mbedtls/error.h>
 #include <mbedtls/platform.h>
+#include <mbedtls/x509.h>
 #include <mbedtls/x509_crt.h>
 #include <psa/crypto.h>
 
@@ -51,6 +53,44 @@ static void reply(int fd, int32_t rc, uint32_t flags) {
   (void)write_full(fd, &flags, sizeof(flags));
 }
 
+static int compare_cert_time(const mbedtls_x509_time *cert, const struct tm *now) {
+  const int current[] = {
+      now->tm_year + 1900,
+      now->tm_mon + 1,
+      now->tm_mday,
+      now->tm_hour,
+      now->tm_min,
+      now->tm_sec,
+  };
+  const int candidate[] = {
+      cert->year,
+      cert->mon,
+      cert->day,
+      cert->hour,
+      cert->min,
+      cert->sec,
+  };
+  for (size_t i = 0; i < sizeof(candidate) / sizeof(candidate[0]); ++i) {
+    if (candidate[i] < current[i]) { return -1; }
+    if (candidate[i] > current[i]) { return 1; }
+  }
+  return 0;
+}
+
+static uint32_t cert_time_flags(const mbedtls_x509_crt *chain) {
+  time_t seconds = time(NULL);
+  struct tm now;
+  uint32_t flags = 0;
+  if (seconds <= 0 || gmtime_r(&seconds, &now) == NULL) {
+    return MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
+  }
+  for (const mbedtls_x509_crt *cert = chain; cert != NULL; cert = cert->next) {
+    if (compare_cert_time(&cert->valid_to, &now) < 0) { flags |= MBEDTLS_X509_BADCERT_EXPIRED; }
+    if (compare_cert_time(&cert->valid_from, &now) > 0) { flags |= MBEDTLS_X509_BADCERT_FUTURE; }
+  }
+  return flags;
+}
+
 static void handle_client(int fd, mbedtls_x509_crt *trust) {
   uint32_t magic = 0;
   uint32_t host_len = 0;
@@ -82,8 +122,13 @@ static void handle_client(int fd, mbedtls_x509_crt *trust) {
     if (parse != 0) { goto out; }
   }
 
-  rc =
-    mbedtls_x509_crt_verify_with_profile(&chain, trust, NULL, &mbedtls_x509_crt_profile_next, host, &flags, NULL, NULL);
+  flags |= cert_time_flags(&chain);
+  if (flags == 0) {
+    rc = mbedtls_x509_crt_verify_with_profile(&chain, trust, NULL, &mbedtls_x509_crt_profile_next, host, &flags,
+                                              NULL, NULL);
+  } else {
+    rc = MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+  }
 
 out:
   reply(fd, rc, flags);

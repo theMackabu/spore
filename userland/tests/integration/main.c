@@ -25,6 +25,14 @@
 #define SYS_getdents64 61
 #endif
 
+#ifndef SO_DOMAIN
+#define SO_DOMAIN 39
+#endif
+
+#ifndef SO_ACCEPTCONN
+#define SO_ACCEPTCONN 30
+#endif
+
 #define SYS_SPORE_SNAPSHOT 0x4000
 #define SYS_SPORE_SPAWN 0x4001
 #define SYS_SPORE_REAP 0x4002
@@ -666,19 +674,154 @@ static int socket_options_regression(void) {
   int got = 0;
   socklen_t got_len = sizeof(got);
   int sndbuf = 65536;
+  int small_rcvbuf = 4096;
+  int huge_buf = 1048576;
+  int tcp_sndbuf = 0;
+  int tcp_rcvbuf = 0;
+  int tos = 0xb8;
+  int ttl = 37;
+  int user_timeout = 1234;
+  int rcvlowat = 7;
+  int keepidle = 1;
+  int keepintvl = 1;
+  int keepcnt = 2;
+  struct linger linger = {.l_onoff = 1, .l_linger = 0};
+  struct linger got_linger = {0};
+  socklen_t linger_len = sizeof(got_linger);
   struct timeval tv = {.tv_sec = 1, .tv_usec = 250000};
   int ok = setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == 0 &&
            setsockopt(udp, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0 &&
            setsockopt(udp, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0 &&
+           setsockopt(udp, SOL_SOCKET, SO_RCVBUF, &small_rcvbuf, sizeof(small_rcvbuf)) == 0 &&
            getsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
            setsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0 &&
            setsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one)) == 0 &&
+           setsockopt(tcp, SOL_SOCKET, SO_LINGER, &linger, sizeof(linger)) == 0 &&
+           setsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &rcvlowat, sizeof(rcvlowat)) == 0 &&
+           setsockopt(tcp, SOL_SOCKET, SO_SNDBUF, &huge_buf, sizeof(huge_buf)) == 0 &&
+           setsockopt(tcp, SOL_SOCKET, SO_RCVBUF, &huge_buf, sizeof(huge_buf)) == 0 &&
+           setsockopt(tcp, IPPROTO_IP, IP_TOS, &tos, sizeof(tos)) == 0 &&
+           setsockopt(tcp, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) == 0 &&
+           setsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) == 0 &&
+           setsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) == 0 &&
+           setsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) == 0 &&
+           setsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout, sizeof(user_timeout)) == 0 &&
            getsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
+           getsockopt(tcp, IPPROTO_IP, IP_TOS, &got, &got_len) == 0 && got == tos && got_len == sizeof(got) &&
+           getsockopt(tcp, IPPROTO_IP, IP_TTL, &got, &got_len) == 0 && got == ttl && got_len == sizeof(got) &&
+           getsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &got, &got_len) == 0 && got == keepidle &&
+           got_len == sizeof(got) &&
+           getsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &got, &got_len) == 0 && got == keepintvl &&
+           got_len == sizeof(got) &&
+           getsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &got, &got_len) == 0 && got == keepcnt &&
+           got_len == sizeof(got) &&
+           getsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &got, &got_len) == 0 && got == user_timeout &&
+           got_len == sizeof(got) &&
            getsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
-           getsockopt(udp, SOL_SOCKET, SO_SNDBUF, &got, &got_len) == 0 && got == sndbuf && got_len == sizeof(got);
+           getsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &got, &got_len) == 0 && got == rcvlowat &&
+           got_len == sizeof(got) &&
+           getsockopt(tcp, SOL_SOCKET, SO_SNDLOWAT, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
+           getsockopt(tcp, SOL_SOCKET, SO_ACCEPTCONN, &got, &got_len) == 0 && got == 0 && got_len == sizeof(got) &&
+           getsockopt(tcp, SOL_SOCKET, SO_DOMAIN, &got, &got_len) == 0 && got == AF_INET && got_len == sizeof(got) &&
+           getsockopt(tcp, SOL_SOCKET, SO_PROTOCOL, &got, &got_len) == 0 && got == IPPROTO_TCP &&
+           got_len == sizeof(got) &&
+           getsockopt(tcp, SOL_SOCKET, SO_LINGER, &got_linger, &linger_len) == 0 && linger_len == sizeof(got_linger) &&
+           got_linger.l_onoff == 1 && got_linger.l_linger == 0 &&
+           getsockopt(udp, SOL_SOCKET, SO_SNDBUF, &got, &got_len) == 0 && got == sndbuf && got_len == sizeof(got) &&
+           getsockopt(udp, SOL_SOCKET, SO_RCVBUF, &got, &got_len) == 0 && got == small_rcvbuf &&
+           got_len == sizeof(got) &&
+           getsockopt(tcp, SOL_SOCKET, SO_SNDBUF, &tcp_sndbuf, &got_len) == 0 && tcp_sndbuf > 0 &&
+           tcp_sndbuf < huge_buf && got_len == sizeof(tcp_sndbuf) &&
+           getsockopt(tcp, SOL_SOCKET, SO_RCVBUF, &tcp_rcvbuf, &got_len) == 0 && tcp_rcvbuf > 0 &&
+           tcp_rcvbuf < huge_buf && got_len == sizeof(tcp_rcvbuf);
   close(udp);
   close(tcp);
   printf("[spore] socket options: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
+static int tcp_rcvlowat_poll_regression(void) {
+  int server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  int client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (server < 0 || client < 0) {
+    if (server >= 0) { close(server); }
+    if (client >= 0) { close(client); }
+    printf("[spore] tcp SO_RCVLOWAT poll: FAIL socket\n");
+    return 0;
+  }
+
+  struct sockaddr_in sa;
+  fill_udp_addr(&sa, ip4(127, 0, 0, 1), 45692);
+  int accepting = 0;
+  socklen_t accepting_len = sizeof(accepting);
+  int ok = bind(server, (struct sockaddr *)&sa, sizeof(sa)) == 0 && listen(server, 1) == 0 &&
+           getsockopt(server, SOL_SOCKET, SO_ACCEPTCONN, &accepting, &accepting_len) == 0 && accepting == 1 &&
+           accepting_len == sizeof(accepting) && connect(client, (struct sockaddr *)&sa, sizeof(sa)) == 0;
+  int accepted = ok ? accept(server, NULL, NULL) : -1;
+  ok = ok && accepted >= 0;
+
+  int lowat = 5;
+  struct pollfd pfd = {.fd = client, .events = POLLIN};
+  int below = -1;
+  int ready = -1;
+  char buf[8] = {0};
+  if (ok) {
+    ok = setsockopt(client, SOL_SOCKET, SO_RCVLOWAT, &lowat, sizeof(lowat)) == 0 &&
+         send(accepted, "abc", 3, 0) == 3;
+    below = poll(&pfd, 1, 0);
+    ok = ok && below == 0 && send(accepted, "de", 2, 0) == 2;
+    pfd.revents = 0;
+    ready = poll(&pfd, 1, 0);
+    ok = ok && ready == 1 && (pfd.revents & POLLIN) != 0 && recv(client, buf, 5, 0) == 5 &&
+         memcmp(buf, "abcde", 5) == 0;
+  }
+
+  if (accepted >= 0) { close(accepted); }
+  close(client);
+  close(server);
+  printf("[spore] tcp SO_RCVLOWAT poll: %s below=%d ready=%d data=%.*s\n", ok ? "PASS" : "FAIL", below, ready,
+         5, buf);
+  return ok;
+}
+
+static int tcp_abortive_linger_regression(void) {
+  int server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  int client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (server < 0 || client < 0) {
+    if (server >= 0) { close(server); }
+    if (client >= 0) { close(client); }
+    printf("[spore] tcp SO_LINGER reset: FAIL socket\n");
+    return 0;
+  }
+
+  struct sockaddr_in sa;
+  fill_udp_addr(&sa, ip4(127, 0, 0, 1), 45693);
+  int ok = bind(server, (struct sockaddr *)&sa, sizeof(sa)) == 0 && listen(server, 1) == 0 &&
+           connect(client, (struct sockaddr *)&sa, sizeof(sa)) == 0;
+  int accepted = ok ? accept(server, NULL, NULL) : -1;
+  ok = ok && accepted >= 0;
+
+  struct linger linger = {.l_onoff = 1, .l_linger = 0};
+  struct pollfd pfd = {.fd = client, .events = POLLIN};
+  char ch = 0;
+  int poll_rc = -1;
+  int recv_errno = 0;
+  if (ok) {
+    ok = setsockopt(accepted, SOL_SOCKET, SO_LINGER, &linger, sizeof(linger)) == 0;
+    close(accepted);
+    accepted = -1;
+    poll_rc = poll(&pfd, 1, 0);
+    errno = 0;
+    ssize_t n = recv(client, &ch, 1, 0);
+    recv_errno = errno;
+    ok = ok && poll_rc == 1 && (pfd.revents & POLLERR) != 0 && n < 0 && recv_errno == ECONNRESET;
+  }
+
+  if (accepted >= 0) { close(accepted); }
+  close(client);
+  close(server);
+  printf("[spore] tcp SO_LINGER reset: %s poll=%d revents=0x%x errno=%d\n", ok ? "PASS" : "FAIL", poll_rc,
+         pfd.revents, recv_errno);
   return ok;
 }
 
@@ -1596,6 +1739,8 @@ int main(void) {
   ok_all = ok_all && socket_msg_waitall_regression();
   ok_all = ok_all && getsockname_regression();
   ok_all = ok_all && socket_options_regression();
+  ok_all = ok_all && tcp_rcvlowat_poll_regression();
+  ok_all = ok_all && tcp_abortive_linger_regression();
   ok_all = ok_all && udp_broadcast_option_regression();
   ok_all = ok_all && udp_loopback_refused_regression();
   ok_all = ok_all && udp_disconnect_regression();

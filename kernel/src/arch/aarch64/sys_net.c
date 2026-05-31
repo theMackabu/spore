@@ -26,12 +26,17 @@ enum {
   SO_LINGER = 13,
   SO_REUSEPORT = 15,
   SO_PEERCRED = 17,
+  SO_RCVLOWAT = 18,
+  SO_SNDLOWAT = 19,
   SO_RCVTIMEO_OLD = 20,
   SO_SNDTIMEO_OLD = 21,
+  SO_ACCEPTCONN = 30,
   SO_PROTOCOL = 38,
+  SO_DOMAIN = 39,
   SO_RCVTIMEO_NEW = 66,
   SO_SNDTIMEO_NEW = 67,
   IP_TOS = 1,
+  IP_TTL = 2,
   IP_MTU_DISCOVER = 10,
   IP_BIND_ADDRESS_NO_PORT = 24,
   IPPROTO_ICMP = 1,
@@ -41,6 +46,7 @@ enum {
   TCP_KEEPIDLE = 4,
   TCP_KEEPINTVL = 5,
   TCP_KEEPCNT = 6,
+  TCP_USER_TIMEOUT = 18,
   TCP_FASTOPEN = 23,
   TCP_FASTOPEN_CONNECT = 30,
   EPERM = 1,
@@ -422,6 +428,25 @@ int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     return rc < 0 ? (int64_t)rc : 0;
   }
 
+  if (level == SOL_SOCKET && optname == SO_LINGER) {
+    if (optlen < sizeof(struct linger64) || !syscall_user_writable(optval, sizeof(struct linger64))) {
+      return -(int64_t)EINVAL;
+    }
+    bool enabled = false;
+    uint32_t seconds = 0;
+    if (!cell_fd_socket_get_linger((int)fd, &enabled, &seconds)) { return -(int64_t)EBADF; }
+    struct linger64 linger = {
+      .onoff = enabled ? 1 : 0,
+      .linger = (int32_t)seconds,
+    };
+    uint32_t out_len = sizeof(linger);
+    if (!vmm_copy_to_user(syscall_active_as(), optval, &linger, sizeof(linger)) ||
+        !vmm_copy_to_user(syscall_active_as(), optlen_addr, &out_len, sizeof(out_len))) {
+      return -(int64_t)EFAULT;
+    }
+    return 0;
+  }
+
   if (optlen < sizeof(int32_t) || !syscall_user_writable(optval, sizeof(int32_t))) { return -(int64_t)EINVAL; }
 
   int32_t value = 0;
@@ -441,11 +466,25 @@ int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     case SO_SNDBUF:
     case SO_RCVBUF:
     case SO_KEEPALIVE:
+    case SO_RCVLOWAT:
+    case SO_SNDLOWAT:
       if (cell_fd_socket_get_int_option((int)fd, (int)level, (int)optname, &value) < 0) { return -(int64_t)EBADF; }
       break;
+    case SO_ACCEPTCONN: {
+      bool accepting = false;
+      if (!cell_fd_socket_accepting((int)fd, &accepting)) { return -(int64_t)EBADF; }
+      value = accepting ? 1 : 0;
+      break;
+    }
     case SO_PROTOCOL:
       if (!cell_fd_socket_info((int)fd, NULL, &value)) { return -(int64_t)EBADF; }
       break;
+    case SO_DOMAIN: {
+      int32_t proto = 0;
+      if (!cell_fd_socket_info((int)fd, NULL, &proto)) { return -(int64_t)EBADF; }
+      value = proto == 0 ? AF_UNIX : AF_INET;
+      break;
+    }
     default:
       return -(int64_t)ENOPROTOOPT;
     }
@@ -520,6 +559,7 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     case SO_DONTROUTE:
     case SO_BROADCAST:
     case SO_KEEPALIVE:
+    case SO_RCVLOWAT:
     case SO_SNDBUF:
     case SO_RCVBUF: {
       int rc = socket_option_int(optval, optlen, &value);
@@ -527,11 +567,15 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
       rc = cell_fd_socket_set_int_option((int)fd, (int)level, (int)optname, value);
       return rc < 0 ? (int64_t)rc : 0;
     }
-    case SO_LINGER:
+    case SO_LINGER: {
       if (optlen < sizeof(struct linger64) || !socket_option_readable(optval, sizeof(struct linger64))) {
         return -(int64_t)EINVAL;
       }
-      return 0;
+      struct linger64 linger;
+      if (!vmm_copy_from_user(syscall_active_as(), &linger, optval, sizeof(linger))) { return -(int64_t)EFAULT; }
+      if (linger.linger < 0) { return -(int64_t)EINVAL; }
+      return cell_fd_socket_set_linger((int)fd, linger.onoff != 0, (uint32_t)linger.linger) ? 0 : -(int64_t)EBADF;
+    }
     case SO_RCVTIMEO_OLD:
     case SO_SNDTIMEO_OLD:
     case SO_RCVTIMEO_NEW:
@@ -554,6 +598,7 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     case TCP_KEEPIDLE:
     case TCP_KEEPINTVL:
     case TCP_KEEPCNT:
+    case TCP_USER_TIMEOUT:
     case TCP_FASTOPEN:
     case TCP_FASTOPEN_CONNECT: {
       int rc = socket_option_int(optval, optlen, &value);
@@ -569,6 +614,7 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
   if (level == IPPROTO_IP) {
     switch (optname) {
     case IP_TOS:
+    case IP_TTL:
     case IP_MTU_DISCOVER:
     case IP_BIND_ADDRESS_NO_PORT: {
       int rc = socket_option_int(optval, optlen, &value);

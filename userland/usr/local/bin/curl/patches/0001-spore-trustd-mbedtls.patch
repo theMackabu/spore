@@ -151,20 +151,11 @@
  
    mbedtls_ssl_init(&backend->ssl);
    backend->initialized = TRUE;
-@@ -1025,6 +1145,8 @@
-   struct ssl_connect_data *connssl = cf->ctx;
-   struct mbed_ssl_backend_data *backend =
-     (struct mbed_ssl_backend_data *)connssl->backend;
-+  struct ssl_primary_config *conn_config =
-+    Curl_ssl_cf_get_primary_config(cf);
- #ifdef HAVE_PINNED_PUBKEY
- #ifndef CURL_DISABLE_PROXY
-   const char * const pinnedpubkey = Curl_ssl_cf_is_proxy(cf) ?
-@@ -1068,6 +1188,19 @@
+@@ -1068,6 +1186,19 @@
            mbedtls_ssl_get_version(&backend->ssl), cipher_str);
    }
  
-+  if(backend->spore_trustd && conn_config->verifypeer) {
++  if(backend->spore_trustd) {
 +    uint32_t flags = 0;
 +    const char *hostname = connssl->peer.sni ?
 +      connssl->peer.sni : connssl->peer.dest->hostname;
