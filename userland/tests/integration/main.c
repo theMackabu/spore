@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -1697,6 +1698,43 @@ static int signal_mask_regression(void) {
   return ok;
 }
 
+static int shared_mmap_regression(void) {
+  int fd = open("/tmp/shared-mmap", O_CREAT | O_RDWR | O_TRUNC, 0666);
+  int ok = fd >= 0;
+  ok = ok && write(fd, "abcdef", 6) == 6;
+  void *map = ok ? mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
+  ok = ok && map != MAP_FAILED;
+  if (ok) {
+    char *p = map;
+    p[1] = 'Z';
+    p[2] = 'Y';
+    ok = munmap(map, 4096) == 0;
+  }
+  char buf[8] = {0};
+  if (fd >= 0) {
+    lseek(fd, 0, SEEK_SET);
+    ok = ok && read(fd, buf, 6) == 6;
+    close(fd);
+  }
+  ok = ok && strcmp(buf, "aZYdef") == 0;
+  printf("[spore] shared file mmap writeback: %s value=%s\n", ok ? "PASS" : "FAIL", buf);
+  return ok;
+}
+
+static int growdown_mmap_regression(void) {
+#ifndef MAP_GROWSDOWN
+#define MAP_GROWSDOWN 0x0100
+#endif
+  char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN, -1, 0);
+  int ok = map != MAP_FAILED;
+  if (ok) {
+    map[-1] = 'g';
+    ok = map[-1] == 'g' && munmap(map - 4096, 8192) == 0;
+  }
+  printf("[spore] growdown mmap one-page fault: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int absolute_sleep_regression(void) {
   struct timespec deadline;
   clock_gettime(CLOCK_MONOTONIC, &deadline);
@@ -1906,6 +1944,8 @@ int main(void) {
   ok_all = ok_all && ok_v3f;
   ok_all = ok_all && absolute_sleep_regression();
   ok_all = ok_all && signal_mask_regression();
+  ok_all = ok_all && shared_mmap_regression();
+  ok_all = ok_all && growdown_mmap_regression();
   ok_all = ok_all && fork_latency_profile();
   ok_all = ok_all && fork_pressure_regression();
 

@@ -286,6 +286,21 @@ bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t p
   return true;
 }
 
+bool vma_grow_down(struct vma_list *list, uint64_t page, uint32_t required_flags, struct vma *out) {
+  if (list == NULL || (page & (PAGE_SIZE - 1)) != 0) { return false; }
+  uint64_t old_start = page + PAGE_SIZE;
+  if (old_start < page) { return false; }
+  for (size_t i = 0; i < vma_capacity(list); ++i) {
+    struct vma *vma = vma_at_mut(list, i);
+    if (!vma->used || vma->start != old_start || (vma->flags & required_flags) != required_flags) { continue; }
+    if (vma_overlaps(list, page, old_start)) { return false; }
+    vma->start = page;
+    if (out != NULL) { *out = *vma; }
+    return true;
+  }
+  return false;
+}
+
 bool vma_clone(struct vma_list *dst, const struct vma_list *src) {
   vma_list_init(dst);
   for (size_t i = 0; i < vma_capacity(src); ++i) {

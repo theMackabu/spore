@@ -5,8 +5,17 @@
 #include "proc/thread.h"
 #include "vfs.h"
 
+enum {
+  MAP_SHARED = 0x01,
+  MAP_PRIVATE = 0x02,
+  MAP_GROWSDOWN = 0x0100,
+};
+
 static struct process_mm *process_mms;
 static size_t process_mm_capacity;
+
+static bool vma_is_shared_writable_file(const struct vma *vma);
+static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end);
 
 static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
   if (count == 0 || elem_size == 0) { return NULL; }
@@ -73,6 +82,12 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
     mm->used = false;
     return NULL;
   }
+  for (size_t i = 0; i < vma_capacity(&src->vmas); ++i) {
+    const struct vma *vma = vma_at(&src->vmas, i);
+    if (!vma_is_shared_writable_file(vma)) { continue; }
+    vmm_protect_range(&src->as, vma->start, vma->end, vma->prot);
+    vmm_protect_range(&mm->as, vma->start, vma->end, vma->prot);
+  }
   return mm;
 }
 
@@ -85,6 +100,7 @@ void cell_mm_release(struct process_mm *mm) {
   if (mm == NULL || !mm->used || mm->refcount == 0) { return; }
   --mm->refcount;
   if (mm->refcount != 0) { return; }
+  (void)flush_shared_file_vmas(mm, 0, UINT64_MAX);
   vmm_destroy(&mm->as);
   vma_list_destroy(&mm->vmas);
   mm->used = false;
@@ -133,6 +149,40 @@ static bool access_allowed(const struct vma *vma, enum vmm_access access) {
   return false;
 }
 
+static bool vma_is_shared_writable_file(const struct vma *vma) {
+  return vma != NULL && vma->used && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) != 0 &&
+         (vma->prot & VMM_USER_WRITE) != 0;
+}
+
+static bool flush_shared_file_vma_range(struct user_address_space *as, const struct vma *vma, uint64_t start,
+                                        uint64_t end) {
+  if (as == NULL || !vma_is_shared_writable_file(vma)) { return true; }
+  uint64_t flush_start = start > vma->start ? start : vma->start;
+  uint64_t flush_end = end < vma->end ? end : vma->end;
+  uint64_t file_end = vma->file_start + vma->file_size;
+  for (uint64_t page = flush_start & ~(uint64_t)(PAGE_SIZE - 1); page < flush_end; page += PAGE_SIZE) {
+    if (page < vma->file_start || page >= file_end || !vmm_is_mapped(as, page)) { continue; }
+    uint64_t pa = vmm_user_to_phys(as, page) & ~(uint64_t)(PAGE_SIZE - 1);
+    if (pa == 0) { continue; }
+    uint64_t file_off = vma->file_offset + (page - vma->file_start);
+    uint64_t chunk = PAGE_SIZE;
+    if (page + chunk > file_end) { chunk = file_end - page; }
+    const void *src = (const void *)(uintptr_t)(as->hhdm_offset + pa);
+    if (vfs_write(&vma->file_node, file_off, src, chunk) != (int64_t)chunk) { return false; }
+  }
+  return true;
+}
+
+static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end) {
+  if (mm == NULL || !mm->used) { return true; }
+  for (size_t i = 0; i < vma_capacity(&mm->vmas); ++i) {
+    const struct vma *vma = vma_at(&mm->vmas, i);
+    if (vma == NULL || !vma->used || vma->end <= start || vma->start >= end) { continue; }
+    if (!flush_shared_file_vma_range(&mm->as, vma, start, end)) { return false; }
+  }
+  return true;
+}
+
 static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64_t page) {
   struct user_address_space *as = cell_domain_as(domain);
   if (as == NULL) { return false; }
@@ -147,8 +197,8 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
     if ((read_off & (PAGE_SIZE - 1)) != 0) { goto private_copy; }
     uint64_t pa = 0;
     if (!vfs_retain_page_cached(&vma->file_node, read_off, &pa)) { return false; }
-    bool mapped = (vma->prot & VMM_USER_WRITE) != 0 ? vmm_map_page_cow(as, page, pa, vma->prot)
-                                                    : vmm_map_page(as, page, pa, vma->prot);
+    bool private_writable = (vma->flags & MAP_PRIVATE) != 0 && (vma->prot & VMM_USER_WRITE) != 0;
+    bool mapped = private_writable ? vmm_map_page_cow(as, page, pa, vma->prot) : vmm_map_page(as, page, pa, vma->prot);
     if (!mapped) {
       pmm_free_page(pa);
       return false;
@@ -206,7 +256,9 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
   uint64_t last = end & ~(uint64_t)(PAGE_SIZE - 1);
   for (;;) {
     if (!vmm_is_mapped(as, page)) {
+      struct vma grown;
       const struct vma *vma = vma_lookup(vmas, page);
+      if (vma == NULL && cell_grow_down_vma(page, MAP_GROWSDOWN, &grown)) { vma = &grown; }
       if (!domain_access_allowed(vma, access)) { return false; }
       if (vma->type == VMA_FILE) {
         if (!fault_file_page(domain, vma, page)) { return false; }
@@ -242,7 +294,9 @@ bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
   struct vma_list *vmas = cell_domain_vmas(domain);
   if (as == NULL || vmas == NULL) { return false; }
   uint64_t va = far & ~(uint64_t)(PAGE_SIZE - 1);
+  struct vma grown;
   const struct vma *vma = vma_lookup(vmas, va);
+  if (vma == NULL && cell_grow_down_vma(va, MAP_GROWSDOWN, &grown)) { vma = &grown; }
   if (vma == NULL || !access_allowed(vma, access)) { return false; }
   if (vmm_user_range_accessible(as, va, 1, access)) { return true; }
   if (vma->type == VMA_FILE) {
@@ -283,6 +337,12 @@ bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t fl
   return vmas != NULL && vma_insert(vmas, start, end, prot, flags, type);
 }
 
+bool cell_grow_down_vma(uint64_t page, uint32_t required_flags, struct vma *out) {
+  struct domain *domain = cell_current_domain_internal();
+  struct vma_list *vmas = cell_domain_vmas(domain);
+  return vmas != NULL && vma_grow_down(vmas, page, required_flags, out);
+}
+
 bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
                        uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
   struct domain *domain = cell_current_domain_internal();
@@ -313,6 +373,7 @@ bool cell_remove_vma(uint64_t start, uint64_t end) {
   struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
   if (as == NULL || vmas == NULL) { return false; }
+  if (domain->mm != NULL && !flush_shared_file_vmas(domain->mm, start, end)) { return false; }
   vmm_unmap_range(as, start, end);
   return vma_remove(vmas, start, end);
 }

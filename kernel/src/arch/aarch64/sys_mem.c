@@ -10,8 +10,11 @@
 
 enum {
   MAP_PRIVATE = 0x02,
+  MAP_SHARED = 0x01,
   MAP_FIXED = 0x10,
   MAP_ANONYMOUS = 0x20,
+  MAP_GROWSDOWN = 0x0100,
+  MAP_NORESERVE = 0x4000,
   MAP_FIXED_NOREPLACE = 0x100000,
   MREMAP_MAYMOVE = 1,
   MREMAP_FIXED = 2,
@@ -70,7 +73,9 @@ int64_t sys_brk(uint64_t requested) {
 int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t off) {
   struct user_address_space *as = syscall_active_as();
   bool anon = (flags & MAP_ANONYMOUS) != 0;
-  if (len == 0 || (flags & MAP_PRIVATE) == 0 || (!anon && (int64_t)fd < 0)) { return -(int64_t)EINVAL; }
+  bool private = (flags & MAP_PRIVATE) != 0;
+  bool shared = (flags & MAP_SHARED) != 0;
+  if (len == 0 || private == shared || (!anon && (int64_t)fd < 0)) { return -(int64_t)EINVAL; }
   bool fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
   uint64_t base = addr != 0 ? align_down(addr, PAGE_SIZE) : as->mmap_base;
   uint64_t raw_end;
@@ -87,7 +92,8 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
   if ((flags & MAP_FIXED) != 0) { (void)cell_remove_vma(base, end); }
   if (anon) {
-    if (!cell_add_vma(base, end, prot_to_vmm(prot), (uint32_t)flags)) { return -(int64_t)EINVAL; }
+    enum vma_type type = (flags & MAP_GROWSDOWN) != 0 ? VMA_STACK : VMA_ANON;
+    if (!cell_add_vma_typed(base, end, prot_to_vmm(prot), (uint32_t)flags, type)) { return -(int64_t)EINVAL; }
   } else {
     struct vfs_node node;
     if (!cell_fd_stat((int)fd, &node) || node.is_dir || node.device != RAMFS_DEV_NONE) { return -(int64_t)EINVAL; }
