@@ -348,6 +348,14 @@ static int status_code(int status) {
   return 128;
 }
 
+static void report_unresolved_command(const char *cmd) {
+  if (cmd != NULL && strchr(cmd, '/') != NULL) {
+    fprintf(stderr, "%s: No such file or directory\n", cmd);
+    return;
+  }
+  fprintf(stderr, "%s: command not found\n", cmd == NULL ? "" : cmd);
+}
+
 static int wait_foreground(pid_t pgrp, pid_t pid) {
   sh_job_enter_foreground(pgrp);
   int status = wait_status(pid);
@@ -358,7 +366,7 @@ static int wait_foreground(pid_t pgrp, pid_t pid) {
 static int run_external(struct command *cmd) {
   struct resolved_exec exec;
   if (!resolve_exec_path(cmd->argv[0], &exec)) {
-    fprintf(stderr, "%s: No such file or directory\n", cmd->argv[0]);
+    report_unresolved_command(cmd->argv[0]);
     return 127;
   }
 
@@ -444,7 +452,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
       if (handled) { _exit(builtin_status); }
       struct resolved_exec exec;
       if (resolve_exec_path(stages[i].argv[0], &exec)) { exec_resolved(&exec, stages[i].argv); }
-      fprintf(stderr, "%s: not found\n", stages[i].argv[0]);
+      report_unresolved_command(stages[i].argv[0]);
       _exit(127);
     }
     pids[i] = pid;

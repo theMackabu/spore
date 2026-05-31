@@ -1742,6 +1742,7 @@ static int phase_d_fs_demo(void) {
     ok = 0;
   } else {
     const char msg[] = "phase-d";
+    if (write(fd, "", 0) != 0) { ok = 0; }
     if (write(fd, msg, sizeof(msg) - 1) != (ssize_t)(sizeof(msg) - 1)) { ok = 0; }
     close(fd);
   }

@@ -45,7 +45,12 @@ static int64_t write_console_from_user(struct domain *domain, uint64_t buf, uint
   return cell_tty_write_console_from_user(domain, buf, len);
 }
 
+static uint64_t bounded_io_len(uint64_t len) {
+  return len > FILE_IO_CHUNK ? FILE_IO_CHUNK : len;
+}
+
 static int64_t write_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len) {
+  if (len == 0) { return 0; }
   switch (file->node.device) {
   case RAMFS_DEV_NULL:
   case RAMFS_DEV_ZERO:
@@ -89,16 +94,11 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_BLK_BOOT:
     return -22;
   case RAMFS_DEV_BLK_ROOT: {
-    uint64_t done = 0;
-    while (done < len) {
-      uint64_t chunk = len - done;
-      if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-      if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
-      if (!virtio_blk_write(file->offset, file_io_tmp, (uint32_t)chunk)) { return -5; }
-      file->offset += chunk;
-      done += chunk;
-    }
-    return (int64_t)done;
+    uint64_t chunk = bounded_io_len(len);
+    if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
+    if (!virtio_blk_write(file->offset, file_io_tmp, (uint32_t)chunk)) { return -5; }
+    file->offset += chunk;
+    return (int64_t)chunk;
   }
   case RAMFS_DEV_NONE:
     break;
@@ -118,23 +118,18 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_FULL:
   case RAMFS_DEV_RANDOM:
   case RAMFS_DEV_URANDOM: {
-    uint64_t done = 0;
-    while (done < len) {
-      uint64_t chunk = len - done;
-      if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-      if (file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM) {
-        random_bytes(file_io_tmp, (size_t)chunk);
-      } else {
-        kmemset(file_io_tmp, 0, (size_t)chunk);
-      }
-      if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)chunk)) {
-        kmemset(file_io_tmp, 0, FILE_IO_CHUNK);
-        return -14;
-      }
-      done += chunk;
+    uint64_t chunk = bounded_io_len(len);
+    if (file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM) {
+      random_bytes(file_io_tmp, (size_t)chunk);
+    } else {
+      kmemset(file_io_tmp, 0, (size_t)chunk);
+    }
+    if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)chunk)) {
+      kmemset(file_io_tmp, 0, FILE_IO_CHUNK);
+      return -14;
     }
     kmemset(file_io_tmp, 0, FILE_IO_CHUNK);
-    return (int64_t)len;
+    return (int64_t)chunk;
   }
   case RAMFS_DEV_CONSOLE:
   case RAMFS_DEV_TTY: {
@@ -183,28 +178,18 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_SYS_CPU_CORE_ONLINE:
     return cell_procfs_read_device(file, domain, buf, len);
   case RAMFS_DEV_BLK_ROOT: {
-    uint64_t done = 0;
-    while (done < len) {
-      uint64_t chunk = len - done;
-      if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-      if (!virtio_blk_read(file->offset, file_io_tmp, (uint32_t)chunk)) { return done == 0 ? -5 : (int64_t)done; }
-      if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)chunk)) { return -14; }
-      file->offset += chunk;
-      done += chunk;
-    }
-    return (int64_t)done;
+    uint64_t chunk = bounded_io_len(len);
+    if (!virtio_blk_read(file->offset, file_io_tmp, (uint32_t)chunk)) { return -5; }
+    if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)chunk)) { return -14; }
+    file->offset += chunk;
+    return (int64_t)chunk;
   }
   case RAMFS_DEV_BLK_BOOT: {
-    uint64_t done = 0;
-    while (done < len) {
-      uint64_t chunk = len - done;
-      if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-      if (!virtio_blk_read_boot(file->offset, file_io_tmp, (uint32_t)chunk)) { return done == 0 ? -5 : (int64_t)done; }
-      if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)chunk)) { return -14; }
-      file->offset += chunk;
-      done += chunk;
-    }
-    return (int64_t)done;
+    uint64_t chunk = bounded_io_len(len);
+    if (!virtio_blk_read_boot(file->offset, file_io_tmp, (uint32_t)chunk)) { return -5; }
+    if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)chunk)) { return -14; }
+    file->offset += chunk;
+    return (int64_t)chunk;
   }
   case RAMFS_DEV_NONE:
     break;
@@ -216,6 +201,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (len == 0) { return 0; }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
     int64_t wrote = cell_socket_tcp_write_from_domain(domain, file, buf, len);
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
@@ -245,19 +231,14 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
       struct vfs_node fresh;
       if (vfs_refresh(&file->node, &fresh)) { file->offset = fresh.size; }
     }
-    uint64_t done = 0;
-    while (done < len) {
-      uint64_t chunk = len - done;
-      if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-      if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
-      int64_t wrote = vfs_write(&file->node, file->offset, file_io_tmp, chunk);
-      if (wrote < 0) { return done == 0 ? wrote : (int64_t)done; }
-      if (wrote == 0) { return done == 0 ? -28 : (int64_t)done; }
-      file->offset += (uint64_t)wrote;
-      done += (uint64_t)wrote;
-      (void)vfs_refresh(&file->node, &file->node);
-    }
-    return (int64_t)done;
+    uint64_t chunk = bounded_io_len(len);
+    if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
+    int64_t wrote = vfs_write(&file->node, file->offset, file_io_tmp, chunk);
+    if (wrote < 0) { return wrote; }
+    if (wrote == 0) { return -28; }
+    file->offset += (uint64_t)wrote;
+    (void)vfs_refresh(&file->node, &file->node);
+    return wrote;
   }
   return write_console_from_user(domain, buf, len);
 }
@@ -315,17 +296,12 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   }
   if (file->type != OPEN_RAMFS || file->node.is_dir) { return -22; }
   if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, buf, len, frame); }
-  uint64_t done = 0;
-  while (done < len) {
-    uint64_t chunk = len - done;
-    if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-    uint64_t got = vfs_read(&file->node, file->offset, file_io_tmp, chunk);
-    if (got == 0) { break; }
-    if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)got)) { return -14; }
-    file->offset += got;
-    done += got;
-  }
-  return (int64_t)done;
+  uint64_t chunk = bounded_io_len(len);
+  uint64_t got = vfs_read(&file->node, file->offset, file_io_tmp, chunk);
+  if (got == 0) { return 0; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)got)) { return -14; }
+  file->offset += got;
+  return (int64_t)got;
 }
 
 int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {
@@ -334,16 +310,11 @@ int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct t
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
   if (file->type != OPEN_RAMFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
-  uint64_t done = 0;
-  while (done < len) {
-    uint64_t chunk = len - done;
-    if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-    uint64_t got = vfs_read(&file->node, off + done, file_io_tmp, chunk);
-    if (got == 0) { break; }
-    if (!vmm_copy_to_user(cell_domain_as(domain), buf + done, file_io_tmp, (size_t)got)) { return -14; }
-    done += got;
-  }
-  return (int64_t)done;
+  uint64_t chunk = bounded_io_len(len);
+  uint64_t got = vfs_read(&file->node, off, file_io_tmp, chunk);
+  if (got == 0) { return 0; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)got)) { return -14; }
+  return (int64_t)got;
 }
 
 int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {
@@ -351,21 +322,17 @@ int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct 
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (len == 0) { return 0; }
   if (file->type != OPEN_RAMFS ||
       ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR) ||
       file->node.device != RAMFS_DEV_NONE) {
     return -22;
   }
-  uint64_t done = 0;
-  while (done < len) {
-    uint64_t chunk = len - done;
-    if (chunk > FILE_IO_CHUNK) { chunk = FILE_IO_CHUNK; }
-    if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf + done, (size_t)chunk)) { return -14; }
-    int64_t wrote = vfs_write(&file->node, off + done, file_io_tmp, chunk);
-    if (wrote < 0) { return done == 0 ? wrote : (int64_t)done; }
-    if (wrote == 0) { return done == 0 ? -28 : (int64_t)done; }
-    done += (uint64_t)wrote;
-    (void)vfs_refresh(&file->node, &file->node);
-  }
-  return (int64_t)done;
+  uint64_t chunk = bounded_io_len(len);
+  if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
+  int64_t wrote = vfs_write(&file->node, off, file_io_tmp, chunk);
+  if (wrote < 0) { return wrote; }
+  if (wrote == 0) { return -28; }
+  (void)vfs_refresh(&file->node, &file->node);
+  return wrote;
 }
