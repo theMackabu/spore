@@ -19,8 +19,44 @@
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_idle_ticks;
 static uint64_t boot_epoch_sec;
+static uint64_t loadavg_scaled[3];
+static uint64_t next_loadavg_tick;
+
+enum {
+  LOADAVG_FSHIFT = 11,
+  LOADAVG_FSCALE = 1u << LOADAVG_FSHIFT,
+  LOADAVG_INTERVAL_TICKS = 5 * 100,
+  LOADAVG_EXP_1 = 1884,
+  LOADAVG_EXP_5 = 2014,
+  LOADAVG_EXP_15 = 2037,
+};
+
 static struct domain *current_domain(void) {
   return cell_current_domain_internal();
+}
+
+static uint64_t runnable_thread_count(void) {
+  uint64_t count = 0;
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+    struct thread *thread = cell_thread_slot(i);
+    if (thread != NULL && thread->domain != NULL && thread->state == THREAD_RUNNABLE) { ++count; }
+  }
+  return count;
+}
+
+static uint64_t loadavg_step(uint64_t old, uint64_t active, uint64_t exp) {
+  return (old * exp + active * LOADAVG_FSCALE * (LOADAVG_FSCALE - exp)) >> LOADAVG_FSHIFT;
+}
+
+static void update_loadavg(void) {
+  if (next_loadavg_tick == 0) { next_loadavg_tick = LOADAVG_INTERVAL_TICKS; }
+  while (scheduler_ticks >= next_loadavg_tick) {
+    uint64_t active = runnable_thread_count();
+    loadavg_scaled[0] = loadavg_step(loadavg_scaled[0], active, LOADAVG_EXP_1);
+    loadavg_scaled[1] = loadavg_step(loadavg_scaled[1], active, LOADAVG_EXP_5);
+    loadavg_scaled[2] = loadavg_step(loadavg_scaled[2], active, LOADAVG_EXP_15);
+    next_loadavg_tick += LOADAVG_INTERVAL_TICKS;
+  }
 }
 
 static size_t clamp_size(size_t value, size_t min, size_t max) {
@@ -64,6 +100,10 @@ void cell_system_init(uint64_t hhdm_offset) {
   cell_pipe_reset();
   scheduler_ticks = 0;
   scheduler_idle_ticks = 0;
+  loadavg_scaled[0] = 0;
+  loadavg_scaled[1] = 0;
+  loadavg_scaled[2] = 0;
+  next_loadavg_tick = LOADAVG_INTERVAL_TICKS;
   cell_tty_reset();
   kprintf("[spore] process tables: domains=%u threads=%u mms=%u open-files=%u\n", (unsigned)domain_count,
           (unsigned)thread_count, (unsigned)mm_count, (unsigned)open_file_count);
@@ -135,6 +175,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   if (cpu == 0) {
     ++scheduler_ticks;
     if (cell_scheduler_waiting_for_interrupt()) { ++scheduler_idle_ticks; }
+    update_loadavg();
     cell_wake_sleep_waiters(scheduler_ticks);
     net_poll();
     cell_socket_timer_tick(scheduler_ticks);
@@ -173,6 +214,13 @@ uint64_t cell_cpu_busy_ticks(uint32_t cpu) {
 
 uint64_t cell_cpu_idle_ticks(uint32_t cpu) {
   return smp_cpu_idle_ticks(cpu);
+}
+
+void cell_loadavg_scaled(uint64_t out[3]) {
+  if (out == NULL) { return; }
+  out[0] = loadavg_scaled[0];
+  out[1] = loadavg_scaled[1];
+  out[2] = loadavg_scaled[2];
 }
 
 uint64_t cell_boot_epoch_seconds(void) {

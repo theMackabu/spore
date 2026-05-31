@@ -10,6 +10,12 @@ enum {
   RAMFS_NAME_MAX = 255,
   RAMFS_PAGE_SIZE = 4096,
   RAMFS_MAX_BACKING_PAGES = (4ull * 1024 * 1024 * 1024) / RAMFS_PAGE_SIZE,
+  RAMFS_F_SEAL_SEAL = 0x0001,
+  RAMFS_F_SEAL_SHRINK = 0x0002,
+  RAMFS_F_SEAL_GROW = 0x0004,
+  RAMFS_F_SEAL_WRITE = 0x0008,
+  RAMFS_F_SEAL_FUTURE_WRITE = 0x0010,
+  RAMFS_F_SEAL_MASK = 0x001f,
 };
 
 #define RAMFS_MAX_FILE_SIZE (((uint64_t)UINT32_MAX) * RAMFS_PAGE_SIZE)
@@ -74,6 +80,10 @@ struct ramfs_mem_node {
   uint16_t mode;
   uint32_t uid;
   uint32_t gid;
+  uint32_t refs;
+  uint32_t seals;
+  uint32_t shared_write_mappings;
+  bool sealable;
   int first_page;
   int parent;
   char name[RAMFS_NAME_MAX + 1];
@@ -110,6 +120,9 @@ struct ramfs_node {
   uint16_t mode;
   uint32_t uid;
   uint32_t gid;
+  uint32_t seals;
+  uint32_t shared_write_mappings;
+  bool sealable;
   uint64_t atime;
   uint64_t ctime;
   uint64_t mtime;
@@ -136,6 +149,15 @@ bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size);
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode);
 bool ramfs_chown_node(struct ramfs *fs, int index, uint32_t uid, uint32_t gid);
+bool ramfs_retain_node(struct ramfs *fs, int index);
+void ramfs_release_node(struct ramfs *fs, int index);
+bool ramfs_set_sealable(struct ramfs *fs, int index, bool allow_sealing);
+int ramfs_add_seals(struct ramfs *fs, int index, uint32_t seals);
+int ramfs_get_seals(struct ramfs *fs, int index);
+bool ramfs_write_sealed(struct ramfs *fs, int index);
+bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size);
+bool ramfs_shared_writable_mmap_sealed(struct ramfs *fs, int index);
+void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add);
 bool ramfs_unlink(struct ramfs *fs, const char *path);
 bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path);
 bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path);

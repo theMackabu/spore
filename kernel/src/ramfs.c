@@ -157,6 +157,11 @@ static void free_node_pages(struct ramfs *fs, int node) {
   }
 }
 
+static void free_node(struct ramfs *fs, int node) {
+  free_node_pages(fs, node);
+  fs->nodes[node] = (struct ramfs_mem_node){.parent = -1, .first_page = -1};
+}
+
 static int find_child(const struct ramfs *fs, int parent, const char *name) {
   for (int i = 0; i < RAMFS_MAX_NODES; ++i) {
     if (fs->nodes[i].used && fs->nodes[i].parent == parent && streq(fs->nodes[i].name, name)) { return i; }
@@ -213,7 +218,7 @@ static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir,
   int index = alloc_node(fs);
   if (index < 0) { return -1; }
   if (!copy_name(fs->nodes[index].name, name)) {
-    fs->nodes[index].used = false;
+    free_node(fs, index);
     return -1;
   }
   fs->nodes[index].parent = parent;
@@ -385,6 +390,8 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
 
   (void)add_node(fs, dev, "fs", true, true);
   (void)add_node(fs, dev, "blk", true, true);
+  (void)add_node(fs, dev, "shm", true, true);
+  (void)add_node(fs, run, "memfd", true, true);
   (void)add_node(fs, proc, "net", true, true);
   add_sys_cpu_topology(fs);
 
@@ -452,11 +459,85 @@ bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
     .mode = node->mode,
     .uid = node->uid,
     .gid = node->gid,
+    .seals = node->seals,
+    .shared_write_mappings = node->shared_write_mappings,
+    .sealable = node->sealable,
     .atime = node->atime,
     .ctime = node->ctime,
     .mtime = node->mtime,
   };
   return true;
+}
+
+bool ramfs_retain_node(struct ramfs *fs, int index) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
+  ++fs->nodes[index].refs;
+  return true;
+}
+
+void ramfs_release_node(struct ramfs *fs, int index) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].refs == 0) {
+    return;
+  }
+  --fs->nodes[index].refs;
+  if (fs->nodes[index].refs == 0 && fs->nodes[index].parent < 0 && index != 0) { free_node(fs, index); }
+}
+
+bool ramfs_set_sealable(struct ramfs *fs, int index, bool allow_sealing) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
+      fs->nodes[index].device != RAMFS_DEV_NONE) {
+    return false;
+  }
+  fs->nodes[index].sealable = true;
+  fs->nodes[index].seals = allow_sealing ? 0 : RAMFS_F_SEAL_SEAL;
+  fs->nodes[index].ctime = ramfs_now_sec;
+  return true;
+}
+
+int ramfs_add_seals(struct ramfs *fs, int index, uint32_t seals) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || !fs->nodes[index].sealable ||
+      (seals & ~RAMFS_F_SEAL_MASK) != 0) {
+    return -22;
+  }
+  struct ramfs_mem_node *node = &fs->nodes[index];
+  if ((node->seals & RAMFS_F_SEAL_SEAL) != 0) { return -1; }
+  if ((seals & RAMFS_F_SEAL_WRITE) != 0 && node->shared_write_mappings != 0) { return -16; }
+  node->seals |= seals;
+  node->ctime = ramfs_now_sec;
+  return 0;
+}
+
+int ramfs_get_seals(struct ramfs *fs, int index) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || !fs->nodes[index].sealable) {
+    return -22;
+  }
+  return (int)fs->nodes[index].seals;
+}
+
+bool ramfs_write_sealed(struct ramfs *fs, int index) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
+  return (fs->nodes[index].seals & (RAMFS_F_SEAL_WRITE | RAMFS_F_SEAL_FUTURE_WRITE)) != 0;
+}
+
+bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
+  uint32_t seals = fs->nodes[index].seals;
+  return (size < fs->nodes[index].size && (seals & RAMFS_F_SEAL_SHRINK) != 0) ||
+         (size > fs->nodes[index].size && (seals & RAMFS_F_SEAL_GROW) != 0);
+}
+
+bool ramfs_shared_writable_mmap_sealed(struct ramfs *fs, int index) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
+  return (fs->nodes[index].seals & (RAMFS_F_SEAL_WRITE | RAMFS_F_SEAL_FUTURE_WRITE)) != 0;
+}
+
+void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add) {
+  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return; }
+  if (add) {
+    ++fs->nodes[index].shared_write_mappings;
+  } else if (fs->nodes[index].shared_write_mappings != 0) {
+    --fs->nodes[index].shared_write_mappings;
+  }
 }
 
 bool ramfs_lookup_node(const struct ramfs *fs_const, const char *path, struct ramfs_node *out) {
@@ -543,6 +624,7 @@ bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
       fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || size > RAMFS_MAX_FILE_SIZE) {
     return false;
   }
+  if (ramfs_truncate_sealed(fs, index, size)) { return false; }
   uint64_t keep_pages = (size + RAMFS_PAGE_SIZE - 1) / RAMFS_PAGE_SIZE;
   int *link = &fs->nodes[index].first_page;
   while (*link >= 0) {
@@ -591,8 +673,13 @@ bool ramfs_unlink(struct ramfs *fs, const char *path) {
       if (fs->nodes[i].used && fs->nodes[i].parent == index) { return false; }
     }
   }
-  free_node_pages(fs, index);
-  fs->nodes[index].used = false;
+  if (fs->nodes[index].refs != 0) {
+    fs->nodes[index].parent = -1;
+    fs->nodes[index].name[0] = '\0';
+    fs->nodes[index].ctime = ramfs_now_sec;
+    return true;
+  }
+  free_node(fs, index);
   return true;
 }
 
@@ -613,8 +700,7 @@ bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path) {
     for (int slot = fs->nodes[src].first_page; slot >= 0; slot = backing_pages[slot].next) {
       int dst_slot = get_backing_page(fs, dst, backing_pages[slot].file_page, true);
       if (dst_slot < 0) {
-        free_node_pages(fs, dst);
-        fs->nodes[dst].used = false;
+        free_node(fs, dst);
         return false;
       }
       kmemcpy(backing_pages[dst_slot].data, backing_pages[slot].data, RAMFS_PAGE_SIZE);
@@ -632,8 +718,13 @@ bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path) 
   if (index <= 0 || !split_parent(fs, new_path, &parent, &name)) { return false; }
   int existing = lookup_index(fs, new_path);
   if (existing > 0) {
-    free_node_pages(fs, existing);
-    fs->nodes[existing].used = false;
+    if (fs->nodes[existing].refs != 0) {
+      fs->nodes[existing].parent = -1;
+      fs->nodes[existing].name[0] = '\0';
+      fs->nodes[existing].ctime = ramfs_now_sec;
+    } else {
+      free_node(fs, existing);
+    }
   }
   if (!copy_name(fs->nodes[index].name, name)) { return false; }
   fs->nodes[index].parent = parent;
@@ -678,6 +769,7 @@ int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, 
       len > RAMFS_MAX_FILE_SIZE - off) {
     return -1;
   }
+  if (ramfs_write_sealed(fs, index)) { return -1; }
   const uint8_t *in = src;
   uint64_t done = 0;
   while (done < len) {

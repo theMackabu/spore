@@ -2,6 +2,7 @@
 
 #include "mem.h"
 #include "mm/pmm.h"
+#include "mm/vmm.h"
 
 #if __STDC_HOSTED__
 #include <stdlib.h>
@@ -9,6 +10,8 @@
 #endif
 
 #define VMAS_PER_CHUNK (VMA_CHUNK_BYTES / sizeof(struct vma))
+
+enum { MAP_SHARED = 0x01 };
 
 static uint64_t vma_hhdm_offset;
 
@@ -90,7 +93,24 @@ static bool add_raw_vma(struct vma_list *list, const struct vma *src) {
   if (slot == NULL) { return false; }
   *slot = *src;
   slot->used = true;
+  if (slot->type == VMA_FILE) {
+    vfs_retain_node(&slot->file_node);
+    if ((slot->flags & MAP_SHARED) != 0 && (slot->prot & VMM_USER_WRITE) != 0) {
+      vfs_note_shared_writable_mapping(&slot->file_node, true);
+    }
+  }
   return true;
+}
+
+static void release_vma(struct vma *vma) {
+  if (vma == NULL || !vma->used) { return; }
+  if (vma->type == VMA_FILE) {
+    if ((vma->flags & MAP_SHARED) != 0 && (vma->prot & VMM_USER_WRITE) != 0) {
+      vfs_note_shared_writable_mapping(&vma->file_node, false);
+    }
+    vfs_release_node(&vma->file_node);
+  }
+  vma->used = false;
 }
 
 static bool add_raw(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
@@ -117,11 +137,11 @@ static void merge_adjacent(struct vma_list *list) {
       if (i == j || !b->used) { continue; }
       if (a->end == b->start && compatible(a, b)) {
         a->end = b->end;
-        b->used = false;
+        release_vma(b);
         j = 0;
       } else if (b->end == a->start && compatible(a, b)) {
         a->start = b->start;
-        b->used = false;
+        release_vma(b);
         j = 0;
       }
     }
@@ -134,6 +154,9 @@ void vma_list_init(struct vma_list *list) {
 
 void vma_list_destroy(struct vma_list *list) {
   if (list == NULL) { return; }
+  for (size_t i = 0; i < vma_capacity(list); ++i) {
+    release_vma(vma_at_mut(list, i));
+  }
   for (size_t i = 0; i < list->chunk_count; ++i) {
     chunk_free(list->chunks[i], list->chunk_pa[i]);
   }
@@ -193,6 +216,10 @@ bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32
   slot->flags = flags;
   slot->type = VMA_FILE;
   slot->file_node = *node;
+  vfs_retain_node(&slot->file_node);
+  if ((flags & MAP_SHARED) != 0 && (prot & VMM_USER_WRITE) != 0) {
+    vfs_note_shared_writable_mapping(&slot->file_node, true);
+  }
   slot->file_start = file_start;
   slot->file_offset = file_offset;
   slot->file_size = file_size;
@@ -288,12 +315,13 @@ bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t p
 
 bool vma_grow_down(struct vma_list *list, uint64_t page, uint32_t required_flags, struct vma *out) {
   if (list == NULL || (page & (PAGE_SIZE - 1)) != 0) { return false; }
-  uint64_t old_start = page + PAGE_SIZE;
-  if (old_start < page) { return false; }
+  enum { MAX_GROWDOWN_PAGES = 2048 };
   for (size_t i = 0; i < vma_capacity(list); ++i) {
     struct vma *vma = vma_at_mut(list, i);
-    if (!vma->used || vma->start != old_start || (vma->flags & required_flags) != required_flags) { continue; }
-    if (vma_overlaps(list, page, old_start)) { return false; }
+    if (!vma->used || page >= vma->start || (vma->flags & required_flags) != required_flags) { continue; }
+    uint64_t grow_pages = (vma->start - page) / PAGE_SIZE;
+    if (grow_pages == 0 || grow_pages > MAX_GROWDOWN_PAGES) { return false; }
+    if (vma_overlaps(list, page, vma->start)) { return false; }
     vma->start = page;
     if (out != NULL) { *out = *vma; }
     return true;

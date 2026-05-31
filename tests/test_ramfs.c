@@ -1,6 +1,7 @@
 #include "ramfs.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -134,6 +135,39 @@ int main(void) {
   assert(!ramfs_lookup_node(&fs, "/tmp/d/a", &node));
   assert(ramfs_lookup_node(&fs, "/tmp/d/b", &node));
   assert(ramfs_unlink(&fs, "/tmp/d/b"));
+
+  assert(ramfs_create(&fs, "/tmp/d/no-seal", &node));
+  assert(ramfs_set_sealable(&fs, node.index, false));
+  assert(ramfs_get_seals(&fs, node.index) == RAMFS_F_SEAL_SEAL);
+  assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_GROW) == -EPERM);
+
+  assert(ramfs_create(&fs, "/tmp/d/sealed", &node));
+  assert(ramfs_set_sealable(&fs, node.index, true));
+  assert(ramfs_get_seals(&fs, node.index) == 0);
+  assert(ramfs_write(&fs, node.index, 0, "seal", 4) == 4);
+  assert(ramfs_truncate(&fs, node.index, 4096));
+  assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_GROW) == 0);
+  assert(!ramfs_truncate(&fs, node.index, 8192));
+  assert(ramfs_truncate(&fs, node.index, 2048));
+  assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_SHRINK | RAMFS_F_SEAL_FUTURE_WRITE) == 0);
+  assert(!ramfs_truncate(&fs, node.index, 1024));
+  assert(ramfs_write(&fs, node.index, 0, "x", 1) < 0);
+  assert(ramfs_shared_writable_mmap_sealed(&fs, node.index));
+  assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_SEAL) == 0);
+  assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_WRITE) == -EPERM);
+
+  assert(ramfs_create(&fs, "/tmp/d/busy-seal", &node));
+  assert(ramfs_set_sealable(&fs, node.index, true));
+  assert(ramfs_truncate(&fs, node.index, 4096));
+  ramfs_note_shared_writable_mapping(&fs, node.index, true);
+  assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_WRITE) == -EBUSY);
+  ramfs_note_shared_writable_mapping(&fs, node.index, false);
+  assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_WRITE) == 0);
+  assert(ramfs_write(&fs, node.index, 0, "x", 1) < 0);
+
+  assert(ramfs_unlink(&fs, "/tmp/d/no-seal"));
+  assert(ramfs_unlink(&fs, "/tmp/d/sealed"));
+  assert(ramfs_unlink(&fs, "/tmp/d/busy-seal"));
   assert(ramfs_unlink(&fs, "/tmp/d"));
   return 0;
 }

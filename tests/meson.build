@@ -28,6 +28,7 @@ test('stack', test_stack)
 test_elf = executable('test_elf',
   files(
     'test_elf.c',
+    'vfs_ref_stub.c',
     '../kernel/src/elf/loader.c',
     '../kernel/src/mm/vma.c',
     '../kernel/src/lib/mem.c',
@@ -73,6 +74,7 @@ test('vmm', test_vmm)
 test_vma = executable('test_vma',
   files(
     'test_vma.c',
+    'vfs_ref_stub.c',
     '../kernel/src/mm/vma.c',
     '../kernel/src/lib/mem.c',
   ),

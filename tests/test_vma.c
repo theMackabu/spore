@@ -2,6 +2,11 @@
 
 #include <assert.h>
 
+void vfs_ref_stub_reset(void);
+unsigned vfs_ref_stub_retain_count(void);
+unsigned vfs_ref_stub_release_count(void);
+unsigned vfs_ref_stub_shared_write_count(void);
+
 int main(void) {
   struct vma_list list;
   vma_list_init(&list);
@@ -73,6 +78,37 @@ int main(void) {
   assert(vma_count(&many_clone) == target);
   vma_list_destroy(&many_clone);
   vma_list_destroy(&many);
+
+  vfs_ref_stub_reset();
+  struct vma_list files;
+  vma_list_init(&files);
+  struct vfs_node node = {
+    .backend = VFS_RAMFS,
+    .ino = 42,
+    .is_dir = false,
+    .device = RAMFS_DEV_NONE,
+    .mode = 0100600u,
+    .size = 0x8000,
+  };
+  enum { MAP_SHARED_TEST = 0x01, MAP_PRIVATE_TEST = 0x02 };
+  assert(vma_insert_file(&files, 0x900000, 0x902000, 3, MAP_SHARED_TEST, &node, 0x900000, 0, 0x2000));
+  assert(vfs_ref_stub_retain_count() == 1);
+  assert(vfs_ref_stub_release_count() == 0);
+  assert(vfs_ref_stub_shared_write_count() == 1);
+  assert(vma_protect(&files, 0x901000, 0x902000, 1));
+  assert(vfs_ref_stub_shared_write_count() == 1);
+  assert(vma_remove(&files, 0x900000, 0x901000));
+  assert(vfs_ref_stub_shared_write_count() == 0);
+  vma_list_destroy(&files);
+  assert(vfs_ref_stub_retain_count() == vfs_ref_stub_release_count());
+
+  vfs_ref_stub_reset();
+  vma_list_init(&files);
+  assert(vma_insert_file(&files, 0xa00000, 0xa01000, 3, MAP_PRIVATE_TEST, &node, 0xa00000, 0, 0x1000));
+  assert(vfs_ref_stub_shared_write_count() == 0);
+  vma_list_destroy(&files);
+  assert(vfs_ref_stub_retain_count() == vfs_ref_stub_release_count());
+
   vma_list_destroy(&clone);
   vma_list_destroy(&list);
   return 0;

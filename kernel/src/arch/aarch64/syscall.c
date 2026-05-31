@@ -130,6 +130,7 @@ enum {
   SYS_PRLIMIT64 = 261,
   SYS_RENAMEAT2 = 276,
   SYS_GETRANDOM = 278,
+  SYS_MEMFD_CREATE = 279,
   SYS_MEMBARRIER = 283,
   SYS_STATX = 291,
   SYS_RSEQ = 293,
@@ -154,6 +155,8 @@ enum {
   F_GETFD = 1,
   F_SETFD = 2,
   F_DUPFD_CLOEXEC = 1030,
+  F_ADD_SEALS = 1033,
+  F_GET_SEALS = 1034,
   F_GETFL = 3,
   F_SETFL = 4,
   FD_CLOEXEC = 1,
@@ -164,6 +167,7 @@ enum {
   EBADF = 9,
   EACCES = 13,
   EFAULT = 14,
+  EBUSY = 16,
   EINVAL = 22,
   ENOTDIR = 20,
   ENOSYS = 38,
@@ -337,6 +341,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_PRLIMIT64] = &&l_prlimit64,
     [SYS_RENAMEAT2] = &&l_renameat2,
     [SYS_GETRANDOM] = &&l_getrandom,
+    [SYS_MEMFD_CREATE] = &&l_memfd_create,
     [SYS_MEMBARRIER] = &&l_membarrier,
     [SYS_STATX] = &&l_statx,
     [SYS_RSEQ] = &&l_rseq,
@@ -596,6 +601,8 @@ l_madvise:
   return sys_madvise(a0, a1, a2);
 l_mremap:
   return sys_mremap(a0, a1, a2, a3, a4);
+l_memfd_create:
+  return sys_memfd_create(a0, a1);
 l_socket:
   return sys_socket(a0, a1, a2);
 l_bind:
@@ -685,6 +692,8 @@ l_fcntl:
     return flags;
   }
   if (a1 == F_SETFL) { return cell_fd_set_flags((int)a0, (int)a2); }
+  if (a1 == F_ADD_SEALS) { return cell_fd_add_seals((int)a0, (uint32_t)a2); }
+  if (a1 == F_GET_SEALS) { return cell_fd_get_seals((int)a0); }
   return -(int64_t)EINVAL;
 l_flock: {
   int flags = cell_fd_get_flags((int)a0);

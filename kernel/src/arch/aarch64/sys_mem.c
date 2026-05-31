@@ -30,6 +30,7 @@ enum {
   EFAULT = 14,
   EEXIST = 17,
   EINVAL = 22,
+  EPERM = 1,
 };
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
@@ -104,6 +105,9 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   } else {
     struct vfs_node node;
     if (!cell_fd_stat((int)fd, &node) || node.is_dir || node.device != RAMFS_DEV_NONE) { return -(int64_t)EINVAL; }
+    if (shared && (prot_to_vmm(prot) & VMM_USER_WRITE) != 0 && vfs_shared_writable_mmap_sealed(&node)) {
+      return -(int64_t)EPERM;
+    }
     if (!cell_add_file_vma(base, end, prot_to_vmm(prot), (uint32_t)flags, &node, base, off, len)) {
       return -(int64_t)EINVAL;
     }

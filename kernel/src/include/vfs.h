@@ -14,6 +14,15 @@ enum vfs_backend {
   VFS_PROC,
 };
 
+enum {
+  VFS_F_SEAL_SEAL = RAMFS_F_SEAL_SEAL,
+  VFS_F_SEAL_SHRINK = RAMFS_F_SEAL_SHRINK,
+  VFS_F_SEAL_GROW = RAMFS_F_SEAL_GROW,
+  VFS_F_SEAL_WRITE = RAMFS_F_SEAL_WRITE,
+  VFS_F_SEAL_FUTURE_WRITE = RAMFS_F_SEAL_FUTURE_WRITE,
+  VFS_F_SEAL_MASK = RAMFS_F_SEAL_MASK,
+};
+
 struct vfs_node {
   enum vfs_backend backend;
   uint64_t ino;
@@ -24,6 +33,9 @@ struct vfs_node {
   uint16_t links_count;
   uint32_t uid;
   uint32_t gid;
+  uint32_t seals;
+  uint32_t shared_write_mappings;
+  bool sealable;
   uint64_t dev_id;
   uint64_t rdev;
   uint64_t atime;
@@ -92,6 +104,15 @@ bool vfs_chown(const char *path, uint32_t uid, uint32_t gid);
 bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid);
 bool vfs_unlink(const char *path);
 bool vfs_rename(const char *old_path, const char *new_path);
+void vfs_retain_node(const struct vfs_node *node);
+void vfs_release_node(const struct vfs_node *node);
+bool vfs_set_sealable(const struct vfs_node *node, bool allow_sealing);
+int vfs_add_seals(const struct vfs_node *node, uint32_t seals);
+int vfs_get_seals(const struct vfs_node *node);
+bool vfs_write_sealed(const struct vfs_node *node);
+bool vfs_truncate_sealed(const struct vfs_node *node, uint64_t size);
+bool vfs_shared_writable_mmap_sealed(const struct vfs_node *node);
+void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
 bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst);

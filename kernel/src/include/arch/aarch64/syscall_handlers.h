@@ -56,6 +56,7 @@ int64_t sys_inotify_init1(uint64_t flags);
 int64_t sys_inotify_add_watch(uint64_t fd, uint64_t path_addr, uint64_t mask);
 int64_t sys_inotify_rm_watch(uint64_t fd, uint64_t wd);
 int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags);
+int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags);
 int64_t sys_fstat(uint64_t fd, uint64_t stat_addr);
 int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr);
 int64_t sys_fstatfs(uint64_t fd, uint64_t statfs_addr);

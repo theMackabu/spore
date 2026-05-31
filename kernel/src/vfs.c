@@ -173,6 +173,9 @@ static void from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
     .links_count = 1,
     .uid = node->uid,
     .gid = node->gid,
+    .seals = node->seals,
+    .shared_write_mappings = node->shared_write_mappings,
+    .sealable = node->sealable,
     .dev_id = ramfs_mount_dev_id(node->mount),
     .rdev = ramfs_device_rdev(node->device),
     .atime = node->atime,
@@ -749,6 +752,7 @@ bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
 
 bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
   update_time_sources();
+  if (vfs_truncate_sealed(node, size)) { return false; }
   vfs_page_cache_invalidate(node);
   bool ok = false;
   if (node->backend == VFS_EXT2) {
@@ -861,6 +865,49 @@ bool vfs_rename(const char *old_path, const char *new_path) {
   return ok;
 }
 
+void vfs_retain_node(const struct vfs_node *node) {
+  if (node == NULL || node->backend != VFS_RAMFS) { return; }
+  (void)ramfs_retain_node(node->ramfs.fs, node->ramfs.index);
+}
+
+void vfs_release_node(const struct vfs_node *node) {
+  if (node == NULL || node->backend != VFS_RAMFS) { return; }
+  ramfs_release_node(node->ramfs.fs, node->ramfs.index);
+}
+
+bool vfs_set_sealable(const struct vfs_node *node, bool allow_sealing) {
+  if (node == NULL || node->backend != VFS_RAMFS) { return false; }
+  return ramfs_set_sealable(node->ramfs.fs, node->ramfs.index, allow_sealing);
+}
+
+int vfs_add_seals(const struct vfs_node *node, uint32_t seals) {
+  if (node == NULL || node->backend != VFS_RAMFS) { return -22; }
+  return ramfs_add_seals(node->ramfs.fs, node->ramfs.index, seals);
+}
+
+int vfs_get_seals(const struct vfs_node *node) {
+  if (node == NULL || node->backend != VFS_RAMFS) { return -22; }
+  return ramfs_get_seals(node->ramfs.fs, node->ramfs.index);
+}
+
+bool vfs_write_sealed(const struct vfs_node *node) {
+  return node != NULL && node->backend == VFS_RAMFS && ramfs_write_sealed(node->ramfs.fs, node->ramfs.index);
+}
+
+bool vfs_truncate_sealed(const struct vfs_node *node, uint64_t size) {
+  return node != NULL && node->backend == VFS_RAMFS && ramfs_truncate_sealed(node->ramfs.fs, node->ramfs.index, size);
+}
+
+bool vfs_shared_writable_mmap_sealed(const struct vfs_node *node) {
+  return node != NULL && node->backend == VFS_RAMFS &&
+         ramfs_shared_writable_mmap_sealed(node->ramfs.fs, node->ramfs.index);
+}
+
+void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add) {
+  if (node == NULL || node->backend != VFS_RAMFS) { return; }
+  ramfs_note_shared_writable_mapping(node->ramfs.fs, node->ramfs.index, add);
+}
+
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
   if (!node_cacheable(node) || len == 0 || off >= node->size) { return vfs_read_uncached(node, off, dst, len); }
   uint64_t available = node->size - off;
@@ -882,6 +929,7 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
   update_time_sources();
+  if (vfs_write_sealed(node)) { return -1; }
   vfs_page_cache_invalidate(node);
   int64_t written = -28;
   if (node->backend == VFS_EXT2) {

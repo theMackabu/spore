@@ -24,6 +24,9 @@ enum {
   O_CREAT = 0100,
   O_EXCL = 0200,
   O_TRUNC = 01000,
+  O_CLOEXEC = 02000000,
+  MFD_CLOEXEC = 1,
+  MFD_ALLOW_SEALING = 2,
   S_IFMT = 0170000,
   S_IFIFO = 0010000,
   DT_REG = 8,
@@ -46,6 +49,8 @@ enum {
   DEVFS_SUPER_MAGIC = 0x1373,
   STATX_BASIC_STATS = 0x000007ff,
 };
+
+static uint64_t memfd_sequence;
 
 struct stat64_aarch64 {
   uint64_t st_dev;
@@ -155,6 +160,63 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
     (void)vfs_lookup(path, &node);
   }
   return cell_fd_open_node(&node, (uint32_t)flags, virtual_path);
+}
+
+static size_t append_literal(char *dst, size_t cap, size_t len, const char *text) {
+  while (*text != '\0' && len + 1 < cap) {
+    dst[len++] = *text++;
+  }
+  if (cap != 0) { dst[len] = '\0'; }
+  return len;
+}
+
+static size_t append_u64(char *dst, size_t cap, size_t len, uint64_t value) {
+  char tmp[20];
+  size_t n = 0;
+  do {
+    tmp[n++] = (char)('0' + (value % 10));
+    value /= 10;
+  } while (value != 0 && n < sizeof(tmp));
+  while (n > 0 && len + 1 < cap) {
+    dst[len++] = tmp[--n];
+  }
+  if (cap != 0) { dst[len] = '\0'; }
+  return len;
+}
+
+static bool memfd_name_char_ok(char ch) {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' ||
+         ch == '_' || ch == '-';
+}
+
+int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
+  if ((flags & ~(uint64_t)(MFD_CLOEXEC | MFD_ALLOW_SEALING)) != 0) { return -(int64_t)EINVAL; }
+  char name[64];
+  if (!syscall_copy_string_from_user(name_addr, name, sizeof(name))) { return -(int64_t)EFAULT; }
+  for (size_t i = 0; name[i] != '\0'; ++i) {
+    if (!memfd_name_char_ok(name[i])) { name[i] = '_'; }
+  }
+
+  for (unsigned attempt = 0; attempt < 16; ++attempt) {
+    char path[CELL_PATH_MAX];
+    size_t len = append_literal(path, sizeof(path), 0, "/run/memfd/");
+    len = append_u64(path, sizeof(path), len, (uint64_t)cell_current_pid());
+    len = append_literal(path, sizeof(path), len, "-");
+    len = append_u64(path, sizeof(path), len, ++memfd_sequence);
+    len = append_literal(path, sizeof(path), len, "-");
+    len = append_literal(path, sizeof(path), len, name[0] == '\0' ? "memfd" : name);
+    if (len + 1 >= sizeof(path)) { return -(int64_t)ENAMETOOLONG; }
+    struct vfs_node node;
+    if (!vfs_create(path, &node)) { continue; }
+    (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
+    (void)vfs_lookup(path, &node);
+    (void)vfs_set_sealable(&node, (flags & MFD_ALLOW_SEALING) != 0);
+    uint32_t open_flags = O_RDWR | ((flags & MFD_CLOEXEC) != 0 ? O_CLOEXEC : 0);
+    int fd = cell_fd_open_node(&node, open_flags, path);
+    if (fd >= 0) { (void)vfs_unlink(path); }
+    return fd;
+  }
+  return -(int64_t)EEXIST;
 }
 
 static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
@@ -574,5 +636,6 @@ int64_t sys_fchown(uint64_t fd, uint64_t uid_arg, uint64_t gid_arg) {
 int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
   struct vfs_node node;
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
+  if (vfs_truncate_sealed(&node, size)) { return -(int64_t)EPERM; }
   return vfs_truncate(&node, size) ? 0 : -(int64_t)EINVAL;
 }

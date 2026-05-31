@@ -33,6 +33,24 @@
 #ifndef SO_ACCEPTCONN
 #define SO_ACCEPTCONN 30
 #endif
+#ifndef SO_REUSEPORT
+#define SO_REUSEPORT 15
+#endif
+#ifndef SO_DONTROUTE
+#define SO_DONTROUTE 5
+#endif
+#ifndef IP_MTU_DISCOVER
+#define IP_MTU_DISCOVER 10
+#endif
+#ifndef IP_BIND_ADDRESS_NO_PORT
+#define IP_BIND_ADDRESS_NO_PORT 24
+#endif
+#ifndef TCP_FASTOPEN
+#define TCP_FASTOPEN 23
+#endif
+#ifndef TCP_FASTOPEN_CONNECT
+#define TCP_FASTOPEN_CONNECT 30
+#endif
 
 #define SYS_SPORE_SNAPSHOT 0x4000
 #define SYS_SPORE_SPAWN 0x4001
@@ -50,6 +68,7 @@
 #define SYS_GETTID 178
 #define SYS_SENDTO 206
 #define SYS_ACCEPT4 242
+#define SYS_MEMFD_CREATE 279
 
 #define CLONE_VM 0x00000100
 #define CLONE_FS 0x00000200
@@ -79,6 +98,39 @@
 #endif
 #ifndef SA_RESTART
 #define SA_RESTART 0x10000000
+#endif
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0x4000
+#endif
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 1
+#endif
+#ifndef MFD_ALLOW_SEALING
+#define MFD_ALLOW_SEALING 2
+#endif
+#ifndef F_ADD_SEALS
+#define F_ADD_SEALS 1033
+#endif
+#ifndef F_GET_SEALS
+#define F_GET_SEALS 1034
+#endif
+#ifndef F_SEAL_SEAL
+#define F_SEAL_SEAL 0x0001
+#endif
+#ifndef F_SEAL_SHRINK
+#define F_SEAL_SHRINK 0x0002
+#endif
+#ifndef F_SEAL_GROW
+#define F_SEAL_GROW 0x0004
+#endif
+#ifndef F_SEAL_WRITE
+#define F_SEAL_WRITE 0x0008
+#endif
+#ifndef F_SEAL_FUTURE_WRITE
+#define F_SEAL_FUTURE_WRITE 0x0010
 #endif
 
 struct linux_dirent64 {
@@ -698,16 +750,22 @@ static int socket_options_regression(void) {
   int keepidle = 1;
   int keepintvl = 1;
   int keepcnt = 2;
+  int mtu_discover = 1;
+  int bind_no_port = 1;
   struct linger linger = {.l_onoff = 1, .l_linger = 0};
   struct linger got_linger = {0};
   socklen_t linger_len = sizeof(got_linger);
   struct timeval tv = {.tv_sec = 1, .tv_usec = 250000};
   int ok =
     setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == 0 &&
+    setsockopt(udp, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one)) == 0 &&
+    setsockopt(udp, SOL_SOCKET, SO_DONTROUTE, &one, sizeof(one)) == 0 &&
     setsockopt(udp, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0 &&
     setsockopt(udp, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0 &&
     setsockopt(udp, SOL_SOCKET, SO_RCVBUF, &small_rcvbuf, sizeof(small_rcvbuf)) == 0 &&
     getsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
+    getsockopt(udp, SOL_SOCKET, SO_REUSEPORT, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
+    getsockopt(udp, SOL_SOCKET, SO_DONTROUTE, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
     setsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0 &&
     setsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one)) == 0 &&
     setsockopt(tcp, SOL_SOCKET, SO_LINGER, &linger, sizeof(linger)) == 0 &&
@@ -716,13 +774,20 @@ static int socket_options_regression(void) {
     setsockopt(tcp, SOL_SOCKET, SO_RCVBUF, &huge_buf, sizeof(huge_buf)) == 0 &&
     setsockopt(tcp, IPPROTO_IP, IP_TOS, &tos, sizeof(tos)) == 0 &&
     setsockopt(tcp, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) == 0 &&
+    setsockopt(tcp, IPPROTO_IP, IP_MTU_DISCOVER, &mtu_discover, sizeof(mtu_discover)) == 0 &&
+    setsockopt(tcp, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &bind_no_port, sizeof(bind_no_port)) == 0 &&
     setsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) == 0 &&
     setsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) == 0 &&
     setsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) == 0 &&
     setsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout, sizeof(user_timeout)) == 0 &&
+    setsockopt(tcp, IPPROTO_TCP, TCP_FASTOPEN, &one, sizeof(one)) == 0 &&
+    setsockopt(tcp, IPPROTO_TCP, TCP_FASTOPEN_CONNECT, &one, sizeof(one)) == 0 &&
     getsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
     getsockopt(tcp, IPPROTO_IP, IP_TOS, &got, &got_len) == 0 && got == tos && got_len == sizeof(got) &&
     getsockopt(tcp, IPPROTO_IP, IP_TTL, &got, &got_len) == 0 && got == ttl && got_len == sizeof(got) &&
+    getsockopt(tcp, IPPROTO_IP, IP_MTU_DISCOVER, &got, &got_len) == 0 && got == mtu_discover &&
+    got_len == sizeof(got) && getsockopt(tcp, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &got, &got_len) == 0 &&
+    got == bind_no_port && got_len == sizeof(got) &&
     getsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &got, &got_len) == 0 && got == keepidle && got_len == sizeof(got) &&
     getsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &got, &got_len) == 0 && got == keepintvl && got_len == sizeof(got) &&
     getsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &got, &got_len) == 0 && got == keepcnt && got_len == sizeof(got) &&
@@ -1818,6 +1883,39 @@ static int signal_restart_read_regression(void) {
   return ok;
 }
 
+static volatile int futex_restart_word;
+static pid_t futex_restart_parent;
+
+static void *futex_restart_thread(void *arg) {
+  (void)arg;
+  sleep_ms(20);
+  kill(futex_restart_parent, SIGINT);
+  sleep_ms(20);
+  futex_restart_word = 1;
+  raw_syscall4(SYS_FUTEX, (long)&futex_restart_word, FUTEX_WAKE_PRIVATE, 1, 0);
+  return NULL;
+}
+
+static int signal_restart_futex_regression(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = signal_interrupt_handler;
+  sa.sa_flags = SA_RESTART;
+  sigemptyset(&sa.sa_mask);
+  interrupted_signals = 0;
+  futex_restart_word = 0;
+  futex_restart_parent = getpid();
+
+  pthread_t thread;
+  int ok = sigaction(SIGINT, &sa, NULL) == 0 && pthread_create(&thread, NULL, futex_restart_thread, NULL) == 0;
+  long rc = ok ? raw_syscall4(SYS_FUTEX, (long)&futex_restart_word, FUTEX_WAIT_PRIVATE, 0, 0) : -1;
+  if (ok) { ok = pthread_join(thread, NULL) == 0; }
+  ok = ok && rc == 0 && futex_restart_word == 1 && interrupted_signals == SIGINT;
+  printf("[spore] signal restarted futex wait: %s rc=%ld seen=%d\n", ok ? "PASS" : "FAIL", rc,
+         (int)interrupted_signals);
+  return ok;
+}
+
 static int signal_nested_regression(void) {
   struct sigaction sa_int;
   memset(&sa_int, 0, sizeof(sa_int));
@@ -1885,6 +1983,120 @@ static int shared_anon_mmap_fork_regression(void) {
   return ok;
 }
 
+static int shm_open_path_mmap_regression(void) {
+  const char *path = "/dev/shm/spore-shm-test";
+  unlink(path);
+  int fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 0600);
+  int ok = fd >= 0 && ftruncate(fd, 4096) == 0;
+  char *map = ok ? mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
+  ok = ok && map != MAP_FAILED;
+  char buf[8] = {0};
+  if (ok) {
+    memcpy(map, "shm", 3);
+    ok = msync(map, 4096, MS_SYNC) == 0 && pread(fd, buf, 3, 0) == 3 && strcmp(buf, "shm") == 0;
+    ok = ok && munmap(map, 4096) == 0;
+  }
+  if (fd >= 0) { close(fd); }
+  unlink(path);
+  printf("[spore] /dev/shm shared mmap: %s value=%s\n", ok ? "PASS" : "FAIL", buf);
+  return ok;
+}
+
+static int count_dir_entries(const char *path) {
+  DIR *dir = opendir(path);
+  if (dir == NULL) { return -1; }
+  int count = 0;
+  struct dirent *ent;
+  while ((ent = readdir(dir)) != NULL) {
+    if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) { ++count; }
+  }
+  closedir(dir);
+  return count;
+}
+
+static int memfd_shared_mmap_regression(void) {
+  int before = count_dir_entries("/run/memfd");
+  long fd_long = raw_syscall3(SYS_MEMFD_CREATE, (long)"spore-memfd", MFD_CLOEXEC, 0);
+  int fd = (int)fd_long;
+  int ok = fd >= 0 && ftruncate(fd, 4096) == 0;
+  char *map = ok ? mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
+  ok = ok && map != MAP_FAILED;
+  if (fd >= 0) {
+    ok = ok && close(fd) == 0;
+    fd = -1;
+  }
+  ok = ok && count_dir_entries("/run/memfd") == before;
+  if (ok) {
+    map[0] = 'M';
+    pid_t child = fork();
+    if (child == 0) {
+      int child_ok = map[0] == 'M';
+      map[1] = child_ok ? 'C' : 'X';
+      _exit(child_ok ? 0 : 1);
+    }
+    int status = 0;
+    ok = child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
+         map[0] == 'M' && map[1] == 'C';
+    ok = ok && munmap(map, 4096) == 0;
+  }
+  if (fd >= 0) { close(fd); }
+  ok = ok && count_dir_entries("/run/memfd") == before;
+  printf("[spore] memfd shared mmap fork: %s fd=%ld visible-before=%d\n", ok ? "PASS" : "FAIL", fd_long, before);
+  return ok;
+}
+
+static int memfd_seals_regression(void) {
+  int no_seal_fd = (int)raw_syscall3(SYS_MEMFD_CREATE, (long)"spore-no-seal", MFD_CLOEXEC, 0);
+  errno = 0;
+  int no_seal_get = no_seal_fd >= 0 ? fcntl(no_seal_fd, F_GET_SEALS) : -1;
+  int no_seal_errno = errno;
+  errno = 0;
+  int no_seal_add = no_seal_fd >= 0 ? fcntl(no_seal_fd, F_ADD_SEALS, F_SEAL_GROW) : -1;
+  int no_seal_add_errno = errno;
+  int ok = no_seal_fd >= 0 && no_seal_get == F_SEAL_SEAL && no_seal_errno == 0 && no_seal_add == -1 &&
+           no_seal_add_errno == EPERM;
+  if (no_seal_fd >= 0) { close(no_seal_fd); }
+
+  int fd = (int)raw_syscall3(SYS_MEMFD_CREATE, (long)"spore-seals", MFD_CLOEXEC | MFD_ALLOW_SEALING, 0);
+  ok = ok && fd >= 0 && ftruncate(fd, 4096) == 0 && write(fd, "abc", 3) == 3;
+  ok = ok && fcntl(fd, F_GET_SEALS) == 0;
+  ok = ok && fcntl(fd, F_ADD_SEALS, F_SEAL_GROW) == 0;
+  errno = 0;
+  ok = ok && ftruncate(fd, 8192) == -1 && errno == EPERM;
+  ok = ok && ftruncate(fd, 2048) == 0;
+  ok = ok && fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK) == 0;
+  errno = 0;
+  ok = ok && ftruncate(fd, 1024) == -1 && errno == EPERM;
+  ok = ok && fcntl(fd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) == 0;
+  errno = 0;
+  ok = ok && write(fd, "z", 1) == -1 && errno == EPERM;
+  errno = 0;
+  void *future = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  ok = ok && future == MAP_FAILED && errno == EPERM;
+  int seals = fcntl(fd, F_GET_SEALS);
+  ok = ok && (seals & (F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_FUTURE_WRITE)) ==
+               (F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_FUTURE_WRITE);
+  ok = ok && fcntl(fd, F_ADD_SEALS, F_SEAL_SEAL) == 0;
+  errno = 0;
+  ok = ok && fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE) == -1 && errno == EPERM;
+  if (fd >= 0) { close(fd); }
+
+  int busy_fd = (int)raw_syscall3(SYS_MEMFD_CREATE, (long)"spore-seal-busy", MFD_ALLOW_SEALING, 0);
+  ok = ok && busy_fd >= 0 && ftruncate(busy_fd, 4096) == 0;
+  char *map = ok ? mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, busy_fd, 0) : MAP_FAILED;
+  ok = ok && map != MAP_FAILED;
+  errno = 0;
+  ok = ok && fcntl(busy_fd, F_ADD_SEALS, F_SEAL_WRITE) == -1 && errno == EBUSY;
+  if (map != MAP_FAILED) { ok = ok && munmap(map, 4096) == 0; }
+  ok = ok && fcntl(busy_fd, F_ADD_SEALS, F_SEAL_WRITE) == 0;
+  errno = 0;
+  ok = ok && write(busy_fd, "x", 1) == -1 && errno == EPERM;
+  if (busy_fd >= 0) { close(busy_fd); }
+
+  printf("[spore] memfd seals: %s seals=0x%x\n", ok ? "PASS" : "FAIL", seals);
+  return ok;
+}
+
 static int growdown_mmap_regression(void) {
 #ifndef MAP_GROWSDOWN
 #define MAP_GROWSDOWN 0x0100
@@ -1892,10 +2104,35 @@ static int growdown_mmap_regression(void) {
   char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN, -1, 0);
   int ok = map != MAP_FAILED;
   if (ok) {
-    map[-1] = 'g';
-    ok = map[-1] == 'g' && munmap(map - 4096, 8192) == 0;
+    char *low = map - 3 * 4096;
+    low[0] = 'g';
+    ok = low[0] == 'g' && munmap(low, 4 * 4096) == 0;
   }
-  printf("[spore] growdown mmap one-page fault: %s\n", ok ? "PASS" : "FAIL");
+  printf("[spore] growdown mmap multi-page fault: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
+static int mmap_fixed_noreplace_regression(void) {
+  char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  int ok = map != MAP_FAILED;
+  errno = 0;
+  void *again = ok ? mmap(map, 4096, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0)
+                   : MAP_FAILED;
+  ok = ok && again == MAP_FAILED && errno == EEXIST;
+  if (map != MAP_FAILED) { ok = ok && munmap(map, 4096) == 0; }
+  printf("[spore] mmap fixed-noreplace collision: %s errno=%d\n", ok ? "PASS" : "FAIL", errno);
+  return ok;
+}
+
+static int mmap_noreserve_regression(void) {
+  char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  int ok = map != MAP_FAILED;
+  if (ok) {
+    map[0] = 'N';
+    ok = map[0] == 'N' && munmap(map, 4096) == 0;
+  }
+  printf("[spore] mmap noreserve anonymous: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
@@ -2111,10 +2348,16 @@ int main(void) {
   ok_all = ok_all && signal_altstack_regression();
   ok_all = ok_all && signal_interrupted_read_regression();
   ok_all = ok_all && signal_restart_read_regression();
+  ok_all = ok_all && signal_restart_futex_regression();
   ok_all = ok_all && signal_nested_regression();
   ok_all = ok_all && shared_mmap_regression();
   ok_all = ok_all && shared_anon_mmap_fork_regression();
+  ok_all = ok_all && shm_open_path_mmap_regression();
+  ok_all = ok_all && memfd_shared_mmap_regression();
+  ok_all = ok_all && memfd_seals_regression();
   ok_all = ok_all && growdown_mmap_regression();
+  ok_all = ok_all && mmap_fixed_noreplace_regression();
+  ok_all = ok_all && mmap_noreserve_regression();
   ok_all = ok_all && fork_latency_profile();
   ok_all = ok_all && fork_pressure_regression();
 

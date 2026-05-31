@@ -273,13 +273,20 @@ size_t proc_loadavg_text(char *dst, size_t cap) {
   size_t len = 0;
   uint64_t runnable = 0;
   uint64_t total = 0;
+  uint64_t avg[3] = {0, 0, 0};
+  cell_loadavg_scaled(avg);
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->domain == NULL) { continue; }
     ++total;
     if (thread->state == THREAD_RUNNABLE) { ++runnable; }
   }
-  proc_append_str(dst, cap, &len, "0.00 0.00 0.00 ");
+  for (size_t i = 0; i < 3; ++i) {
+    proc_append_u64(dst, cap, &len, avg[i] / 2048);
+    proc_append_char(dst, cap, &len, '.');
+    proc_append_u64_pad(dst, cap, &len, ((avg[i] % 2048) * 100) / 2048, 2);
+    proc_append_char(dst, cap, &len, ' ');
+  }
   proc_append_u64(dst, cap, &len, runnable);
   proc_append_char(dst, cap, &len, '/');
   proc_append_u64(dst, cap, &len, total);

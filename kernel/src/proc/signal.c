@@ -97,7 +97,7 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
 
 static bool wait_reason_is_restartable(enum wait_reason reason) {
   return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
-         reason == WAIT_INOTIFY;
+         reason == WAIT_INOTIFY || reason == WAIT_FUTEX;
 }
 
 bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
