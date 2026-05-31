@@ -328,7 +328,7 @@ bool cell_tty_stdin_readable(void) {
 
 static struct thread *tty_signal_target_for_domain(struct domain *domain) {
   struct thread *fallback = NULL;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state == THREAD_UNUSED || thread->domain != domain) { continue; }
     if (fallback == NULL) { fallback = thread; }
@@ -343,7 +343,7 @@ static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
   int pgrp = cell_tty_foreground_pgrp();
   if (pgrp <= 0) { return; }
   struct thread *interrupted = cell_current_thread_internal();
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used || domain->zombie || domain->pgrp_id != pgrp) { continue; }
     struct thread *thread = tty_signal_target_for_domain(domain);
@@ -360,7 +360,7 @@ void cell_wake_stdin(struct trap_frame *frame) {
   tty_deliver_pending_signal_to_foreground(frame);
   cell_wake_poll_waiters_internal();
   cell_wake_epoll_waiters_internal();
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_STDIN) { continue; }
     int64_t n = cell_tty_read_to_user(thread->domain, thread->stdin_buf, thread->stdin_len);

@@ -2,6 +2,7 @@
 
 #include "kstr.h"
 #include "mem.h"
+#include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
@@ -22,10 +23,34 @@ enum {
   CELL_S_IFIFO = 0010000,
 };
 
-static struct open_file open_files[MAX_OPEN_FILES];
+static struct open_file *open_files;
+static size_t open_file_capacity;
 
-void cell_fd_table_reset(void) {
-  kmemset(open_files, 0, sizeof(open_files));
+static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
+  if (count == 0 || elem_size == 0) { return NULL; }
+  uint64_t bytes = (uint64_t)count * elem_size;
+  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) { return NULL; }
+  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
+  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
+  return ptr;
+}
+
+bool cell_fd_table_reset(size_t capacity, uint64_t hhdm_offset) {
+  if (capacity == 0 || capacity > MAX_OPEN_FILES) { return false; }
+  if (open_files == NULL || open_file_capacity != capacity) {
+    open_files = alloc_table(capacity, sizeof(*open_files), hhdm_offset);
+    if (open_files == NULL) { return false; }
+    open_file_capacity = capacity;
+  } else {
+    kmemset(open_files, 0, open_file_capacity * sizeof(*open_files));
+  }
+  return true;
+}
+
+size_t cell_open_file_capacity(void) {
+  return open_file_capacity;
 }
 
 int cell_find_free_fd(struct domain *domain, int start) {
@@ -37,7 +62,7 @@ int cell_find_free_fd(struct domain *domain, int start) {
 }
 
 struct open_file *cell_alloc_open_file(void) {
-  for (size_t i = 0; i < MAX_OPEN_FILES; ++i) {
+  for (size_t i = 0; i < open_file_capacity; ++i) {
     if (!open_files[i].used) {
       kmemset(&open_files[i], 0, sizeof(open_files[i]));
       open_files[i].used = true;

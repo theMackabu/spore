@@ -1709,6 +1709,29 @@ static int fork_latency_profile(void) {
   return 1;
 }
 
+static int fork_pressure_regression(void) {
+  enum { CHILDREN = 32 };
+  pid_t pids[CHILDREN];
+  int ok = 1;
+  int spawned = 0;
+  for (int i = 0; i < CHILDREN; ++i) {
+    pid_t pid = fork();
+    if (pid == 0) { exit_group(0); }
+    if (pid < 0) {
+      ok = 0;
+      break;
+    }
+    pids[spawned++] = pid;
+  }
+  for (int i = 0; i < spawned; ++i) {
+    int status = 0;
+    pid_t got = waitpid(pids[i], &status, 0);
+    if (got != pids[i] || !WIFEXITED(status) || WEXITSTATUS(status) != 0) { ok = 0; }
+  }
+  printf("[spore] fork pressure: %s children=%d/%d\n", ok ? "PASS" : "FAIL", spawned, CHILDREN);
+  return ok;
+}
+
 static int phase_d_fs_demo(void) {
   int ok = 1;
   if (mkdir("/tmp/spore-demo-d", 0777) != 0) { ok = 0; }
@@ -1837,6 +1860,7 @@ int main(void) {
   ok_all = ok_all && ok_v3f;
   ok_all = ok_all && absolute_sleep_regression();
   ok_all = ok_all && fork_latency_profile();
+  ok_all = ok_all && fork_pressure_regression();
 
   if (after_touch <= before || after_free >= after_touch) { ok_all = 0; }
   if (n <= 0 || strstr(buf, "Spore") == NULL) { ok_all = 0; }

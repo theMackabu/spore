@@ -1,10 +1,8 @@
 #pragma once
 
 #include "arch/aarch64/regs.h"
-#include "elf/loader.h"
 #include "mm/vma.h"
 #include "mm/vmm.h"
-#include "ramfs.h"
 #include "vfs.h"
 
 #include <stdbool.h>
@@ -12,12 +10,12 @@
 #include <stdint.h>
 
 enum {
-  MAX_DOMAINS = 16,
-  MAX_THREADS = 16,
+  MAX_DOMAINS = 1024,
+  MAX_THREADS = 2048,
   MAX_CELLS = MAX_THREADS,
   MAX_SNAPSHOTS = 8,
   MAX_FDS = 64,
-  MAX_OPEN_FILES = 256,
+  MAX_OPEN_FILES = 4096,
   CELL_TCP_RX_CAP = 262144,
   CELL_TCP_TX_CAP = 1460,
   CELL_TCP_TX_QUEUE_CAP = 128,
@@ -368,7 +366,8 @@ struct user_address_space *cell_domain_as(struct domain *domain);
 const struct user_address_space *cell_domain_as_const(const struct domain *domain);
 struct vma_list *cell_domain_vmas(struct domain *domain);
 const struct vma_list *cell_domain_vmas_const(const struct domain *domain);
-void cell_mm_reset(void);
+bool cell_mm_reset(size_t capacity, uint64_t hhdm_offset);
+size_t cell_mm_capacity(void);
 struct process_mm *cell_mm_from_owned(struct user_address_space *as, struct vma_list *vmas);
 struct process_mm *cell_mm_clone_cow(struct process_mm *src);
 struct process_mm *cell_mm_retain(struct process_mm *mm);
@@ -517,6 +516,7 @@ bool cell_remove_vma(uint64_t start, uint64_t end);
 bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
 size_t cell_resident_pages(uint64_t start, uint64_t end);
 bool cell_memory_accounting(const struct domain *domain, struct cell_memory_accounting *out);
+bool cell_proc_info_for_pid(int pid, struct proc_info *out);
 size_t cell_proc_info(struct proc_info *out, size_t max);
 uint64_t cell_uptime_ticks(void);
 uint64_t cell_idle_ticks(void);

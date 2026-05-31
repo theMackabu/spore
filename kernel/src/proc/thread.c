@@ -3,6 +3,7 @@
 #include "arch/aarch64/smp.h"
 #include "kprintf.h"
 #include "mem.h"
+#include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
 
@@ -13,7 +14,8 @@ enum {
   EINVAL = 22,
 };
 
-static struct thread threads[MAX_THREADS];
+static struct thread *threads;
+static size_t thread_capacity;
 static int next_thread_id = 1;
 
 static void poweroff(void) {
@@ -25,9 +27,32 @@ static void poweroff(void) {
                    : "x0", "memory");
 }
 
-void cell_thread_reset(void) {
-  kmemset(threads, 0, sizeof(threads));
+static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
+  if (count == 0 || elem_size == 0) { return NULL; }
+  uint64_t bytes = (uint64_t)count * elem_size;
+  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) { return NULL; }
+  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
+  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
+  return ptr;
+}
+
+bool cell_thread_reset(size_t capacity, uint64_t hhdm_offset) {
+  if (capacity == 0 || capacity > MAX_THREADS) { return false; }
+  if (threads == NULL || thread_capacity != capacity) {
+    threads = alloc_table(capacity, sizeof(*threads), hhdm_offset);
+    if (threads == NULL) { return false; }
+    thread_capacity = capacity;
+  } else {
+    kmemset(threads, 0, thread_capacity * sizeof(*threads));
+  }
   next_thread_id = 1;
+  return true;
+}
+
+size_t cell_thread_capacity(void) {
+  return thread_capacity;
 }
 
 struct domain *cell_current_domain_internal(void) {
@@ -51,15 +76,18 @@ bool cell_scheduler_waiting_for_interrupt(void) {
 }
 
 struct thread *cell_thread_slot(size_t index) {
-  return index < MAX_THREADS ? &threads[index] : NULL;
+  return index < thread_capacity ? &threads[index] : NULL;
 }
 
 size_t cell_thread_index(const struct thread *thread) {
-  return thread == NULL ? MAX_THREADS : (size_t)(thread - threads);
+  if (thread == NULL || threads == NULL || thread < threads || thread >= threads + thread_capacity) {
+    return thread_capacity;
+  }
+  return (size_t)(thread - threads);
 }
 
 struct thread *cell_alloc_thread(struct domain *domain) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < thread_capacity; ++i) {
     if (threads[i].state == THREAD_UNUSED) {
       kmemset(&threads[i], 0, sizeof(threads[i]));
       threads[i].tid = next_thread_id++;
@@ -87,7 +115,7 @@ void cell_release_thread(struct thread *thread) {
 }
 
 struct thread *cell_thread_for_domain(struct domain *domain) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < thread_capacity; ++i) {
     if (threads[i].state != THREAD_UNUSED && threads[i].domain == domain) { return &threads[i]; }
   }
   return NULL;
@@ -95,7 +123,7 @@ struct thread *cell_thread_for_domain(struct domain *domain) {
 
 size_t cell_runnable_or_blocked_threads_in_domain(const struct domain *domain) {
   size_t count = 0;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < thread_capacity; ++i) {
     if (threads[i].domain == domain && (threads[i].state == THREAD_RUNNABLE || threads[i].state == THREAD_BLOCKED)) {
       ++count;
     }
@@ -104,7 +132,7 @@ size_t cell_runnable_or_blocked_threads_in_domain(const struct domain *domain) {
 }
 
 void cell_wake_vfork_parent_of(int child_id) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < thread_capacity; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL) { continue; }
     if (thread->state == THREAD_BLOCKED && thread->wait_reason == WAIT_VFORK && thread->wait_target == child_id) {
@@ -122,7 +150,7 @@ int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame) {
 }
 
 void cell_wake_sleep_waiters(uint64_t scheduler_ticks) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < thread_capacity; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SLEEP) { continue; }
     if (scheduler_ticks < thread->sleep_deadline_tick) { continue; }
@@ -151,7 +179,7 @@ static void restore_thread(struct thread *thread, struct trap_frame *frame, stru
 
 static void cleanup_reaped_current_domain(struct domain *old_domain, struct thread *next) {
   if (old_domain == NULL || old_domain == next->domain || !old_domain->zombie || old_domain->parent_id != 0) { return; }
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < thread_capacity; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == old_domain && thread->running_cpu >= 0) { return; }
   }
@@ -175,8 +203,8 @@ void cell_schedule(struct trap_frame *frame) {
   size_t start = current_thread == NULL ? 0 : cell_thread_index(current_thread) + 1;
   for (;;) {
     if (current_thread != NULL && current_thread->state == THREAD_RUNNABLE) {
-      for (size_t n = 0; n < MAX_THREADS; ++n) {
-        struct thread *candidate = cell_thread_slot((start + n) % MAX_THREADS);
+      for (size_t n = 0; n < thread_capacity; ++n) {
+        struct thread *candidate = cell_thread_slot((start + n) % thread_capacity);
         if (candidate != NULL && candidate->state == THREAD_RUNNABLE &&
             (candidate->running_cpu < 0 || candidate->running_cpu == (int)cpu)) {
           if (current_thread != NULL && current_thread != candidate && current_thread->running_cpu == (int)cpu) {
@@ -190,8 +218,8 @@ void cell_schedule(struct trap_frame *frame) {
         }
       }
     }
-    for (size_t n = 0; n < MAX_THREADS; ++n) {
-      struct thread *candidate = cell_thread_slot((start + n) % MAX_THREADS);
+    for (size_t n = 0; n < thread_capacity; ++n) {
+      struct thread *candidate = cell_thread_slot((start + n) % thread_capacity);
       if (candidate != NULL && candidate->state == THREAD_RUNNABLE && candidate->running_cpu < 0) {
         if (current_thread != NULL && current_thread->running_cpu == (int)cpu) { current_thread->running_cpu = -1; }
         smp_set_current_thread_slot(cpu, candidate);
@@ -204,7 +232,7 @@ void cell_schedule(struct trap_frame *frame) {
 
     bool has_blocked = false;
     bool has_running_elsewhere = false;
-    for (size_t i = 0; i < MAX_THREADS; ++i) {
+    for (size_t i = 0; i < thread_capacity; ++i) {
       struct thread *thread = cell_thread_slot(i);
       if (thread != NULL && thread->state == THREAD_BLOCKED) {
         has_blocked = true;

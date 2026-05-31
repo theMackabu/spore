@@ -1204,7 +1204,7 @@ static struct open_file *unix_file_for_fd(struct domain *domain, int fd) {
 }
 
 static struct open_file *unix_listener_for_path(const char *path) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -1431,7 +1431,7 @@ static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
 
 static bool udp_local_port_in_use(uint16_t port, const struct open_file *except) {
   if (port == 0) { return false; }
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -1513,7 +1513,7 @@ static uint32_t tcp_initial_seq(struct domain *domain, int fd) {
 }
 
 static bool tcp_local_port_in_use(uint16_t port, const struct open_file *except) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -1993,7 +1993,7 @@ static bool socket_matches_udp(struct open_file *file, uint32_t src_ip, uint16_t
 }
 
 bool cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -2007,7 +2007,7 @@ bool cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
 }
 
 bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -2028,7 +2028,7 @@ bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16
 }
 
 bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -2064,7 +2064,7 @@ static uint16_t tcp_pending_for_listener(const struct open_file *listener) {
 }
 
 static struct open_file *tcp_listener_for_port(uint16_t port) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -2259,7 +2259,7 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
 void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
                           uint16_t window, uint8_t flags, const void *options, size_t options_len,
                           const void *payload, size_t len) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -2284,7 +2284,7 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
 }
 
 void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len) {
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
@@ -2315,7 +2315,7 @@ static void clear_socket_wait(struct thread *thread) {
 }
 
 static void wake_socket_timeout_waiters(uint64_t now_ticks) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
         !thread->socket_has_deadline || now_ticks < thread->socket_deadline_tick) {
@@ -2328,7 +2328,7 @@ static void wake_socket_timeout_waiters(uint64_t now_ticks) {
 }
 
 static void wake_socket_waiters(struct open_file *file) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
         thread->domain == NULL) {
@@ -2443,7 +2443,7 @@ static void tcp_timer_keepalive(struct open_file *file, uint64_t now_ticks) {
 
 void cell_socket_timer_tick(uint64_t now_ticks) {
   wake_socket_timeout_waiters(now_ticks);
-  for (size_t d = 0; d < MAX_DOMAINS; ++d) {
+  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {

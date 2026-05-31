@@ -11,8 +11,10 @@
 extern void arch_fp_restore(const struct fp_state *state);
 
 enum {
+  EAGAIN = 11,
   ECHILD = 10,
   EFAULT = 14,
+  ENOMEM = 12,
   WNOHANG = 1,
   CELL_O_CLOEXEC = 02000000,
   CLONE_SETTLS = 0x00080000,
@@ -26,7 +28,7 @@ static struct domain *current_domain(void) {
 }
 
 static bool domain_has_running_thread(const struct domain *domain) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain && thread->running_cpu >= 0) { return true; }
   }
@@ -106,7 +108,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   domain->term_signal = 0;
   domain->zombie = true;
   cell_close_all_fds(domain);
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
       if (thread->running_cpu >= 0) {
@@ -128,11 +130,12 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
 int cell_fork_current(struct trap_frame *frame) {
   struct domain *parent = current_domain();
   struct domain *child_domain = cell_alloc_domain();
-  if (parent == NULL || parent->mm == NULL || child_domain == NULL) { return -12; }
+  if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
+  if (child_domain == NULL) { return -EAGAIN; }
   struct thread *child_thread = cell_alloc_thread(child_domain);
   if (child_thread == NULL) {
     child_domain->used = false;
-    return -12;
+    return -EAGAIN;
   }
   cell_save_current(frame);
   struct process_mm *child_mm = cell_mm_clone_cow(parent->mm);
@@ -140,7 +143,7 @@ int cell_fork_current(struct trap_frame *frame) {
     if (child_mm != NULL) { cell_mm_release(child_mm); }
     child_thread->state = THREAD_UNUSED;
     child_domain->used = false;
-    return -12;
+    return -ENOMEM;
   }
   cell_copy_domain_metadata(child_domain, parent);
   cell_copy_fd_table(child_domain, parent);
@@ -159,19 +162,19 @@ int cell_fork_current(struct trap_frame *frame) {
 int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags, uint64_t parent_tid, uint64_t tls,
                        uint64_t child_tid) {
   struct domain *parent = current_domain();
-  if (parent == NULL || parent->mm == NULL) { return -12; }
+  if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
   struct domain *child = cell_alloc_domain();
-  if (child == NULL) { return -12; }
+  if (child == NULL) { return -EAGAIN; }
   struct thread *child_thread = cell_alloc_thread(child);
   if (child_thread == NULL) {
     child->used = false;
-    return -12;
+    return -EAGAIN;
   }
   cell_save_current(frame);
   if (!cell_domain_set_mm(child, cell_mm_retain(parent->mm))) {
     child_thread->state = THREAD_UNUSED;
     child->used = false;
-    return -12;
+    return -ENOMEM;
   }
   cell_copy_domain_metadata(child, parent);
   cell_copy_fd_table(child, parent);
@@ -218,7 +221,7 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   struct domain *domain = current_domain();
   if (domain == NULL || cell_current_thread_internal() == NULL || newsp == 0) { return -22; }
   struct thread *thread = cell_alloc_thread(domain);
-  if (thread == NULL) { return -12; }
+  if (thread == NULL) { return -EAGAIN; }
   cell_save_current(frame);
   thread->state = THREAD_RUNNABLE;
   thread->tf = cell_current_thread_internal()->tf;
@@ -249,7 +252,7 @@ int cell_set_tid_address_current(uint64_t clear_child_tid) {
 }
 
 static struct domain *find_waitable_child(int parent_id, int pid) {
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain != NULL && domain->used && domain->zombie && domain->parent_id == parent_id &&
         (pid <= 0 || domain->id == pid)) {
@@ -260,7 +263,7 @@ static struct domain *find_waitable_child(int parent_id, int pid) {
 }
 
 static bool has_child(int parent_id, int pid) {
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain != NULL && domain->used && domain->parent_id == parent_id && (pid <= 0 || domain->id == pid)) {
       return true;
@@ -314,7 +317,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
 
   struct process_mm *new_mm = cell_mm_from_owned(as, vmas);
   if (new_mm == NULL) { return false; }
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
       thread->state = THREAD_UNUSED;

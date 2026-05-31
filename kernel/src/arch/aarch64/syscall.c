@@ -518,9 +518,11 @@ l_spore_shutdown:
 l_spore_procinfo: {
   size_t max = a1 / sizeof(struct proc_info);
   if (a0 == 0 || max == 0) { return (int64_t)cell_proc_info(NULL, 0); }
-  struct proc_info infos[MAX_THREADS];
-  size_t count = cell_proc_info(infos, max);
-  size_t copy = count < max ? count : max;
+  enum { PROCINFO_CHUNK = 64 };
+  static struct proc_info infos[PROCINFO_CHUNK];
+  size_t request = max < PROCINFO_CHUNK ? max : PROCINFO_CHUNK;
+  size_t count = cell_proc_info(infos, request);
+  size_t copy = count < request ? count : request;
   return syscall_user_writable(a0, copy * sizeof(infos[0])) &&
              vmm_copy_to_user(syscall_active_as(), a0, infos, copy * sizeof(infos[0]))
            ? (int64_t)count

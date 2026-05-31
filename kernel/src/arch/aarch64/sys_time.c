@@ -179,16 +179,12 @@ int64_t sys_getrusage(int who, uint64_t usage_addr) {
   struct rusage64 usage;
   kmemset(&usage, 0, sizeof(usage));
   if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
-    struct proc_info procs[MAX_DOMAINS];
-    size_t count = cell_proc_info(procs, MAX_DOMAINS);
-    int pid = cell_current_pid();
-    for (size_t i = 0; i < count && i < MAX_DOMAINS; ++i) {
-      if ((int)procs[i].pid != pid) { continue; }
-      ticks_to_timeval(procs[i].cpu_ticks, &usage.ru_utime);
-      usage.ru_maxrss = (int64_t)((procs[i].resident_pages * PAGE_SIZE) / 1024);
-      usage.ru_minflt = (int64_t)procs[i].minor_faults;
-      usage.ru_majflt = (int64_t)procs[i].major_faults;
-      break;
+    struct proc_info proc;
+    if (cell_proc_info_for_pid(cell_current_pid(), &proc)) {
+      ticks_to_timeval(proc.cpu_ticks, &usage.ru_utime);
+      usage.ru_maxrss = (int64_t)((proc.resident_pages * PAGE_SIZE) / 1024);
+      usage.ru_minflt = (int64_t)proc.minor_faults;
+      usage.ru_majflt = (int64_t)proc.major_faults;
     }
   }
   return vmm_copy_to_user(syscall_active_as(), usage_addr, &usage, sizeof(usage)) ? 0 : -(int64_t)EFAULT;

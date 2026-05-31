@@ -3,6 +3,7 @@
 #include "arch/aarch64/smp.h"
 #include "exec/stack.h"
 #include "kprintf.h"
+#include "mm/pmm.h"
 #include "net.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
@@ -22,17 +23,50 @@ static struct domain *current_domain(void) {
   return cell_current_domain_internal();
 }
 
+static size_t clamp_size(size_t value, size_t min, size_t max) {
+  if (value < min) { return min; }
+  if (value > max) { return max; }
+  return value;
+}
+
+static void derive_table_sizes(size_t *domains, size_t *threads, size_t *mms, size_t *open_files) {
+  uint64_t pages = pmm_total_pages();
+  size_t domain_count = clamp_size((size_t)(pages / 4096), 64, MAX_DOMAINS);
+  size_t thread_count = clamp_size(domain_count * 2, 128, MAX_THREADS);
+  size_t mm_count = domain_count + MAX_SNAPSHOTS;
+  if (mm_count > MAX_DOMAINS + MAX_SNAPSHOTS) { mm_count = MAX_DOMAINS + MAX_SNAPSHOTS; }
+  size_t open_file_count = clamp_size(domain_count * 4, 512, MAX_OPEN_FILES);
+  *domains = domain_count;
+  *threads = thread_count;
+  *mms = mm_count;
+  *open_files = open_file_count;
+}
+
+static void halt_table_init_failure(const char *name) {
+  kprintf("[spore] failed to allocate %s table\n", name);
+  for (;;) {
+    __asm__ volatile("wfe");
+  }
+}
+
 void cell_system_init(uint64_t hhdm_offset) {
   vma_set_hhdm_offset(hhdm_offset);
-  cell_mm_reset();
-  cell_domain_reset();
-  cell_thread_reset();
+  size_t domain_count = 0;
+  size_t thread_count = 0;
+  size_t mm_count = 0;
+  size_t open_file_count = 0;
+  derive_table_sizes(&domain_count, &thread_count, &mm_count, &open_file_count);
+  if (!cell_mm_reset(mm_count, hhdm_offset)) { halt_table_init_failure("mm"); }
+  if (!cell_domain_reset(domain_count, hhdm_offset)) { halt_table_init_failure("domain"); }
+  if (!cell_thread_reset(thread_count, hhdm_offset)) { halt_table_init_failure("thread"); }
   cell_snapshot_reset();
-  cell_fd_table_reset();
+  if (!cell_fd_table_reset(open_file_count, hhdm_offset)) { halt_table_init_failure("open-file"); }
   cell_pipe_reset();
   scheduler_ticks = 0;
   scheduler_idle_ticks = 0;
   cell_tty_reset();
+  kprintf("[spore] process tables: domains=%u threads=%u mms=%u open-files=%u\n", (unsigned)domain_count,
+          (unsigned)thread_count, (unsigned)mm_count, (unsigned)open_file_count);
   // v2 Phase A object model: domains own isolation/policy state, threads own
   // EL0 execution state. Kernel mutation is serialized by the big kernel lock;
   // user execution may run on multiple CPUs.
@@ -175,7 +209,7 @@ void cell_note_unsupported_ioctl(uint64_t request) {
 
 int cell_proc_pid_at(size_t index) {
   size_t seen = 0;
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
     if (seen == index) { return domain->id; }

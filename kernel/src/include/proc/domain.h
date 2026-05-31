@@ -2,7 +2,8 @@
 
 #include "cell.h"
 
-void cell_domain_reset(void);
+bool cell_domain_reset(size_t capacity, uint64_t hhdm_offset);
+size_t cell_domain_capacity(void);
 struct domain *cell_current_domain_internal(void);
 struct domain *cell_domain_slot(size_t index);
 size_t cell_domain_index(const struct domain *domain);

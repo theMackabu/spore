@@ -273,7 +273,7 @@ size_t proc_loadavg_text(char *dst, size_t cap) {
   size_t len = 0;
   uint64_t runnable = 0;
   uint64_t total = 0;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->domain == NULL) { continue; }
     ++total;
@@ -438,7 +438,7 @@ size_t proc_fs_tmp_text(char *dst, size_t cap) {
 
 static uint64_t total_domain_cpu_ticks(void) {
   uint64_t ticks = 0;
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain != NULL && domain->used) { ticks += domain->cpu_ticks; }
   }
@@ -457,7 +457,7 @@ size_t proc_stat_text(char *dst, size_t cap) {
   }
   uint64_t running = 0;
   uint64_t blocked = 0;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->state == THREAD_RUNNABLE) {
       ++running;

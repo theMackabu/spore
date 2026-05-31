@@ -58,7 +58,7 @@ static const char *domain_state_text(const struct domain *domain) {
   if (domain == NULL) { return "unknown"; }
   if (domain->zombie) { return "zombie"; }
   bool blocked = false;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->domain != domain || thread->state == THREAD_UNUSED) { continue; }
     if (thread->state == THREAD_RUNNABLE) { return "running"; }
@@ -77,7 +77,7 @@ static char domain_proc_state_char(const struct domain *domain) {
 
 static const char *domain_wait_text(const struct domain *domain) {
   if (domain == NULL || domain->zombie) { return "-"; }
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain && thread->state == THREAD_BLOCKED) {
       return wait_reason_text(thread->wait_reason);
@@ -92,7 +92,7 @@ static size_t procinfo_text(char *dst, size_t cap) {
                   "pid ppid state wait vsz_pages rss_pages minflt majflt cpu_ticks age_ticks budget_remaining "
                   "budget_max unsupported_syscalls last_unsupported_syscall unsupported_ioctls last_unsupported_ioctl "
                   "name exec_path cwd cmdline\n");
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
     struct cell_memory_accounting mem = {0};
@@ -395,39 +395,51 @@ static int64_t read_generated_pid_device(struct open_file *file, struct domain *
   return (int64_t)chunk;
 }
 
+static void fill_proc_info(const struct domain *domain, struct proc_info *out) {
+  struct cell_memory_accounting mem = {0};
+  (void)cell_memory_accounting(domain, &mem);
+  struct proc_info info = {
+    .pid = (uint32_t)domain->id,
+    .tid = (uint32_t)(cell_thread_for_domain((struct domain *)domain) == NULL
+                        ? 0
+                        : cell_thread_for_domain((struct domain *)domain)->tid),
+    .ppid = (uint32_t)domain->parent_id,
+    .state = (uint32_t)(domain->zombie
+                          ? THREAD_ZOMBIE
+                          : (str_eq(domain_state_text(domain), "blocked") ? THREAD_BLOCKED : THREAD_RUNNABLE)),
+    .wait_reason = 0,
+    .resident_pages = mem.resident_pages,
+    .virtual_pages = mem.virtual_pages,
+    .minor_faults = mem.minor_faults,
+    .major_faults = mem.major_faults,
+    .cpu_ticks = domain->cpu_ticks,
+    .start_ticks = domain->start_ticks,
+    .remaining_ticks = domain->budget.remaining_ticks,
+    .max_ticks = domain->budget.max_ticks,
+  };
+  copy_cstr(info.name, sizeof(info.name), domain->name);
+  copy_cstr(info.exec_path, sizeof(info.exec_path), domain->exec_path);
+  copy_cstr(info.argv0, sizeof(info.argv0), domain->argv0);
+  copy_cstr(info.cmdline, sizeof(info.cmdline), domain->cmdline);
+  copy_cstr(info.cwd, sizeof(info.cwd), domain->cwd);
+  *out = info;
+}
+
+bool cell_proc_info_for_pid(int pid, struct proc_info *out) {
+  if (out == NULL) { return false; }
+  const struct domain *domain = cell_find_domain(pid);
+  if (domain == NULL || !domain->used) { return false; }
+  fill_proc_info(domain, out);
+  return true;
+}
+
 size_t cell_proc_info(struct proc_info *out, size_t max) {
   size_t count = 0;
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
     if (count < max && out != NULL) {
-      struct cell_memory_accounting mem = {0};
-      (void)cell_memory_accounting(domain, &mem);
-      struct proc_info info = {
-        .pid = (uint32_t)domain->id,
-        .tid = (uint32_t)(cell_thread_for_domain((struct domain *)domain) == NULL
-                            ? 0
-                            : cell_thread_for_domain((struct domain *)domain)->tid),
-        .ppid = (uint32_t)domain->parent_id,
-        .state = (uint32_t)(domain->zombie
-                              ? THREAD_ZOMBIE
-                              : (str_eq(domain_state_text(domain), "blocked") ? THREAD_BLOCKED : THREAD_RUNNABLE)),
-        .wait_reason = 0,
-        .resident_pages = mem.resident_pages,
-        .virtual_pages = mem.virtual_pages,
-        .minor_faults = mem.minor_faults,
-        .major_faults = mem.major_faults,
-        .cpu_ticks = domain->cpu_ticks,
-        .start_ticks = domain->start_ticks,
-        .remaining_ticks = domain->budget.remaining_ticks,
-        .max_ticks = domain->budget.max_ticks,
-      };
-      copy_cstr(info.name, sizeof(info.name), domain->name);
-      copy_cstr(info.exec_path, sizeof(info.exec_path), domain->exec_path);
-      copy_cstr(info.argv0, sizeof(info.argv0), domain->argv0);
-      copy_cstr(info.cmdline, sizeof(info.cmdline), domain->cmdline);
-      copy_cstr(info.cwd, sizeof(info.cwd), domain->cwd);
-      out[count] = info;
+      fill_proc_info(domain, &out[count]);
     }
     ++count;
   }

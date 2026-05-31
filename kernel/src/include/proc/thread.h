@@ -2,7 +2,8 @@
 
 #include "cell.h"
 
-void cell_thread_reset(void);
+bool cell_thread_reset(size_t capacity, uint64_t hhdm_offset);
+size_t cell_thread_capacity(void);
 struct domain *cell_current_domain_internal(void);
 struct thread *cell_current_thread_internal(void);
 void cell_set_current_thread(struct thread *thread);

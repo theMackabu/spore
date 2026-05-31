@@ -2,6 +2,7 @@
 
 #include "kstr.h"
 #include "mem.h"
+#include "mm/pmm.h"
 #include "proc/fd.h"
 #include "proc/process.h"
 #include "proc/thread.h"
@@ -13,20 +14,47 @@ enum {
   EINVAL = 22,
 };
 
-static struct domain domains[MAX_DOMAINS];
+static struct domain *domains;
+static size_t domain_capacity;
 static int next_domain_id = 1;
 
-void cell_domain_reset(void) {
-  kmemset(domains, 0, sizeof(domains));
+static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
+  if (count == 0 || elem_size == 0) { return NULL; }
+  uint64_t bytes = (uint64_t)count * elem_size;
+  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) { return NULL; }
+  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
+  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
+  return ptr;
+}
+
+bool cell_domain_reset(size_t capacity, uint64_t hhdm_offset) {
+  if (capacity == 0 || capacity > MAX_DOMAINS) { return false; }
+  if (domains == NULL || domain_capacity != capacity) {
+    domains = alloc_table(capacity, sizeof(*domains), hhdm_offset);
+    if (domains == NULL) { return false; }
+    domain_capacity = capacity;
+  } else {
+    kmemset(domains, 0, domain_capacity * sizeof(*domains));
+  }
   next_domain_id = 1;
+  return true;
+}
+
+size_t cell_domain_capacity(void) {
+  return domain_capacity;
 }
 
 struct domain *cell_domain_slot(size_t index) {
-  return index < MAX_DOMAINS ? &domains[index] : NULL;
+  return index < domain_capacity ? &domains[index] : NULL;
 }
 
 size_t cell_domain_index(const struct domain *domain) {
-  return domain == NULL ? MAX_DOMAINS : (size_t)(domain - domains);
+  if (domain == NULL || domains == NULL || domain < domains || domain >= domains + domain_capacity) {
+    return domain_capacity;
+  }
+  return (size_t)(domain - domains);
 }
 
 uint32_t cell_domain_last_id(void) {
@@ -34,14 +62,14 @@ uint32_t cell_domain_last_id(void) {
 }
 
 struct domain *cell_find_domain(int id) {
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < domain_capacity; ++i) {
     if (domains[i].used && domains[i].id == id) { return &domains[i]; }
   }
   return NULL;
 }
 
 struct domain *cell_alloc_domain(void) {
-  for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+  for (size_t i = 0; i < domain_capacity; ++i) {
     if (!domains[i].used) {
       kmemset(&domains[i], 0, sizeof(domains[i]));
       domains[i].used = true;
@@ -94,14 +122,14 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
 void cell_destroy_domain(struct domain *domain) {
   int reparent_to = (domain != NULL && domain->id != 1 && cell_find_domain(1) != NULL) ? 1 : 0;
   if (domain != NULL) {
-    for (size_t i = 0; i < MAX_DOMAINS; ++i) {
+    for (size_t i = 0; i < cell_domain_capacity(); ++i) {
       struct domain *child = cell_domain_slot(i);
       if (child == NULL || !child->used || child->parent_id != domain->id) { continue; }
       child->parent_id = reparent_to;
       if (child->zombie && reparent_to != 0) { cell_wake_parent_of(child); }
     }
   }
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) {
       thread->state = THREAD_UNUSED;

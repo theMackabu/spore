@@ -2,7 +2,8 @@
 
 #include "cell.h"
 
-void cell_fd_table_reset(void);
+bool cell_fd_table_reset(size_t capacity, uint64_t hhdm_offset);
+size_t cell_open_file_capacity(void);
 int cell_find_free_fd(struct domain *domain, int start);
 struct open_file *cell_alloc_open_file(void);
 void cell_retain_open_file(struct open_file *file);

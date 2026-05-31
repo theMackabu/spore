@@ -5,14 +5,38 @@
 #include "proc/thread.h"
 #include "vfs.h"
 
-static struct process_mm process_mms[MAX_DOMAINS + MAX_SNAPSHOTS];
+static struct process_mm *process_mms;
+static size_t process_mm_capacity;
 
-void cell_mm_reset(void) {
-  kmemset(process_mms, 0, sizeof(process_mms));
+static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
+  if (count == 0 || elem_size == 0) { return NULL; }
+  uint64_t bytes = (uint64_t)count * elem_size;
+  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) { return NULL; }
+  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
+  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
+  return ptr;
+}
+
+bool cell_mm_reset(size_t capacity, uint64_t hhdm_offset) {
+  if (capacity == 0 || capacity > MAX_DOMAINS + MAX_SNAPSHOTS) { return false; }
+  if (process_mms == NULL || process_mm_capacity != capacity) {
+    process_mms = alloc_table(capacity, sizeof(*process_mms), hhdm_offset);
+    if (process_mms == NULL) { return false; }
+    process_mm_capacity = capacity;
+  } else {
+    kmemset(process_mms, 0, process_mm_capacity * sizeof(*process_mms));
+  }
+  return true;
+}
+
+size_t cell_mm_capacity(void) {
+  return process_mm_capacity;
 }
 
 static struct process_mm *alloc_mm(void) {
-  for (size_t i = 0; i < sizeof(process_mms) / sizeof(process_mms[0]); ++i) {
+  for (size_t i = 0; i < process_mm_capacity; ++i) {
     if (!process_mms[i].used) {
       kmemset(&process_mms[i], 0, sizeof(process_mms[i]));
       process_mms[i].used = true;

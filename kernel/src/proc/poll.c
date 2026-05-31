@@ -198,7 +198,7 @@ static void wake_epoll_waiters(void);
 static void wake_poll_waiters(void) {
   if (poll_waking) { return; }
   poll_waking = true;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_POLL ||
         thread->domain == NULL) {
@@ -224,7 +224,7 @@ void cell_wake_poll_waiters_internal(void) {
 }
 
 void cell_socket_wake_unix_accept_waiters(struct open_file *listener) {
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
         thread->domain == NULL) {
@@ -276,7 +276,7 @@ static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t event
 static void wake_epoll_waiters(void) {
   if (epoll_waking) { return; }
   epoll_waking = true;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_EPOLL ||
         thread->domain == NULL) {

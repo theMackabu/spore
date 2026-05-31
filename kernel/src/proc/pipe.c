@@ -203,7 +203,7 @@ static void clear_pipe_wait(struct thread *thread) {
 static void wake_pipe_waiters(void) {
   if (pipe_waking) { return; }
   pipe_waking = true;
-  for (size_t i = 0; i < MAX_THREADS; ++i) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_PIPE ||
         thread->domain == NULL) {
