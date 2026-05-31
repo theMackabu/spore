@@ -98,8 +98,7 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
         file->type == OPEN_EVENTFD) {
       revents |= CELL_POLLOUT;
     } else if (file->type == OPEN_SOCKET) {
-      if (file->socket_proto != IPPROTO_TCP ||
-          cell_tcp_socket_writable(file) || file->tcp_error != 0) {
+      if (file->socket_proto != IPPROTO_TCP || cell_tcp_socket_writable(file) || file->tcp_error != 0) {
         revents |= CELL_POLLOUT;
       }
     } else if (file->type == OPEN_PIPE) {

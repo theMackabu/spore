@@ -130,8 +130,8 @@ static int measure_user_string_array(uint64_t user, uint64_t *out_count, uint64_
   }
 }
 
-static bool exec_scratch_alloc(struct exec_scratch *scratch, uint64_t argv_cap, uint64_t env_cap,
-                               uint64_t data_cap, uint64_t hhdm_offset) {
+static bool exec_scratch_alloc(struct exec_scratch *scratch, uint64_t argv_cap, uint64_t env_cap, uint64_t data_cap,
+                               uint64_t hhdm_offset) {
   kmemset(scratch, 0, sizeof(*scratch));
   scratch->argv_cap = argv_cap;
   scratch->env_cap = env_cap;

@@ -234,9 +234,7 @@ void cell_schedule(struct trap_frame *frame) {
     bool has_running_elsewhere = false;
     for (size_t i = 0; i < thread_capacity; ++i) {
       struct thread *thread = cell_thread_slot(i);
-      if (thread != NULL && thread->state == THREAD_BLOCKED) {
-        has_blocked = true;
-      }
+      if (thread != NULL && thread->state == THREAD_BLOCKED) { has_blocked = true; }
       if (thread != NULL && thread->state == THREAD_RUNNABLE && thread->running_cpu >= 0 &&
           thread->running_cpu != (int)cpu) {
         has_running_elsewhere = true;

@@ -55,20 +55,10 @@ static void reply(int fd, int32_t rc, uint32_t flags) {
 
 static int compare_cert_time(const mbedtls_x509_time *cert, const struct tm *now) {
   const int current[] = {
-      now->tm_year + 1900,
-      now->tm_mon + 1,
-      now->tm_mday,
-      now->tm_hour,
-      now->tm_min,
-      now->tm_sec,
+    now->tm_year + 1900, now->tm_mon + 1, now->tm_mday, now->tm_hour, now->tm_min, now->tm_sec,
   };
   const int candidate[] = {
-      cert->year,
-      cert->mon,
-      cert->day,
-      cert->hour,
-      cert->min,
-      cert->sec,
+    cert->year, cert->mon, cert->day, cert->hour, cert->min, cert->sec,
   };
   for (size_t i = 0; i < sizeof(candidate) / sizeof(candidate[0]); ++i) {
     if (candidate[i] < current[i]) { return -1; }
@@ -124,8 +114,8 @@ static void handle_client(int fd, mbedtls_x509_crt *trust) {
 
   flags |= cert_time_flags(&chain);
   if (flags == 0) {
-    rc = mbedtls_x509_crt_verify_with_profile(&chain, trust, NULL, &mbedtls_x509_crt_profile_next, host, &flags,
-                                              NULL, NULL);
+    rc = mbedtls_x509_crt_verify_with_profile(&chain, trust, NULL, &mbedtls_x509_crt_profile_next, host, &flags, NULL,
+                                              NULL);
   } else {
     rc = MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
   }

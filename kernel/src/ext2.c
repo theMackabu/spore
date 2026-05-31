@@ -1089,8 +1089,8 @@ static struct child_cache_entry *child_cache_alloc_slot(void) {
   return entry;
 }
 
-static bool child_cache_store(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t name_len,
-                              uint32_t ino, const struct ext2_node *node) {
+static bool child_cache_store(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t name_len, uint32_t ino,
+                              const struct ext2_node *node) {
   if (name_len > EXT2_NAME_MAX) { return false; }
   struct child_cache_entry *entry = child_cache_find(fs, parent_ino, name, name_len);
   if (entry == NULL) { entry = child_cache_alloc_slot(); }
@@ -1313,7 +1313,9 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
   }
 
   uint32_t new_block = 0;
-  if (file_block_for_write(fs, dir, blocks, &new_block, true) != 0 || !read_block(fs, new_block, block)) { return false; }
+  if (file_block_for_write(fs, dir, blocks, &new_block, true) != 0 || !read_block(fs, new_block, block)) {
+    return false;
+  }
   kmemset(block, 0, fs->block_size);
   write_dir_record(block, ino, (uint16_t)fs->block_size, name_len, type, name);
   dir->size += fs->block_size;

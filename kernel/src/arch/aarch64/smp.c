@@ -109,7 +109,8 @@ void smp_init_topology(uint64_t hhdm_offset, const struct spore_cpu_entry *entri
 
   uint64_t boot_records_pa = pmm_alloc_zero_page();
   smp_cpus = alloc_zero_page_backed_bytes(sizeof(struct smp_cpu) * count);
-  smp_boot_records = boot_records_pa == 0 ? NULL : (struct smp_ap_boot_record *)(uintptr_t)(hhdm_offset + boot_records_pa);
+  smp_boot_records =
+    boot_records_pa == 0 ? NULL : (struct smp_ap_boot_record *)(uintptr_t)(hhdm_offset + boot_records_pa);
   smp_boot_records_pa = boot_records_pa;
   if (smp_cpus == NULL || smp_boot_records == NULL || sizeof(struct smp_ap_boot_record) * count > PAGE_SIZE) {
     smp_present_count = 1;
@@ -142,8 +143,7 @@ void smp_init_topology(uint64_t hhdm_offset, const struct spore_cpu_entry *entri
     smp_boot_records[cpu].stack_virt_top = smp_cpus[cpu].stack_virt_top;
   }
   smp_possible_count = smp_present_count;
-  kprintf("[spore] smp: topology has %u present CPU%s\n", smp_present_count,
-          smp_present_count == 1 ? "" : "s");
+  kprintf("[spore] smp: topology has %u present CPU%s\n", smp_present_count, smp_present_count == 1 ? "" : "s");
 }
 
 void smp_boot_parked_secondaries(uint64_t kernel_phys_base, uint64_t kernel_virt_base) {

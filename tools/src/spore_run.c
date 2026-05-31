@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -6,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -69,10 +69,14 @@ static const char *shell_commands[] = {
   "curl http://example.test:8080/\n",
   "curl -sS https://example.com/ > /tmp/https-example\n",
   "grep 'Example Domain' /tmp/https-example\n",
-  "p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_BADCERT_ACCEPTED__; curl -fsS https://expired.badssl.com/ >/tmp/badcert 2>/tmp/badcert.err && echo \"$p$q\"\n",
-  "/bin/dash -c 'grep certificate /tmp/badcert.err || { p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_BADCERT_REASON__; echo \"$p$q\"; }'\n",
-  "p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_HOSTNAME_ACCEPTED__; curl -fsS https://wrong.host.badssl.com/ >/tmp/badhost 2>/tmp/badhost.err && echo \"$p$q\"\n",
-  "/bin/dash -c 'grep certificate /tmp/badhost.err || { p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_HOSTNAME_REASON__; echo \"$p$q\"; }'\n",
+  "p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_BADCERT_ACCEPTED__; curl -fsS https://expired.badssl.com/ >/tmp/badcert "
+  "2>/tmp/badcert.err && echo \"$p$q\"\n",
+  "/bin/dash -c 'grep certificate /tmp/badcert.err || { p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_BADCERT_REASON__; echo "
+  "\"$p$q\"; }'\n",
+  "p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_HOSTNAME_ACCEPTED__; curl -fsS https://wrong.host.badssl.com/ >/tmp/badhost "
+  "2>/tmp/badhost.err && echo \"$p$q\"\n",
+  "/bin/dash -c 'grep certificate /tmp/badhost.err || { p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_HOSTNAME_REASON__; echo "
+  "\"$p$q\"; }'\n",
   "confine net:none curl http://example.test:8080/\n",
   "confine net:tcp:10.0.2.2:8080 curl http://example.test:8080/\n",
   "confine net:dns nslookup example.com\n",

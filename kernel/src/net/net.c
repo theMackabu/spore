@@ -357,7 +357,9 @@ static void send_icmp_port_unreachable(uint32_t dst_ip, const uint8_t *original_
   store_be16(packet + 4, 0);
   store_be16(packet + 6, 0);
   kmemcpy(packet + ICMP_HEADER_LEN, original_ip, original_ihl);
-  if (quoted_payload_len != 0) { kmemcpy(packet + ICMP_HEADER_LEN + original_ihl, original_payload, quoted_payload_len); }
+  if (quoted_payload_len != 0) {
+    kmemcpy(packet + ICMP_HEADER_LEN + original_ihl, original_payload, quoted_payload_len);
+  }
   store_be16(packet + 2, checksum(packet, ICMP_HEADER_LEN + quoted_len));
   (void)send_ipv4(NET_IP_ICMP, dst_ip, packet, ICMP_HEADER_LEN + quoted_len);
 }
@@ -373,9 +375,7 @@ bool net_udp_send_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uin
 
 bool net_udp_send_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
                           const void *payload, size_t len) {
-  if (is_loopback(dst_ip)) {
-    return cell_net_deliver_udp(dst_ip, src_port, dst_port, payload, len);
-  }
+  if (is_loopback(dst_ip)) { return cell_net_deliver_udp(dst_ip, src_port, dst_port, payload, len); }
   if (!cell_egress_allowed(NET_IP_UDP, dst_ip, dst_port)) {
     kprintf("[spore] net: tx denied proto=udp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
@@ -411,15 +411,15 @@ bool net_tcp_send_segment_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t d
 }
 
 bool net_tcp_send_segment_options(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                                  uint16_t window, uint8_t flags, const void *payload, size_t len,
-                                  const void *options, size_t options_len) {
-  return net_tcp_send_segment_options_tos(src_port, dst_ip, dst_port, 0, seq, ack, window, flags, payload, len,
-                                          options, options_len);
+                                  uint16_t window, uint8_t flags, const void *payload, size_t len, const void *options,
+                                  size_t options_len) {
+  return net_tcp_send_segment_options_tos(src_port, dst_ip, dst_port, 0, seq, ack, window, flags, payload, len, options,
+                                          options_len);
 }
 
-bool net_tcp_send_segment_options_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos,
-                                      uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
-                                      const void *payload, size_t len, const void *options, size_t options_len) {
+bool net_tcp_send_segment_options_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, uint32_t seq,
+                                      uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len,
+                                      const void *options, size_t options_len) {
   return net_tcp_send_segment_options_ttl_tos(src_port, dst_ip, dst_port, 64, tos, seq, ack, window, flags, payload,
                                               len, options, options_len);
 }

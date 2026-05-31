@@ -152,9 +152,7 @@ static void parse_madt(struct acpi_madt *madt, struct spore_cpu_entry *out, uint
     if (len < 2 || ptr + len > end) { break; }
     if (type == 0x0b && len >= sizeof(struct acpi_madt_gicc)) {
       struct acpi_madt_gicc *gicc = (struct acpi_madt_gicc *)ptr;
-      if ((gicc->flags & 1u) != 0) {
-        (void)add_cpu(out, cap, count, gicc->mpidr, SPORE_CPU_PRESENT);
-      }
+      if ((gicc->flags & 1u) != 0) { (void)add_cpu(out, cap, count, gicc->mpidr, SPORE_CPU_PRESENT); }
     }
     ptr += len;
   }

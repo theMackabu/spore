@@ -20,6 +20,7 @@ enum {
   EAGAIN = 11,
   EFAULT = 14,
   EINVAL = 22,
+  ENOSPC = 28,
   ENXIO = 6,
   CELL_S_IFMT = 0170000,
   CELL_S_IFIFO = 0010000,
@@ -199,29 +200,49 @@ int cell_fd_inotify_init1(int flags) {
 }
 
 int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask) {
-  (void)mask;
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || path == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL ||
       domain->fds[fd]->type != OPEN_INOTIFY) {
     return -9;
   }
+  if (mask == 0) { return -EINVAL; }
   struct open_file *file = domain->fds[fd];
-  int wd = (int)file->inotify_next_wd++;
-  if (wd <= 0) { return -EINVAL; }
-  ++file->inotify_watch_count;
-  cell_copy_open_path(file, path);
-  return wd;
+  struct inotify_watch *free_slot = NULL;
+  for (size_t i = 0; i < CELL_INOTIFY_WATCH_CAP; ++i) {
+    struct inotify_watch *watch = &file->inotify_watches[i];
+    if (watch->used && str_eq(watch->path, path)) {
+      watch->mask = mask;
+      return watch->wd;
+    }
+    if (!watch->used && free_slot == NULL) { free_slot = watch; }
+  }
+  if (free_slot == NULL) { return -ENOSPC; }
+  uint32_t wd = file->inotify_next_wd++;
+  if (wd == 0 || wd > INT32_MAX) {
+    wd = 1;
+    file->inotify_next_wd = 2;
+  }
+  free_slot->used = true;
+  free_slot->wd = (int32_t)wd;
+  free_slot->mask = mask;
+  copy_cstr(free_slot->path, sizeof(free_slot->path), path);
+  return (int)wd;
 }
 
 int cell_fd_inotify_rm_watch(int fd, int wd) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL ||
-      domain->fds[fd]->type != OPEN_INOTIFY) {
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || domain->fds[fd]->type != OPEN_INOTIFY) {
     return -9;
   }
-  if (wd <= 0 || domain->fds[fd]->inotify_watch_count == 0) { return -EINVAL; }
-  --domain->fds[fd]->inotify_watch_count;
-  return 0;
+  if (wd <= 0) { return -EINVAL; }
+  struct open_file *file = domain->fds[fd];
+  for (size_t i = 0; i < CELL_INOTIFY_WATCH_CAP; ++i) {
+    if (file->inotify_watches[i].used && file->inotify_watches[i].wd == wd) {
+      kmemset(&file->inotify_watches[i], 0, sizeof(file->inotify_watches[i]));
+      return 0;
+    }
+  }
+  return -EINVAL;
 }
 
 int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len) {

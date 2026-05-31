@@ -71,8 +71,8 @@ void install_ttbr1(uint64_t root_pa) {
   uint64_t mair = 0xffull | (0x00ull << 16);
   uint64_t tcr;
   __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
-  uint64_t clear = 0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) |
-                   (0x3full << 16) | (1ull << 23) | (3ull << 24) | (3ull << 26) | (3ull << 28) | (3ull << 30);
+  uint64_t clear = 0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) | (0x3full << 16) |
+                   (1ull << 23) | (3ull << 24) | (3ull << 26) | (3ull << 28) | (3ull << 30);
   clear |= 7ull << 32;
   tcr &= ~clear;
   tcr |= 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12);

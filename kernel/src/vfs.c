@@ -79,8 +79,7 @@ static bool path_is_mount(const char *path, const char *mount) {
 
 static bool ramfs_route(const char *path) {
   return path_is_mount(path, "/dev") || path_is_mount(path, "/proc") || path_is_mount(path, "/sys") ||
-         path_is_mount(path, "/tmp") ||
-         path_is_mount(path, "/run");
+         path_is_mount(path, "/tmp") || path_is_mount(path, "/run");
 }
 
 static bool same_ramfs_route(const char *a, const char *b) {

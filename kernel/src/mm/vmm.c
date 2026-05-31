@@ -100,8 +100,8 @@ bool vmm_map_page_cow(struct user_address_space *as, uint64_t va, uint64_t pa, u
   }
 
   uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
-  l3[pt_index(va, 12)] = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_AF | PTE_SH_INNER | PTE_AP_USER_RO |
-                          PTE_PXN | xn | PTE_COW;
+  l3[pt_index(va, 12)] =
+    (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_AF | PTE_SH_INNER | PTE_AP_USER_RO | PTE_PXN | xn | PTE_COW;
   vmm_flush_user_va(va);
   return true;
 }

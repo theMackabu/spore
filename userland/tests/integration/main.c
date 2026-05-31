@@ -3,16 +3,16 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <pthread.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -578,8 +578,8 @@ static int socket_msg_peek_regression(void) {
   if (accepted >= 0) { close(accepted); }
   close(client);
   close(server);
-  printf("[spore] socket MSG_PEEK: %s udp=%s/%s/%s tcp=%s/%s\n", ok ? "PASS" : "FAIL", peeked, got_first,
-         got_second, stream_peek, stream_read);
+  printf("[spore] socket MSG_PEEK: %s udp=%s/%s/%s tcp=%s/%s\n", ok ? "PASS" : "FAIL", peeked, got_first, got_second,
+         stream_peek, stream_read);
   return ok;
 }
 
@@ -647,8 +647,8 @@ static int socket_msg_waitall_regression(void) {
   if (accepted >= 0) { close(accepted); }
   close(client);
   close(server);
-  printf("[spore] socket MSG_WAITALL: %s recv=%.*s recvmsg=%.*s%.*s dontwait=%.*s\n", ok ? "PASS" : "FAIL", 8,
-         buf, 4, iov_a, 4, iov_b, 4, partial);
+  printf("[spore] socket MSG_WAITALL: %s recv=%.*s recvmsg=%.*s%.*s dontwait=%.*s\n", ok ? "PASS" : "FAIL", 8, buf, 4,
+         iov_a, 4, iov_b, 4, partial);
   return ok;
 }
 
@@ -698,51 +698,44 @@ static int socket_options_regression(void) {
   struct linger got_linger = {0};
   socklen_t linger_len = sizeof(got_linger);
   struct timeval tv = {.tv_sec = 1, .tv_usec = 250000};
-  int ok = setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == 0 &&
-           setsockopt(udp, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0 &&
-           setsockopt(udp, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0 &&
-           setsockopt(udp, SOL_SOCKET, SO_RCVBUF, &small_rcvbuf, sizeof(small_rcvbuf)) == 0 &&
-           getsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
-           setsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0 &&
-           setsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one)) == 0 &&
-           setsockopt(tcp, SOL_SOCKET, SO_LINGER, &linger, sizeof(linger)) == 0 &&
-           setsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &rcvlowat, sizeof(rcvlowat)) == 0 &&
-           setsockopt(tcp, SOL_SOCKET, SO_SNDBUF, &huge_buf, sizeof(huge_buf)) == 0 &&
-           setsockopt(tcp, SOL_SOCKET, SO_RCVBUF, &huge_buf, sizeof(huge_buf)) == 0 &&
-           setsockopt(tcp, IPPROTO_IP, IP_TOS, &tos, sizeof(tos)) == 0 &&
-           setsockopt(tcp, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) == 0 &&
-           setsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) == 0 &&
-           setsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) == 0 &&
-           setsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) == 0 &&
-           setsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout, sizeof(user_timeout)) == 0 &&
-           getsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
-           getsockopt(tcp, IPPROTO_IP, IP_TOS, &got, &got_len) == 0 && got == tos && got_len == sizeof(got) &&
-           getsockopt(tcp, IPPROTO_IP, IP_TTL, &got, &got_len) == 0 && got == ttl && got_len == sizeof(got) &&
-           getsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &got, &got_len) == 0 && got == keepidle &&
-           got_len == sizeof(got) &&
-           getsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &got, &got_len) == 0 && got == keepintvl &&
-           got_len == sizeof(got) &&
-           getsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &got, &got_len) == 0 && got == keepcnt &&
-           got_len == sizeof(got) &&
-           getsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &got, &got_len) == 0 && got == user_timeout &&
-           got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &got, &got_len) == 0 && got == rcvlowat &&
-           got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_SNDLOWAT, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_ACCEPTCONN, &got, &got_len) == 0 && got == 0 && got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_DOMAIN, &got, &got_len) == 0 && got == AF_INET && got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_PROTOCOL, &got, &got_len) == 0 && got == IPPROTO_TCP &&
-           got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_LINGER, &got_linger, &linger_len) == 0 && linger_len == sizeof(got_linger) &&
-           got_linger.l_onoff == 1 && got_linger.l_linger == 0 &&
-           getsockopt(udp, SOL_SOCKET, SO_SNDBUF, &got, &got_len) == 0 && got == sndbuf && got_len == sizeof(got) &&
-           getsockopt(udp, SOL_SOCKET, SO_RCVBUF, &got, &got_len) == 0 && got == small_rcvbuf &&
-           got_len == sizeof(got) &&
-           getsockopt(tcp, SOL_SOCKET, SO_SNDBUF, &tcp_sndbuf, &got_len) == 0 && tcp_sndbuf > 0 &&
-           tcp_sndbuf < huge_buf && got_len == sizeof(tcp_sndbuf) &&
-           getsockopt(tcp, SOL_SOCKET, SO_RCVBUF, &tcp_rcvbuf, &got_len) == 0 && tcp_rcvbuf > 0 &&
-           tcp_rcvbuf < huge_buf && got_len == sizeof(tcp_rcvbuf);
+  int ok =
+    setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == 0 &&
+    setsockopt(udp, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0 &&
+    setsockopt(udp, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) == 0 &&
+    setsockopt(udp, SOL_SOCKET, SO_RCVBUF, &small_rcvbuf, sizeof(small_rcvbuf)) == 0 &&
+    getsockopt(udp, SOL_SOCKET, SO_REUSEADDR, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
+    setsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0 &&
+    setsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one)) == 0 &&
+    setsockopt(tcp, SOL_SOCKET, SO_LINGER, &linger, sizeof(linger)) == 0 &&
+    setsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &rcvlowat, sizeof(rcvlowat)) == 0 &&
+    setsockopt(tcp, SOL_SOCKET, SO_SNDBUF, &huge_buf, sizeof(huge_buf)) == 0 &&
+    setsockopt(tcp, SOL_SOCKET, SO_RCVBUF, &huge_buf, sizeof(huge_buf)) == 0 &&
+    setsockopt(tcp, IPPROTO_IP, IP_TOS, &tos, sizeof(tos)) == 0 &&
+    setsockopt(tcp, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) == 0 &&
+    setsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) == 0 &&
+    setsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) == 0 &&
+    setsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) == 0 &&
+    setsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout, sizeof(user_timeout)) == 0 &&
+    getsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &got, &got_len) == 0 && got == 1 && got_len == sizeof(got) &&
+    getsockopt(tcp, IPPROTO_IP, IP_TOS, &got, &got_len) == 0 && got == tos && got_len == sizeof(got) &&
+    getsockopt(tcp, IPPROTO_IP, IP_TTL, &got, &got_len) == 0 && got == ttl && got_len == sizeof(got) &&
+    getsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &got, &got_len) == 0 && got == keepidle && got_len == sizeof(got) &&
+    getsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &got, &got_len) == 0 && got == keepintvl && got_len == sizeof(got) &&
+    getsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &got, &got_len) == 0 && got == keepcnt && got_len == sizeof(got) &&
+    getsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &got, &got_len) == 0 && got == user_timeout &&
+    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &got, &got_len) == 0 && got == 1 &&
+    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &got, &got_len) == 0 && got == rcvlowat &&
+    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_SNDLOWAT, &got, &got_len) == 0 && got == 1 &&
+    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_ACCEPTCONN, &got, &got_len) == 0 && got == 0 &&
+    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_DOMAIN, &got, &got_len) == 0 && got == AF_INET &&
+    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_PROTOCOL, &got, &got_len) == 0 && got == IPPROTO_TCP &&
+    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_LINGER, &got_linger, &linger_len) == 0 &&
+    linger_len == sizeof(got_linger) && got_linger.l_onoff == 1 && got_linger.l_linger == 0 &&
+    getsockopt(udp, SOL_SOCKET, SO_SNDBUF, &got, &got_len) == 0 && got == sndbuf && got_len == sizeof(got) &&
+    getsockopt(udp, SOL_SOCKET, SO_RCVBUF, &got, &got_len) == 0 && got == small_rcvbuf && got_len == sizeof(got) &&
+    getsockopt(tcp, SOL_SOCKET, SO_SNDBUF, &tcp_sndbuf, &got_len) == 0 && tcp_sndbuf > 0 && tcp_sndbuf < huge_buf &&
+    got_len == sizeof(tcp_sndbuf) && getsockopt(tcp, SOL_SOCKET, SO_RCVBUF, &tcp_rcvbuf, &got_len) == 0 &&
+    tcp_rcvbuf > 0 && tcp_rcvbuf < huge_buf && got_len == sizeof(tcp_rcvbuf);
   close(udp);
   close(tcp);
   printf("[spore] socket options: %s\n", ok ? "PASS" : "FAIL");
@@ -775,21 +768,19 @@ static int tcp_rcvlowat_poll_regression(void) {
   int ready = -1;
   char buf[8] = {0};
   if (ok) {
-    ok = setsockopt(client, SOL_SOCKET, SO_RCVLOWAT, &lowat, sizeof(lowat)) == 0 &&
-         send(accepted, "abc", 3, 0) == 3;
+    ok = setsockopt(client, SOL_SOCKET, SO_RCVLOWAT, &lowat, sizeof(lowat)) == 0 && send(accepted, "abc", 3, 0) == 3;
     below = poll(&pfd, 1, 0);
     ok = ok && below == 0 && send(accepted, "de", 2, 0) == 2;
     pfd.revents = 0;
     ready = poll(&pfd, 1, 0);
-    ok = ok && ready == 1 && (pfd.revents & POLLIN) != 0 && recv(client, buf, 5, 0) == 5 &&
-         memcmp(buf, "abcde", 5) == 0;
+    ok =
+      ok && ready == 1 && (pfd.revents & POLLIN) != 0 && recv(client, buf, 5, 0) == 5 && memcmp(buf, "abcde", 5) == 0;
   }
 
   if (accepted >= 0) { close(accepted); }
   close(client);
   close(server);
-  printf("[spore] tcp SO_RCVLOWAT poll: %s below=%d ready=%d data=%.*s\n", ok ? "PASS" : "FAIL", below, ready,
-         5, buf);
+  printf("[spore] tcp SO_RCVLOWAT poll: %s below=%d ready=%d data=%.*s\n", ok ? "PASS" : "FAIL", below, ready, 5, buf);
   return ok;
 }
 
@@ -829,8 +820,8 @@ static int tcp_abortive_linger_regression(void) {
   if (accepted >= 0) { close(accepted); }
   close(client);
   close(server);
-  printf("[spore] tcp SO_LINGER reset: %s poll=%d revents=0x%x errno=%d\n", ok ? "PASS" : "FAIL", poll_rc,
-         pfd.revents, recv_errno);
+  printf("[spore] tcp SO_LINGER reset: %s poll=%d revents=0x%x errno=%d\n", ok ? "PASS" : "FAIL", poll_rc, pfd.revents,
+         recv_errno);
   return ok;
 }
 
@@ -858,8 +849,8 @@ static int udp_broadcast_option_regression(void) {
   close(fd);
 
   int ok = denied < 0 && denied_errno == EACCES && set_ok == 0 && sent == (ssize_t)sizeof(payload);
-  printf("[spore] udp broadcast option: %s denied=%d sent=%zd errno=%d\n", ok ? "PASS" : "FAIL",
-         denied_errno, sent, send_errno);
+  printf("[spore] udp broadcast option: %s denied=%d sent=%zd errno=%d\n", ok ? "PASS" : "FAIL", denied_errno, sent,
+         send_errno);
   return ok;
 }
 
@@ -977,8 +968,8 @@ static int udp_disconnect_regression(void) {
 
   ok = ok && get_rc == 0 && so_error == 0 && peer_rc < 0 && peer_errno == ENOTCONN && send_rc < 0 &&
        send_errno == EINVAL && sendto_rc == (ssize_t)sizeof(payload);
-  printf("[spore] udp disconnect: %s so_error=%d peer=%d send=%d sendto=%zd\n", ok ? "PASS" : "FAIL",
-         so_error, peer_errno, send_errno, sendto_rc);
+  printf("[spore] udp disconnect: %s so_error=%d peer=%d send=%d sendto=%zd\n", ok ? "PASS" : "FAIL", so_error,
+         peer_errno, send_errno, sendto_rc);
   return ok;
 }
 
@@ -1009,8 +1000,7 @@ static int udp_external_refused_regression(void) {
   }
 
   ok = ok && poll_rc == 1 && (pfd.revents & POLLERR) != 0 && get_rc == 0 && so_error == ECONNREFUSED;
-  printf("[spore] udp external refused: %s poll=0x%x so_error=%d\n", ok ? "PASS" : "FAIL", pfd.revents,
-         so_error);
+  printf("[spore] udp external refused: %s poll=0x%x so_error=%d\n", ok ? "PASS" : "FAIL", pfd.revents, so_error);
   return ok;
 }
 
@@ -1284,8 +1274,8 @@ static int tcp_bulk_send_regression(void) {
         msg_recv[i] = 0;
       }
       struct iovec iov[2] = {
-          {.iov_base = msg_send, .iov_len = MSG_BULK_LEN / 2},
-          {.iov_base = msg_send + MSG_BULK_LEN / 2, .iov_len = MSG_BULK_LEN / 2},
+        {.iov_base = msg_send, .iov_len = MSG_BULK_LEN / 2},
+        {.iov_base = msg_send + MSG_BULK_LEN / 2, .iov_len = MSG_BULK_LEN / 2},
       };
       struct msghdr msg = {.msg_iov = iov, .msg_iovlen = 2};
       msg_first = sendmsg(msg_client, &msg, 0);
@@ -1304,8 +1294,8 @@ static int tcp_bulk_send_regression(void) {
   if (msg_client >= 0) { close(msg_client); }
   if (msg_accepted >= 0) { close(msg_accepted); }
 
-  printf("[spore] tcp bulk send: %s send=%ld/%zu sendmsg=%ld/%zu\n", ok ? "PASS" : "FAIL", (long)first,
-         received, (long)msg_first, msg_received);
+  printf("[spore] tcp bulk send: %s send=%ld/%zu sendmsg=%ld/%zu\n", ok ? "PASS" : "FAIL", (long)first, received,
+         (long)msg_first, msg_received);
   return ok;
 }
 
@@ -1334,8 +1324,7 @@ static int tcp_fin_eof_regression(void) {
   close(client);
 
   ok = ok && poll_rc == 1 && (pfd.revents & POLLIN) != 0 && eof == 0;
-  printf("[spore] tcp FIN EOF: %s poll=0x%x eof=%zd errno=%d\n", ok ? "PASS" : "FAIL", pfd.revents, eof,
-         recv_errno);
+  printf("[spore] tcp FIN EOF: %s poll=0x%x eof=%zd errno=%d\n", ok ? "PASS" : "FAIL", pfd.revents, eof, recv_errno);
   return ok;
 }
 
@@ -1681,6 +1670,33 @@ static uint64_t usec_now(void) {
   return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
 }
 
+static volatile sig_atomic_t saw_sigint;
+
+static void signal_mask_handler(int signal) {
+  saw_sigint += signal;
+}
+
+static int signal_mask_regression(void) {
+  saw_sigint = 0;
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = signal_mask_handler;
+  sigemptyset(&sa.sa_mask);
+  int ok = sigaction(SIGINT, &sa, NULL) == 0;
+
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGINT);
+  ok = ok && sigprocmask(SIG_BLOCK, &set, NULL) == 0;
+  ok = ok && kill(getpid(), SIGINT) == 0;
+  ok = ok && saw_sigint == 0;
+  ok = ok && sigprocmask(SIG_UNBLOCK, &set, NULL) == 0;
+  ok = ok && saw_sigint == SIGINT;
+
+  printf("[spore] signal mask pending delivery: %s seen=%d\n", ok ? "PASS" : "FAIL", (int)saw_sigint);
+  return ok;
+}
+
 static int absolute_sleep_regression(void) {
   struct timespec deadline;
   clock_gettime(CLOCK_MONOTONIC, &deadline);
@@ -1889,6 +1905,7 @@ int main(void) {
   int ok_v3f = phase_f_egress_demo();
   ok_all = ok_all && ok_v3f;
   ok_all = ok_all && absolute_sleep_regression();
+  ok_all = ok_all && signal_mask_regression();
   ok_all = ok_all && fork_latency_profile();
   ok_all = ok_all && fork_pressure_regression();
 

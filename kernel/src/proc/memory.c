@@ -237,19 +237,13 @@ bool cell_handle_cow_fault(uint64_t far) {
 
 bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) {
-    return false;
-  }
+  if (domain == NULL) { return false; }
   struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
-  if (as == NULL || vmas == NULL) {
-    return false;
-  }
+  if (as == NULL || vmas == NULL) { return false; }
   uint64_t va = far & ~(uint64_t)(PAGE_SIZE - 1);
   const struct vma *vma = vma_lookup(vmas, va);
-  if (vma == NULL || !access_allowed(vma, access)) {
-    return false;
-  }
+  if (vma == NULL || !access_allowed(vma, access)) { return false; }
   if (vmm_user_range_accessible(as, va, 1, access)) { return true; }
   if (vma->type == VMA_FILE) {
     if (!fault_file_page(domain, vma, va)) { return false; }

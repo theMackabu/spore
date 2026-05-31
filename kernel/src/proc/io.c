@@ -263,7 +263,16 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     int64_t got = cell_eventfd_read_to_domain(domain, file, buf, len);
     return got == -EAGAIN && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL ? -EAGAIN : got;
   }
-  if (file->type == OPEN_INOTIFY) { return -EAGAIN; }
+  if (file->type == OPEN_INOTIFY) {
+    if ((file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EAGAIN; }
+    cell_save_current(frame);
+    cell_current_thread_internal()->state = THREAD_BLOCKED;
+    cell_current_thread_internal()->running_cpu = -1;
+    cell_current_thread_internal()->wait_reason = WAIT_INOTIFY;
+    cell_current_thread_internal()->wait_target = fd;
+    cell_schedule(frame);
+    return CELL_SWITCHED;
+  }
   if (file->type == OPEN_PIPE) {
     int64_t got = cell_pipe_read_to_domain(domain, file, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }

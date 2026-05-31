@@ -1,8 +1,8 @@
 #include "arch/aarch64/syscall_handlers.h"
 
+#include "arch/aarch64/smp.h"
 #include "cell.h"
 #include "exec/stack.h"
-#include "arch/aarch64/smp.h"
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/pmm.h"
@@ -240,9 +240,7 @@ int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len) {
   uint64_t out[AFFINITY_WORDS];
   kmemset(out, 0, sizeof(out));
   for (uint32_t cpu = 0; cpu < possible; ++cpu) {
-    if (smp_cpu_online(cpu)) {
-      out[cpu / 64u] |= 1ull << (cpu % 64u);
-    }
+    if (smp_cpu_online(cpu)) { out[cpu / 64u] |= 1ull << (cpu % 64u); }
   }
   return vmm_copy_to_user(syscall_active_as(), mask, out, bytes) ? (int64_t)bytes : -(int64_t)EFAULT;
 }

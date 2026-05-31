@@ -78,7 +78,9 @@ static uint16_t ip_payload_checksum(uint8_t proto, uint32_t src_ip, uint32_t dst
   pseudo[8] = 0;
   pseudo[9] = proto;
   store_be16(pseudo + 10, (uint16_t)len);
-  for (size_t i = 0; i < len; ++i) { pseudo[12 + i] = ((const uint8_t *)payload)[i]; }
+  for (size_t i = 0; i < len; ++i) {
+    pseudo[12 + i] = ((const uint8_t *)payload)[i];
+  }
   return ip_checksum(pseudo, 12 + len);
 }
 
@@ -356,7 +358,9 @@ bool virtio_net_send_frame(const void *frame, uint32_t len) {
   assert(len <= sizeof(sent_frame));
   saw_frame = true;
   sent_frame_len = len;
-  for (uint32_t i = 0; i < len; ++i) { sent_frame[i] = ((const uint8_t *)frame)[i]; }
+  for (uint32_t i = 0; i < len; ++i) {
+    sent_frame[i] = ((const uint8_t *)frame)[i];
+  }
   return true;
 }
 
@@ -414,8 +418,8 @@ bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16
 }
 
 void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint16_t window, uint8_t flags, const void *options, size_t options_len,
-                          const void *payload, size_t len) {
+                          uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
+                          size_t len) {
   (void)src_ip;
   (void)src_port;
   (void)dst_port;
@@ -625,9 +629,9 @@ static void test_broadcast_icmp_is_dropped(void) {
 static void test_invalid_tcp_flag_combinations_are_dropped(void) {
   uint8_t frame[ETH_HEADER_LEN + IPV4_HEADER_LEN + TCP_HEADER_LEN] = {0};
   const uint8_t invalid_flags[] = {
-      TCP_FLAG_SYN | TCP_FLAG_FIN,
-      TCP_FLAG_SYN | TCP_FLAG_RST,
-      TCP_FLAG_FIN | TCP_FLAG_RST,
+    TCP_FLAG_SYN | TCP_FLAG_FIN,
+    TCP_FLAG_SYN | TCP_FLAG_RST,
+    TCP_FLAG_FIN | TCP_FLAG_RST,
   };
 
   net_init();
@@ -667,12 +671,8 @@ static void test_invalid_ipv4_sources_are_dropped(void) {
   uint16_t remote_port = 49153;
   uint16_t local_port = 45995;
   const uint32_t invalid_sources[] = {
-      net_ipv4(0, 0, 0, 0),
-      net_ipv4(10, 0, 2, 15),
-      net_ipv4(127, 0, 0, 1),
-      net_ipv4(224, 0, 0, 1),
-      net_ipv4(240, 0, 0, 1),
-      net_ipv4(255, 255, 255, 255),
+    net_ipv4(0, 0, 0, 0),   net_ipv4(10, 0, 2, 15), net_ipv4(127, 0, 0, 1),
+    net_ipv4(224, 0, 0, 1), net_ipv4(240, 0, 0, 1), net_ipv4(255, 255, 255, 255),
   };
 
   for (size_t i = 0; i < sizeof(invalid_sources) / sizeof(invalid_sources[0]); ++i) {

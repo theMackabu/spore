@@ -4,11 +4,15 @@
 
 #if __STDC_HOSTED__
 #include <stdlib.h>
-static uint32_t ramfs_smp_possible_cpu_count(void) { return 1; }
+static uint32_t ramfs_smp_possible_cpu_count(void) {
+  return 1;
+}
 #else
 #include "arch/aarch64/smp.h"
 #include "mm/pmm.h"
-static uint32_t ramfs_smp_possible_cpu_count(void) { return smp_possible_cpu_count(); }
+static uint32_t ramfs_smp_possible_cpu_count(void) {
+  return smp_possible_cpu_count();
+}
 #endif
 
 struct ramfs_backing_page {
@@ -484,10 +488,8 @@ bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ra
 
 bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out) {
   static const struct ramfs_dirent entries[] = {
-    {.name = "dev", .ino = 2, .is_dir = true},
-    {.name = "proc", .ino = 3, .is_dir = true},
-    {.name = "sys", .ino = 4, .is_dir = true},
-    {.name = "tmp", .ino = 5, .is_dir = true},
+    {.name = "dev", .ino = 2, .is_dir = true}, {.name = "proc", .ino = 3, .is_dir = true},
+    {.name = "sys", .ino = 4, .is_dir = true}, {.name = "tmp", .ino = 5, .is_dir = true},
     {.name = "run", .ino = 6, .is_dir = true},
   };
   if (index >= sizeof(entries) / sizeof(entries[0])) { return false; }

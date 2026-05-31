@@ -37,11 +37,11 @@ bool net_tcp_send_segment_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t d
                                   uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags, const void *payload,
                                   size_t len);
 bool net_tcp_send_segment_options(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                                  uint16_t window, uint8_t flags, const void *payload, size_t len,
-                                  const void *options, size_t options_len);
-bool net_tcp_send_segment_options_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos,
-                                      uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
-                                      const void *payload, size_t len, const void *options, size_t options_len);
+                                  uint16_t window, uint8_t flags, const void *payload, size_t len, const void *options,
+                                  size_t options_len);
+bool net_tcp_send_segment_options_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, uint32_t seq,
+                                      uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len,
+                                      const void *options, size_t options_len);
 bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl,
                                           uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
                                           const void *payload, size_t len, const void *options, size_t options_len);

@@ -239,8 +239,7 @@ int64_t sys_sendto(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t
   if (!syscall_user_readable(buf, len)) { return -(int64_t)EFAULT; }
   if (addr == 0) {
     int64_t tcp = cell_fd_tcp_send((int)fd, buf, len, (flags & MSG_DONTWAIT) != 0, frame);
-    if (tcp == -(int64_t)EPIPE && (flags & MSG_NOSIGNAL) == 0 && frame != NULL &&
-        cell_signal_current(SIGPIPE, frame)) {
+    if (tcp == -(int64_t)EPIPE && (flags & MSG_NOSIGNAL) == 0 && frame != NULL && cell_signal_current(SIGPIPE, frame)) {
       return CELL_SWITCHED;
     }
     if (tcp != -EBADF && tcp != -9) { return tcp; }
@@ -261,8 +260,8 @@ int64_t sys_sendto(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t
 int64_t sys_recvfrom(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len, uint64_t flags, uint64_t addr,
                      uint64_t addrlen) {
   if (!syscall_user_writable(buf, len)) { return -(int64_t)EFAULT; }
-  int64_t rc = cell_fd_socket_recv((int)fd, buf, len, (uint32_t)flags, (flags & MSG_DONTWAIT) != 0, frame, addr,
-                                   addrlen);
+  int64_t rc =
+    cell_fd_socket_recv((int)fd, buf, len, (uint32_t)flags, (flags & MSG_DONTWAIT) != 0, frame, addr, addrlen);
   return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
 }
 
@@ -271,8 +270,9 @@ static int copy_iov_at(uint64_t iov_addr, int32_t iovlen, int32_t index, struct 
   if (iov_addr == 0 || !syscall_user_readable(iov_addr + (uint64_t)index * sizeof(*out), sizeof(*out))) {
     return -EFAULT;
   }
-  return vmm_copy_from_user(syscall_active_as(), out, iov_addr + (uint64_t)index * sizeof(*out), sizeof(*out)) ? 0
-                                                                                                             : -EFAULT;
+  return vmm_copy_from_user(syscall_active_as(), out, iov_addr + (uint64_t)index * sizeof(*out), sizeof(*out))
+           ? 0
+           : -EFAULT;
 }
 
 static int gather_iovecs(uint64_t iov_addr, int32_t iovlen, uint8_t *dst, size_t cap, uint64_t *total_len,
@@ -305,8 +305,7 @@ int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
   bool is_socket = cell_fd_socket_info((int)fd, NULL, &proto);
   if (is_socket && proto == IPPROTO_TCP) {
     int64_t rc = cell_fd_socket_sendmsg((int)fd, msg_addr, (flags & MSG_DONTWAIT) != 0, frame);
-    if (rc == -(int64_t)EPIPE && (flags & MSG_NOSIGNAL) == 0 && frame != NULL &&
-        cell_signal_current(SIGPIPE, frame)) {
+    if (rc == -(int64_t)EPIPE && (flags & MSG_NOSIGNAL) == 0 && frame != NULL && cell_signal_current(SIGPIPE, frame)) {
       return CELL_SWITCHED;
     }
     return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
@@ -339,7 +338,8 @@ int64_t sys_recvmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
   (void)flags;
   if (msg_addr == 0 || !syscall_user_readable(msg_addr, sizeof(struct msghdr64))) { return -(int64_t)EFAULT; }
   int32_t proto = 0;
-  if (cell_fd_socket_info((int)fd, NULL, &proto) && (proto == IPPROTO_TCP || proto == IPPROTO_UDP || proto == IPPROTO_ICMP)) {
+  if (cell_fd_socket_info((int)fd, NULL, &proto) &&
+      (proto == IPPROTO_TCP || proto == IPPROTO_UDP || proto == IPPROTO_ICMP)) {
     int64_t rc = cell_fd_socket_recvmsg((int)fd, msg_addr, (uint32_t)flags, (flags & MSG_DONTWAIT) != 0, frame);
     return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
   }
@@ -415,9 +415,8 @@ int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     return 0;
   }
 
-  if (level == SOL_SOCKET &&
-      (optname == SO_RCVTIMEO_OLD || optname == SO_SNDTIMEO_OLD || optname == SO_RCVTIMEO_NEW ||
-       optname == SO_SNDTIMEO_NEW)) {
+  if (level == SOL_SOCKET && (optname == SO_RCVTIMEO_OLD || optname == SO_SNDTIMEO_OLD || optname == SO_RCVTIMEO_NEW ||
+                              optname == SO_SNDTIMEO_NEW)) {
     if (optlen < sizeof(struct timeval64) || !syscall_user_writable(optval, sizeof(struct timeval64))) {
       return -(int64_t)EINVAL;
     }

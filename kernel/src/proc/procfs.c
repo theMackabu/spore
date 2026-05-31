@@ -3,8 +3,8 @@
 #include "proc/procfs_format.h"
 #include "proc/procfs_text.h"
 
-#include "kstr.h"
 #include "arch/aarch64/smp.h"
+#include "kstr.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
@@ -50,6 +50,8 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "pipe";
   case WAIT_EPOLL:
     return "epoll";
+  case WAIT_INOTIFY:
+    return "inotify";
   }
   return "?";
 }
@@ -404,9 +406,9 @@ static void fill_proc_info(const struct domain *domain, struct proc_info *out) {
                         ? 0
                         : cell_thread_for_domain((struct domain *)domain)->tid),
     .ppid = (uint32_t)domain->parent_id,
-    .state = (uint32_t)(domain->zombie
-                          ? THREAD_ZOMBIE
-                          : (str_eq(domain_state_text(domain), "blocked") ? THREAD_BLOCKED : THREAD_RUNNABLE)),
+    .state =
+      (uint32_t)(domain->zombie ? THREAD_ZOMBIE
+                                : (str_eq(domain_state_text(domain), "blocked") ? THREAD_BLOCKED : THREAD_RUNNABLE)),
     .wait_reason = 0,
     .resident_pages = mem.resident_pages,
     .virtual_pages = mem.virtual_pages,
@@ -438,9 +440,7 @@ size_t cell_proc_info(struct proc_info *out, size_t max) {
   for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
-    if (count < max && out != NULL) {
-      fill_proc_info(domain, &out[count]);
-    }
+    if (count < max && out != NULL) { fill_proc_info(domain, &out[count]); }
     ++count;
   }
   return count;

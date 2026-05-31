@@ -29,9 +29,7 @@ static void usage(void) {
 static int parse_positive(const char *text) {
   char *end = NULL;
   long value = strtol(text, &end, 10);
-  if (text == NULL || *text == '\0' || end == NULL || *end != '\0' || value <= 0 || value > MAX_WORKERS) {
-    usage();
-  }
+  if (text == NULL || *text == '\0' || end == NULL || *end != '\0' || value <= 0 || value > MAX_WORKERS) { usage(); }
   return (int)value;
 }
 

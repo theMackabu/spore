@@ -52,6 +52,7 @@ enum wait_reason {
   WAIT_VFORK,
   WAIT_PIPE,
   WAIT_EPOLL,
+  WAIT_INOTIFY,
 };
 
 enum cell_state {
@@ -77,6 +78,7 @@ enum open_file_type {
 
 enum { CELL_PATH_MAX = 256 };
 enum { CELL_EPOLL_WATCH_CAP = 16 };
+enum { CELL_INOTIFY_WATCH_CAP = 16 };
 enum { CELL_FS_RULE_CAP = 8 };
 
 enum cell_fs_right {
@@ -100,6 +102,13 @@ struct epoll_watch {
   int32_t fd;
   uint32_t events;
   uint64_t data;
+};
+
+struct inotify_watch {
+  bool used;
+  int32_t wd;
+  uint32_t mask;
+  char path[CELL_PATH_MAX];
 };
 
 struct open_file {
@@ -198,7 +207,7 @@ struct open_file {
   uint64_t eventfd_value;
   bool eventfd_semaphore;
   uint32_t inotify_next_wd;
-  uint32_t inotify_watch_count;
+  struct inotify_watch inotify_watches[CELL_INOTIFY_WATCH_CAP];
 };
 
 struct capability_set {
@@ -302,6 +311,8 @@ struct thread {
   uint32_t socket_flags;
   bool socket_has_deadline;
   uint64_t socket_deadline_tick;
+  uint64_t signal_mask;
+  uint64_t pending_signals;
   bool pipe_write;
   uint8_t poll_kind;
   bool poll_has_deadline;
@@ -481,8 +492,8 @@ bool cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
 bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
 bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
 void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint16_t window, uint8_t flags, const void *options, size_t options_len,
-                          const void *payload, size_t len);
+                          uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
+                          size_t len);
 void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
 int cell_fd_epoll_create(int flags);

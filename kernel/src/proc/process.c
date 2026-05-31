@@ -52,7 +52,9 @@ void cell_wake_parent_of(struct domain *child) {
     }
     parent->tf.x[0] = (uint64_t)child->id;
     struct thread *child_thread = cell_thread_for_domain(child);
-    if (child_thread != NULL) { child_thread->state = (child_is_current || child_is_running) ? THREAD_ZOMBIE : THREAD_UNUSED; }
+    if (child_thread != NULL) {
+      child_thread->state = (child_is_current || child_is_running) ? THREAD_ZOMBIE : THREAD_UNUSED;
+    }
     if (child_is_current || child_is_running) {
       child->parent_id = 0;
     } else {
@@ -151,6 +153,8 @@ int cell_fork_current(struct trap_frame *frame) {
   child_thread->state = THREAD_RUNNABLE;
   child_thread->tf = cell_current_thread_internal()->tf;
   child_thread->fp = cell_current_thread_internal()->fp;
+  child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
+  child_thread->pending_signals = 0;
   child_thread->tf.x[0] = 0;
   child_thread->tpidr_el0 = cell_current_thread_internal()->tpidr_el0;
   cell_current_thread_internal()->tf.x[0] = (uint64_t)child_domain->id;
@@ -182,6 +186,8 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   child_thread->state = THREAD_RUNNABLE;
   child_thread->tf = cell_current_thread_internal()->tf;
   child_thread->fp = cell_current_thread_internal()->fp;
+  child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
+  child_thread->pending_signals = 0;
   child_thread->tf.x[0] = 0;
   if (newsp != 0 && child_thread != NULL) { child_thread->tf.sp_el0 = newsp; }
   child_thread->tpidr_el0 = ((flags & CLONE_SETTLS) != 0) ? tls : cell_current_thread_internal()->tpidr_el0;
@@ -226,6 +232,8 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   thread->state = THREAD_RUNNABLE;
   thread->tf = cell_current_thread_internal()->tf;
   thread->fp = cell_current_thread_internal()->fp;
+  thread->signal_mask = cell_current_thread_internal()->signal_mask;
+  thread->pending_signals = 0;
   thread->tf.x[0] = 0;
   thread->tf.sp_el0 = newsp;
   thread->tpidr_el0 = ((flags & 0x00080000ull) != 0) ? tls : cell_current_thread_internal()->tpidr_el0;

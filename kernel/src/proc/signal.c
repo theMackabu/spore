@@ -37,6 +37,7 @@ struct k_sigaction64 {
 struct signal_frame64 {
   uint64_t magic;
   uint64_t signal;
+  uint64_t saved_signal_mask;
   struct trap_frame saved;
   uint8_t siginfo[128];
   uint8_t ucontext[1024];
@@ -49,6 +50,23 @@ static struct domain *current_domain(void) {
 static bool signal_is_supported(int signal) {
   return signal == SIGTERM || signal == SIGINT || signal == SIGABRT || signal == SIGKILL || signal == SIGSEGV ||
          signal == SIGPIPE;
+}
+
+static uint64_t signal_bit(int signal) {
+  if (signal <= 0 || signal >= (int)NSIG) { return 0; }
+  return 1ull << (uint64_t)(signal - 1);
+}
+
+static bool signal_is_unblockable(int signal) {
+  return signal == SIGKILL || signal == SIGSEGV;
+}
+
+static uint64_t signal_mask_sanitized(uint64_t mask) {
+  return mask & ~signal_bit(SIGKILL) & ~signal_bit(SIGSEGV);
+}
+
+static bool signal_is_blocked(const struct thread *thread, int signal) {
+  return thread != NULL && !signal_is_unblockable(signal) && (thread->signal_mask & signal_bit(signal)) != 0;
 }
 
 static void terminate_domain_by_signal(struct domain *domain, int signal) {
@@ -69,6 +87,10 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
 
 bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   if (thread == NULL || thread->domain == NULL || signal <= 0 || signal >= (int)NSIG) { return false; }
+  if (signal_is_blocked(thread, signal)) {
+    thread->pending_signals |= signal_bit(signal);
+    return false;
+  }
   struct domain *domain = thread->domain;
   struct signal_action *action = &domain->signal_actions[signal];
   if (action->handler == 0 || signal == SIGKILL) {
@@ -107,6 +129,7 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   kmemset(&frame, 0, sizeof(frame));
   frame.magic = 0x5350475349474652ull; // "SPGSIGFR"
   frame.signal = (uint64_t)signal;
+  frame.saved_signal_mask = thread->signal_mask;
   frame.saved = thread->tf;
 
   uint64_t frame_addr = (thread->tf.sp_el0 - sizeof(frame)) & ~15ull;
@@ -124,8 +147,20 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   thread->tf.x[30] = action->restorer;
   thread->tf.sp_el0 = frame_addr;
   thread->tf.elr_el1 = action->handler;
+  thread->signal_mask = signal_mask_sanitized(thread->signal_mask | action->mask | signal_bit(signal));
   if ((action->flags & SA_RESETHAND) != 0) { action->handler = 0; }
   return true;
+}
+
+void cell_deliver_pending_signals(struct thread *thread) {
+  if (thread == NULL || thread->pending_signals == 0) { return; }
+  for (int signal = 1; signal < (int)NSIG; ++signal) {
+    uint64_t bit = signal_bit(signal);
+    if ((thread->pending_signals & bit) == 0 || signal_is_blocked(thread, signal)) { continue; }
+    thread->pending_signals &= ~bit;
+    (void)cell_deliver_signal_to_thread(thread, signal);
+    return;
+  }
 }
 
 bool cell_signal_current(int signal, struct trap_frame *frame) {
@@ -185,6 +220,13 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
     return -EFAULT;
   }
   *frame = sigframe.saved;
+  struct thread *thread = cell_current_thread_internal();
+  if (thread != NULL) {
+    thread->tf = *frame;
+    thread->signal_mask = signal_mask_sanitized(sigframe.saved_signal_mask);
+    cell_deliver_pending_signals(thread);
+    *frame = thread->tf;
+  }
   return 0;
 }
 
