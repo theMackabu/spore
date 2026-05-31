@@ -152,15 +152,15 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   return true;
 }
 
-void cell_deliver_pending_signals(struct thread *thread) {
-  if (thread == NULL || thread->pending_signals == 0) { return; }
+bool cell_deliver_pending_signals(struct thread *thread) {
+  if (thread == NULL || thread->pending_signals == 0) { return false; }
   for (int signal = 1; signal < (int)NSIG; ++signal) {
     uint64_t bit = signal_bit(signal);
     if ((thread->pending_signals & bit) == 0 || signal_is_blocked(thread, signal)) { continue; }
     thread->pending_signals &= ~bit;
-    (void)cell_deliver_signal_to_thread(thread, signal);
-    return;
+    return cell_deliver_signal_to_thread(thread, signal);
   }
+  return false;
 }
 
 bool cell_signal_current(int signal, struct trap_frame *frame) {

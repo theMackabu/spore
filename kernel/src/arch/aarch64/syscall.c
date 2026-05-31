@@ -488,7 +488,7 @@ l_tgkill:
 l_rt_sigaction:
   return cell_rt_sigaction((int)a0, a1, a2, a3);
 l_rt_sigprocmask:
-  return sys_rt_sigprocmask(a0, a1, a2, a3);
+  return sys_rt_sigprocmask(f, a0, a1, a2, a3);
 l_rt_sigreturn:
   return cell_rt_sigreturn(f) == 0 ? SYSCALL_SWITCHED : -(int64_t)EFAULT;
 l_sigaltstack:

@@ -41,7 +41,8 @@ int64_t sys_sigaltstack(uint64_t new_addr, uint64_t old_addr) {
   return 0;
 }
 
-int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set, uint64_t oldset, uint64_t sigsetsize) {
+int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set, uint64_t oldset,
+                           uint64_t sigsetsize) {
   if (sigsetsize != sizeof(uint64_t)) { return -(int64_t)EINVAL; }
   if (set != 0 && how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK) { return -(int64_t)EINVAL; }
   uint64_t next = 0;
@@ -67,7 +68,14 @@ int64_t sys_rt_sigprocmask(uint64_t how, uint64_t set, uint64_t oldset, uint64_t
     mask &= ~(1ull << (SIGKILL - 1));
     mask &= ~(1ull << (SIGSEGV - 1));
     thread->signal_mask = mask;
-    cell_deliver_pending_signals(thread);
+    if (thread->pending_signals != 0 && frame != NULL) {
+      frame->x[0] = 0;
+      thread->tf = *frame;
+      if (cell_deliver_pending_signals(thread)) {
+        *frame = thread->tf;
+        return CELL_SWITCHED;
+      }
+    }
   }
   return 0;
 }
