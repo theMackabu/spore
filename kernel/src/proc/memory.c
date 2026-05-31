@@ -17,6 +17,10 @@ static size_t process_mm_capacity;
 static bool vma_is_shared_writable_file(const struct vma *vma);
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end);
 
+static bool vma_is_shared(const struct vma *vma) {
+  return vma != NULL && vma->used && (vma->flags & MAP_SHARED) != 0;
+}
+
 static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
   if (count == 0 || elem_size == 0) { return NULL; }
   uint64_t bytes = (uint64_t)count * elem_size;
@@ -84,9 +88,13 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
   }
   for (size_t i = 0; i < vma_capacity(&src->vmas); ++i) {
     const struct vma *vma = vma_at(&src->vmas, i);
-    if (!vma_is_shared_writable_file(vma)) { continue; }
-    vmm_protect_range(&src->as, vma->start, vma->end, vma->prot);
-    vmm_protect_range(&mm->as, vma->start, vma->end, vma->prot);
+    if (!vma_is_shared(vma)) { continue; }
+    if (!vmm_restore_shared_range(&src->as, &mm->as, vma->start, vma->end, vma->prot)) {
+      vmm_destroy(&mm->as);
+      vma_list_destroy(&mm->vmas);
+      mm->used = false;
+      return NULL;
+    }
   }
   return mm;
 }
@@ -337,6 +345,24 @@ bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t fl
   return vmas != NULL && vma_insert(vmas, start, end, prot, flags, type);
 }
 
+bool cell_prefault_anon_vma(uint64_t start, uint64_t end) {
+  struct domain *domain = cell_current_domain_internal();
+  struct user_address_space *as = cell_domain_as(domain);
+  struct vma_list *vmas = cell_domain_vmas(domain);
+  if (as == NULL || vmas == NULL || start >= end) { return false; }
+  const struct vma *vma = vma_lookup_range(vmas, start, end);
+  if (vma == NULL || vma->type != VMA_ANON) { return false; }
+  for (uint64_t page = start; page < end; page += PAGE_SIZE) {
+    if (vmm_is_mapped(as, page)) { continue; }
+    if (!vmm_alloc_page(as, page, vma->prot)) {
+      vmm_unmap_range(as, start, page);
+      return false;
+    }
+    note_fault(domain, false);
+  }
+  return true;
+}
+
 bool cell_grow_down_vma(uint64_t page, uint32_t required_flags, struct vma *out) {
   struct domain *domain = cell_current_domain_internal();
   struct vma_list *vmas = cell_domain_vmas(domain);
@@ -376,6 +402,12 @@ bool cell_remove_vma(uint64_t start, uint64_t end) {
   if (domain->mm != NULL && !flush_shared_file_vmas(domain->mm, start, end)) { return false; }
   vmm_unmap_range(as, start, end);
   return vma_remove(vmas, start, end);
+}
+
+bool cell_sync_shared_vmas(uint64_t start, uint64_t end) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL || domain->mm == NULL || start >= end) { return false; }
+  return flush_shared_file_vmas(domain->mm, start, end);
 }
 
 bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {

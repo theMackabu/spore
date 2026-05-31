@@ -16,6 +16,9 @@ enum {
   MAP_GROWSDOWN = 0x0100,
   MAP_NORESERVE = 0x4000,
   MAP_FIXED_NOREPLACE = 0x100000,
+  MS_ASYNC = 1,
+  MS_INVALIDATE = 2,
+  MS_SYNC = 4,
   MREMAP_MAYMOVE = 1,
   MREMAP_FIXED = 2,
   PROT_READ = 0x1,
@@ -94,6 +97,10 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   if (anon) {
     enum vma_type type = (flags & MAP_GROWSDOWN) != 0 ? VMA_STACK : VMA_ANON;
     if (!cell_add_vma_typed(base, end, prot_to_vmm(prot), (uint32_t)flags, type)) { return -(int64_t)EINVAL; }
+    if (shared && type == VMA_ANON && !cell_prefault_anon_vma(base, end)) {
+      (void)cell_remove_vma(base, end);
+      return -(int64_t)ENOMEM;
+    }
   } else {
     struct vfs_node node;
     if (!cell_fd_stat((int)fd, &node) || node.is_dir || node.device != RAMFS_DEV_NONE) { return -(int64_t)EINVAL; }
@@ -123,6 +130,17 @@ int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
   }
   vmm_protect_range(syscall_active_as(), start, end, vmm_prot);
   return 0;
+}
+
+int64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
+  if ((addr & (PAGE_SIZE - 1)) != 0 || len == 0 || (flags & ~(uint64_t)(MS_ASYNC | MS_INVALIDATE | MS_SYNC)) != 0 ||
+      ((flags & MS_ASYNC) != 0 && (flags & MS_SYNC) != 0)) {
+    return -(int64_t)EINVAL;
+  }
+  uint64_t end;
+  if (!checked_add(addr, len, &end)) { return -(int64_t)EINVAL; }
+  end = align_up(end, PAGE_SIZE);
+  return cell_sync_shared_vmas(addr, end) ? 0 : -(int64_t)EINVAL;
 }
 
 int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {

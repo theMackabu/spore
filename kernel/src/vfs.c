@@ -47,6 +47,8 @@ static uint32_t page_cache_evict_hand;
 static uint64_t lookup_cache_clock;
 static struct vfs_stats vfs_stat_counters;
 
+static uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
+
 bool cell_proc_exists(int pid);
 int cell_proc_pid_at(size_t index);
 uint32_t cell_proc_uid(int pid);
@@ -414,7 +416,7 @@ static bool page_cache_load(const struct vfs_node *node, uint64_t off) {
     readable = node->size - off;
     if (readable > VFS_PAGE_SIZE) { readable = VFS_PAGE_SIZE; }
   }
-  if (readable != 0 && vfs_read(node, off, data, readable) != readable) {
+  if (readable != 0 && vfs_read_uncached(node, off, data, readable) != readable) {
     page_cache_clear(index);
     return false;
   }
@@ -474,6 +476,16 @@ void vfs_page_cache_invalidate(const struct vfs_node *node) {
     }
   }
   if (any) { ++vfs_stat_counters.page_cache_invalidations; }
+}
+
+static uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
+  if (node->backend == VFS_RAMFS) { return ramfs_read(node->ramfs.fs, node->ramfs.index, off, dst, len); }
+  if (node->backend == VFS_EXT2) {
+    uint32_t got = 0;
+    if (len > UINT32_MAX) { len = UINT32_MAX; }
+    return ext2_read_file(root_ext2, &node->ext2, off, dst, (uint32_t)len, &got) ? got : 0;
+  }
+  return 0;
 }
 
 static bool parse_uint_component(const char **p, int *out) {
@@ -850,13 +862,22 @@ bool vfs_rename(const char *old_path, const char *new_path) {
 }
 
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
-  if (node->backend == VFS_RAMFS) { return ramfs_read(node->ramfs.fs, node->ramfs.index, off, dst, len); }
-  if (node->backend == VFS_EXT2) {
-    uint32_t got = 0;
-    if (len > UINT32_MAX) { len = UINT32_MAX; }
-    return ext2_read_file(root_ext2, &node->ext2, off, dst, (uint32_t)len, &got) ? got : 0;
+  if (!node_cacheable(node) || len == 0 || off >= node->size) { return vfs_read_uncached(node, off, dst, len); }
+  uint64_t available = node->size - off;
+  if (len > available) { len = available; }
+  uint8_t *out = dst;
+  uint64_t done = 0;
+  while (done < len) {
+    uint64_t page_off = (off + done) & ~(uint64_t)(VFS_PAGE_SIZE - 1);
+    uint64_t in_page = (off + done) - page_off;
+    uint8_t page[VFS_PAGE_SIZE];
+    if (!vfs_read_page_cached(node, page_off, page)) { break; }
+    uint64_t chunk = VFS_PAGE_SIZE - in_page;
+    if (chunk > len - done) { chunk = len - done; }
+    kmemcpy(out + done, page + in_page, chunk);
+    done += chunk;
   }
-  return 0;
+  return done;
 }
 
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {

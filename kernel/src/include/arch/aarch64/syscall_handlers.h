@@ -32,6 +32,7 @@ int64_t sys_brk(uint64_t requested);
 int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t off);
 int64_t sys_munmap(uint64_t addr, uint64_t len);
 int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot);
+int64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags);
 int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice);
 int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64_t flags, uint64_t new_addr);
 
@@ -91,7 +92,7 @@ int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, 
 int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr);
 int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
                         uint64_t timeout_ms, uint64_t sigmask, uint64_t sigsetsize);
-int64_t sys_sigaltstack(uint64_t new_addr, uint64_t old_addr);
+int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t old_addr);
 int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set, uint64_t oldset, uint64_t sigsetsize);
 int64_t sys_clone(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
                   uint64_t child_tid);

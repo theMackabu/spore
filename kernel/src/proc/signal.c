@@ -22,10 +22,13 @@ enum {
   SIGPIPE = 13,
   SIGTERM = 15,
   SA_SIGINFO = 4,
+  SA_ONSTACK = 0x08000000,
+  SS_DISABLE = 2,
   NSIG = 65,
 };
 
 static const uint64_t SA_RESETHAND = 0x80000000ull;
+static const uint64_t SA_RESTART = 0x10000000ull;
 
 struct k_sigaction64 {
   uint64_t handler;
@@ -69,6 +72,13 @@ static bool signal_is_blocked(const struct thread *thread, int signal) {
   return thread != NULL && !signal_is_unblockable(signal) && (thread->signal_mask & signal_bit(signal)) != 0;
 }
 
+static bool thread_on_sigaltstack(const struct thread *thread) {
+  if (thread == NULL || (thread->sigaltstack_flags & SS_DISABLE) != 0 || thread->sigaltstack_size == 0) { return false; }
+  uint64_t sp = thread->tf.sp_el0;
+  uint64_t end = thread->sigaltstack_sp + thread->sigaltstack_size;
+  return end >= thread->sigaltstack_sp && sp >= thread->sigaltstack_sp && sp < end;
+}
+
 static void terminate_domain_by_signal(struct domain *domain, int signal) {
   if (domain == NULL || domain->zombie) { return; }
   domain->exit_status = 128 + signal;
@@ -83,6 +93,11 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
     }
   }
   cell_wake_parent_of(domain);
+}
+
+static bool wait_reason_is_restartable(enum wait_reason reason) {
+  return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
+         reason == WAIT_INOTIFY;
 }
 
 bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
@@ -104,7 +119,13 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   }
 
   if (thread->state == THREAD_BLOCKED) {
-    thread->tf.x[0] = (uint64_t)(-(int64_t)EINTR);
+    bool restart = (action->flags & SA_RESTART) != 0 && wait_reason_is_restartable(thread->wait_reason) &&
+                   thread->tf.elr_el1 >= 4;
+    if (restart) {
+      thread->tf.elr_el1 -= 4;
+    } else {
+      thread->tf.x[0] = (uint64_t)(-(int64_t)EINTR);
+    }
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;
     thread->wait_target = -1;
@@ -132,7 +153,12 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   frame.saved_signal_mask = thread->signal_mask;
   frame.saved = thread->tf;
 
-  uint64_t frame_addr = (thread->tf.sp_el0 - sizeof(frame)) & ~15ull;
+  uint64_t stack_top = thread->tf.sp_el0;
+  if ((action->flags & SA_ONSTACK) != 0 && !thread_on_sigaltstack(thread) &&
+      (thread->sigaltstack_flags & SS_DISABLE) == 0 && thread->sigaltstack_size >= sizeof(frame)) {
+    stack_top = thread->sigaltstack_sp + thread->sigaltstack_size;
+  }
+  uint64_t frame_addr = (stack_top - sizeof(frame)) & ~15ull;
   if (!cell_domain_ensure_user_range(domain, frame_addr, sizeof(frame), VMM_ACCESS_WRITE) ||
       !vmm_copy_to_user(cell_domain_as(domain), frame_addr, &frame, sizeof(frame))) {
     terminate_domain_by_signal(domain, SIGSEGV);

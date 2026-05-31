@@ -6,14 +6,18 @@
 #include <stdint.h>
 
 enum {
+  ENOMEM = 12,
   EFAULT = 14,
   EINVAL = 22,
+  EPERM = 1,
   SIG_BLOCK = 0,
   SIG_UNBLOCK = 1,
   SIG_SETMASK = 2,
   SIGKILL = 9,
   SIGSEGV = 11,
+  SS_ONSTACK = 1,
   SS_DISABLE = 2,
+  MINSIGSTKSZ = 2048,
 };
 
 struct stack_t64 {
@@ -23,20 +27,42 @@ struct stack_t64 {
   uint64_t ss_size;
 };
 
-int64_t sys_sigaltstack(uint64_t new_addr, uint64_t old_addr) {
+static bool on_sigaltstack(const struct thread *thread, const struct trap_frame *frame) {
+  if (thread == NULL || frame == NULL || (thread->sigaltstack_flags & SS_DISABLE) != 0 ||
+      thread->sigaltstack_size == 0) {
+    return false;
+  }
+  uint64_t end = thread->sigaltstack_sp + thread->sigaltstack_size;
+  return end >= thread->sigaltstack_sp && frame->sp_el0 >= thread->sigaltstack_sp && frame->sp_el0 < end;
+}
+
+int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t old_addr) {
+  struct thread *thread = cell_current_thread_internal();
+  if (thread == NULL) { return -(int64_t)EFAULT; }
+  bool onstack = on_sigaltstack(thread, frame);
   if (old_addr != 0) {
-    struct stack_t64 old = {.ss_sp = 0, .ss_flags = SS_DISABLE, .ss_size = 0};
+    struct stack_t64 old = {
+      .ss_sp = thread->sigaltstack_sp,
+      .ss_flags = onstack ? SS_ONSTACK : thread->sigaltstack_flags,
+      .ss_size = thread->sigaltstack_size,
+    };
     if (!syscall_user_writable(old_addr, sizeof(old)) ||
         !vmm_copy_to_user(syscall_active_as(), old_addr, &old, sizeof(old))) {
       return -(int64_t)EFAULT;
     }
   }
   if (new_addr != 0) {
-    struct stack_t64 ignored;
-    if (!syscall_user_readable(new_addr, sizeof(ignored)) ||
-        !vmm_copy_from_user(syscall_active_as(), &ignored, new_addr, sizeof(ignored))) {
+    if (onstack) { return -(int64_t)EPERM; }
+    struct stack_t64 next;
+    if (!syscall_user_readable(new_addr, sizeof(next)) ||
+        !vmm_copy_from_user(syscall_active_as(), &next, new_addr, sizeof(next))) {
       return -(int64_t)EFAULT;
     }
+    if ((next.ss_flags & ~(uint32_t)SS_DISABLE) != 0) { return -(int64_t)EINVAL; }
+    if ((next.ss_flags & SS_DISABLE) == 0 && next.ss_size < MINSIGSTKSZ) { return -(int64_t)ENOMEM; }
+    thread->sigaltstack_sp = (next.ss_flags & SS_DISABLE) != 0 ? 0 : next.ss_sp;
+    thread->sigaltstack_size = (next.ss_flags & SS_DISABLE) != 0 ? 0 : next.ss_size;
+    thread->sigaltstack_flags = (next.ss_flags & SS_DISABLE) != 0 ? SS_DISABLE : 0;
   }
   return 0;
 }

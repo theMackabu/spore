@@ -77,6 +77,9 @@
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0x4000
 #endif
+#ifndef SA_RESTART
+#define SA_RESTART 0x10000000
+#endif
 
 struct linux_dirent64 {
   uint64_t d_ino;
@@ -1672,9 +1675,37 @@ static uint64_t usec_now(void) {
 }
 
 static volatile sig_atomic_t saw_sigint;
+static unsigned char altstack_area[16384];
+static volatile uintptr_t signal_stack_addr;
+static volatile sig_atomic_t interrupted_signals;
+static volatile sig_atomic_t nested_signals;
 
 static void signal_mask_handler(int signal) {
   saw_sigint += signal;
+}
+
+static void signal_altstack_handler(int signal) {
+  volatile char marker = (char)signal;
+  signal_stack_addr = (uintptr_t)&marker;
+}
+
+static void signal_interrupt_handler(int signal) {
+  interrupted_signals += signal;
+}
+
+static void signal_nested_term_handler(int signal) {
+  nested_signals = nested_signals * 10 + signal;
+}
+
+static void signal_nested_int_handler(int signal) {
+  nested_signals = nested_signals * 10 + signal;
+  kill(getpid(), SIGTERM);
+  nested_signals = nested_signals * 10 + signal;
+}
+
+static void sleep_ms(long ms) {
+  struct timespec ts = {.tv_sec = ms / 1000, .tv_nsec = (ms % 1000) * 1000000L};
+  nanosleep(&ts, NULL);
 }
 
 static int signal_mask_regression(void) {
@@ -1698,26 +1729,159 @@ static int signal_mask_regression(void) {
   return ok;
 }
 
+static int signal_altstack_regression(void) {
+  stack_t ss = {.ss_sp = altstack_area, .ss_size = sizeof(altstack_area), .ss_flags = 0};
+  int ok = sigaltstack(&ss, NULL) == 0;
+
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = signal_altstack_handler;
+  sa.sa_flags = SA_ONSTACK;
+  sigemptyset(&sa.sa_mask);
+  signal_stack_addr = 0;
+  ok = ok && sigaction(SIGINT, &sa, NULL) == 0;
+  ok = ok && kill(getpid(), SIGINT) == 0;
+
+  uintptr_t start = (uintptr_t)altstack_area;
+  uintptr_t end = start + sizeof(altstack_area);
+  ok = ok && signal_stack_addr >= start && signal_stack_addr < end;
+
+  printf("[spore] signal altstack delivery: %s addr=%p range=%p-%p\n", ok ? "PASS" : "FAIL",
+         (void *)signal_stack_addr, (void *)start, (void *)end);
+  return ok;
+}
+
+static int signal_interrupted_read_regression(void) {
+  int fds[2];
+  int ok = pipe(fds) == 0;
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = signal_interrupt_handler;
+  sigemptyset(&sa.sa_mask);
+  interrupted_signals = 0;
+  ok = ok && sigaction(SIGINT, &sa, NULL) == 0;
+
+  pid_t parent = getpid();
+  pid_t child = ok ? fork() : -1;
+  if (child == 0) {
+    close(fds[0]);
+    sleep_ms(20);
+    kill(parent, SIGINT);
+    _exit(0);
+  }
+
+  char ch = 0;
+  errno = 0;
+  ssize_t n = ok ? read(fds[0], &ch, 1) : -1;
+  ok = ok && n == -1 && errno == EINTR && interrupted_signals == SIGINT;
+  if (child > 0) { waitpid(child, NULL, 0); }
+  if (fds[0] >= 0) { close(fds[0]); }
+  if (fds[1] >= 0) { close(fds[1]); }
+
+  printf("[spore] signal interrupted read EINTR: %s errno=%d seen=%d\n", ok ? "PASS" : "FAIL", errno,
+         (int)interrupted_signals);
+  return ok;
+}
+
+static int signal_restart_read_regression(void) {
+  int fds[2];
+  int ok = pipe(fds) == 0;
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = signal_interrupt_handler;
+  sa.sa_flags = SA_RESTART;
+  sigemptyset(&sa.sa_mask);
+  interrupted_signals = 0;
+  ok = ok && sigaction(SIGINT, &sa, NULL) == 0;
+
+  pid_t parent = getpid();
+  pid_t child = ok ? fork() : -1;
+  if (child == 0) {
+    close(fds[0]);
+    sleep_ms(20);
+    kill(parent, SIGINT);
+    sleep_ms(20);
+    write(fds[1], "R", 1);
+    _exit(0);
+  }
+
+  char ch = 0;
+  errno = 0;
+  ssize_t n = ok ? read(fds[0], &ch, 1) : -1;
+  ok = ok && n == 1 && ch == 'R' && interrupted_signals == SIGINT;
+  if (child > 0) { waitpid(child, NULL, 0); }
+  if (fds[0] >= 0) { close(fds[0]); }
+  if (fds[1] >= 0) { close(fds[1]); }
+
+  printf("[spore] signal restarted read: %s n=%zd ch=%c seen=%d\n", ok ? "PASS" : "FAIL", n, ch ? ch : '-',
+         (int)interrupted_signals);
+  return ok;
+}
+
+static int signal_nested_regression(void) {
+  struct sigaction sa_int;
+  memset(&sa_int, 0, sizeof(sa_int));
+  sa_int.sa_handler = signal_nested_int_handler;
+  sigemptyset(&sa_int.sa_mask);
+
+  struct sigaction sa_term;
+  memset(&sa_term, 0, sizeof(sa_term));
+  sa_term.sa_handler = signal_nested_term_handler;
+  sigemptyset(&sa_term.sa_mask);
+
+  nested_signals = 0;
+  int ok = sigaction(SIGINT, &sa_int, NULL) == 0 && sigaction(SIGTERM, &sa_term, NULL) == 0 &&
+           kill(getpid(), SIGINT) == 0 && nested_signals == 352;
+  printf("[spore] nested signal frames: %s sequence=%d\n", ok ? "PASS" : "FAIL", (int)nested_signals);
+  return ok;
+}
+
 static int shared_mmap_regression(void) {
   int fd = open("/tmp/shared-mmap", O_CREAT | O_RDWR | O_TRUNC, 0666);
   int ok = fd >= 0;
   ok = ok && write(fd, "abcdef", 6) == 6;
   void *map = ok ? mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
   ok = ok && map != MAP_FAILED;
+  char buf[8] = {0};
   if (ok) {
     char *p = map;
     p[1] = 'Z';
     p[2] = 'Y';
-    ok = munmap(map, 4096) == 0;
+    lseek(fd, 0, SEEK_SET);
+    ok = msync(map, 4096, MS_SYNC) == 0 && read(fd, buf, 6) == 6 && strcmp(buf, "aZYdef") == 0;
+    ok = ok && munmap(map, 4096) == 0;
   }
-  char buf[8] = {0};
   if (fd >= 0) {
+    memset(buf, 0, sizeof(buf));
     lseek(fd, 0, SEEK_SET);
     ok = ok && read(fd, buf, 6) == 6;
     close(fd);
   }
   ok = ok && strcmp(buf, "aZYdef") == 0;
   printf("[spore] shared file mmap writeback: %s value=%s\n", ok ? "PASS" : "FAIL", buf);
+  return ok;
+}
+
+static int shared_anon_mmap_fork_regression(void) {
+  char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  int ok = map != MAP_FAILED;
+  if (ok) { map[0] = 'P'; }
+
+  pid_t child = ok ? fork() : -1;
+  if (child == 0) {
+    int child_ok = map[0] == 'P';
+    map[1] = child_ok ? 'C' : 'X';
+    _exit(child_ok ? 0 : 1);
+  }
+
+  int status = 0;
+  if (child > 0) { ok = ok && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0; }
+  char first = map == MAP_FAILED ? '-' : map[0];
+  char second = map == MAP_FAILED ? '-' : map[1];
+  ok = ok && first == 'P' && second == 'C';
+  if (map != MAP_FAILED) { ok = ok && munmap(map, 4096) == 0; }
+
+  printf("[spore] shared anonymous mmap fork: %s value=%c%c\n", ok ? "PASS" : "FAIL", first, second);
   return ok;
 }
 
@@ -1944,7 +2108,12 @@ int main(void) {
   ok_all = ok_all && ok_v3f;
   ok_all = ok_all && absolute_sleep_regression();
   ok_all = ok_all && signal_mask_regression();
+  ok_all = ok_all && signal_altstack_regression();
+  ok_all = ok_all && signal_interrupted_read_regression();
+  ok_all = ok_all && signal_restart_read_regression();
+  ok_all = ok_all && signal_nested_regression();
   ok_all = ok_all && shared_mmap_regression();
+  ok_all = ok_all && shared_anon_mmap_fork_regression();
   ok_all = ok_all && growdown_mmap_regression();
   ok_all = ok_all && fork_latency_profile();
   ok_all = ok_all && fork_pressure_regression();

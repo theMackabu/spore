@@ -124,6 +124,7 @@ enum {
   SYS_EXECVE = 221,
   SYS_MMAP = 222,
   SYS_MPROTECT = 226,
+  SYS_MSYNC = 227,
   SYS_MADVISE = 233,
   SYS_WAIT4 = 260,
   SYS_PRLIMIT64 = 261,
@@ -330,6 +331,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_EXECVE] = &&l_execve,
     [SYS_MMAP] = &&l_mmap,
     [SYS_MPROTECT] = &&l_mprotect,
+    [SYS_MSYNC] = &&l_msync,
     [SYS_MADVISE] = &&l_madvise,
     [SYS_WAIT4] = &&l_wait4,
     [SYS_PRLIMIT64] = &&l_prlimit64,
@@ -470,18 +472,21 @@ l_wait4: {
 l_kill:
   if ((int)a0 == cell_current_pid() &&
       ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 13 || (int)a1 == 15)) {
+    f->x[0] = 0;
     return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_kill((int)a0, (int)a1);
 l_tkill:
   if ((int)a0 == cell_current_tid() &&
       ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 13 || (int)a1 == 15)) {
+    f->x[0] = 0;
     return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tkill((int)a0, (int)a1);
 l_tgkill:
   if ((int)a0 == cell_current_pid() && (int)a1 == cell_current_tid() &&
       ((int)a2 == 2 || (int)a2 == 6 || (int)a2 == 9 || (int)a2 == 11 || (int)a2 == 13 || (int)a2 == 15)) {
+    f->x[0] = 0;
     return cell_signal_current((int)a2, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tgkill((int)a0, (int)a1, (int)a2);
@@ -492,7 +497,7 @@ l_rt_sigprocmask:
 l_rt_sigreturn:
   return cell_rt_sigreturn(f) == 0 ? SYSCALL_SWITCHED : -(int64_t)EFAULT;
 l_sigaltstack:
-  return sys_sigaltstack(a0, a1);
+  return sys_sigaltstack(f, a0, a1);
 l_times:
   return sys_times(a0);
 l_spore_snapshot:
@@ -585,6 +590,8 @@ l_munmap:
   return sys_munmap(a0, a1);
 l_mprotect:
   return sys_mprotect(a0, a1, a2);
+l_msync:
+  return sys_msync(a0, a1, a2);
 l_madvise:
   return sys_madvise(a0, a1, a2);
 l_mremap:

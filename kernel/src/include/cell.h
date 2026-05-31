@@ -313,6 +313,9 @@ struct thread {
   uint64_t socket_deadline_tick;
   uint64_t signal_mask;
   uint64_t pending_signals;
+  uint64_t sigaltstack_sp;
+  uint64_t sigaltstack_size;
+  uint32_t sigaltstack_flags;
   bool pipe_write;
   uint8_t poll_kind;
   bool poll_has_deadline;
@@ -527,10 +530,12 @@ bool cell_vma_overlaps(uint64_t start, uint64_t end);
 bool cell_vma_lookup_range(uint64_t start, uint64_t end, struct vma *out);
 bool cell_add_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags);
 bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, enum vma_type type);
+bool cell_prefault_anon_vma(uint64_t start, uint64_t end);
 bool cell_grow_down_vma(uint64_t page, uint32_t required_flags, struct vma *out);
 bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
                        uint64_t file_start, uint64_t file_offset, uint64_t file_size);
 bool cell_remove_vma(uint64_t start, uint64_t end);
+bool cell_sync_shared_vmas(uint64_t start, uint64_t end);
 bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
 size_t cell_resident_pages(uint64_t start, uint64_t end);
 bool cell_memory_accounting(const struct domain *domain, struct cell_memory_accounting *out);

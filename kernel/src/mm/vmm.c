@@ -31,6 +31,8 @@ static bool checked_add(uint64_t a, uint64_t b, uint64_t *out) {
   return *out >= a;
 }
 
+static uint64_t *leaf_for_va(const struct user_address_space *as, uint64_t va);
+
 static void flush_all_user_tlb(void) {
 #if defined(__STDC_HOSTED__) && __STDC_HOSTED__
   return;
@@ -168,6 +170,28 @@ bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *sr
   bool ok = clone_table_cow(dst, src, root, src->root_pa, 0);
   flush_all_user_tlb();
   return ok;
+}
+
+bool vmm_restore_shared_range(struct user_address_space *a, struct user_address_space *b, uint64_t start, uint64_t end,
+                              uint32_t flags) {
+  if (a == NULL || b == NULL || start >= end) { return false; }
+  uint64_t ap = (flags & VMM_USER_WRITE) != 0 ? PTE_AP_USER_RW : PTE_AP_USER_RO;
+  uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
+  for (uint64_t va = start; va < end; va += PAGE_SIZE) {
+    uint64_t *a_pte = leaf_for_va(a, va);
+    uint64_t *b_pte = leaf_for_va(b, va);
+    if (a_pte == NULL || b_pte == NULL || (*a_pte & PTE_VALID) == 0 || (*b_pte & PTE_VALID) == 0) { continue; }
+    if ((*a_pte & PTE_ADDR_MASK) != (*b_pte & PTE_ADDR_MASK)) { return false; }
+    uint64_t a_entry = leaf_with_ap(*a_pte & ~PTE_COW, ap);
+    uint64_t b_entry = leaf_with_ap(*b_pte & ~PTE_COW, ap);
+    a_entry = (a_entry & ~PTE_UXN) | xn;
+    b_entry = (b_entry & ~PTE_UXN) | xn;
+    *a_pte = a_entry;
+    *b_pte = b_entry;
+    vmm_flush_user_va(va);
+  }
+  flush_all_user_tlb();
+  return true;
 }
 
 static void destroy_table(struct user_address_space *as, uint64_t table_pa, unsigned level) {

@@ -155,6 +155,9 @@ int cell_fork_current(struct trap_frame *frame) {
   child_thread->fp = cell_current_thread_internal()->fp;
   child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
   child_thread->pending_signals = 0;
+  child_thread->sigaltstack_sp = cell_current_thread_internal()->sigaltstack_sp;
+  child_thread->sigaltstack_size = cell_current_thread_internal()->sigaltstack_size;
+  child_thread->sigaltstack_flags = cell_current_thread_internal()->sigaltstack_flags;
   child_thread->tf.x[0] = 0;
   child_thread->tpidr_el0 = cell_current_thread_internal()->tpidr_el0;
   cell_current_thread_internal()->tf.x[0] = (uint64_t)child_domain->id;
@@ -188,6 +191,9 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   child_thread->fp = cell_current_thread_internal()->fp;
   child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
   child_thread->pending_signals = 0;
+  child_thread->sigaltstack_sp = cell_current_thread_internal()->sigaltstack_sp;
+  child_thread->sigaltstack_size = cell_current_thread_internal()->sigaltstack_size;
+  child_thread->sigaltstack_flags = cell_current_thread_internal()->sigaltstack_flags;
   child_thread->tf.x[0] = 0;
   if (newsp != 0 && child_thread != NULL) { child_thread->tf.sp_el0 = newsp; }
   child_thread->tpidr_el0 = ((flags & CLONE_SETTLS) != 0) ? tls : cell_current_thread_internal()->tpidr_el0;
@@ -234,6 +240,7 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   thread->fp = cell_current_thread_internal()->fp;
   thread->signal_mask = cell_current_thread_internal()->signal_mask;
   thread->pending_signals = 0;
+  thread->sigaltstack_flags = 2;
   thread->tf.x[0] = 0;
   thread->tf.sp_el0 = newsp;
   thread->tpidr_el0 = ((flags & 0x00080000ull) != 0) ? tls : cell_current_thread_internal()->tpidr_el0;

@@ -95,6 +95,7 @@ struct thread *cell_alloc_thread(struct domain *domain) {
       threads[i].domain = domain;
       threads[i].wait_reason = WAIT_NONE;
       threads[i].wait_target = -1;
+      threads[i].sigaltstack_flags = 2;
       ++domain->refcount;
       return &threads[i];
     }
