@@ -66,11 +66,13 @@ void syscall_realtime_base(uint64_t *epoch_sec, uint64_t *counter, uint64_t *fre
 }
 
 static bool user_readable(uint64_t buf, uint64_t len) {
+  if (len == 0) { return true; }
   return cell_ensure_user_range(buf, (size_t)len, VMM_ACCESS_READ) &&
          vmm_user_range_accessible(active_as(), buf, (size_t)len, VMM_ACCESS_READ);
 }
 
 static bool user_writable(uint64_t buf, uint64_t len) {
+  if (len == 0) { return true; }
   return cell_ensure_user_range(buf, (size_t)len, VMM_ACCESS_WRITE) &&
          vmm_user_range_accessible(active_as(), buf, (size_t)len, VMM_ACCESS_WRITE);
 }

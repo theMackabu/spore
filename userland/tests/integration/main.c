@@ -1742,8 +1742,14 @@ static int phase_d_fs_demo(void) {
     ok = 0;
   } else {
     const char msg[] = "phase-d";
+    const char iov_msg[] = "+iov";
+    struct iovec iov[2] = {
+      {.iov_base = (void *)0x1, .iov_len = 0},
+      {.iov_base = (void *)iov_msg, .iov_len = sizeof(iov_msg) - 1},
+    };
     if (write(fd, "", 0) != 0) { ok = 0; }
     if (write(fd, msg, sizeof(msg) - 1) != (ssize_t)(sizeof(msg) - 1)) { ok = 0; }
+    if (writev(fd, iov, 2) != (ssize_t)(sizeof(iov_msg) - 1)) { ok = 0; }
     close(fd);
   }
   if (chdir("/tmp/spore-demo-d") != 0) { ok = 0; }
@@ -1751,7 +1757,7 @@ static int phase_d_fs_demo(void) {
   if (getcwd(cwd, sizeof(cwd)) == NULL || strcmp(cwd, "/tmp/spore-demo-d") != 0) { ok = 0; }
   fd = open("a", O_RDONLY);
   char buf[32] = {0};
-  if (fd < 0 || read(fd, buf, sizeof(buf) - 1) != 7 || strcmp(buf, "phase-d") != 0) { ok = 0; }
+  if (fd < 0 || read(fd, buf, sizeof(buf) - 1) != 11 || strcmp(buf, "phase-d+iov") != 0) { ok = 0; }
   if (fd >= 0) { close(fd); }
   if (rename("a", "b") != 0) { ok = 0; }
   int dfd = open(".", O_RDONLY);
