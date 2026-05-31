@@ -1,4 +1,4 @@
-export PATH='/bin:/sbin:/usr/bin:/usr/local/bin:.'
+export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:.'
 export SHELL='/bin/msh'
 export TERM='spore'
 export ENV='/etc/dashrc'

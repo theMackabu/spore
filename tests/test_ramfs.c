@@ -86,6 +86,32 @@ int main(void) {
   char buf[8] = {0};
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 5);
   assert(strcmp(buf, "hello") == 0);
+
+  const char *pack = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.pack";
+  const char *idx = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.idx";
+  const char *keep = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.keep";
+  assert(ramfs_create(&fs, pack, &node));
+  assert(ramfs_write(&fs, node.index, 0, "pack", 4) == 4);
+  assert(ramfs_create(&fs, idx, &node));
+  assert(ramfs_write(&fs, node.index, 0, "idx", 3) == 3);
+  assert(ramfs_create(&fs, keep, &node));
+  assert(ramfs_write(&fs, node.index, 0, "keep", 4) == 4);
+  assert(ramfs_lookup_node(&fs, pack, &node));
+  memset(buf, 0, sizeof(buf));
+  assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 4);
+  assert(strcmp(buf, "pack") == 0);
+  assert(ramfs_lookup_node(&fs, idx, &node));
+  memset(buf, 0, sizeof(buf));
+  assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 3);
+  assert(strcmp(buf, "idx") == 0);
+  assert(ramfs_lookup_node(&fs, keep, &node));
+  memset(buf, 0, sizeof(buf));
+  assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 4);
+  assert(strcmp(buf, "keep") == 0);
+  assert(ramfs_unlink(&fs, pack));
+  assert(ramfs_unlink(&fs, idx));
+  assert(ramfs_unlink(&fs, keep));
+
   assert(ramfs_link(&fs, "/tmp/d/a", "/tmp/d/link"));
   memset(buf, 0, sizeof(buf));
   assert(ramfs_lookup_node(&fs, "/tmp/d/link", &node));

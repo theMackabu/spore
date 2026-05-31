@@ -1734,6 +1734,8 @@ static int fork_pressure_regression(void) {
 
 static int phase_d_fs_demo(void) {
   int ok = 1;
+  errno = 0;
+  if (mkdir("/", 0777) == 0 || errno != EEXIST) { ok = 0; }
   if (mkdir("/tmp/spore-demo-d", 0777) != 0) { ok = 0; }
   int fd = open("/tmp/spore-demo-d/a", O_CREAT | O_RDWR | O_TRUNC, 0666);
   if (fd < 0) {

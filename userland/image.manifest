@@ -8,6 +8,8 @@ dir /home
 dir /root
 dir /etc/mycelium
 dir /sbin
+dir /usr/sbin
+dir /usr/local/sbin
 dir /libexec
 dir /libexec/spore-test
 dir /lib/apk/db
@@ -27,7 +29,7 @@ symlink /lib/mycelium/myc /sbin/myc
 userland/libexec/trustd /libexec/trustd
 userland/bin/msh /bin/msh
 userland/bin/dash /bin/dash
-symlink msh /bin/sh
+symlink dash /bin/sh
 
 userland/bin/shutdown /bin/shutdown
 userland/bin/reboot /bin/reboot

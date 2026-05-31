@@ -34,12 +34,14 @@ static bool streq(const char *a, const char *b) {
   return *a == '\0' && *b == '\0';
 }
 
-static void copy_name(char *dst, const char *src) {
+static bool copy_name(char *dst, const char *src) {
   size_t i = 0;
   for (; i < RAMFS_NAME_MAX && src[i] != '\0'; ++i) {
     dst[i] = src[i];
   }
+  if (src[i] != '\0') { return false; }
   dst[i] = '\0';
+  return true;
 }
 
 static const char *last_component(const char *path) {
@@ -184,7 +186,9 @@ static bool split_parent(const struct ramfs *fs, const char *path, int *parent, 
   if (path == NULL || path[0] != '/' || streq(path, "/")) { return false; }
   const char *last = last_component(path);
   if (*last == '\0') { return false; }
-  char parent_path[128];
+  size_t name_len = kstrlen(last);
+  if (name_len == 0 || name_len > RAMFS_NAME_MAX) { return false; }
+  char parent_path[512];
   size_t parent_len = (size_t)(last - path);
   if (parent_len == 0) { parent_len = 1; }
   if (parent_len >= sizeof(parent_path)) { return false; }
@@ -204,6 +208,10 @@ static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir,
   if (parent < 0 || !fs->nodes[parent].is_dir || find_child(fs, parent, name) >= 0) { return -1; }
   int index = alloc_node(fs);
   if (index < 0) { return -1; }
+  if (!copy_name(fs->nodes[index].name, name)) {
+    fs->nodes[index].used = false;
+    return -1;
+  }
   fs->nodes[index].parent = parent;
   fs->nodes[index].is_dir = is_dir;
   fs->nodes[index].writable = writable;
@@ -213,7 +221,6 @@ static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir,
   fs->nodes[index].gid = 0;
   fs->nodes[parent].mtime = ramfs_now_sec;
   fs->nodes[parent].ctime = ramfs_now_sec;
-  copy_name(fs->nodes[index].name, name);
   return index;
 }
 
@@ -358,7 +365,7 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
   fs->nodes[root].is_dir = true;
   fs->nodes[root].parent = root;
   fs->nodes[root].mount = RAMFS_MOUNT_RAM0;
-  copy_name(fs->nodes[root].name, "");
+  (void)copy_name(fs->nodes[root].name, "");
 
   int dev = add_node(fs, root, "dev", true, true);
   int proc = add_node(fs, root, "proc", true, true);
@@ -626,8 +633,8 @@ bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path) 
     free_node_pages(fs, existing);
     fs->nodes[existing].used = false;
   }
+  if (!copy_name(fs->nodes[index].name, name)) { return false; }
   fs->nodes[index].parent = parent;
-  copy_name(fs->nodes[index].name, name);
   fs->nodes[index].ctime = ramfs_now_sec;
   return true;
 }

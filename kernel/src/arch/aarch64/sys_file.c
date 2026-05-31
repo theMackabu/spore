@@ -433,7 +433,11 @@ int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
-  if (!vfs_mkdir(path, (uint32_t)mode)) { return -(int64_t)EINVAL; }
+  if (!vfs_mkdir(path, (uint32_t)mode)) {
+    struct vfs_node existing;
+    if (vfs_lookup(path, &existing)) { return -(int64_t)EEXIST; }
+    return -(int64_t)EINVAL;
+  }
   (void)vfs_chown(path, cell_current_euid(), cell_current_egid());
   return 0;
 }

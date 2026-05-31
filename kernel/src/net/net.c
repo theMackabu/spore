@@ -435,7 +435,10 @@ bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, ui
     kprintf("[spore] net: tx denied proto=tcp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
   }
-  if ((options_len & 3u) != 0 || options_len > 40 || len + TCP_HEADER_LEN + options_len > 1460) { return false; }
+  if ((options_len & 3u) != 0 || options_len > 40 ||
+      len + TCP_HEADER_LEN + options_len > MAX_FRAME - ETH_HEADER_LEN - IPV4_HEADER_LEN) {
+    return false;
+  }
   uint8_t packet[TCP_HEADER_LEN + 40 + 1460];
   size_t header_len = TCP_HEADER_LEN + options_len;
   store_be16(packet, src_port);
