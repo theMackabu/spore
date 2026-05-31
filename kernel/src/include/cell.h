@@ -19,6 +19,10 @@ enum {
   MAX_FDS = 64,
   MAX_OPEN_FILES = 256,
   CELL_TCP_RX_CAP = 262144,
+  CELL_TCP_TX_CAP = 1460,
+  CELL_TCP_TX_QUEUE_CAP = 8,
+  CELL_DGRAM_RX_CAP = 1472,
+  CELL_DGRAM_RX_QUEUE_CAP = 8,
   CELL_MAX_POLL_FDS = 64,
   CELL_SWITCHED = -0x40000000,
 };
@@ -120,25 +124,63 @@ struct open_file {
   struct vfs_node node;
   uint8_t socket_proto;
   uint32_t udp_remote_ip;
-  uint32_t udp_rx_ip;
   uint16_t udp_local_port;
   uint16_t udp_remote_port;
-  uint16_t udp_rx_port;
   bool udp_connected;
-  uint8_t udp_rx[1472];
-  uint64_t udp_rx_len;
+  uint8_t udp_error;
+  bool so_reuseaddr;
+  bool so_reuseport;
+  bool so_keepalive;
+  bool so_broadcast;
+  bool so_dontroute;
+  bool tcp_nodelay;
+  uint32_t so_sndbuf;
+  uint32_t so_rcvbuf;
+  uint64_t so_rcvtimeo_ticks;
+  uint64_t so_sndtimeo_ticks;
+  uint32_t tcp_keepidle;
+  uint32_t tcp_keepintvl;
+  uint32_t tcp_keepcnt;
+  uint32_t ip_tos;
+  uint32_t ip_mtu_discover;
+  bool ip_bind_address_no_port;
+  uint8_t dgram_rx_head;
+  uint8_t dgram_rx_count;
+  uint8_t dgram_rx_slot[CELL_DGRAM_RX_QUEUE_CAP];
+  uint16_t dgram_rx_len[CELL_DGRAM_RX_QUEUE_CAP];
+  uint32_t dgram_rx_ip[CELL_DGRAM_RX_QUEUE_CAP];
+  uint16_t dgram_rx_port[CELL_DGRAM_RX_QUEUE_CAP];
   uint32_t tcp_remote_ip;
   uint32_t tcp_seq;
   uint32_t tcp_ack;
+  uint32_t tcp_remote_window;
+  uint32_t tcp_remote_mss;
+  uint32_t tcp_srtt_ticks_x8;
+  uint32_t tcp_rttvar_ticks_x4;
+  uint32_t tcp_rto_ticks;
+  uint64_t tcp_retransmit_deadline_tick;
+  uint64_t tcp_syn_sent_tick;
   uint16_t tcp_local_port;
   uint16_t tcp_remote_port;
+  uint16_t tcp_listen_backlog;
   uint32_t tcp_rx_len;
+  uint8_t tcp_tx_head;
+  uint8_t tcp_tx_count;
+  uint8_t tcp_tx_slot[CELL_TCP_TX_QUEUE_CAP];
+  uint16_t tcp_tx_len[CELL_TCP_TX_QUEUE_CAP];
+  uint32_t tcp_tx_seq[CELL_TCP_TX_QUEUE_CAP];
+  uint8_t tcp_tx_retries[CELL_TCP_TX_QUEUE_CAP];
+  uint64_t tcp_tx_deadline_tick[CELL_TCP_TX_QUEUE_CAP];
+  uint64_t tcp_tx_sent_tick[CELL_TCP_TX_QUEUE_CAP];
   uint32_t tcp_ooo_seq[8];
   uint32_t tcp_ooo_len[8];
   uint8_t tcp_state;
   uint8_t tcp_error;
   uint8_t tcp_rx_slot;
+  uint8_t tcp_syn_retries;
+  uint8_t tcp_remote_window_scale;
   bool tcp_fin;
+  bool tcp_fin_sent;
   bool tcp_fin_pending;
   bool tcp_ooo_used[8];
   uint32_t tcp_fin_seq;
@@ -241,6 +283,15 @@ struct thread {
   uint64_t pipe_len;
   uint64_t socket_addr;
   uint64_t socket_addrlen;
+  int socket_accept_flags;
+  bool socket_write;
+  bool socket_msg;
+  uint64_t socket_msg_addr;
+  uint64_t socket_iov;
+  uint64_t socket_iovlen;
+  uint32_t socket_flags;
+  bool socket_has_deadline;
+  uint64_t socket_deadline_tick;
   bool pipe_write;
   uint8_t poll_kind;
   bool poll_has_deadline;
@@ -341,7 +392,7 @@ void cell_restore_current(struct trap_frame *frame);
 void cell_schedule(struct trap_frame *frame);
 void cell_exit_thread_current(int status, struct trap_frame *frame);
 void cell_exit_group_current(int status, struct trap_frame *frame);
-void cell_signal_current(int signal, struct trap_frame *frame);
+bool cell_signal_current(int signal, struct trap_frame *frame);
 int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t sigset_size);
 int cell_rt_sigreturn(struct trap_frame *frame);
 void cell_dump_current_fault(const struct trap_frame *frame, uint64_t far);
@@ -384,21 +435,40 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
 int cell_fd_socket_inet(uint8_t proto);
 int cell_fd_socket_unix(void);
 bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto);
-bool cell_fd_udp_bind(int fd, uint16_t port);
+int cell_fd_socket_error(int fd, bool clear);
+bool cell_fd_socket_local_addr(int fd, uint32_t *ip, uint16_t *port);
+bool cell_fd_socket_peer_addr(int fd, uint32_t *ip, uint16_t *port);
+int cell_fd_socket_get_int_option(int fd, int level, int optname, int32_t *out);
+int cell_fd_socket_set_int_option(int fd, int level, int optname, int32_t value);
+bool cell_fd_socket_get_timeout(int fd, bool receive, uint64_t *ticks);
+bool cell_fd_socket_set_timeout(int fd, bool receive, uint64_t ticks);
+int cell_fd_udp_bind(int fd, uint16_t port);
 bool cell_fd_udp_connect(int fd, uint32_t ip, uint16_t port);
+int cell_fd_udp_disconnect(int fd);
 int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint64_t len);
+int64_t cell_fd_udp_send_kernel(int fd, uint32_t ip, uint16_t port, const void *buf, uint64_t len);
+int cell_fd_tcp_bind(int fd, uint16_t port);
+int cell_fd_tcp_listen(int fd, int backlog);
+int cell_fd_tcp_accept(int fd, uint64_t addr, uint64_t addrlen, int flags, struct trap_frame *frame);
 int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *frame);
-int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len);
-int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame, uint64_t addr,
-                            uint64_t addrlen);
+int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len, bool dontwait, struct trap_frame *frame);
+int64_t cell_fd_tcp_send_kernel(int fd, const void *buf, uint64_t len);
+int cell_fd_socket_shutdown(int fd, int how);
+int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, bool dontwait, struct trap_frame *frame,
+                            uint64_t addr, uint64_t addrlen);
+int64_t cell_fd_socket_sendmsg(int fd, uint64_t msg_addr, bool dontwait, struct trap_frame *frame);
+int64_t cell_fd_socket_recvmsg(int fd, uint64_t msg_addr, uint32_t flags, bool dontwait, struct trap_frame *frame);
 int cell_fd_unix_bind(int fd, const char *path);
 int cell_fd_unix_listen(int fd, int backlog);
-int cell_fd_unix_accept(int fd, struct trap_frame *frame);
+int cell_fd_unix_accept(int fd, int flags, struct trap_frame *frame);
 int cell_fd_unix_connect(int fd, const char *path);
 bool cell_fd_unix_peer_cred(int fd, struct cell_peer_cred *out);
-void cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
+bool cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
+bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
+bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
 void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint8_t flags, const void *payload, size_t len);
+                          uint16_t window, uint8_t flags, const void *options, size_t options_len,
+                          const void *payload, size_t len);
 void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
 int cell_fd_epoll_create(int flags);

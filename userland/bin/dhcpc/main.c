@@ -139,6 +139,12 @@ int main(void) {
     perror("socket");
     return EXIT_FAILURE;
   }
+  int broadcast = 1;
+  if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast)) != 0) {
+    perror("setsockopt SO_BROADCAST");
+    close(fd);
+    return EXIT_FAILURE;
+  }
 
   struct sockaddr_in local;
   memset(&local, 0, sizeof(local));

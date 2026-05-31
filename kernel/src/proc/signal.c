@@ -19,6 +19,7 @@ enum {
   SIGABRT = 6,
   SIGKILL = 9,
   SIGSEGV = 11,
+  SIGPIPE = 13,
   SIGTERM = 15,
   SA_SIGINFO = 4,
   NSIG = 65,
@@ -43,6 +44,11 @@ struct signal_frame64 {
 
 static struct domain *current_domain(void) {
   return cell_current_domain_internal();
+}
+
+static bool signal_is_supported(int signal) {
+  return signal == SIGTERM || signal == SIGINT || signal == SIGABRT || signal == SIGKILL || signal == SIGSEGV ||
+         signal == SIGPIPE;
 }
 
 static void terminate_domain_by_signal(struct domain *domain, int signal) {
@@ -86,6 +92,15 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
     thread->pipe_len = 0;
     thread->socket_addr = 0;
     thread->socket_addrlen = 0;
+    thread->socket_accept_flags = 0;
+    thread->socket_write = false;
+    thread->socket_msg = false;
+    thread->socket_msg_addr = 0;
+    thread->socket_iov = 0;
+    thread->socket_iovlen = 0;
+    thread->socket_flags = 0;
+    thread->socket_has_deadline = false;
+    thread->socket_deadline_tick = 0;
   }
 
   struct signal_frame64 frame;
@@ -113,12 +128,19 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   return true;
 }
 
-void cell_signal_current(int signal, struct trap_frame *frame) {
-  if (cell_current_thread_internal() == NULL) { return; }
-  cell_current_thread_internal()->tf = *frame;
-  (void)cell_deliver_signal_to_thread(cell_current_thread_internal(), signal);
-  *frame = cell_current_thread_internal()->tf;
-  if (cell_current_thread_internal()->state == THREAD_ZOMBIE) { cell_schedule(frame); }
+bool cell_signal_current(int signal, struct trap_frame *frame) {
+  struct thread *thread = cell_current_thread_internal();
+  if (thread == NULL || frame == NULL) { return false; }
+  bool ignored = thread->domain != NULL && signal > 0 && signal < (int)NSIG &&
+                 thread->domain->signal_actions[signal].handler == 1 && signal != SIGKILL;
+  thread->tf = *frame;
+  bool delivered = cell_deliver_signal_to_thread(thread, signal);
+  *frame = thread->tf;
+  if (thread->state == THREAD_ZOMBIE) {
+    cell_schedule(frame);
+    return true;
+  }
+  return delivered && !ignored;
 }
 
 int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t sigset_size) {
@@ -223,7 +245,7 @@ int cell_kill(int pid, int signal) {
           ++delivered;
           continue;
         }
-        if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
+        if (!signal_is_supported(signal)) {
           ++delivered;
           continue;
         }
@@ -236,9 +258,7 @@ int cell_kill(int pid, int signal) {
   struct domain *domain = cell_find_domain(pid);
   if (domain == NULL || domain->zombie) { return -ESRCH; }
   if (signal == 0) { return 0; }
-  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
-    return 0;
-  }
+  if (!signal_is_supported(signal)) { return 0; }
   (void)cell_deliver_signal_to_thread(cell_thread_for_domain(domain), signal);
   return 0;
 }
@@ -251,9 +271,7 @@ int cell_tkill(int tid, int signal) {
     }
     return -ESRCH;
   }
-  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
-    return 0;
-  }
+  if (!signal_is_supported(signal)) { return 0; }
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state == THREAD_UNUSED || thread->tid != tid || thread->domain == NULL) { continue; }
@@ -275,9 +293,7 @@ int cell_tgkill(int pid, int tid, int signal) {
     }
     return -ESRCH;
   }
-  if (signal != SIGTERM && signal != SIGINT && signal != SIGABRT && signal != SIGKILL && signal != SIGSEGV) {
-    return 0;
-  }
+  if (!signal_is_supported(signal)) { return 0; }
   for (size_t i = 0; i < MAX_THREADS; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state == THREAD_UNUSED || thread->tid != tid || thread->domain != domain) {

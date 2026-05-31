@@ -217,7 +217,9 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
-    return cell_socket_tcp_write_from_domain(domain, file, buf, len);
+    int64_t wrote = cell_socket_tcp_write_from_domain(domain, file, buf, len);
+    if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
+    return cell_block_current_on_socket_write_timeout(fd, buf, len, file->so_sndtimeo_ticks, frame);
   }
   if (file->type == OPEN_EVENTFD) {
     int64_t wrote = cell_eventfd_write_from_domain(domain, file, buf, len);
@@ -293,7 +295,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     net_poll();
     int64_t got = cell_socket_tcp_read_to_domain(domain, file, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
-    return cell_block_current_on_socket(fd, buf, len, 0, 0, frame);
+    return cell_block_current_on_socket_timeout(fd, buf, len, 0, 0, file->so_rcvtimeo_ticks, frame);
   }
   if (file->type == OPEN_STDIN) {
     if (len == 0) { return 0; }

@@ -273,6 +273,16 @@ int cell_block_current_on_sleep(uint64_t deadline_tick, struct trap_frame *frame
 
 int cell_block_current_on_socket(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
                                  struct trap_frame *frame) {
+  return cell_block_current_on_socket_timeout(fd, buf, len, addr, addrlen, 0, frame);
+}
+
+int cell_block_current_on_socket_timeout(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
+                                         uint64_t timeout_ticks, struct trap_frame *frame) {
+  return cell_block_current_on_socket_flags_timeout(fd, buf, len, addr, addrlen, 0, timeout_ticks, frame);
+}
+
+int cell_block_current_on_socket_flags_timeout(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
+                                               uint32_t flags, uint64_t timeout_ticks, struct trap_frame *frame) {
   struct thread *current_thread = cell_current_thread_internal();
   cell_save_current(frame);
   current_thread->running_cpu = -1;
@@ -283,6 +293,95 @@ int cell_block_current_on_socket(int fd, uint64_t buf, uint64_t len, uint64_t ad
   current_thread->pipe_len = len;
   current_thread->socket_addr = addr;
   current_thread->socket_addrlen = addrlen;
+  current_thread->socket_msg = false;
+  current_thread->socket_write = false;
+  current_thread->socket_msg_addr = 0;
+  current_thread->socket_iov = 0;
+  current_thread->socket_iovlen = 0;
+  current_thread->socket_flags = flags;
+  current_thread->socket_has_deadline = timeout_ticks != 0;
+  current_thread->socket_deadline_tick = timeout_ticks == 0 ? 0 : cell_uptime_ticks() + timeout_ticks;
+  current_thread->pipe_write = false;
+  cell_schedule(frame);
+  return CELL_SWITCHED;
+}
+
+int cell_block_current_on_socket_write_timeout(int fd, uint64_t buf, uint64_t len, uint64_t timeout_ticks,
+                                               struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
+  cell_save_current(frame);
+  current_thread->running_cpu = -1;
+  current_thread->state = THREAD_BLOCKED;
+  current_thread->wait_reason = WAIT_SOCKET;
+  current_thread->wait_target = fd;
+  current_thread->pipe_buf = buf;
+  current_thread->pipe_len = len;
+  current_thread->socket_addr = 0;
+  current_thread->socket_addrlen = 0;
+  current_thread->socket_msg = false;
+  current_thread->socket_write = true;
+  current_thread->socket_msg_addr = 0;
+  current_thread->socket_iov = 0;
+  current_thread->socket_iovlen = 0;
+  current_thread->socket_flags = 0;
+  current_thread->socket_has_deadline = timeout_ticks != 0;
+  current_thread->socket_deadline_tick = timeout_ticks == 0 ? 0 : cell_uptime_ticks() + timeout_ticks;
+  current_thread->pipe_write = false;
+  cell_schedule(frame);
+  return CELL_SWITCHED;
+}
+
+int cell_block_current_on_socket_sendmsg_timeout(int fd, uint64_t msg_addr, uint64_t timeout_ticks,
+                                                 struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
+  cell_save_current(frame);
+  current_thread->running_cpu = -1;
+  current_thread->state = THREAD_BLOCKED;
+  current_thread->wait_reason = WAIT_SOCKET;
+  current_thread->wait_target = fd;
+  current_thread->pipe_buf = 0;
+  current_thread->pipe_len = 0;
+  current_thread->socket_addr = 0;
+  current_thread->socket_addrlen = 0;
+  current_thread->socket_msg = true;
+  current_thread->socket_write = true;
+  current_thread->socket_msg_addr = msg_addr;
+  current_thread->socket_iov = 0;
+  current_thread->socket_iovlen = 0;
+  current_thread->socket_flags = 0;
+  current_thread->socket_has_deadline = timeout_ticks != 0;
+  current_thread->socket_deadline_tick = timeout_ticks == 0 ? 0 : cell_uptime_ticks() + timeout_ticks;
+  current_thread->pipe_write = false;
+  cell_schedule(frame);
+  return CELL_SWITCHED;
+}
+
+int cell_block_current_on_socket_msg(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
+                                     uint64_t addrlen, uint32_t flags, struct trap_frame *frame) {
+  return cell_block_current_on_socket_msg_timeout(fd, msg_addr, iov, iovlen, addr, addrlen, flags, 0, frame);
+}
+
+int cell_block_current_on_socket_msg_timeout(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
+                                             uint64_t addrlen, uint32_t flags, uint64_t timeout_ticks,
+                                             struct trap_frame *frame) {
+  struct thread *current_thread = cell_current_thread_internal();
+  cell_save_current(frame);
+  current_thread->running_cpu = -1;
+  current_thread->state = THREAD_BLOCKED;
+  current_thread->wait_reason = WAIT_SOCKET;
+  current_thread->wait_target = fd;
+  current_thread->pipe_buf = 0;
+  current_thread->pipe_len = 0;
+  current_thread->socket_addr = addr;
+  current_thread->socket_addrlen = addrlen;
+  current_thread->socket_msg = true;
+  current_thread->socket_write = false;
+  current_thread->socket_msg_addr = msg_addr;
+  current_thread->socket_iov = iov;
+  current_thread->socket_iovlen = iovlen;
+  current_thread->socket_flags = flags;
+  current_thread->socket_has_deadline = timeout_ticks != 0;
+  current_thread->socket_deadline_tick = timeout_ticks == 0 ? 0 : cell_uptime_ticks() + timeout_ticks;
   current_thread->pipe_write = false;
   cell_schedule(frame);
   return CELL_SWITCHED;

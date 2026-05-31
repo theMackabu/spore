@@ -105,12 +105,15 @@ enum {
   SYS_ACCEPT = 202,
   SYS_CONNECT = 203,
   SYS_GETSOCKNAME = 204,
+  SYS_GETPEERNAME = 205,
   SYS_SENDTO = 206,
   SYS_RECVFROM = 207,
   SYS_SETSOCKOPT = 208,
   SYS_GETSOCKOPT = 209,
+  SYS_SHUTDOWN = 210,
   SYS_SENDMSG = 211,
   SYS_RECVMSG = 212,
+  SYS_ACCEPT4 = 242,
   SYS_BRK = 214,
   SYS_MUNMAP = 215,
   SYS_MREMAP = 216,
@@ -305,12 +308,15 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_ACCEPT] = &&l_accept,
     [SYS_CONNECT] = &&l_connect,
     [SYS_GETSOCKNAME] = &&l_getsockname,
+    [SYS_GETPEERNAME] = &&l_getpeername,
     [SYS_SENDTO] = &&l_sendto,
     [SYS_RECVFROM] = &&l_recvfrom,
-    [SYS_SETSOCKOPT] = &&l_zero,
+    [SYS_SETSOCKOPT] = &&l_setsockopt,
     [SYS_GETSOCKOPT] = &&l_getsockopt,
+    [SYS_SHUTDOWN] = &&l_shutdown,
     [SYS_SENDMSG] = &&l_sendmsg,
     [SYS_RECVMSG] = &&l_recvmsg,
+    [SYS_ACCEPT4] = &&l_accept4,
     [SYS_BRK] = &&l_brk,
     [SYS_MUNMAP] = &&l_munmap,
     [SYS_MREMAP] = &&l_mremap,
@@ -451,23 +457,20 @@ l_wait4: {
 }
 l_kill:
   if ((int)a0 == cell_current_pid() &&
-      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 15)) {
-    cell_signal_current((int)a1, f);
-    return SYSCALL_SWITCHED;
+      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 13 || (int)a1 == 15)) {
+    return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_kill((int)a0, (int)a1);
 l_tkill:
   if ((int)a0 == cell_current_tid() &&
-      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 15)) {
-    cell_signal_current((int)a1, f);
-    return SYSCALL_SWITCHED;
+      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 13 || (int)a1 == 15)) {
+    return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tkill((int)a0, (int)a1);
 l_tgkill:
   if ((int)a0 == cell_current_pid() && (int)a1 == cell_current_tid() &&
-      ((int)a2 == 2 || (int)a2 == 6 || (int)a2 == 9 || (int)a2 == 11 || (int)a2 == 15)) {
-    cell_signal_current((int)a2, f);
-    return SYSCALL_SWITCHED;
+      ((int)a2 == 2 || (int)a2 == 6 || (int)a2 == 9 || (int)a2 == 11 || (int)a2 == 13 || (int)a2 == 15)) {
+    return cell_signal_current((int)a2, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tgkill((int)a0, (int)a1, (int)a2);
 l_rt_sigaction:
@@ -580,6 +583,8 @@ l_listen:
   return sys_listen(a0, a1);
 l_accept:
   return sys_accept(f, a0, a1, a2);
+l_accept4:
+  return sys_accept4(f, a0, a1, a2, a3);
 l_connect:
   return sys_connect(f, a0, a1, a2);
 l_sendto:
@@ -592,8 +597,14 @@ l_recvmsg:
   return sys_recvmsg(f, a0, a1, a2);
 l_getsockname:
   return sys_getsockname(a0, a1, a2);
+l_getpeername:
+  return sys_getpeername(a0, a1, a2);
+l_setsockopt:
+  return sys_setsockopt(a0, a1, a2, a3, a4);
 l_getsockopt:
   return sys_getsockopt(a0, a1, a2, a3, a4);
+l_shutdown:
+  return sys_shutdown(a0, a1);
 l_openat:
   return sys_openat(a0, a1, a2);
 l_close:

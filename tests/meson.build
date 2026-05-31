@@ -114,3 +114,14 @@ test_mycelium_model = executable('test_mycelium_model',
   native: true)
 
 test('mycelium-model', test_mycelium_model)
+
+test_net = executable('test_net',
+  files(
+    'test_net.c',
+    '../kernel/src/net/net.c',
+    '../kernel/src/lib/mem.c',
+  ),
+  include_directories: test_include,
+  native: true)
+
+test('net', test_net)

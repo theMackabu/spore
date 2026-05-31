@@ -11,6 +11,7 @@
 enum {
   CELL_O_CLOEXEC = 02000000,
   IPPROTO_TCP = 6,
+  IPPROTO_UDP = 17,
   EAGAIN = 11,
   EFAULT = 14,
   EINVAL = 22,
@@ -22,7 +23,9 @@ enum {
 
 enum tcp_socket_state {
   TCP_CLOSED,
+  TCP_LISTEN,
   TCP_SYN_SENT,
+  TCP_SYN_RECEIVED,
   TCP_ESTABLISHED,
   TCP_FIN_WAIT,
 };
@@ -46,6 +49,10 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
 
   struct open_file *file = domain->fds[fd];
   int revents = 0;
+  if (file->type == OPEN_SOCKET && ((file->socket_proto == IPPROTO_TCP && file->tcp_error != 0) ||
+                                    (file->socket_proto == IPPROTO_UDP && file->udp_error != 0))) {
+    revents |= CELL_POLLERR;
+  }
   if (file->type == OPEN_PIPE && cell_pipe_file_hup(file)) { revents |= CELL_POLLHUP; }
   if (file->type == OPEN_UNIX_STREAM && cell_pipe_id_hup(file->unix_rx_pipe)) { revents |= CELL_POLLHUP; }
   if ((events & CELL_POLLIN) != 0) {
@@ -55,8 +62,12 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
     } else if (file->type == OPEN_SOCKET) {
       net_poll();
       if (file->socket_proto == IPPROTO_TCP) {
-        if (file->tcp_rx_len != 0 || file->tcp_fin || file->tcp_error != 0) { revents |= CELL_POLLIN; }
-      } else if (file->udp_rx_len != 0) {
+        if (file->tcp_state == TCP_LISTEN) {
+          if (cell_tcp_listener_readable(file)) { revents |= CELL_POLLIN; }
+        } else if (file->tcp_rx_len != 0 || file->tcp_fin || file->tcp_error != 0) {
+          revents |= CELL_POLLIN;
+        }
+      } else if (file->dgram_rx_count != 0) {
         revents |= CELL_POLLIN;
       }
     } else if (file->type == OPEN_PIPE) {
@@ -86,7 +97,8 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
         file->type == OPEN_EVENTFD) {
       revents |= CELL_POLLOUT;
     } else if (file->type == OPEN_SOCKET) {
-      if (file->socket_proto != IPPROTO_TCP || file->tcp_state == TCP_ESTABLISHED || file->tcp_error != 0) {
+      if (file->socket_proto != IPPROTO_TCP ||
+          cell_tcp_socket_writable(file) || file->tcp_error != 0) {
         revents |= CELL_POLLOUT;
       }
     } else if (file->type == OPEN_PIPE) {
@@ -219,12 +231,13 @@ void cell_socket_wake_unix_accept_waiters(struct open_file *listener) {
     }
     int fd = thread->wait_target;
     if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] != listener) { continue; }
-    int accepted = cell_socket_take_pending_unix(thread->domain, listener);
+    int accepted = cell_socket_take_pending_unix(thread->domain, listener, thread->socket_accept_flags);
     if (accepted == -EAGAIN) { continue; }
     thread->tf.x[0] = (uint64_t)accepted;
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;
     thread->wait_target = -1;
+    thread->socket_accept_flags = 0;
   }
   wake_poll_waiters();
 }

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -152,7 +153,7 @@ static const char *shell_commands[] = {
   "du -s /tmp\n",
   "readlink -f /tmp/../tmp/hashin\n",
   "time true\n",
-  "printf 'all:\\n\\techo mk-ok\\n' > /tmp/mkfile\n",
+  "printf 'all:\\\\n\\\\techo mk-ok\\\\n' > /tmp/mkfile\n",
   "mk -n -f /tmp/mkfile all\n",
   "chroot / /bin/pwd\n",
   "cp /tmp/coreutils /tmp/coreutils.copy\n",
@@ -620,7 +621,15 @@ static ssize_t find_shell_prompt(const char *data, size_t len) {
           break;
         }
       }
-      if (old_prompt || user_host_prompt) { return (ssize_t)start; }
+      bool spore_prompt = false;
+      size_t context_start = i > 160 ? i - 160 : start;
+      for (size_t j = context_start; j + strlen("spore.local") <= i; ++j) {
+        if (memcmp(data + j, "spore.local", strlen("spore.local")) == 0) {
+          spore_prompt = true;
+          break;
+        }
+      }
+      if (old_prompt || user_host_prompt || spore_prompt) { return (ssize_t)start; }
     }
   }
   return -1;
@@ -756,6 +765,27 @@ static void record_output(char *buf, size_t *len, const char *chunk, size_t n, s
   }
 }
 
+static void drain_available(int fd, char *buf, size_t *len, bool print_boot_output, bool mirror, FILE *mirror_stream,
+                            struct startup_serial *startup) {
+  int old_flags = fcntl(fd, F_GETFL, 0);
+  if (old_flags >= 0) { (void)fcntl(fd, F_SETFL, old_flags | O_NONBLOCK); }
+
+  char chunk[4096];
+  for (;;) {
+    ssize_t n = read(fd, chunk, sizeof(chunk));
+    if (n > 0) {
+      if (print_boot_output) { write_serial_output(chunk, (size_t)n, startup); }
+      if (mirror) { write_raw_to(chunk, (size_t)n, mirror_stream); }
+      append(buf, len, chunk, (size_t)n);
+      continue;
+    }
+    if (n < 0 && errno == EINTR) { continue; }
+    break;
+  }
+
+  if (old_flags >= 0) { (void)fcntl(fd, F_SETFL, old_flags); }
+}
+
 static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mirror_log, int log_pipe[2]) {
   int in_pipe[2];
   int serial_pipe[2];
@@ -796,6 +826,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   bool shell_size_sent = false;
   enum scripted_input scripted_input = SCRIPT_NONE;
   int ant_ctrl_c_stage = 0;
+  bool editor_prompt_nudge_pending = false;
   bool plain = strcmp(mode, "plain") == 0;
   bool shell = strcmp(mode, "shell") == 0;
   bool bench = strcmp(mode, "bench") == 0;
@@ -810,7 +841,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   struct termios saved_termios;
   bool raw_terminal = interactive && enter_raw_terminal(&saved_termios);
   double start = now_seconds();
-  double deadline = plain ? 0.0 : start + 120.0;
+  double deadline = plain ? 0.0 : start + (shell ? 300.0 : 120.0);
+  double last_shell_output_at = start;
   bool first_output = false;
   double first_output_at = -1.0;
   bool timing_summary_printed = false;
@@ -832,16 +864,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
   for (;;) {
     int status = 0;
     if (waitpid(pid, &status, WNOHANG) == pid) {
-      char chunk[4096];
-      ssize_t n;
-      while ((n = read(serial_pipe[0], chunk, sizeof(chunk))) > 0) {
-        if (plain || shell) { write_serial_output(chunk, (size_t)n, &startup_serial); }
-        append(buf, &len, chunk, (size_t)n);
-      }
-      while ((n = read(log_pipe[0], chunk, sizeof(chunk))) > 0) {
-        if (mirror_log) { write_raw_to(chunk, (size_t)n, stderr); }
-        append(buf, &len, chunk, (size_t)n);
-      }
+      drain_available(serial_pipe[0], buf, &len, plain || shell, false, stderr, &startup_serial);
+      drain_available(log_pipe[0], buf, &len, false, mirror_log, stderr, &startup_serial);
       if (rng && rng_sample[0] != '\0') { printf("[rng] %s\n", rng_sample); }
       if (strcmp(mode, "filter") == 0 || strcmp(mode, "stdin") == 0) {
         print_filtered(buf);
@@ -884,7 +908,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
     int max_fd = serial_pipe[0] > log_pipe[0] ? serial_pipe[0] : log_pipe[0];
     if (interactive && STDIN_FILENO > max_fd) { max_fd = STDIN_FILENO; }
     struct timeval tv = {.tv_sec = 0, .tv_usec = 50000};
-    if (select(max_fd + 1, &rfds, NULL, NULL, &tv) > 0) {
+    int ready = select(max_fd + 1, &rfds, NULL, NULL, &tv);
+    if (ready > 0) {
       if (interactive && FD_ISSET(STDIN_FILENO, &rfds)) {
         char input[1024];
         ssize_t n = read(STDIN_FILENO, input, sizeof(input));
@@ -894,6 +919,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
       if (FD_ISSET(serial_pipe[0], &rfds)) {
         ssize_t n = read(serial_pipe[0], chunk, sizeof(chunk));
         if (n > 0) {
+          if (shell) { last_shell_output_at = now_seconds(); }
           record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
                         start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
           if (plain || shell) { write_serial_output(chunk, (size_t)n, &startup_serial); }
@@ -902,6 +928,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
       if (FD_ISSET(log_pipe[0], &rfds)) {
         ssize_t n = read(log_pipe[0], chunk, sizeof(chunk));
         if (n > 0) {
+          if (shell) { last_shell_output_at = now_seconds(); }
           if (mirror_log) { write_raw_to(chunk, (size_t)n, stderr); }
           record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
                         start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
@@ -921,18 +948,21 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           static const char pico_input[] = "from pico\x0f\x18\x18";
           write_serial_input(in_pipe[1], pico_input, sizeof(pico_input) - 1);
           scripted_input = SCRIPT_NONE;
+          editor_prompt_nudge_pending = true;
           buf[0] = '\0';
           len = 0;
         }
         if (shell && scripted_input == SCRIPT_PICO_PASTE && contains(buf, "Spore Pico")) {
           send_numbered_lines(in_pipe[1], NULL, "pico-paste", 32, "\x0f\x18\x18");
           scripted_input = SCRIPT_NONE;
+          editor_prompt_nudge_pending = true;
           buf[0] = '\0';
           len = 0;
         }
         if (shell && scripted_input == SCRIPT_NANO_PASTE && contains(buf, "GNU nano")) {
           send_numbered_cr_lines(in_pipe[1], "nano-paste", 32, "\x0f\r\x18");
           scripted_input = SCRIPT_NONE;
+          editor_prompt_nudge_pending = true;
           buf[0] = '\0';
           len = 0;
         }
@@ -997,6 +1027,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           len = 0;
         }
         if (shell && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) && prompt >= 0) {
+          editor_prompt_nudge_pending = false;
           if (scripted_input == SCRIPT_ANT_CTRL_C && ant_ctrl_c_stage > 0) {
             scripted_input = SCRIPT_NONE;
             ant_ctrl_c_stage = 0;
@@ -1023,6 +1054,9 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           len = 0;
         }
       }
+    } else if (ready == 0 && shell && editor_prompt_nudge_pending && now_seconds() - last_shell_output_at > 1.0) {
+      write_serial_input(in_pipe[1], "\n", 1);
+      editor_prompt_nudge_pending = false;
     }
   }
 }

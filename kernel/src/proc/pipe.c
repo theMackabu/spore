@@ -188,6 +188,15 @@ static void clear_pipe_wait(struct thread *thread) {
   thread->pipe_len = 0;
   thread->socket_addr = 0;
   thread->socket_addrlen = 0;
+  thread->socket_accept_flags = 0;
+  thread->socket_write = false;
+  thread->socket_msg = false;
+  thread->socket_msg_addr = 0;
+  thread->socket_iov = 0;
+  thread->socket_iovlen = 0;
+  thread->socket_flags = 0;
+  thread->socket_has_deadline = false;
+  thread->socket_deadline_tick = 0;
   thread->pipe_write = false;
 }
 

@@ -9,6 +9,7 @@
 #include "proc/pipe.h"
 #include "proc/poll.h"
 #include "proc/snapshot.h"
+#include "proc/socket.h"
 #include "proc/thread.h"
 #include "proc/tty.h"
 
@@ -102,6 +103,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
     if (cell_scheduler_waiting_for_interrupt()) { ++scheduler_idle_ticks; }
     cell_wake_sleep_waiters(scheduler_ticks);
     net_poll();
+    cell_socket_timer_tick(scheduler_ticks);
     cell_wake_poll_waiters_internal();
   }
   struct domain *domain = current_domain();
