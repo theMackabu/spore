@@ -20,7 +20,8 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     env:
-      MUSL_TOOLCHAIN_URL: https://musl.cc/aarch64-linux-musl-cross.tgz
+      MUSL_TOOLCHAIN_PRIMARY_URL: https://github.com/cross-tools/musl-cross/releases/download/20260515/aarch64-unknown-linux-musl.tar.xz
+      MUSL_TOOLCHAIN_FALLBACK_URL: https://musl.cc/aarch64-linux-musl-cross.tgz
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -109,36 +110,138 @@ jobs:
           "$RUNNER_TEMP/meson-venv/bin/pip" install meson==1.10.1
           echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
 
+      - name: Restore musl toolchain cache
+        if: steps.release_gate.outputs.should_release == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/musl
+          key: ${{ runner.os }}-aarch64-musl-cross-v2
+
       - name: Install aarch64 musl cross toolchain
         if: steps.release_gate.outputs.should_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/musl"
-          curl -L "$MUSL_TOOLCHAIN_URL" | tar -xz -C "$RUNNER_TEMP/musl" --strip-components=1
-          echo "$RUNNER_TEMP/musl/bin" >> "$GITHUB_PATH"
+          toolchain="$GITHUB_WORKSPACE/.ci-cache/musl"
 
-          # The project intentionally uses the aarch64-unknown-linux-musl-* prefix.
+          has_toolchain() {
+            [ -x "$toolchain/bin/aarch64-unknown-linux-musl-gcc" ] ||
+              [ -x "$toolchain/bin/aarch64-linux-musl-gcc" ]
+          }
+
+          unpack_toolchain() {
+            url="$1"
+            archive="$RUNNER_TEMP/musl-toolchain.archive"
+            unpack="$RUNNER_TEMP/musl-toolchain-unpack"
+            rm -rf "$archive" "$unpack" "$toolchain"
+            mkdir -p "$unpack" "$toolchain"
+
+            curl --fail --location --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 180 \
+              --silent --show-error "$url" -o "$archive" || return 1
+            case "$url" in
+              *.tar.xz) tar -xJf "$archive" -C "$unpack" || return 1 ;;
+              *.tgz|*.tar.gz) tar -xzf "$archive" -C "$unpack" || return 1 ;;
+              *) tar -xf "$archive" -C "$unpack" || return 1 ;;
+            esac
+
+            first_dir="$(find "$unpack" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+            if [ -n "$first_dir" ] && [ -d "$first_dir/bin" ]; then
+              cp -a "$first_dir"/. "$toolchain"/ || return 1
+            else
+              cp -a "$unpack"/. "$toolchain"/ || return 1
+            fi
+
+            has_toolchain
+          }
+
+          if ! has_toolchain; then
+            rm -rf "$toolchain"
+            for url in "$MUSL_TOOLCHAIN_PRIMARY_URL" "$MUSL_TOOLCHAIN_FALLBACK_URL"; do
+              echo "Installing musl toolchain from $url"
+              if unpack_toolchain "$url"; then
+                break
+              fi
+              echo "warning: failed to install musl toolchain from $url" >&2
+            done
+          fi
+
+          if ! has_toolchain; then
+            echo "aarch64 musl toolchain install failed" >&2
+            exit 1
+          fi
+          echo "$toolchain/bin" >> "$GITHUB_PATH"
+
+          # The project intentionally uses the aarch64-unknown-linux-musl-* prefix,
+          # while some prebuilt toolchains ship the aarch64-linux-musl-* prefix.
           for tool in gcc g++ cpp ar as ld ranlib strip objcopy objdump readelf nm size strings; do
-            src="$RUNNER_TEMP/musl/bin/aarch64-linux-musl-$tool"
-            dst="$RUNNER_TEMP/musl/bin/aarch64-unknown-linux-musl-$tool"
-            if [ -x "$src" ] && [ ! -e "$dst" ]; then
-              ln -s "aarch64-linux-musl-$tool" "$dst"
+            unknown="$toolchain/bin/aarch64-unknown-linux-musl-$tool"
+            linux="$toolchain/bin/aarch64-linux-musl-$tool"
+            if [ ! -e "$unknown" ] && [ -x "$linux" ]; then
+              ln -s "aarch64-linux-musl-$tool" "$unknown"
+            fi
+            if [ ! -e "$linux" ] && [ -x "$unknown" ]; then
+              ln -s "aarch64-unknown-linux-musl-$tool" "$linux"
             fi
           done
+          test -x "$toolchain/bin/aarch64-unknown-linux-musl-gcc"
 
           # Some vendored build scripts currently point at the local Nix tool path.
           # Provide the same absolute tool names in CI without changing the release build inputs.
           sudo mkdir -p /run/current-system/sw/bin
           for tool in ar ranlib strip; do
-            sudo ln -sf "$RUNNER_TEMP/musl/bin/aarch64-unknown-linux-musl-$tool" \
+            sudo ln -sf "$toolchain/bin/aarch64-unknown-linux-musl-$tool" \
               "/run/current-system/sw/bin/aarch64-unknown-linux-musl-$tool"
           done
+
+      - name: Compute userland build cache key
+        if: steps.release_gate.outputs.should_release == 'true'
+        id: userland_cache_key
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'musl-primary=%s\n' "$MUSL_TOOLCHAIN_PRIMARY_URL"
+            printf 'musl-fallback=%s\n' "$MUSL_TOOLCHAIN_FALLBACK_URL"
+            aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
+            git submodule status --recursive
+            find userland -type f \( \
+              -name meson.build -o \
+              -name build.sh -o \
+              -name '*.patch' -o \
+              -name '*.src' -o \
+              -name '*.ini' \
+            \) -print | sort | while IFS= read -r file; do
+              sha256sum "$file"
+            done
+            sha256sum meson.build
+          } > "$RUNNER_TEMP/userland-cache-inputs"
+          hash="$(sha256sum "$RUNNER_TEMP/userland-cache-inputs" | cut -d' ' -f1)"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Restore userland build cache
+        if: steps.release_gate.outputs.should_release == 'true'
+        id: userland_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-cache/userland-build
+          key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
+          restore-keys: |
+            ${{ runner.os }}-spore-userland-
 
       - name: Configure Meson
         if: steps.release_gate.outputs.should_release == 'true'
         shell: bash
         run: meson setup build
+
+      - name: Hydrate cached userland build outputs
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d .ci-cache/userland-build ]; then
+            mkdir -p build/userland
+            cp -a .ci-cache/userland-build/. build/userland/
+          fi
 
       - name: Build release artifacts
         if: steps.release_gate.outputs.should_release == 'true'
@@ -147,6 +250,25 @@ jobs:
           set -euo pipefail
           meson compile -C build image.img test_image.img spore-run
           meson test -C build --print-errorlogs
+
+      - name: Refresh userland build cache
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .ci-cache/userland-build
+          mkdir -p .ci-cache/userland-build
+          if [ -d build/userland ]; then
+            cp -a build/userland/. .ci-cache/userland-build/
+          fi
+          du -sh .ci-cache/userland-build || true
+
+      - name: Save userland build cache
+        if: steps.release_gate.outputs.should_release == 'true' && steps.userland_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-cache/userland-build
+          key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
 
       - name: Package artifacts
         if: steps.release_gate.outputs.should_release == 'true'
