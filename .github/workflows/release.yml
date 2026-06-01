@@ -95,11 +95,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          . /etc/os-release
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" |
+            sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y \
-            autoconf automake build-essential clang cmake curl dosfstools e2fsprogs \
-            file lld llvm make mtools ninja-build perl pkg-config python3-venv qemu-system-arm \
-            xz-utils zip
+            autoconf automake build-essential clang-21 cmake curl dosfstools e2fsprogs \
+            file lld-21 llvm-21 make mtools ninja-build perl pkg-config python3-jsonschema \
+            python3-venv qemu-system-arm xz-utils zip
 
       - name: Install Meson
         if: steps.release_gate.outputs.should_release == 'true'
@@ -107,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/meson-venv"
-          "$RUNNER_TEMP/meson-venv/bin/pip" install meson==1.10.1
+          "$RUNNER_TEMP/meson-venv/bin/pip" install meson==1.10.1 jsonschema jinja2
           echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
 
       - name: Restore musl toolchain cache
@@ -229,6 +233,9 @@ jobs:
       - name: Configure Meson
         if: steps.release_gate.outputs.should_release == 'true'
         shell: bash
+        env:
+          CC: clang-21
+          CXX: clang++-21
         run: meson setup build
 
       - name: Hydrate cached userland build outputs
