@@ -24,7 +24,7 @@ jobs:
       MUSL_TOOLCHAIN_FALLBACK_URL: https://musl.cc/aarch64-linux-musl-cross.tgz
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
@@ -112,7 +112,7 @@ jobs:
 
       - name: Restore musl toolchain cache
         if: steps.release_gate.outputs.should_release == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .ci-cache/musl
           key: ${{ runner.os }}-aarch64-musl-cross-v2
@@ -169,6 +169,8 @@ jobs:
             echo "aarch64 musl toolchain install failed" >&2
             exit 1
           fi
+          chmod -R u+w "$toolchain"
+          chmod u+rwx "$toolchain" "$toolchain/bin"
           echo "$toolchain/bin" >> "$GITHUB_PATH"
 
           for tool in gcc g++ cpp ar as ld ranlib strip objcopy objdump readelf nm size strings; do
@@ -217,7 +219,7 @@ jobs:
       - name: Restore userland build cache
         if: steps.release_gate.outputs.should_release == 'true'
         id: userland_cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .ci-cache/userland-build
           key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
@@ -261,7 +263,7 @@ jobs:
 
       - name: Save userland build cache
         if: steps.release_gate.outputs.should_release == 'true' && steps.userland_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .ci-cache/userland-build
           key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
