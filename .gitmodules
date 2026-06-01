@@ -9,7 +9,7 @@
 	url = https://github.com/mirror/ncurses.git
 [submodule "userland/third_party/nano"]
 	path = userland/third_party/nano
-	url = https://git.savannah.gnu.org/git/nano.git
+	url = https://https.git.savannah.gnu.org/git/nano.git
 [submodule "userland/third_party/vim"]
 	path = userland/third_party/vim
 	url = https://github.com/vim/vim.git

@@ -27,7 +27,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - name: Read Meson version
         id: version
@@ -101,9 +100,17 @@ jobs:
             sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y \
-            autoconf automake build-essential clang-21 cmake curl dosfstools e2fsprogs \
-            file lld-21 llvm-21 make mtools ninja-build perl pkg-config python3-jsonschema \
-            python3-venv qemu-system-arm xz-utils zip
+            autoconf automake build-essential ca-certificates clang-21 cmake curl dosfstools \
+            e2fsprogs file git lld-21 llvm-21 make mtools ninja-build perl pkg-config \
+            python3-jsonschema python3-venv qemu-system-arm xz-utils zip
+
+      - name: Check out submodules
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule sync --recursive
+          git submodule update --init --recursive --jobs 4
 
       - name: Install Meson
         if: steps.release_gate.outputs.should_release == 'true'
