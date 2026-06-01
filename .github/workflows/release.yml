@@ -171,8 +171,6 @@ jobs:
           fi
           echo "$toolchain/bin" >> "$GITHUB_PATH"
 
-          # The project intentionally uses the aarch64-unknown-linux-musl-* prefix,
-          # while some prebuilt toolchains ship the aarch64-linux-musl-* prefix.
           for tool in gcc g++ cpp ar as ld ranlib strip objcopy objdump readelf nm size strings; do
             unknown="$toolchain/bin/aarch64-unknown-linux-musl-$tool"
             linux="$toolchain/bin/aarch64-linux-musl-$tool"
@@ -185,8 +183,6 @@ jobs:
           done
           test -x "$toolchain/bin/aarch64-unknown-linux-musl-gcc"
 
-          # Some vendored build scripts currently point at the local Nix tool path.
-          # Provide the same absolute tool names in CI without changing the release build inputs.
           sudo mkdir -p /run/current-system/sw/bin
           for tool in ar ranlib strip; do
             sudo ln -sf "$toolchain/bin/aarch64-unknown-linux-musl-$tool" \
