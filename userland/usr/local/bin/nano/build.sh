@@ -49,7 +49,16 @@ git -C "$gnulib_cache" checkout --force "$gnulib_hash" >/dev/null
 mkdir -p "$nano_work/gnulib"
 tar -C "$gnulib_cache" -cf - . | tar -C "$nano_work/gnulib" -xf -
 
-pkg_m4=$(find /nix/store /opt/homebrew /usr/local /run/current-system/sw -path '*/pkg.m4' -print 2>/dev/null | head -1 || true)
+pkg_m4=$(
+  {
+    aclocal_dir=$(aclocal --print-ac-dir 2>/dev/null || true)
+    if [ -n "$aclocal_dir" ] && [ -f "$aclocal_dir/pkg.m4" ]; then
+      printf '%s\n' "$aclocal_dir/pkg.m4"
+    fi
+    find /usr/share/aclocal /usr/local/share/aclocal /nix/store /opt/homebrew /usr/local /run/current-system/sw \
+      -path '*/pkg.m4' -print 2>/dev/null
+  } | head -1
+)
 if [ -z "$pkg_m4" ]; then
   echo "nano: pkg.m4 is required to run autogen.sh" >&2
   exit 1
