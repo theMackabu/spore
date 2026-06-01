@@ -101,7 +101,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake build-essential ca-certificates clang-21 cmake curl dosfstools \
-            e2fsprogs file git lld-21 llvm-21 make mtools ninja-build perl pkg-config \
+            e2fsprogs file gettext git lld-21 llvm-21 make mtools ninja-build perl pkg-config \
             python3-jsonschema python3-venv qemu-system-arm xz-utils zip
 
       - name: Check out submodules

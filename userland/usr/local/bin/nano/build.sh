@@ -75,7 +75,10 @@ chmod +x "$wrap_dir/aclocal"
 (
   cd "$nano_work"
   PATH="$wrap_dir:$PATH" ./autogen.sh >/dev/null
-)
+) || {
+  echo "nano: autogen.sh failed" >&2
+  exit 1
+}
 (
   cd "$nano_build"
   PATH="$wrap_dir:$PATH" "$nano_work/configure" \
