@@ -205,7 +205,7 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
     if ((read_off & (PAGE_SIZE - 1)) != 0) { goto private_copy; }
     uint64_t pa = 0;
     if (!vfs_retain_page_cached(&vma->file_node, read_off, &pa)) { return false; }
-    bool private_writable = (vma->flags & MAP_PRIVATE) != 0 && (vma->prot & VMM_USER_WRITE) != 0;
+    bool private_writable = (vma->flags & MAP_SHARED) == 0 && (vma->prot & VMM_USER_WRITE) != 0;
     bool mapped = private_writable ? vmm_map_page_cow(as, page, pa, vma->prot) : vmm_map_page(as, page, pa, vma->prot);
     if (!mapped) {
       pmm_free_page(pa);

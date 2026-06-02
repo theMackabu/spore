@@ -280,6 +280,25 @@ static int phase_c_exec_demo(void) {
   return ok;
 }
 
+static int exec_child_status(const char *arg, int expected) {
+  pid_t pid = fork();
+  if (pid < 0) { return 0; }
+  if (pid == 0) {
+    char *const argv[] = {"/bin/exec_child", (char *)arg, NULL};
+    char *const envp[] = {NULL};
+    execve("/bin/exec_child", argv, envp);
+    exit_group(99);
+  }
+  int status = 0;
+  return waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == expected;
+}
+
+static int exec_private_data_regression(void) {
+  int ok = exec_child_status("poison-data", 0) && exec_child_status("check-data", 0);
+  printf("[spore] exec private data COW: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int phase_c_stdin_demo(void) {
   pid_t pid = fork();
   if (pid < 0) { return 0; }
@@ -2376,6 +2395,7 @@ int main(void) {
   int ok_v2c = phase_c_exec_demo();
   printf("[spore] v2c fork/exec/wait demo: %s\n", ok_v2c ? "PASS" : "FAIL");
   ok_all = ok_all && ok_v2c;
+  ok_all = ok_all && exec_private_data_regression();
 
   (void)phase_c_stdin_demo();
   ok_all = ok_all && phase_d_fs_demo();
