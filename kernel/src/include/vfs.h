@@ -85,6 +85,8 @@ struct vfs_stats {
   uint64_t page_cache_loads;
   uint64_t page_cache_invalidations;
   uint64_t page_cache_pages;
+  uint64_t page_cache_capacity;
+  uint64_t page_cache_buckets;
 };
 
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset);

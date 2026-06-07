@@ -67,7 +67,7 @@ static size_t clamp_size(size_t value, size_t min, size_t max) {
 
 static void derive_table_sizes(size_t *domains, size_t *threads, size_t *mms, size_t *open_files) {
   uint64_t pages = pmm_total_pages();
-  size_t domain_count = clamp_size((size_t)(pages / 4096), 64, MAX_DOMAINS);
+  size_t domain_count = clamp_size((size_t)(pages / 32768), 64, MAX_DOMAINS);
   size_t thread_count = clamp_size(domain_count * 2, 128, MAX_THREADS);
   size_t mm_count = domain_count + MAX_SNAPSHOTS;
   if (mm_count > MAX_DOMAINS + MAX_SNAPSHOTS) { mm_count = MAX_DOMAINS + MAX_SNAPSHOTS; }

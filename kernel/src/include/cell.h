@@ -104,6 +104,8 @@ struct epoll_watch {
   uint64_t data;
 };
 
+struct tcp_ooo_state;
+
 struct inotify_watch {
   bool used;
   int32_t wd;
@@ -187,22 +189,20 @@ struct open_file {
   uint64_t tcp_tx_deadline_tick[CELL_TCP_TX_QUEUE_CAP];
   uint64_t tcp_tx_sent_tick[CELL_TCP_TX_QUEUE_CAP];
   uint64_t tcp_tx_first_sent_tick[CELL_TCP_TX_QUEUE_CAP];
-  uint32_t tcp_ooo_seq[8];
-  uint32_t tcp_ooo_len[8];
   uint8_t tcp_state;
   uint8_t tcp_error;
   uint8_t tcp_rx_slot;
+  uint8_t tcp_ooo_slot;
   uint8_t tcp_syn_retries;
   uint8_t tcp_keepalive_probes;
   uint8_t tcp_remote_window_scale;
   bool tcp_fin;
   bool tcp_fin_sent;
   bool tcp_fin_pending;
-  bool tcp_ooo_used[8];
   uint32_t tcp_fin_seq;
   uint32_t ip_ttl;
-  uint8_t tcp_ooo[8][1460];
   uint8_t *tcp_rx;
+  struct tcp_ooo_state *tcp_ooo;
   struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
   uint64_t eventfd_value;
   bool eventfd_semaphore;
