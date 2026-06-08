@@ -225,6 +225,11 @@ uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
   return 0;
 }
 
+void *pmm_phys_to_virt(uint64_t pa) {
+  if (hhdm_base == NULL) { return NULL; }
+  return (void *)((uintptr_t)hhdm_base + pa);
+}
+
 void pmm_free_page(uint64_t pa) {
   if ((pa % PAGE_SIZE) != 0) { return; }
 

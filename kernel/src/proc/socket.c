@@ -2,6 +2,7 @@
 
 #include "kstr.h"
 #include "mem.h"
+#include "mm/pmm.h"
 #include "net.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
@@ -82,7 +83,6 @@ enum tcp_socket_state {
 };
 
 enum { TCP_RX_BUFFER_SLOTS = 16 };
-enum { TCP_TX_BUFFER_SLOTS = 1024 };
 enum { TCP_OOO_BUFFER_SLOTS = 32, TCP_OOO_ENTRIES = 8, TCP_OOO_PAYLOAD_CAP = 1460 };
 enum { DGRAM_RX_BUFFER_SLOTS = 64 };
 enum { TCP_RCV_WINDOW_SCALE = 2 };
@@ -128,12 +128,22 @@ struct tcp_ooo_state {
   uint8_t data[TCP_OOO_ENTRIES][TCP_OOO_PAYLOAD_CAP];
 };
 
+struct tcp_tx_state {
+  uint8_t head;
+  uint8_t count;
+  uint16_t len[CELL_TCP_TX_QUEUE_CAP];
+  uint32_t seq[CELL_TCP_TX_QUEUE_CAP];
+  uint8_t retries[CELL_TCP_TX_QUEUE_CAP];
+  uint64_t deadline_tick[CELL_TCP_TX_QUEUE_CAP];
+  uint64_t sent_tick[CELL_TCP_TX_QUEUE_CAP];
+  uint64_t first_sent_tick[CELL_TCP_TX_QUEUE_CAP];
+  uint8_t payload[CELL_TCP_TX_QUEUE_CAP][CELL_TCP_TX_CAP];
+};
+
 static struct unix_pending_conn unix_pending[16];
 static struct tcp_pending_conn tcp_pending[16];
 static uint8_t tcp_rx_buffers[TCP_RX_BUFFER_SLOTS][CELL_TCP_RX_CAP];
 static bool tcp_rx_used[TCP_RX_BUFFER_SLOTS];
-static uint8_t tcp_tx_buffers[TCP_TX_BUFFER_SLOTS][CELL_TCP_TX_CAP];
-static bool tcp_tx_used[TCP_TX_BUFFER_SLOTS];
 static struct tcp_ooo_state tcp_ooo_buffers[TCP_OOO_BUFFER_SLOTS];
 static bool tcp_ooo_used[TCP_OOO_BUFFER_SLOTS];
 static uint8_t dgram_rx_buffers[DGRAM_RX_BUFFER_SLOTS][CELL_DGRAM_RX_CAP];
@@ -223,57 +233,80 @@ static void tcp_free_ooo(struct open_file *file) {
   file->tcp_ooo = NULL;
 }
 
-static int tcp_alloc_tx_slot(void) {
-  for (size_t i = 0; i < TCP_TX_BUFFER_SLOTS; ++i) {
-    if (tcp_tx_used[i]) { continue; }
-    tcp_tx_used[i] = true;
-    return (int)i;
-  }
-  return -1;
+static uint64_t tcp_tx_state_pages(void) {
+  return ((uint64_t)sizeof(struct tcp_tx_state) + PAGE_SIZE - 1) / PAGE_SIZE;
 }
 
-static void tcp_free_tx_slot(uint16_t slot) {
-  if (slot < TCP_TX_BUFFER_SLOTS) { tcp_tx_used[slot] = false; }
+static bool tcp_alloc_tx(struct open_file *file) {
+  if (file == NULL) { return false; }
+  if (file->tcp_tx != NULL) { return true; }
+  uint64_t pages = tcp_tx_state_pages();
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) { return false; }
+  void *ptr = pmm_phys_to_virt(pa);
+  if (ptr == NULL) {
+    for (uint64_t i = 0; i < pages; ++i) {
+      pmm_free_page(pa + i * PAGE_SIZE);
+    }
+    return false;
+  }
+  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
+  file->tcp_tx_pa = pa;
+  file->tcp_tx = ptr;
+  return true;
+}
+
+static void tcp_free_tx(struct open_file *file) {
+  if (file == NULL || file->tcp_tx == NULL || file->tcp_tx_pa == 0) { return; }
+  uint64_t pages = tcp_tx_state_pages();
+  kmemset(file->tcp_tx, 0, (size_t)(pages * PAGE_SIZE));
+  for (uint64_t i = 0; i < pages; ++i) {
+    pmm_free_page(file->tcp_tx_pa + i * PAGE_SIZE);
+  }
+  file->tcp_tx_pa = 0;
+  file->tcp_tx = NULL;
+}
+
+static uint8_t tcp_tx_count(const struct open_file *file) {
+  return file != NULL && file->tcp_tx != NULL ? file->tcp_tx->count : 0;
 }
 
 static uint8_t tcp_tx_queue_index(const struct open_file *file, uint8_t offset) {
-  return (uint8_t)((file->tcp_tx_head + offset) % CELL_TCP_TX_QUEUE_CAP);
+  return (uint8_t)((file->tcp_tx->head + offset) % CELL_TCP_TX_QUEUE_CAP);
 }
 
 static void tcp_tx_drop_head(struct open_file *file) {
-  if (file == NULL || file->tcp_tx_count == 0) { return; }
-  uint8_t index = file->tcp_tx_head;
-  tcp_free_tx_slot(file->tcp_tx_slot[index]);
-  file->tcp_tx_slot[index] = 0;
-  file->tcp_tx_len[index] = 0;
-  file->tcp_tx_seq[index] = 0;
-  file->tcp_tx_retries[index] = 0;
-  file->tcp_tx_deadline_tick[index] = 0;
-  file->tcp_tx_sent_tick[index] = 0;
-  file->tcp_tx_first_sent_tick[index] = 0;
-  file->tcp_tx_head = tcp_tx_queue_index(file, 1);
-  --file->tcp_tx_count;
-  if (file->tcp_tx_count == 0) { file->tcp_tx_head = 0; }
+  if (file == NULL || file->tcp_tx == NULL || file->tcp_tx->count == 0) { return; }
+  struct tcp_tx_state *tx = file->tcp_tx;
+  uint8_t index = tx->head;
+  tx->len[index] = 0;
+  tx->seq[index] = 0;
+  tx->retries[index] = 0;
+  tx->deadline_tick[index] = 0;
+  tx->sent_tick[index] = 0;
+  tx->first_sent_tick[index] = 0;
+  tx->head = tcp_tx_queue_index(file, 1);
+  --tx->count;
+  if (tx->count == 0) { tx->head = 0; }
 }
 
 static void tcp_tx_drop_tail(struct open_file *file) {
-  if (file == NULL || file->tcp_tx_count == 0) { return; }
-  uint8_t index = tcp_tx_queue_index(file, (uint8_t)(file->tcp_tx_count - 1));
-  tcp_free_tx_slot(file->tcp_tx_slot[index]);
-  file->tcp_tx_slot[index] = 0;
-  file->tcp_tx_len[index] = 0;
-  file->tcp_tx_seq[index] = 0;
-  file->tcp_tx_retries[index] = 0;
-  file->tcp_tx_deadline_tick[index] = 0;
-  file->tcp_tx_sent_tick[index] = 0;
-  file->tcp_tx_first_sent_tick[index] = 0;
-  --file->tcp_tx_count;
-  if (file->tcp_tx_count == 0) { file->tcp_tx_head = 0; }
+  if (file == NULL || file->tcp_tx == NULL || file->tcp_tx->count == 0) { return; }
+  struct tcp_tx_state *tx = file->tcp_tx;
+  uint8_t index = tcp_tx_queue_index(file, (uint8_t)(tx->count - 1));
+  tx->len[index] = 0;
+  tx->seq[index] = 0;
+  tx->retries[index] = 0;
+  tx->deadline_tick[index] = 0;
+  tx->sent_tick[index] = 0;
+  tx->first_sent_tick[index] = 0;
+  --tx->count;
+  if (tx->count == 0) { tx->head = 0; }
 }
 
 static void tcp_tx_clear(struct open_file *file) {
   if (file == NULL) { return; }
-  while (file->tcp_tx_count != 0) {
+  while (tcp_tx_count(file) != 0) {
     tcp_tx_drop_head(file);
   }
 }
@@ -516,10 +549,11 @@ static uint64_t tcp_user_timeout_ticks(const struct open_file *file) {
 }
 
 static bool tcp_user_timeout_expired(const struct open_file *file, uint64_t now_ticks) {
-  if (file == NULL || file->tcp_tx_count == 0) { return false; }
+  if (file == NULL || tcp_tx_count(file) == 0) { return false; }
   uint64_t timeout = tcp_user_timeout_ticks(file);
   if (timeout == 0) { return false; }
-  uint64_t first_sent = file->tcp_tx_first_sent_tick[file->tcp_tx_head];
+  const struct tcp_tx_state *tx = file->tcp_tx;
+  uint64_t first_sent = tx->first_sent_tick[tx->head];
   return first_sent != 0 && now_ticks >= first_sent + timeout;
 }
 
@@ -569,8 +603,9 @@ static void tcp_update_remote_window(struct open_file *file, uint16_t window) {
 }
 
 static uint32_t tcp_tx_inflight(const struct open_file *file) {
-  if (file == NULL || file->tcp_tx_count == 0) { return 0; }
-  return file->tcp_seq - file->tcp_tx_seq[file->tcp_tx_head];
+  if (file == NULL || tcp_tx_count(file) == 0) { return 0; }
+  const struct tcp_tx_state *tx = file->tcp_tx;
+  return file->tcp_seq - tx->seq[tx->head];
 }
 
 static uint32_t tcp_send_window_available(const struct open_file *file) {
@@ -581,9 +616,10 @@ static uint32_t tcp_send_window_available(const struct open_file *file) {
 
 static uint32_t tcp_tx_queued_bytes(const struct open_file *file) {
   uint32_t total = 0;
-  if (file == NULL) { return 0; }
-  for (uint8_t i = 0; i < file->tcp_tx_count; ++i) {
-    total += file->tcp_tx_len[tcp_tx_queue_index(file, i)];
+  if (file == NULL || file->tcp_tx == NULL) { return 0; }
+  const struct tcp_tx_state *tx = file->tcp_tx;
+  for (uint8_t i = 0; i < tx->count; ++i) {
+    total += tx->len[tcp_tx_queue_index(file, i)];
   }
   return total;
 }
@@ -602,32 +638,32 @@ static uint32_t tcp_send_chunk_limit(const struct open_file *file) {
 }
 
 static bool tcp_tx_track_segment(struct open_file *file, uint32_t seq, const uint8_t *data, uint16_t len) {
-  if (file == NULL || len == 0 || file->tcp_tx_count >= CELL_TCP_TX_QUEUE_CAP) { return false; }
-  int slot = tcp_alloc_tx_slot();
-  if (slot < 0) { return false; }
-  uint8_t index = tcp_tx_queue_index(file, file->tcp_tx_count);
-  file->tcp_tx_slot[index] = (uint16_t)slot;
-  file->tcp_tx_len[index] = len;
-  file->tcp_tx_seq[index] = seq;
-  file->tcp_tx_retries[index] = 0;
+  if (file == NULL || len == 0 || tcp_tx_count(file) >= CELL_TCP_TX_QUEUE_CAP) { return false; }
+  if (!tcp_alloc_tx(file)) { return false; }
+  struct tcp_tx_state *tx = file->tcp_tx;
+  uint8_t index = tcp_tx_queue_index(file, tx->count);
+  tx->len[index] = len;
+  tx->seq[index] = seq;
+  tx->retries[index] = 0;
   uint64_t now_ticks = cell_uptime_ticks();
-  file->tcp_tx_first_sent_tick[index] = now_ticks;
-  file->tcp_tx_sent_tick[index] = now_ticks;
-  file->tcp_tx_deadline_tick[index] = now_ticks + tcp_current_rto(file);
-  kmemcpy(tcp_tx_buffers[slot], data, len);
-  ++file->tcp_tx_count;
+  tx->first_sent_tick[index] = now_ticks;
+  tx->sent_tick[index] = now_ticks;
+  tx->deadline_tick[index] = now_ticks + tcp_current_rto(file);
+  kmemcpy(tx->payload[index], data, len);
+  ++tx->count;
   return true;
 }
 
 static void tcp_tx_ack(struct open_file *file, uint32_t ack) {
   uint64_t now_ticks = cell_uptime_ticks();
   bool ambiguous = false;
-  while (file != NULL && file->tcp_tx_count != 0) {
-    uint8_t index = file->tcp_tx_head;
-    uint32_t end = file->tcp_tx_seq[index] + file->tcp_tx_len[index];
+  while (file != NULL && tcp_tx_count(file) != 0) {
+    struct tcp_tx_state *tx = file->tcp_tx;
+    uint8_t index = tx->head;
+    uint32_t end = tx->seq[index] + tx->len[index];
     if (!seq_before_or_equal(end, ack)) { return; }
-    if (file->tcp_tx_retries[index] == 0 && !ambiguous) {
-      tcp_note_rtt_sample(file, file->tcp_tx_sent_tick[index], now_ticks);
+    if (tx->retries[index] == 0 && !ambiguous) {
+      tcp_note_rtt_sample(file, tx->sent_tick[index], now_ticks);
     } else {
       ambiguous = true;
     }
@@ -774,14 +810,14 @@ static void tcp_drain_ooo(struct open_file *file) {
 static bool tcp_send_would_block(const struct open_file *file) {
   return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
          file->tcp_state == TCP_ESTABLISHED && file->tcp_error == 0 && !file->tcp_fin_sent &&
-         (file->tcp_tx_count >= CELL_TCP_TX_QUEUE_CAP || tcp_send_window_available(file) == 0 ||
+         (tcp_tx_count(file) >= CELL_TCP_TX_QUEUE_CAP || tcp_send_window_available(file) == 0 ||
           tcp_send_buffer_available(file) == 0);
 }
 
 bool cell_tcp_socket_writable(const struct open_file *file) {
   return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
          file->tcp_state == TCP_ESTABLISHED && file->tcp_error == 0 && !file->tcp_fin_sent &&
-         file->tcp_tx_count < CELL_TCP_TX_QUEUE_CAP && tcp_send_window_available(file) != 0 &&
+         tcp_tx_count(file) < CELL_TCP_TX_QUEUE_CAP && tcp_send_window_available(file) != 0 &&
          tcp_send_buffer_available(file) != 0;
 }
 
@@ -1304,6 +1340,7 @@ void cell_socket_release_file(struct open_file *file) {
       (void)tcp_send_fin_once(file);
     }
     tcp_tx_clear(file);
+    tcp_free_tx(file);
     tcp_free_rx(file);
     tcp_free_ooo(file);
   }
@@ -2460,7 +2497,7 @@ static void tcp_close_timed_out(struct open_file *file) {
 }
 
 static void tcp_timer_keepalive(struct open_file *file, uint64_t now_ticks) {
-  if (file == NULL || !file->so_keepalive || file->tcp_state != TCP_ESTABLISHED || file->tcp_tx_count != 0) { return; }
+  if (file == NULL || !file->so_keepalive || file->tcp_state != TCP_ESTABLISHED || tcp_tx_count(file) != 0) { return; }
   uint64_t idle_ticks = tcp_keepalive_ticks(file->tcp_keepidle);
   uint64_t interval_ticks = tcp_keepalive_ticks(file->tcp_keepintvl);
   if (idle_ticks == 0 || interval_ticks == 0 || file->tcp_keepcnt == 0) { return; }
@@ -2521,34 +2558,34 @@ void cell_socket_timer_tick(uint64_t now_ticks) {
         continue;
       }
       if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { continue; }
-      if (file->tcp_tx_count == 0) {
+      if (tcp_tx_count(file) == 0) {
         tcp_timer_keepalive(file, now_ticks);
         continue;
       }
-      uint8_t index = file->tcp_tx_head;
+      struct tcp_tx_state *tx = file->tcp_tx;
+      uint8_t index = tx->head;
       if (tcp_user_timeout_expired(file, now_ticks)) {
         tcp_close_timed_out(file);
         continue;
       }
-      if (now_ticks < file->tcp_tx_deadline_tick[index]) { continue; }
-      if (file->tcp_tx_retries[index] >= TCP_DATA_MAX_RETRIES) {
+      if (now_ticks < tx->deadline_tick[index]) { continue; }
+      if (tx->retries[index] >= TCP_DATA_MAX_RETRIES) {
         tcp_close_timed_out(file);
         continue;
       }
-      uint16_t slot = file->tcp_tx_slot[index];
       if (!net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
-                                        socket_effective_ttl(file), (uint8_t)file->ip_tos, file->tcp_tx_seq[index],
-                                        file->tcp_ack, tcp_window(file), TCP_PSH | TCP_ACK, tcp_tx_buffers[slot],
-                                        file->tcp_tx_len[index])) {
+                                        socket_effective_ttl(file), (uint8_t)file->ip_tos, tx->seq[index],
+                                        file->tcp_ack, tcp_window(file), TCP_PSH | TCP_ACK, tx->payload[index],
+                                        tx->len[index])) {
         file->tcp_error = EIO;
         file->tcp_state = TCP_CLOSED;
         tcp_tx_clear(file);
         wake_socket_waiters(file);
         continue;
       }
-      ++file->tcp_tx_retries[index];
-      file->tcp_tx_sent_tick[index] = now_ticks;
-      file->tcp_tx_deadline_tick[index] = now_ticks + tcp_backoff_rto(file, file->tcp_tx_retries[index]);
+      ++tx->retries[index];
+      tx->sent_tick[index] = now_ticks;
+      tx->deadline_tick[index] = now_ticks + tcp_backoff_rto(file, tx->retries[index]);
     }
   }
 }

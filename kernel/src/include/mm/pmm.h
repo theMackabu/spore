@@ -18,6 +18,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
 uint64_t pmm_alloc_page(void);
 uint64_t pmm_alloc_zero_page(void);
 uint64_t pmm_alloc_contiguous_pages(uint64_t count);
+void *pmm_phys_to_virt(uint64_t pa);
 void pmm_free_page(uint64_t pa);
 bool pmm_share_page(uint64_t pa);
 bool pmm_is_last_ref(uint64_t pa);
