@@ -39,4 +39,4 @@
 	url = https://gitlab.alpinelinux.org/alpine/apk-tools.git
 [submodule "userland/third_party/busybox"]
 	path = userland/third_party/busybox
-	url = https://git.busybox.net/busybox
+	url = https://github.com/mirror/busybox.git
