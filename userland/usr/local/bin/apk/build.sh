@@ -69,8 +69,8 @@ done
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
     -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \
-    -DCMAKE_AR=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ar \
-    -DCMAKE_RANLIB=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ranlib \
+    -DCMAKE_AR=aarch64-unknown-linux-musl-ar \
+    -DCMAKE_RANLIB=aarch64-unknown-linux-musl-ranlib \
     -DCMAKE_INSTALL_PREFIX="$mbedtls_inst" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG -march=armv8-a+crypto" \
@@ -89,8 +89,8 @@ cmake --install "$mbedtls_build" >/dev/null
 cat >"$cross" <<EOF
 [binaries]
 c = 'aarch64-unknown-linux-musl-gcc'
-ar = '/run/current-system/sw/bin/aarch64-unknown-linux-musl-ar'
-strip = '/run/current-system/sw/bin/aarch64-unknown-linux-musl-strip'
+ar = 'aarch64-unknown-linux-musl-ar'
+strip = 'aarch64-unknown-linux-musl-strip'
 pkg-config = 'pkg-config'
 
 [host_machine]

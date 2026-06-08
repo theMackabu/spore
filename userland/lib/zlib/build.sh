@@ -38,8 +38,8 @@ mkdir -p "$work" "$inst"
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
     -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \
-    -DCMAKE_AR=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ar \
-    -DCMAKE_RANLIB=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ranlib \
+    -DCMAKE_AR=aarch64-unknown-linux-musl-ar \
+    -DCMAKE_RANLIB=aarch64-unknown-linux-musl-ranlib \
     -DCMAKE_INSTALL_PREFIX="$inst" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG" \

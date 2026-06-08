@@ -59,9 +59,9 @@ fi
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
     -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \
-    -DCMAKE_AR=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ar \
-    -DCMAKE_RANLIB=/run/current-system/sw/bin/aarch64-unknown-linux-musl-ranlib \
-    -DCMAKE_STRIP=/run/current-system/sw/bin/aarch64-unknown-linux-musl-strip \
+    -DCMAKE_AR=aarch64-unknown-linux-musl-ar \
+    -DCMAKE_RANLIB=aarch64-unknown-linux-musl-ranlib \
+    -DCMAKE_STRIP=aarch64-unknown-linux-musl-strip \
     -DCMAKE_EXE_LINKER_FLAGS=-static \
     -DCMAKE_PREFIX_PATH="$mbedtls_inst" \
     -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
