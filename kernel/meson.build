@@ -19,7 +19,7 @@ kernel_c_args = [
 kernel_target_args = []
 kernel_link_args = []
 if not meson.is_cross_build()
-  kernel_target_args = ['--target=aarch64-none-elf']
+  kernel_target_args = ['--target=aarch64-none-elf', '-Wno-unused-command-line-argument']
   kernel_link_args = kernel_target_args + [
     '-fuse-ld=lld',
     '-nostdlib',
@@ -133,6 +133,7 @@ boot_efi = custom_target('BOOTAA64.EFI',
     '-fno-builtin',
     '-nostdlib',
     '-Wno-builtin-requires-header',
+    '-Wno-unused-command-line-argument',
     '-fuse-ld=lld-link',
     '-Wl,/subsystem:efi_application',
     '-Wl,/entry:efi_main',
