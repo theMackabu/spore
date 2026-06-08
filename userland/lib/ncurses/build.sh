@@ -39,7 +39,8 @@ cc "$root/tools/src/elf_clean_runpath.c" -o "$cleaner"
     --disable-db-install \
     --disable-widec \
     --without-fallbacks \
-    --with-terminfo-dirs=/usr/share/terminfo:/etc/terminfo:/lib/terminfo >/dev/null
+    --with-terminfo-dirs=/usr/share/terminfo:/etc/terminfo:/lib/terminfo \
+    CC=aarch64-unknown-linux-musl-gcc >/dev/null
 )
 make -C "$nc_build" -j"$jobs" libs >/dev/null
 make -C "$nc_build" -j1 install.libs install.includes >/dev/null

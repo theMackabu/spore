@@ -16,6 +16,10 @@ case "$out" in
 esac
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+musl_cc=$(command -v aarch64-unknown-linux-musl-gcc)
+musl_ar=$(command -v aarch64-unknown-linux-musl-ar)
+musl_ranlib=$(command -v aarch64-unknown-linux-musl-ranlib)
+musl_strip=$(command -v aarch64-unknown-linux-musl-strip)
 apk_src="$root/userland/third_party/apk-tools"
 mbedtls_src="$root/userland/third_party/mbedtls"
 apk_work="$build/apk-tools-src"
@@ -36,7 +40,7 @@ mkdir -p "$build"
   test -f "$zlib_inst/lib/libz.a" && cksum "$zlib_inst/lib/libz.a"
   cksum "$0"
   cksum "$root"/userland/usr/local/bin/apk/patches/*.patch
-  aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
+  "$musl_cc" --version | sed -n '1p'
 } >"$stamp_new"
 
 if [ -f "$out" ] && [ -f "$stamp" ] && cmp -s "$stamp_new" "$stamp"; then
@@ -68,9 +72,9 @@ done
   cmake -Wno-dev "$mbedtls_work" \
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-    -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \
-    -DCMAKE_AR=aarch64-unknown-linux-musl-ar \
-    -DCMAKE_RANLIB=aarch64-unknown-linux-musl-ranlib \
+    -DCMAKE_C_COMPILER="$musl_cc" \
+    -DCMAKE_AR="$musl_ar" \
+    -DCMAKE_RANLIB="$musl_ranlib" \
     -DCMAKE_INSTALL_PREFIX="$mbedtls_inst" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG -march=armv8-a+crypto" \
@@ -88,9 +92,9 @@ cmake --install "$mbedtls_build" >/dev/null
 
 cat >"$cross" <<EOF
 [binaries]
-c = 'aarch64-unknown-linux-musl-gcc'
-ar = 'aarch64-unknown-linux-musl-ar'
-strip = 'aarch64-unknown-linux-musl-strip'
+c = '$musl_cc'
+ar = '$musl_ar'
+strip = '$musl_strip'
 pkg-config = 'pkg-config'
 
 [host_machine]

@@ -16,6 +16,10 @@ out=$4
 # runtime speed; the image can afford a slightly larger curl.
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+musl_cc=$(command -v aarch64-unknown-linux-musl-gcc)
+musl_ar=$(command -v aarch64-unknown-linux-musl-ar)
+musl_ranlib=$(command -v aarch64-unknown-linux-musl-ranlib)
+musl_strip=$(command -v aarch64-unknown-linux-musl-strip)
 curl_src="$root/userland/third_party/curl"
 curl_work_src="$build/curl-src"
 curl_build="$build/curl-build"
@@ -34,7 +38,7 @@ mkdir -p "$build"
     done
   fi
   cksum "$0"
-  aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
+  "$musl_cc" --version | sed -n '1p'
 } >"$stamp_new"
 
 if [ -f "$out" ] && [ -f "$stamp" ] && cmp -s "$stamp_new" "$stamp"; then
@@ -58,10 +62,10 @@ fi
   cmake "$curl_work_src" \
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-    -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \
-    -DCMAKE_AR=aarch64-unknown-linux-musl-ar \
-    -DCMAKE_RANLIB=aarch64-unknown-linux-musl-ranlib \
-    -DCMAKE_STRIP=aarch64-unknown-linux-musl-strip \
+    -DCMAKE_C_COMPILER="$musl_cc" \
+    -DCMAKE_AR="$musl_ar" \
+    -DCMAKE_RANLIB="$musl_ranlib" \
+    -DCMAKE_STRIP="$musl_strip" \
     -DCMAKE_EXE_LINKER_FLAGS=-static \
     -DCMAKE_PREFIX_PATH="$mbedtls_inst" \
     -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \

@@ -14,6 +14,9 @@ out=$3
 # minimum size; HTTPS was visibly CPU-bound with MinSizeRel crypto.
 
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+musl_cc=$(command -v aarch64-unknown-linux-musl-gcc)
+musl_ar=$(command -v aarch64-unknown-linux-musl-ar)
+musl_ranlib=$(command -v aarch64-unknown-linux-musl-ranlib)
 src="$root/userland/third_party/mbedtls"
 work="$build/mbedtls-build"
 inst="$build/mbedtls-install"
@@ -24,7 +27,7 @@ mkdir -p "$build"
 {
   git -C "$src" rev-parse HEAD
   cksum "$0"
-  aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
+  "$musl_cc" --version | sed -n '1p'
 } >"$stamp_new"
 
 if [ -f "$out" ] && [ -f "$stamp" ] && cmp -s "$stamp_new" "$stamp"; then
@@ -40,9 +43,9 @@ mkdir -p "$work" "$inst"
   cmake "$src" \
     -DCMAKE_SYSTEM_NAME=Linux \
     -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-    -DCMAKE_C_COMPILER=aarch64-unknown-linux-musl-gcc \
-    -DCMAKE_AR=aarch64-unknown-linux-musl-ar \
-    -DCMAKE_RANLIB=aarch64-unknown-linux-musl-ranlib \
+    -DCMAKE_C_COMPILER="$musl_cc" \
+    -DCMAKE_AR="$musl_ar" \
+    -DCMAKE_RANLIB="$musl_ranlib" \
     -DCMAKE_INSTALL_PREFIX="$inst" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG -march=armv8-a+crypto -DMBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_ONLY" \

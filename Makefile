@@ -10,7 +10,7 @@ RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --vars "$(EDK2_VARS)" --
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run run-tests run-shell-check benchmark rng-smoke kill format fetch clean
+.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run-reset run run-tests run-shell-check benchmark rng-smoke kill format fetch clean
 
 all: image test-image runner
 
@@ -54,6 +54,11 @@ test: build
 	$(MESON) test -C "$(BUILD_DIR)"
 
 run: runner run-root
+	$(RUN_CMD)
+
+run-reset: runner image
+	cp -f "$(BUILD_DIR)/root.ext2" "$(RUN_ROOT)"
+	@echo "reset persistent run disk: $(RUN_ROOT)"
 	$(RUN_CMD)
 
 run-tests: runner test-run-root
