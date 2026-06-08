@@ -149,7 +149,9 @@ static void init_backing_range(size_t first, size_t count) {
 static bool grow_backing_pages(void) {
   size_t old_capacity = backing_page_capacity;
   size_t new_capacity = old_capacity == 0 ? RAMFS_INITIAL_BACKING_PAGES : old_capacity * 2;
-  if (new_capacity <= old_capacity || new_capacity > RAMFS_MAX_BACKING_PAGES) { new_capacity = RAMFS_MAX_BACKING_PAGES; }
+  if (new_capacity <= old_capacity || new_capacity > RAMFS_MAX_BACKING_PAGES) {
+    new_capacity = RAMFS_MAX_BACKING_PAGES;
+  }
   if (new_capacity <= old_capacity) { return false; }
   struct ramfs_backing_page *new_pages = alloc_backing_table(new_capacity);
   if (new_pages == NULL) { return false; }

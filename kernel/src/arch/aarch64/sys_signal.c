@@ -67,8 +67,7 @@ int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t ol
   return 0;
 }
 
-int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set, uint64_t oldset,
-                           uint64_t sigsetsize) {
+int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set, uint64_t oldset, uint64_t sigsetsize) {
   if (sigsetsize != sizeof(uint64_t)) { return -(int64_t)EINVAL; }
   if (set != 0 && how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK) { return -(int64_t)EINVAL; }
   uint64_t next = 0;

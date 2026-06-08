@@ -185,8 +185,8 @@ static size_t append_u64(char *dst, size_t cap, size_t len, uint64_t value) {
 }
 
 static bool memfd_name_char_ok(char ch) {
-  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' ||
-         ch == '_' || ch == '-';
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' ||
+         ch == '-';
 }
 
 int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {

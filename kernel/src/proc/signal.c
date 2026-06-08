@@ -73,7 +73,9 @@ static bool signal_is_blocked(const struct thread *thread, int signal) {
 }
 
 static bool thread_on_sigaltstack(const struct thread *thread) {
-  if (thread == NULL || (thread->sigaltstack_flags & SS_DISABLE) != 0 || thread->sigaltstack_size == 0) { return false; }
+  if (thread == NULL || (thread->sigaltstack_flags & SS_DISABLE) != 0 || thread->sigaltstack_size == 0) {
+    return false;
+  }
   uint64_t sp = thread->tf.sp_el0;
   uint64_t end = thread->sigaltstack_sp + thread->sigaltstack_size;
   return end >= thread->sigaltstack_sp && sp >= thread->sigaltstack_sp && sp < end;
@@ -119,8 +121,8 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   }
 
   if (thread->state == THREAD_BLOCKED) {
-    bool restart = (action->flags & SA_RESTART) != 0 && wait_reason_is_restartable(thread->wait_reason) &&
-                   thread->tf.elr_el1 >= 4;
+    bool restart =
+      (action->flags & SA_RESTART) != 0 && wait_reason_is_restartable(thread->wait_reason) && thread->tf.elr_el1 >= 4;
     if (restart) {
       thread->tf.elr_el1 -= 4;
     } else {

@@ -806,15 +806,14 @@ static int socket_options_regression(void) {
     getsockopt(tcp, IPPROTO_IP, IP_TTL, &got, &got_len) == 0 && got == ttl && got_len == sizeof(got) &&
     getsockopt(tcp, IPPROTO_IP, IP_MTU_DISCOVER, &got, &got_len) == 0 && got == mtu_discover &&
     got_len == sizeof(got) && getsockopt(tcp, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &got, &got_len) == 0 &&
-    got == bind_no_port && got_len == sizeof(got) &&
-    getsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &got, &got_len) == 0 && got == keepidle && got_len == sizeof(got) &&
-    getsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &got, &got_len) == 0 && got == keepintvl && got_len == sizeof(got) &&
-    getsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &got, &got_len) == 0 && got == keepcnt && got_len == sizeof(got) &&
-    getsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &got, &got_len) == 0 && got == user_timeout &&
-    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &got, &got_len) == 0 && got == 1 &&
-    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &got, &got_len) == 0 && got == rcvlowat &&
-    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_SNDLOWAT, &got, &got_len) == 0 && got == 1 &&
-    got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_ACCEPTCONN, &got, &got_len) == 0 && got == 0 &&
+    got == bind_no_port && got_len == sizeof(got) && getsockopt(tcp, IPPROTO_TCP, TCP_KEEPIDLE, &got, &got_len) == 0 &&
+    got == keepidle && got_len == sizeof(got) && getsockopt(tcp, IPPROTO_TCP, TCP_KEEPINTVL, &got, &got_len) == 0 &&
+    got == keepintvl && got_len == sizeof(got) && getsockopt(tcp, IPPROTO_TCP, TCP_KEEPCNT, &got, &got_len) == 0 &&
+    got == keepcnt && got_len == sizeof(got) && getsockopt(tcp, IPPROTO_TCP, TCP_USER_TIMEOUT, &got, &got_len) == 0 &&
+    got == user_timeout && got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_KEEPALIVE, &got, &got_len) == 0 &&
+    got == 1 && got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_RCVLOWAT, &got, &got_len) == 0 &&
+    got == rcvlowat && got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_SNDLOWAT, &got, &got_len) == 0 &&
+    got == 1 && got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_ACCEPTCONN, &got, &got_len) == 0 && got == 0 &&
     got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_DOMAIN, &got, &got_len) == 0 && got == AF_INET &&
     got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_PROTOCOL, &got, &got_len) == 0 && got == IPPROTO_TCP &&
     got_len == sizeof(got) && getsockopt(tcp, SOL_SOCKET, SO_LINGER, &got_linger, &linger_len) == 0 &&
@@ -1830,8 +1829,8 @@ static int signal_altstack_regression(void) {
   uintptr_t end = start + sizeof(altstack_area);
   ok = ok && signal_stack_addr >= start && signal_stack_addr < end;
 
-  printf("[spore] signal altstack delivery: %s addr=%p range=%p-%p\n", ok ? "PASS" : "FAIL",
-         (void *)signal_stack_addr, (void *)start, (void *)end);
+  printf("[spore] signal altstack delivery: %s addr=%p range=%p-%p\n", ok ? "PASS" : "FAIL", (void *)signal_stack_addr,
+         (void *)start, (void *)end);
   return ok;
 }
 
@@ -2135,9 +2134,8 @@ static int mmap_fixed_noreplace_regression(void) {
   char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   int ok = map != MAP_FAILED;
   errno = 0;
-  void *again = ok ? mmap(map, 4096, PROT_READ | PROT_WRITE,
-                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0)
-                   : MAP_FAILED;
+  void *again =
+    ok ? mmap(map, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) : MAP_FAILED;
   ok = ok && again == MAP_FAILED && errno == EEXIST;
   if (map != MAP_FAILED) { ok = ok && munmap(map, 4096) == 0; }
   printf("[spore] mmap fixed-noreplace collision: %s errno=%d\n", ok ? "PASS" : "FAIL", errno);
