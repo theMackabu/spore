@@ -66,8 +66,9 @@
               marker="$build_dir/.spore-nix-env"
               env_id="spore-nix-env-v4-cross-gcc-shim"
 
-              tools_dir="$(mktemp -d)"
-              trap 'rm -rf "$tools_dir"' EXIT INT TERM
+              tools_dir=".cache/spore-nix-tools"
+              rm -rf "$tools_dir"
+              mkdir -p "$tools_dir"
               ln -s "${pkgs.llvmPackages.clang}/bin/clang" "$tools_dir/cc"
               ln -s "${pkgs.llvmPackages.clang}/bin/clang" "$tools_dir/clang"
               gcc_fixed="$(echo ${crossGccUnwrapped}/lib/gcc/aarch64-unknown-linux-musl/*/include-fixed)"
@@ -96,15 +97,14 @@ EOF
                 rm -rf "$build_dir"
               fi
 
-              mkdir -p "$build_dir"
-              printf '%s\n' "$env_id" >"$marker"
-
               qemu="$(command -v qemu-system-aarch64)"
               if [ -x /opt/homebrew/bin/qemu-system-aarch64 ]; then
                 qemu=/opt/homebrew/bin/qemu-system-aarch64
               fi
 
               make BUILD_DIR="$build_dir" QEMU="$qemu" run-reset
+              mkdir -p "$build_dir"
+              printf '%s\n' "$env_id" >"$marker"
             '';
           };
         });
