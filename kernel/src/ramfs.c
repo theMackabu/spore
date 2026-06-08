@@ -18,13 +18,18 @@ static uint32_t ramfs_smp_possible_cpu_count(void) {
 struct ramfs_backing_page {
   bool used;
   int next;
+  int free_next;
   int owner;
   uint32_t file_page;
   uint64_t pa;
   uint8_t *data;
 };
 
-static struct ramfs_backing_page backing_pages[RAMFS_MAX_BACKING_PAGES];
+static struct ramfs_backing_page *backing_pages;
+static size_t backing_page_capacity;
+static size_t backing_page_used_count;
+static int backing_page_free_head = -1;
+static uint64_t ramfs_hhdm_offset;
 static uint64_t ramfs_now_sec;
 
 void ramfs_set_now(uint64_t epoch_sec) {
@@ -99,23 +104,94 @@ static bool alloc_backing_data(struct ramfs *fs, struct ramfs_backing_page *page
 #endif
 }
 
-static void reset_backing_pages(void) {
-  for (size_t i = 0; i < RAMFS_MAX_BACKING_PAGES; ++i) {
-    if (backing_pages[i].used) { free_backing_data(&backing_pages[i]); }
+static void *alloc_backing_table(size_t capacity) {
+  size_t bytes = capacity * sizeof(*backing_pages);
+#if __STDC_HOSTED__
+  void *ptr = malloc(bytes);
+  if (ptr == NULL) { return NULL; }
+  kmemset(ptr, 0, bytes);
+  return ptr;
+#else
+  uint64_t pages = (bytes + RAMFS_PAGE_SIZE - 1) / RAMFS_PAGE_SIZE;
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) { return NULL; }
+  void *ptr = (void *)(uintptr_t)(ramfs_hhdm_offset + pa);
+  kmemset(ptr, 0, pages * RAMFS_PAGE_SIZE);
+  return ptr;
+#endif
+}
+
+static void free_backing_table(void *ptr, size_t capacity) {
+  if (ptr == NULL) { return; }
+#if __STDC_HOSTED__
+  free(ptr);
+  (void)capacity;
+#else
+  size_t bytes = capacity * sizeof(*backing_pages);
+  uint64_t pages = (bytes + RAMFS_PAGE_SIZE - 1) / RAMFS_PAGE_SIZE;
+  uint64_t pa = (uint64_t)(uintptr_t)ptr - ramfs_hhdm_offset;
+  for (uint64_t i = 0; i < pages; ++i) {
+    pmm_free_page(pa + i * RAMFS_PAGE_SIZE);
   }
-  kmemset(backing_pages, 0, sizeof(backing_pages));
-  for (size_t i = 0; i < RAMFS_MAX_BACKING_PAGES; ++i) {
-    backing_pages[i].next = -1;
-    backing_pages[i].owner = -1;
+#endif
+}
+
+static void init_backing_range(size_t first, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    size_t index = first + i;
+    backing_pages[index].next = -1;
+    backing_pages[index].free_next = backing_page_free_head;
+    backing_pages[index].owner = -1;
+    backing_page_free_head = (int)index;
   }
 }
 
-uint64_t ramfs_backing_used_pages(void) {
-  uint64_t count = 0;
-  for (size_t i = 0; i < RAMFS_MAX_BACKING_PAGES; ++i) {
-    if (backing_pages[i].used) { ++count; }
+static bool grow_backing_pages(void) {
+  size_t old_capacity = backing_page_capacity;
+  size_t new_capacity = old_capacity == 0 ? RAMFS_INITIAL_BACKING_PAGES : old_capacity * 2;
+  if (new_capacity <= old_capacity || new_capacity > RAMFS_MAX_BACKING_PAGES) { new_capacity = RAMFS_MAX_BACKING_PAGES; }
+  if (new_capacity <= old_capacity) { return false; }
+  struct ramfs_backing_page *new_pages = alloc_backing_table(new_capacity);
+  if (new_pages == NULL) { return false; }
+  if (backing_pages != NULL) { kmemcpy(new_pages, backing_pages, old_capacity * sizeof(*backing_pages)); }
+  struct ramfs_backing_page *old_pages = backing_pages;
+  backing_pages = new_pages;
+  backing_page_capacity = new_capacity;
+  init_backing_range(old_capacity, new_capacity - old_capacity);
+  free_backing_table(old_pages, old_capacity);
+  return true;
+}
+
+static int alloc_backing_slot(void) {
+  if (backing_page_free_head < 0 && !grow_backing_pages()) { return -1; }
+  int slot = backing_page_free_head;
+  backing_page_free_head = backing_pages[slot].free_next;
+  backing_pages[slot] = (struct ramfs_backing_page){.used = true, .next = -1, .free_next = -1, .owner = -1};
+  ++backing_page_used_count;
+  return slot;
+}
+
+static void free_backing_slot(int slot) {
+  if (slot < 0 || (size_t)slot >= backing_page_capacity || !backing_pages[slot].used) { return; }
+  free_backing_data(&backing_pages[slot]);
+  backing_pages[slot] = (struct ramfs_backing_page){.next = -1, .free_next = backing_page_free_head, .owner = -1};
+  backing_page_free_head = slot;
+  if (backing_page_used_count > 0) { --backing_page_used_count; }
+}
+
+static void reset_backing_pages(void) {
+  for (size_t i = 0; i < backing_page_capacity; ++i) {
+    if (backing_pages[i].used) { free_backing_data(&backing_pages[i]); }
   }
-  return count;
+  free_backing_table(backing_pages, backing_page_capacity);
+  backing_pages = NULL;
+  backing_page_capacity = 0;
+  backing_page_used_count = 0;
+  backing_page_free_head = -1;
+}
+
+uint64_t ramfs_backing_used_pages(void) {
+  return backing_page_used_count;
 }
 
 static int find_backing_page(const struct ramfs *fs, int node, uint32_t file_page) {
@@ -128,22 +204,17 @@ static int find_backing_page(const struct ramfs *fs, int node, uint32_t file_pag
 static int get_backing_page(struct ramfs *fs, int node, uint32_t file_page, bool create) {
   int found = find_backing_page(fs, node, file_page);
   if (found >= 0 || !create) { return found; }
-  for (int i = 0; i < RAMFS_MAX_BACKING_PAGES; ++i) {
-    if (backing_pages[i].used) { continue; }
-    backing_pages[i] = (struct ramfs_backing_page){
-      .used = true,
-      .next = fs->nodes[node].first_page,
-      .owner = node,
-      .file_page = file_page,
-    };
-    if (!alloc_backing_data(fs, &backing_pages[i])) {
-      backing_pages[i] = (struct ramfs_backing_page){.next = -1, .owner = -1};
-      return -1;
-    }
-    fs->nodes[node].first_page = i;
-    return i;
+  int slot = alloc_backing_slot();
+  if (slot < 0) { return -1; }
+  backing_pages[slot].next = fs->nodes[node].first_page;
+  backing_pages[slot].owner = node;
+  backing_pages[slot].file_page = file_page;
+  if (!alloc_backing_data(fs, &backing_pages[slot])) {
+    free_backing_slot(slot);
+    return -1;
   }
-  return -1;
+  fs->nodes[node].first_page = slot;
+  return slot;
 }
 
 static void free_node_pages(struct ramfs *fs, int node) {
@@ -151,8 +222,7 @@ static void free_node_pages(struct ramfs *fs, int node) {
   fs->nodes[node].first_page = -1;
   while (slot >= 0) {
     int next = backing_pages[slot].next;
-    free_backing_data(&backing_pages[slot]);
-    backing_pages[slot] = (struct ramfs_backing_page){.next = -1, .owner = -1};
+    free_backing_slot(slot);
     slot = next;
   }
 }
@@ -365,6 +435,7 @@ static void add_sys_cpu_topology(struct ramfs *fs) {
 
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
                 uint64_t hhdm_offset) {
+  ramfs_hhdm_offset = hhdm_offset;
   kmemset(fs, 0, sizeof(*fs));
   reset_backing_pages();
   fs->hhdm_offset = hhdm_offset;
@@ -631,8 +702,7 @@ bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
     int slot = *link;
     if (backing_pages[slot].file_page >= keep_pages) {
       *link = backing_pages[slot].next;
-      free_backing_data(&backing_pages[slot]);
-      backing_pages[slot] = (struct ramfs_backing_page){.next = -1, .owner = -1};
+      free_backing_slot(slot);
     } else {
       link = &backing_pages[slot].next;
     }
