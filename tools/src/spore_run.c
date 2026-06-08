@@ -205,7 +205,7 @@ static const char *shell_commands[] = {
   "confine compute-only /home/spore/demos/spinner\n",
   "confine fs:/tmp /home/spore/demos/peeker /etc/motd\n",
   "confine fs:/tmp /home/spore/demos/writer /tmp/d/out\n",
-  "confine mem:1 /home/spore/demos/memhog\n",
+  "confine mem:1 /home/spore/demos/memhog --expect-deny\n",
   "runc bad-manifest /home/spore/demos/escalate\n",
   "sudo shutdown\n",
 };

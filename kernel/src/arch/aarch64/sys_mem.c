@@ -68,6 +68,7 @@ int64_t sys_brk(uint64_t requested) {
     return (int64_t)requested;
   }
   if (new_end > old_end) {
+    if (!cell_map_add_allowed(old_end, new_end, false)) { return (int64_t)as->brk_current; }
     if (!cell_add_vma(old_end, new_end, VMM_USER_READ | VMM_USER_WRITE, 0)) { return (int64_t)as->brk_current; }
   }
   as->brk_current = requested;
@@ -92,8 +93,8 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
     end = align_up(raw_end, PAGE_SIZE);
     if (end < raw_end) { return -(int64_t)EINVAL; }
   }
-  if (!cell_mmap_allowed((end - base) / PAGE_SIZE)) { return -(int64_t)ENOMEM; }
   if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
+  if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }
   if ((flags & MAP_FIXED) != 0) { (void)cell_remove_vma(base, end); }
   if (anon) {
     enum vma_type type = (flags & MAP_GROWSDOWN) != 0 ? VMA_STACK : VMA_ANON;
@@ -220,6 +221,7 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   if ((flags & MREMAP_FIXED) == 0) {
     uint64_t in_place_end;
     if (checked_add(old_addr, new_size, &in_place_end) && !cell_vma_overlaps(old_end, in_place_end)) {
+      if (!cell_map_add_allowed(old_end, in_place_end, false)) { return -(int64_t)ENOMEM; }
       if (!add_mremap_vma(old_end, in_place_end, &old_vma, old_vma.file_start, new_size)) { return -(int64_t)ENOMEM; }
       return (int64_t)old_addr;
     }
@@ -237,6 +239,9 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   if (!checked_add(new_start, new_size, &new_end)) { return -(int64_t)EINVAL; }
   if (ranges_overlap(old_addr, old_end, new_start, new_end)) { return -(int64_t)EINVAL; }
 
+  if (!cell_map_resize_allowed(old_addr, old_end, new_start, new_end, (flags & MREMAP_FIXED) != 0)) {
+    return -(int64_t)ENOMEM;
+  }
   if ((flags & MREMAP_FIXED) != 0) { (void)cell_remove_vma(new_start, new_end); }
   if (cell_vma_overlaps(new_start, new_end)) { return -(int64_t)ENOMEM; }
   if (!move_mapped_pages(old_addr, old_size < new_size ? old_size : new_size, new_start)) { return -(int64_t)ENOMEM; }

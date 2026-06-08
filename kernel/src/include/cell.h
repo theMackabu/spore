@@ -405,7 +405,9 @@ bool cell_fs_path_allowed(const char *path, uint8_t rights);
 bool cell_syscall_allowed(uint64_t nr);
 bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port);
 int cell_apply_policy(const char *manifest);
-bool cell_mmap_allowed(uint64_t pages);
+bool cell_map_add_allowed(uint64_t start, uint64_t end, bool replace_existing);
+bool cell_map_resize_allowed(uint64_t old_start, uint64_t old_end, uint64_t new_start, uint64_t new_end,
+                             bool replace_new);
 void cell_save_current(const struct trap_frame *frame);
 void cell_restore_current(struct trap_frame *frame);
 void cell_schedule(struct trap_frame *frame);

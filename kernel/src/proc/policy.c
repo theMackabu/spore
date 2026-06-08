@@ -162,9 +162,54 @@ bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
   return allowed;
 }
 
-bool cell_mmap_allowed(uint64_t pages) {
+static uint64_t page_count(uint64_t start, uint64_t end) {
+  return end > start ? (end - start) / 4096u : 0;
+}
+
+static bool ranges_overlap(uint64_t a_start, uint64_t a_end, uint64_t b_start, uint64_t b_end) {
+  return a_start < b_end && b_start < a_end;
+}
+
+static uint64_t overlap_pages(const struct vma_list *vmas, uint64_t start, uint64_t end) {
+  if (vmas == NULL || end <= start) { return 0; }
+  uint64_t total = 0;
+  for (size_t i = 0; i < vma_capacity(vmas); ++i) {
+    const struct vma *vma = vma_at(vmas, i);
+    if (vma == NULL || !vma->used || !ranges_overlap(start, end, vma->start, vma->end)) { continue; }
+    uint64_t overlap_start = start > vma->start ? start : vma->start;
+    uint64_t overlap_end = end < vma->end ? end : vma->end;
+    total += page_count(overlap_start, overlap_end);
+  }
+  return total;
+}
+
+static bool memory_pages_allowed(uint64_t removed_pages, uint64_t added_pages) {
   struct domain *domain = cell_current_domain_internal();
-  return domain == NULL || domain->caps.memory_page_cap == 0 || pages <= domain->caps.memory_page_cap;
+  if (domain == NULL || domain->caps.memory_page_cap == 0) { return true; }
+
+  const struct vma_list *vmas = cell_domain_vmas_const(domain);
+  if (vmas == NULL) { return false; }
+  uint64_t current_pages = vma_virtual_pages(vmas);
+  uint64_t base_pages = removed_pages > current_pages ? 0 : current_pages - removed_pages;
+  return added_pages <= domain->caps.memory_page_cap && base_pages <= domain->caps.memory_page_cap - added_pages;
+}
+
+bool cell_map_add_allowed(uint64_t start, uint64_t end, bool replace_existing) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL || domain->caps.memory_page_cap == 0) { return true; }
+  const struct vma_list *vmas = cell_domain_vmas_const(domain);
+  uint64_t removed_pages = replace_existing ? overlap_pages(vmas, start, end) : 0;
+  return memory_pages_allowed(removed_pages, page_count(start, end));
+}
+
+bool cell_map_resize_allowed(uint64_t old_start, uint64_t old_end, uint64_t new_start, uint64_t new_end,
+                             bool replace_new) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL || domain->caps.memory_page_cap == 0) { return true; }
+  const struct vma_list *vmas = cell_domain_vmas_const(domain);
+  uint64_t removed_pages = overlap_pages(vmas, old_start, old_end);
+  if (replace_new) { removed_pages += overlap_pages(vmas, new_start, new_end); }
+  return memory_pages_allowed(removed_pages, page_count(new_start, new_end));
 }
 
 int cell_apply_policy(const char *manifest) {
