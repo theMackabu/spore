@@ -492,12 +492,6 @@ size_t proc_stat_text(char *dst, size_t cap) {
   }
   proc_append_str(dst, cap, &len, "ctxt ");
   proc_append_u64(dst, cap, &len, cell_uptime_ticks());
-  proc_append_str(dst, cap, &len, "\ncpu_possible ");
-  proc_append_u64(dst, cap, &len, smp_possible_cpu_count());
-  proc_append_str(dst, cap, &len, "\ncpu_present ");
-  proc_append_u64(dst, cap, &len, smp_present_cpu_count());
-  proc_append_str(dst, cap, &len, "\ncpu_online ");
-  proc_append_u64(dst, cap, &len, smp_online_cpu_count());
   proc_append_str(dst, cap, &len, "\nbtime ");
   proc_append_u64(dst, cap, &len, cell_boot_epoch_seconds());
   proc_append_str(dst, cap, &len, "\nprocesses ");

@@ -1,5 +1,7 @@
 export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:.'
 export SHELL='/bin/msh'
 export TERM='spore'
+export LANG='C.UTF-8'
+export LC_CTYPE='C.UTF-8'
 export ENV='/etc/dashrc'
 export PS1='\e[32m\u@\h\e[0m:\e[34m\w\e[0m\$ '
