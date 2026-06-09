@@ -17,6 +17,9 @@ enum {
   TCSETS = 0x5402,
   TCSETSW = 0x5403,
   TCSETSF = 0x5404,
+  TCSBRK = 0x5409,
+  TCXONC = 0x540A,
+  TCFLSH = 0x540B,
   TIOCGWINSZ = 0x5413,
   TIOCSWINSZ = 0x5414,
   TIOCGPGRP = 0x540F,
@@ -71,7 +74,8 @@ static struct open_file *fd_file(uint64_t fd) {
 }
 
 int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
-  if (request == TIOCGPTN) {
+  uint32_t req = (uint32_t)request;
+  if (req == TIOCGPTN) {
     struct open_file *file = fd_file(fd);
     if (file == NULL || !cell_pty_is_master(file)) { return -(int64_t)ENOTTY; }
     int id = cell_pty_id(file);
@@ -79,7 +83,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TIOCSPTLCK) {
+  if (req == TIOCSPTLCK) {
     struct open_file *file = fd_file(fd);
     if (file == NULL || !cell_pty_is_master(file)) { return -(int64_t)ENOTTY; }
     int locked = 0;
@@ -90,7 +94,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     int rc = cell_pty_set_locked(file, locked);
     return rc == 0 ? 0 : (int64_t)rc;
   }
-  if (request == TIOCGPTLCK) {
+  if (req == TIOCGPTLCK) {
     struct open_file *file = fd_file(fd);
     if (file == NULL || !cell_pty_is_master(file)) { return -(int64_t)ENOTTY; }
     int locked = cell_pty_unlocked(file) ? 0 : 1;
@@ -99,18 +103,18 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TIOCGPTPEER) {
+  if (req == TIOCGPTPEER) {
     struct open_file *file = fd_file(fd);
     if (file == NULL || !cell_pty_is_master(file)) { return -(int64_t)ENOTTY; }
     return cell_pty_open_peer(file, (uint32_t)arg);
   }
-  if (request == FIONREAD || request == TIOCOUTQ) {
+  if (req == FIONREAD || req == TIOCOUTQ) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct open_file *file = fd_file(fd);
     int queued = 0;
     if (file != NULL && file->type == OPEN_PTY) {
-      uint64_t value = request == FIONREAD ? cell_pty_read_available(file) : cell_pty_write_pending(file);
+      uint64_t value = req == FIONREAD ? cell_pty_read_available(file) : cell_pty_write_pending(file);
       queued = value > I32_MAX ? I32_MAX : (int)value;
     }
     return syscall_user_writable(arg, sizeof(queued)) &&
@@ -118,7 +122,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TIOCGSID) {
+  if (req == TIOCGSID) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct domain *domain = cell_current_domain_internal();
@@ -127,10 +131,21 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TIOCNOTTY || request == TIOCPKT) { return require_tty_fd(fd); }
-  if (request == TIOCSTI) { return -(int64_t)EINVAL; }
-  if (request == TIOCSCTTY) { return require_tty_fd(fd); }
-  if (request == TIOCGPGRP) {
+  if (req == TIOCNOTTY || req == TIOCPKT) { return require_tty_fd(fd); }
+  if (req == TCSBRK || req == TCXONC || req == TCFLSH) { return require_tty_fd(fd); }
+  if (req == TIOCSTI) { return -(int64_t)EINVAL; }
+  if (req == TIOCSCTTY) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
+    struct open_file *file = fd_file(fd);
+    struct domain *domain = cell_current_domain_internal();
+    if (file != NULL && file->type == OPEN_PTY && domain != NULL && domain->pgrp_id > 0) {
+      int rc = cell_pty_set_foreground_pgrp(file, domain->pgrp_id);
+      if (rc < 0) { return rc; }
+    }
+    return 0;
+  }
+  if (req == TIOCGPGRP) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct open_file *file = fd_file(fd);
@@ -139,7 +154,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TIOCSPGRP) {
+  if (req == TIOCSPGRP) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     int pgrp = 0;
@@ -152,7 +167,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
                                                     : cell_tty_set_foreground_pgrp(pgrp);
     return rc == 0 ? 0 : (int64_t)rc;
   }
-  if (request == TIOCGWINSZ) {
+  if (req == TIOCGWINSZ) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     uint16_t rows = 0;
@@ -173,7 +188,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TIOCSWINSZ) {
+  if (req == TIOCSWINSZ) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct winsize64 ws;
@@ -184,7 +199,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (file != NULL && file->type == OPEN_PTY) { cell_pty_set_winsize(file, ws.ws_row, ws.ws_col); }
     return 0;
   }
-  if (request == FIONBIO) {
+  if (req == FIONBIO) {
     int on = 0;
     if (!syscall_user_readable(arg, sizeof(on)) || !vmm_copy_from_user(syscall_active_as(), &on, arg, sizeof(on))) {
       return -(int64_t)EFAULT;
@@ -198,17 +213,17 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     }
     return cell_fd_set_flags((int)fd, flags);
   }
-  if (request == FIOCLEX || request == FIONCLEX) {
+  if (req == FIOCLEX || req == FIONCLEX) {
     int flags = cell_fd_get_fd_flags((int)fd);
     if (flags < 0) { return flags; }
-    if (request == FIOCLEX) {
+    if (req == FIOCLEX) {
       flags |= FD_CLOEXEC;
     } else {
       flags &= ~FD_CLOEXEC;
     }
     return cell_fd_set_fd_flags((int)fd, flags);
   }
-  if (request == TCGETS) {
+  if (req == TCGETS) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct open_file *file = fd_file(fd);
@@ -232,7 +247,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              ? 0
              : -(int64_t)EFAULT;
   }
-  if (request == TCSETS || request == TCSETSW || request == TCSETSF) {
+  if (req == TCSETS || req == TCSETSW || req == TCSETSF) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct termios64 tio;
@@ -249,6 +264,6 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     }
     return 0;
   }
-  cell_note_unsupported_ioctl(request);
+  cell_note_unsupported_ioctl(req);
   return -(int64_t)EINVAL;
 }

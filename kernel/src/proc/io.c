@@ -238,7 +238,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
     return cell_block_current_on_pipe(fd, buf, len, true, frame);
   }
-  if (file->type != OPEN_STDOUT) {
+  if (file->type != OPEN_STDOUT && file->type != OPEN_STDIN) {
     if (file->type != OPEN_RAMFS ||
         ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR)) {
       return -22;

@@ -346,7 +346,7 @@ static int collect_unix_rights(const struct msghdr64 *msg, struct unix_right_bat
       for (uint64_t i = 0; i < count; ++i) {
         if (rights->count >= MAX_SCM_RIGHTS) { return -EINVAL; }
         int32_t passed_fd = -1;
-        if (!vmm_copy_from_user(syscall_active_as(), &passed_fd, data_off + i * sizeof(passed_fd),
+        if (!vmm_copy_from_user(syscall_active_as(), &passed_fd, msg->control + data_off + i * sizeof(passed_fd),
                                 sizeof(passed_fd))) {
           return -EFAULT;
         }
@@ -452,10 +452,10 @@ static int64_t recv_iovecs_stream(struct trap_frame *frame, uint64_t fd, const s
   if (!cell_fd_unix_rx_offset((int)fd, &recv_start)) { return -(int64_t)EBADF; }
   have_right = cell_fd_unix_next_right_range((int)fd, &right_start, &right_end);
   if (have_right) {
-    if (right_start > recv_start) {
-      max_total = right_start - recv_start;
+    if (right_start >= recv_start && right_end > recv_start) {
+      max_total = right_end - recv_start;
       stop_at_boundary = true;
-    } else if (right_start == recv_start && right_end > recv_start) {
+    } else if (right_start < recv_start && right_end > recv_start) {
       max_total = right_end - recv_start;
       stop_at_boundary = true;
     }
