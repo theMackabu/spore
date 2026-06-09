@@ -21,6 +21,8 @@ int cell_pty_id(const struct open_file *file);
 bool cell_pty_is_master(const struct open_file *file);
 bool cell_pty_unlocked(const struct open_file *file);
 int cell_pty_set_locked(struct open_file *file, int locked);
+uint32_t cell_pty_oflag(const struct open_file *file);
+void cell_pty_set_oflag(struct open_file *file, uint32_t oflag);
 uint32_t cell_pty_lflag(const struct open_file *file);
 void cell_pty_set_lflag(struct open_file *file, uint32_t lflag);
 uint8_t cell_pty_erase_char(const struct open_file *file);

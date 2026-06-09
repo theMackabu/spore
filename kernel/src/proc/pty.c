@@ -14,6 +14,8 @@ enum {
   ENOENT = 2,
   ENOTTY = 25,
   PTY_BUF_CAP = 8192,
+  TTY_OPOST = 0000001,
+  TTY_ONLCR = 0000004,
   TTY_ISIG = 0000001,
   TTY_ICANON = 0000002,
   TTY_ECHO = 0000010,
@@ -34,6 +36,7 @@ struct pty {
   uint16_t rows;
   uint16_t cols;
   int foreground_pgrp;
+  uint32_t oflag;
   uint32_t lflag;
   uint8_t erase;
   struct pty_ring to_master;
@@ -143,6 +146,7 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
   ptys[id].rows = 38;
   ptys[id].cols = 96;
   ptys[id].foreground_pgrp = domain->pgrp_id;
+  ptys[id].oflag = TTY_OPOST | TTY_ONLCR;
   ptys[id].lflag = TTY_ISIG | TTY_ICANON | TTY_ECHO;
   ptys[id].erase = 0x7f;
   int fd = install_pty_fd(domain, id, true, flags, path);
@@ -241,6 +245,16 @@ int cell_pty_set_locked(struct open_file *file, int locked) {
   return 0;
 }
 
+uint32_t cell_pty_oflag(const struct open_file *file) {
+  struct pty *pty = pty_for_file(file);
+  return pty == NULL ? 0 : pty->oflag;
+}
+
+void cell_pty_set_oflag(struct open_file *file, uint32_t oflag) {
+  struct pty *pty = pty_for_file(file);
+  if (pty != NULL) { pty->oflag = oflag; }
+}
+
 uint32_t cell_pty_lflag(const struct open_file *file) {
   struct pty *pty = pty_for_file(file);
   return pty == NULL ? 0 : pty->lflag;
@@ -319,16 +333,19 @@ int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file
   struct pty_ring *ring = file->pty_master ? &pty->to_slave : &pty->to_master;
   uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
   if (peer_refs == 0) { return -EIO; }
-  size_t room = ring_room(ring);
-  if (room == 0) { return -EAGAIN; }
-  uint64_t target = len < room ? len : room;
   uint64_t wrote = 0;
-  while (wrote < target) {
+  while (wrote < len) {
     char c;
     if (!vmm_copy_from_user(cell_domain_as(domain), &c, buf + wrote, 1)) { return wrote == 0 ? -EFAULT : (int64_t)wrote; }
+    bool map_newline =
+      !file->pty_master && c == '\n' && (pty->oflag & TTY_OPOST) != 0 && (pty->oflag & TTY_ONLCR) != 0;
+    size_t needed = map_newline ? 2u : 1u;
+    if (ring_room(ring) < needed) { break; }
+    if (map_newline) { (void)ring_push(ring, '\r'); }
     (void)ring_push(ring, c);
     ++wrote;
   }
+  if (wrote == 0) { return -EAGAIN; }
   if (wrote != 0) { pty_notify(); }
   return (int64_t)wrote;
 }

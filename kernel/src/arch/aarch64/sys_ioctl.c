@@ -229,7 +229,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     struct open_file *file = fd_file(fd);
     struct termios64 tio = {
       .c_iflag = 0,
-      .c_oflag = 0,
+      .c_oflag = file != NULL && file->type == OPEN_PTY ? cell_pty_oflag(file) : 0,
       .c_cflag = 0,
       .c_lflag = file != NULL && file->type == OPEN_PTY ? cell_pty_lflag(file) : cell_tty_lflag(),
       .c_line = 0,
@@ -256,6 +256,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     }
     struct open_file *file = fd_file(fd);
     if (file != NULL && file->type == OPEN_PTY) {
+      cell_pty_set_oflag(file, tio.c_oflag);
       cell_pty_set_lflag(file, tio.c_lflag);
       cell_pty_set_erase_char(file, tio.c_cc[2]);
     } else {
