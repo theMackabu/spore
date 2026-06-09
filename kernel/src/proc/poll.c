@@ -4,6 +4,7 @@
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/pipe.h"
+#include "proc/pty.h"
 #include "proc/socket.h"
 #include "proc/thread.h"
 #include "proc/tty.h"
@@ -54,7 +55,10 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
     revents |= CELL_POLLERR;
   }
   if (file->type == OPEN_PIPE && cell_pipe_file_hup(file)) { revents |= CELL_POLLHUP; }
-  if (file->type == OPEN_UNIX_STREAM && cell_pipe_id_hup(file->unix_rx_pipe)) { revents |= CELL_POLLHUP; }
+  if (file->type == OPEN_PTY && cell_pty_file_hup(file)) { revents |= CELL_POLLHUP; }
+  if (file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_id_hup(file->unix_rx_pipe)) {
+    revents |= CELL_POLLHUP;
+  }
   if ((events & CELL_POLLIN) != 0) {
     if (file->type == OPEN_STDIN ||
         (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE))) {
@@ -73,10 +77,12 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
       }
     } else if (file->type == OPEN_PIPE) {
       if (cell_pipe_file_readable(file)) { revents |= CELL_POLLIN; }
+    } else if (file->type == OPEN_PTY) {
+      if (cell_pty_file_readable(file)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_UNIX_LISTENER) {
       if (cell_unix_listener_readable(file)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_UNIX_STREAM) {
-      if (cell_pipe_id_readable(file->unix_rx_pipe)) { revents |= CELL_POLLIN; }
+      if (file->unix_connected && cell_pipe_id_readable(file->unix_rx_pipe)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_RAMFS) {
       revents |= CELL_POLLIN;
     } else if (file->type == OPEN_EPOLL) {
@@ -103,8 +109,10 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
       }
     } else if (file->type == OPEN_PIPE) {
       if (cell_pipe_file_writable(file)) { revents |= CELL_POLLOUT; }
+    } else if (file->type == OPEN_PTY) {
+      if (cell_pty_file_writable(file)) { revents |= CELL_POLLOUT; }
     } else if (file->type == OPEN_UNIX_STREAM) {
-      if (cell_pipe_id_writable(file->unix_tx_pipe)) { revents |= CELL_POLLOUT; }
+      if (file->unix_connected && cell_pipe_id_writable(file->unix_tx_pipe)) { revents |= CELL_POLLOUT; }
     }
   }
   return revents;

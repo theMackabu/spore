@@ -17,6 +17,8 @@ bool cell_pipe_file_hup(struct open_file *file);
 bool cell_pipe_id_readable(uint8_t pipe_id);
 bool cell_pipe_id_writable(uint8_t pipe_id);
 bool cell_pipe_id_hup(uint8_t pipe_id);
+bool cell_pipe_id_read_offset(uint8_t pipe_id, uint64_t *out);
+bool cell_pipe_id_write_offset(uint8_t pipe_id, uint64_t *out);
 bool cell_pipe_release_file(struct open_file *file);
 int64_t cell_pipe_write_id_from_domain(struct domain *domain, uint8_t pipe_id, uint64_t buf, uint64_t len);
 int64_t cell_pipe_read_id_to_domain(struct domain *domain, uint8_t pipe_id, uint64_t buf, uint64_t len);

@@ -4,6 +4,7 @@
 #include "mm/vmm.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
+#include "proc/socket.h"
 #include "proc/thread.h"
 
 enum {
@@ -24,6 +25,8 @@ struct pipe_obj {
   uint64_t pages[PIPE_PAGES];
   uint64_t head;
   uint64_t len;
+  uint64_t read_offset;
+  uint64_t write_offset;
 };
 
 static struct pipe_obj pipes[16];
@@ -51,6 +54,7 @@ static void pipe_free_storage(struct pipe_obj *pipe) {
 
 static void pipe_destroy(struct pipe_obj *pipe) {
   if (pipe == NULL) { return; }
+  cell_unix_release_rights_for_pipe((uint8_t)(pipe - pipes));
   pipe_free_storage(pipe);
   *pipe = (struct pipe_obj){0};
 }
@@ -170,6 +174,20 @@ bool cell_pipe_id_hup(uint8_t pipe_id) {
   return pipe != NULL && pipe->writers == 0;
 }
 
+bool cell_pipe_id_read_offset(uint8_t pipe_id, uint64_t *out) {
+  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+  if (pipe == NULL || out == NULL) { return false; }
+  *out = pipe->read_offset;
+  return true;
+}
+
+bool cell_pipe_id_write_offset(uint8_t pipe_id, uint64_t *out) {
+  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+  if (pipe == NULL || out == NULL) { return false; }
+  *out = pipe->write_offset;
+  return true;
+}
+
 bool cell_pipe_release_file(struct open_file *file) {
   struct pipe_obj *pipe = pipe_for_file(file);
   if (pipe == NULL) { return false; }
@@ -261,6 +279,7 @@ int64_t cell_pipe_write_id_from_domain(struct domain *domain, uint8_t pipe_id, u
     done += chunk;
   }
   if (done != 0) {
+    pipe->write_offset += done;
     cell_pipe_notify();
     return (int64_t)done;
   }
@@ -286,6 +305,7 @@ int64_t cell_pipe_read_id_to_domain(struct domain *domain, uint8_t pipe_id, uint
     done += chunk;
   }
   if (done != 0) {
+    pipe->read_offset += done;
     cell_pipe_notify();
     return (int64_t)done;
   }

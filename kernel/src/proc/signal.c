@@ -15,12 +15,19 @@ enum {
   EINVAL = 22,
   EINTR = 4,
   ESRCH = 3,
+  SIGHUP = 1,
   SIGINT = 2,
+  SIGQUIT = 3,
   SIGABRT = 6,
   SIGKILL = 9,
+  SIGUSR1 = 10,
   SIGSEGV = 11,
+  SIGUSR2 = 12,
   SIGPIPE = 13,
   SIGTERM = 15,
+  SIGCHLD = 17,
+  SIGCONT = 18,
+  SIGWINCH = 28,
   SA_SIGINFO = 4,
   SA_ONSTACK = 0x08000000,
   SS_DISABLE = 2,
@@ -51,8 +58,13 @@ static struct domain *current_domain(void) {
 }
 
 static bool signal_is_supported(int signal) {
-  return signal == SIGTERM || signal == SIGINT || signal == SIGABRT || signal == SIGKILL || signal == SIGSEGV ||
-         signal == SIGPIPE;
+  return signal == SIGHUP || signal == SIGINT || signal == SIGQUIT || signal == SIGABRT || signal == SIGKILL ||
+         signal == SIGUSR1 || signal == SIGSEGV || signal == SIGUSR2 || signal == SIGPIPE || signal == SIGTERM ||
+         signal == SIGCHLD || signal == SIGCONT || signal == SIGWINCH;
+}
+
+static bool signal_default_ignored(int signal) {
+  return signal == SIGCHLD || signal == SIGCONT || signal == SIGWINCH;
 }
 
 static uint64_t signal_bit(int signal) {
@@ -99,7 +111,7 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
 
 static bool wait_reason_is_restartable(enum wait_reason reason) {
   return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
-         reason == WAIT_INOTIFY || reason == WAIT_FUTEX;
+         reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FUTEX;
 }
 
 bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
@@ -110,6 +122,7 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   }
   struct domain *domain = thread->domain;
   struct signal_action *action = &domain->signal_actions[signal];
+  if (action->handler == 0 && signal_default_ignored(signal)) { return true; }
   if (action->handler == 0 || signal == SIGKILL) {
     terminate_domain_by_signal(domain, signal);
     return true;

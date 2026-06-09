@@ -53,6 +53,7 @@ enum wait_reason {
   WAIT_PIPE,
   WAIT_EPOLL,
   WAIT_INOTIFY,
+  WAIT_PTY,
 };
 
 enum cell_state {
@@ -74,6 +75,7 @@ enum open_file_type {
   OPEN_EPOLL,
   OPEN_EVENTFD,
   OPEN_INOTIFY,
+  OPEN_PTY,
 };
 
 enum { CELL_PATH_MAX = 256 };
@@ -122,6 +124,9 @@ struct open_file {
   uint32_t flags;
   uint8_t pipe_id;
   bool pipe_write_end;
+  uint8_t pty_id;
+  bool pty_master;
+  bool unix_connected;
   uint8_t unix_rx_pipe;
   uint8_t unix_tx_pipe;
   int unix_owner_pid;

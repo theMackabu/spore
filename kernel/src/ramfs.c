@@ -1,6 +1,7 @@
 #include "ramfs.h"
 
 #include "mem.h"
+#include "proc/pty.h"
 
 #if __STDC_HOSTED__
 #include <stdlib.h>
@@ -464,6 +465,7 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
   (void)add_node(fs, dev, "fs", true, true);
   (void)add_node(fs, dev, "blk", true, true);
   (void)add_node(fs, dev, "shm", true, true);
+  (void)add_node(fs, dev, "pts", true, true);
   (void)add_node(fs, run, "memfd", true, true);
   (void)add_node(fs, proc, "net", true, true);
   add_sys_cpu_topology(fs);
@@ -476,6 +478,14 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
   (void)add_device(fs, "/dev/console", RAMFS_DEV_CONSOLE);
   (void)add_device(fs, "/dev/tty", RAMFS_DEV_TTY);
   (void)add_device(fs, "/dev/ttys0", RAMFS_DEV_TTY);
+  (void)add_device(fs, "/dev/ptmx", RAMFS_DEV_PTMX);
+  for (uint32_t pty = 0; pty < CELL_PTY_CAP; ++pty) {
+    char path[32] = "/dev/pts/";
+    size_t len = kstrlen(path);
+    len = append_dec(path, sizeof(path), len, pty);
+    path[len] = '\0';
+    (void)add_device(fs, path, RAMFS_DEV_PTS);
+  }
   (void)add_device(fs, "/dev/procinfo", RAMFS_DEV_PROCINFO);
   (void)add_device(fs, "/dev/fs/root", RAMFS_DEV_FS_ROOT);
   (void)add_device(fs, "/dev/fs/boot", RAMFS_DEV_FS_BOOT);

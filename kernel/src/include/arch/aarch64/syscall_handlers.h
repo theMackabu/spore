@@ -100,6 +100,7 @@ int64_t sys_clone(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint
 int64_t sys_futex(struct trap_frame *frame, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout);
 
 int64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol);
+int64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64_t sv);
 int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len);
 int64_t sys_connect(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64_t len);
 int64_t sys_listen(uint64_t fd, uint64_t backlog);

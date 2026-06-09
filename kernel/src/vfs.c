@@ -20,6 +20,8 @@ enum {
   VFS_LOOKUP_CACHE_ENTRIES = 128,
   VFS_LOOKUP_CACHE_PATH_MAX = 255,
   VFS_READAHEAD_PAGES = 2,
+  VFS_PROC_FD_MAX = 64,
+  VFS_PROC_FD_PATH_MAX = 256,
 };
 
 struct vfs_page_cache_entry {
@@ -55,6 +57,9 @@ static uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, voi
 
 bool cell_proc_exists(int pid);
 int cell_proc_pid_at(size_t index);
+int cell_current_pid(void);
+bool cell_fd_path(int fd, char *out, size_t cap);
+bool cell_fd_stat(int fd, struct vfs_node *out);
 uint32_t cell_proc_uid(int pid);
 uint32_t cell_proc_gid(int pid);
 uint64_t cell_realtime_seconds(void);
@@ -182,6 +187,10 @@ static uint64_t ramfs_device_rdev(enum ramfs_device device) {
     return make_rdev(5, 1);
   case RAMFS_DEV_TTY:
     return make_rdev(5, 0);
+  case RAMFS_DEV_PTMX:
+    return make_rdev(5, 2);
+  case RAMFS_DEV_PTS:
+    return make_rdev(136, 0);
   case RAMFS_DEV_BLK_ROOT:
     return make_rdev(254, 0);
   case RAMFS_DEV_BLK_BOOT:
@@ -605,6 +614,53 @@ static bool proc_pid_file_node(int pid, enum ramfs_device device, struct vfs_nod
   return true;
 }
 
+static bool proc_fd_dir_node(int pid, struct vfs_node *out) {
+  uint64_t now = cell_realtime_seconds();
+  *out = (struct vfs_node){
+    .backend = VFS_PROC,
+    .ino = 140000u + (uint64_t)pid,
+    .is_dir = true,
+    .writable = false,
+    .device = RAMFS_DEV_PROC_PID_FD,
+    .mode = 0040555u,
+    .links_count = 1,
+    .uid = cell_proc_uid(pid),
+    .gid = cell_proc_gid(pid),
+    .dev_id = VFS_DEV_PROC,
+    .atime = now,
+    .ctime = now,
+    .mtime = now,
+    .proc_pid = pid,
+    .proc_fd = -1,
+  };
+  return true;
+}
+
+static bool proc_fd_link_node(int pid, int fd, struct vfs_node *out) {
+  if (pid != cell_current_pid()) { return false; }
+  struct vfs_node fd_node;
+  if (!cell_fd_stat(fd, &fd_node)) { return false; }
+  uint64_t now = cell_realtime_seconds();
+  *out = (struct vfs_node){
+    .backend = VFS_PROC,
+    .ino = 150000u + (uint64_t)pid * 64u + (uint64_t)fd,
+    .is_dir = false,
+    .writable = false,
+    .device = RAMFS_DEV_PROC_PID_FD,
+    .mode = 0120777u,
+    .links_count = 1,
+    .uid = cell_proc_uid(pid),
+    .gid = cell_proc_gid(pid),
+    .dev_id = VFS_DEV_PROC,
+    .atime = now,
+    .ctime = now,
+    .mtime = now,
+    .proc_pid = pid,
+    .proc_fd = fd,
+  };
+  return true;
+}
+
 static void utoa_dec(uint64_t value, char *dst, size_t cap) {
   char tmp[32];
   size_t n = 0;
@@ -621,13 +677,59 @@ static void utoa_dec(uint64_t value, char *dst, size_t cap) {
   dst[out] = '\0';
 }
 
+static size_t append_text(char *dst, size_t cap, size_t len, const char *text) {
+  while (*text != '\0' && len + 1 < cap) {
+    dst[len++] = *text++;
+  }
+  if (cap != 0) { dst[len] = '\0'; }
+  return len;
+}
+
+static size_t append_dec_text(char *dst, size_t cap, size_t len, uint64_t value) {
+  char tmp[32];
+  utoa_dec(value, tmp, sizeof(tmp));
+  return append_text(dst, cap, len, tmp);
+}
+
+static bool fd_link_target(int fd, char *out, size_t cap, size_t *len_out) {
+  if (cell_fd_path(fd, out, cap)) {
+    if (len_out != NULL) { *len_out = kstrlen(out); }
+    return true;
+  }
+  struct vfs_node node;
+  if (!cell_fd_stat(fd, &node)) { return false; }
+  uint32_t type = node.mode & 0170000u;
+  size_t len = 0;
+  if (type == 0010000u) {
+    len = append_text(out, cap, len, "pipe:[");
+    len = append_dec_text(out, cap, len, node.ino);
+    len = append_text(out, cap, len, "]");
+  } else if (type == 0140000u) {
+    len = append_text(out, cap, len, "socket:[");
+    len = append_dec_text(out, cap, len, node.ino);
+    len = append_text(out, cap, len, "]");
+  } else {
+    len = append_text(out, cap, len, "anon_inode:[fd");
+    len = append_dec_text(out, cap, len, (uint64_t)fd);
+    len = append_text(out, cap, len, "]");
+  }
+  if (len_out != NULL) { *len_out = len; }
+  return cap != 0;
+}
+
 static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
   if (!path_is_mount(path, "/proc")) { return false; }
   const char *p = path + 5;
   if (*p != '/') { return false; }
   ++p;
   int pid = 0;
-  if (!parse_uint_component(&p, &pid) || !cell_proc_exists(pid)) { return false; }
+  if (starts_with(p, "self") && (p[4] == '\0' || p[4] == '/')) {
+    p += 4;
+    pid = cell_current_pid();
+  } else if (!parse_uint_component(&p, &pid)) {
+    return false;
+  }
+  if (!cell_proc_exists(pid)) { return false; }
   if (*p == '\0') {
     uint64_t now = cell_realtime_seconds();
     *out = (struct vfs_node){
@@ -650,6 +752,13 @@ static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
   }
   if (*p != '/') { return false; }
   ++p;
+  if (streq(p, "fd")) { return proc_fd_dir_node(pid, out); }
+  if (starts_with(p, "fd/")) {
+    p += 3;
+    int fd = 0;
+    if (!parse_uint_component(&p, &fd) || *p != '\0') { return false; }
+    return proc_fd_link_node(pid, fd, out);
+  }
   if (streq(p, "task")) {
     uint64_t now = cell_realtime_seconds();
     *out = (struct vfs_node){
@@ -854,6 +963,18 @@ bool vfs_symlink(const char *target, const char *link_path) {
 }
 
 bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
+  struct vfs_node node;
+  if (ramfs_route(path) && lookup_proc_dynamic(path, &node) && node.device == RAMFS_DEV_PROC_PID_FD &&
+      node.proc_fd >= 0) {
+    char target[VFS_PROC_FD_PATH_MAX];
+    size_t target_len = 0;
+    if (!fd_link_target(node.proc_fd, target, sizeof(target), &target_len)) { return false; }
+    if (len_out != NULL) { *len_out = target_len; }
+    size_t copy_len = target_len;
+    if (copy_len > cap) { copy_len = cap; }
+    if (copy_len != 0) { kmemcpy(out, target, copy_len); }
+    return true;
+  }
   if (root_ext2 != NULL && !ramfs_route(path)) { return ext2_readlink(root_ext2, path, out, cap, len_out); }
   return false;
 }
@@ -1016,6 +1137,10 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
   }
   if (node->backend == VFS_PROC) {
     *out = *node;
+    if (node->device == RAMFS_DEV_PROC_PID_FD && node->proc_fd >= 0) {
+      struct vfs_node fd_node;
+      return node->proc_pid == cell_current_pid() && cell_fd_stat(node->proc_fd, &fd_node);
+    }
     return cell_proc_exists(node->proc_pid);
   }
   return false;
@@ -1024,6 +1149,22 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
 bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out) {
   ++vfs_stat_counters.dirent_count;
   if (dir->backend == VFS_PROC) {
+    if (dir->device == RAMFS_DEV_PROC_PID_FD && dir->proc_fd < 0) {
+      if (dir->proc_pid != cell_current_pid()) { return false; }
+      struct vfs_node fd_node;
+      size_t seen = 0;
+      for (int fd = 0; fd < (int)VFS_PROC_FD_MAX; ++fd) {
+        if (!cell_fd_stat(fd, &fd_node)) { continue; }
+        if (seen++ != index) { continue; }
+        *out = (struct vfs_dirent){.ino = 150000u + (uint64_t)dir->proc_pid * 64u + (uint64_t)fd,
+                                   .is_dir = false,
+                                   .is_device = false,
+                                   .type = 10};
+        utoa_dec((uint64_t)fd, out->name, sizeof(out->name));
+        return true;
+      }
+      return false;
+    }
     if (dir->proc_pid < 0) {
       if (index != 0) { return false; }
       int pid = -dir->proc_pid;
@@ -1031,9 +1172,9 @@ bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out
       utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
       return true;
     }
-    static const char *names[] = {"stat", "status", "cmdline", "statm", "comm", "mounts", "cwd", "exe", "task"};
+    static const char *names[] = {"stat", "status", "cmdline", "statm", "comm", "mounts", "cwd", "exe", "fd", "task"};
     if (!dir->is_dir || index >= sizeof(names) / sizeof(names[0])) { return false; }
-    bool is_task = streq(names[index], "task");
+    bool is_task = streq(names[index], "task") || streq(names[index], "fd");
     *out = (struct vfs_dirent){.ino = dir->ino + index + 1, .is_dir = is_task, .is_device = false};
     kmemcpy(out->name, names[index], kstrlen(names[index]) + 1);
     return true;

@@ -74,6 +74,7 @@ kernel_sources = files(
   'src/proc/process.c',
   'src/proc/procfs.c',
   'src/proc/procfs_text.c',
+  'src/proc/pty.c',
   'src/proc/snapshot.c',
   'src/proc/signal.c',
   'src/proc/socket.c',

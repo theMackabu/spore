@@ -6,6 +6,7 @@
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/pipe.h"
+#include "proc/pty.h"
 #include "proc/procfs.h"
 #include "proc/signal.h"
 #include "proc/socket.h"
@@ -29,6 +30,7 @@ enum {
   EFAULT = 14,
   EINVAL = 22,
   EINTR = 4,
+  ENOTCONN = 107,
 };
 
 /*
@@ -62,6 +64,9 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_CONSOLE:
   case RAMFS_DEV_TTY:
     return write_console_from_user(domain, buf, len);
+  case RAMFS_DEV_PTMX:
+  case RAMFS_DEV_PTS:
+    return -EINVAL;
   case RAMFS_DEV_PROCINFO:
   case RAMFS_DEV_MEMINFO:
   case RAMFS_DEV_CPUINFO:
@@ -83,6 +88,7 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_PROC_PID_MOUNTS:
   case RAMFS_DEV_PROC_PID_CWD:
   case RAMFS_DEV_PROC_PID_EXE:
+  case RAMFS_DEV_PROC_PID_FD:
   case RAMFS_DEV_FS_ROOT:
   case RAMFS_DEV_FS_BOOT:
   case RAMFS_DEV_FS_RAM0:
@@ -147,6 +153,9 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     cell_schedule(frame);
     return CELL_SWITCHED;
   }
+  case RAMFS_DEV_PTMX:
+  case RAMFS_DEV_PTS:
+    return -EINVAL;
   case RAMFS_DEV_PROCINFO:
   case RAMFS_DEV_MEMINFO:
   case RAMFS_DEV_CPUINFO:
@@ -168,6 +177,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_PROC_PID_MOUNTS:
   case RAMFS_DEV_PROC_PID_CWD:
   case RAMFS_DEV_PROC_PID_EXE:
+  case RAMFS_DEV_PROC_PID_FD:
   case RAMFS_DEV_FS_ROOT:
   case RAMFS_DEV_FS_BOOT:
   case RAMFS_DEV_FS_RAM0:
@@ -217,7 +227,13 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
     return cell_block_current_on_pipe(fd, buf, len, true, frame);
   }
+  if (file->type == OPEN_PTY) {
+    int64_t wrote = cell_pty_write_from_domain(domain, file, buf, len);
+    if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
+    return cell_block_current_on_pty(fd, buf, len, true, frame);
+  }
   if (file->type == OPEN_UNIX_STREAM) {
+    if (!file->unix_connected) { return -ENOTCONN; }
     int64_t wrote = cell_pipe_write_id_from_domain(domain, file->unix_tx_pipe, buf, len);
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
     return cell_block_current_on_pipe(fd, buf, len, true, frame);
@@ -278,7 +294,13 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     return cell_block_current_on_pipe(fd, buf, len, false, frame);
   }
+  if (file->type == OPEN_PTY) {
+    int64_t got = cell_pty_read_to_domain(domain, file, buf, len);
+    if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
+    return cell_block_current_on_pty(fd, buf, len, false, frame);
+  }
   if (file->type == OPEN_UNIX_STREAM) {
+    if (!file->unix_connected) { return -ENOTCONN; }
     int64_t got = cell_pipe_read_id_to_domain(domain, file->unix_rx_pipe, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     return cell_block_current_on_pipe(fd, buf, len, false, frame);

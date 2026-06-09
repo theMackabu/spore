@@ -226,7 +226,6 @@ int cell_setsid_current(void) {
   if (domain->pgrp_id == domain->id) { return -EPERM; }
   domain->session_id = domain->id;
   domain->pgrp_id = domain->id;
-  (void)cell_tty_set_foreground_pgrp(domain->pgrp_id);
   return domain->session_id;
 }
 

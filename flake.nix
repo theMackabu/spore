@@ -24,6 +24,8 @@
           crossLibc = crossGcc.libc;
           crossLibcDev = crossGcc.libc_dev;
           crossBinutils = pkgs.pkgsCross.aarch64-multiplatform-musl.buildPackages.binutils;
+          clangWrapped = pkgs.llvmPackages.clang;
+          clangUnwrapped = pkgs.llvmPackages.clang-unwrapped;
           python = pkgs.python3.withPackages (ps: [
             ps.jinja2
             ps.jsonschema
@@ -48,7 +50,8 @@
             texinfo
             meson
             python
-            llvmPackages.clang
+            clangWrapped
+            clangUnwrapped
             llvmPackages.lld
             llvmPackages.llvm
             crossGcc
@@ -64,16 +67,63 @@
 
               build_dir="''${SPORE_BUILD_DIR:-build}"
               marker="$build_dir/.spore-nix-env"
-              env_id="spore-nix-env-v4-cross-gcc-shim"
+              env_id="spore-nix-env-v6-unwrapped-kernel-clang-shim"
 
-              tools_dir=".cache/spore-nix-tools"
-              rm -rf "$tools_dir"
+              tools_dir="$PWD/.cache/spore-nix-tools"
               mkdir -p "$tools_dir"
-              ln -s "${pkgs.llvmPackages.clang}/bin/clang" "$tools_dir/cc"
-              ln -s "${pkgs.llvmPackages.clang}/bin/clang" "$tools_dir/clang"
+
+              install_symlink() {
+                link_path="$1"
+                link_target="$2"
+                if [ ! -L "$link_path" ] || [ "$(readlink "$link_path")" != "$link_target" ]; then
+                  rm -f "$link_path"
+                  ln -s "$link_target" "$link_path"
+                fi
+              }
+
+              install_file_if_changed() {
+                dst="$1"
+                tmp="$2"
+                if [ -f "$dst" ] && cmp -s "$tmp" "$dst"; then
+                  rm -f "$tmp"
+                  [ -x "$dst" ] || chmod +x "$dst"
+                else
+                  rm -f "$dst"
+                  mv "$tmp" "$dst"
+                  chmod +x "$dst"
+                fi
+              }
+
+              clang_shim="$tools_dir/spore-clang"
+              tmp="$(mktemp "$tools_dir/spore-clang.XXXXXX")"
+              cat >"$tmp" <<EOF
+#!/usr/bin/env bash
+target_none_elf=false
+args=()
+for arg in "\$@"; do
+  case "\$arg" in
+    --target=aarch64-none-elf) target_none_elf=true ;;
+    -fuse-ld=lld)
+      args+=("-fuse-ld=${pkgs.llvmPackages.lld}/bin/ld.lld")
+      continue
+      ;;
+  esac
+  args+=("\$arg")
+done
+if [ "\$target_none_elf" = true ]; then
+  exec "${clangUnwrapped}/bin/clang" "\''${args[@]}"
+fi
+exec "${clangWrapped}/bin/clang" "\''${args[@]}"
+EOF
+              install_file_if_changed "$clang_shim" "$tmp"
+              install_symlink "$tools_dir/cc" "$clang_shim"
+              install_symlink "$tools_dir/clang" "$clang_shim"
+
               gcc_fixed="$(echo ${crossGccUnwrapped}/lib/gcc/aarch64-unknown-linux-musl/*/include-fixed)"
               for tool in gcc g++ cpp; do
-                cat >"$tools_dir/aarch64-unknown-linux-musl-$tool" <<EOF
+                wrapper="$tools_dir/aarch64-unknown-linux-musl-$tool"
+                tmp="$(mktemp "$tools_dir/aarch64-unknown-linux-musl-$tool.XXXXXX")"
+                cat >"$tmp" <<EOF
 #!/bin/sh
 exec "${crossGccUnwrapped}/bin/aarch64-unknown-linux-musl-$tool" \\
   -B"${crossLibc}/lib/" \\
@@ -82,11 +132,11 @@ exec "${crossGccUnwrapped}/bin/aarch64-unknown-linux-musl-$tool" \\
   -B"${crossGccLib}/aarch64-unknown-linux-musl/lib" \\
   "\$@"
 EOF
-                chmod +x "$tools_dir/aarch64-unknown-linux-musl-$tool"
+                install_file_if_changed "$wrapper" "$tmp"
               done
-              ln -s "${crossBinutils}/bin/aarch64-unknown-linux-musl-ar" "$tools_dir/aarch64-unknown-linux-musl-ar"
-              ln -s "${crossBinutils}/bin/aarch64-unknown-linux-musl-ranlib" "$tools_dir/aarch64-unknown-linux-musl-ranlib"
-              ln -s "${crossBinutils}/bin/aarch64-unknown-linux-musl-strip" "$tools_dir/aarch64-unknown-linux-musl-strip"
+              install_symlink "$tools_dir/aarch64-unknown-linux-musl-ar" "${crossBinutils}/bin/aarch64-unknown-linux-musl-ar"
+              install_symlink "$tools_dir/aarch64-unknown-linux-musl-ranlib" "${crossBinutils}/bin/aarch64-unknown-linux-musl-ranlib"
+              install_symlink "$tools_dir/aarch64-unknown-linux-musl-strip" "${crossBinutils}/bin/aarch64-unknown-linux-musl-strip"
               export PATH="$tools_dir:$PATH"
               export CC=clang
 
@@ -97,14 +147,16 @@ EOF
                 rm -rf "$build_dir"
               fi
 
+              make BUILD_DIR="$build_dir" setup
+              mkdir -p "$build_dir"
+              printf '%s\n' "$env_id" >"$marker"
+
               qemu="$(command -v qemu-system-aarch64)"
               if [ -x /opt/homebrew/bin/qemu-system-aarch64 ]; then
                 qemu=/opt/homebrew/bin/qemu-system-aarch64
               fi
 
-              make BUILD_DIR="$build_dir" QEMU="$qemu" run-reset
-              mkdir -p "$build_dir"
-              printf '%s\n' "$env_id" >"$marker"
+              make BUILD_DIR="$build_dir" QEMU="$qemu" run
             '';
           };
         });

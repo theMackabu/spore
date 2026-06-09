@@ -1,6 +1,7 @@
 #include "arch/aarch64/syscall_handlers.h"
 
 #include "cell.h"
+#include "kstr.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "vfs.h"
@@ -129,6 +130,21 @@ struct linux_dirent64_header {
   uint8_t d_type;
 } __attribute__((packed));
 
+static bool proc_self_fd_number(const char *path, int *fd_out) {
+  const char *prefix = "/proc/self/fd/";
+  if (!starts_with(path, prefix)) { return false; }
+  const char *p = path + kstrlen(prefix);
+  if (*p == '\0') { return false; }
+  int fd = 0;
+  while (*p != '\0') {
+    if (*p < '0' || *p > '9') { return false; }
+    fd = fd * 10 + (*p - '0');
+    ++p;
+  }
+  *fd_out = fd;
+  return true;
+}
+
 int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   char path[CELL_PATH_MAX];
   char virtual_path[CELL_PATH_MAX];
@@ -146,6 +162,19 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   }
   if ((flags & O_TRUNC) != 0) { access |= W_OK; }
   if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(access))) { return -(int64_t)EPERM; }
+  int proc_fd = -1;
+  if (proc_self_fd_number(path, &proc_fd)) {
+    int dup = cell_fd_dup(proc_fd, 0);
+    if (dup < 0) { return dup; }
+    if ((flags & O_CLOEXEC) != 0) {
+      int rc = cell_fd_set_fd_flags(dup, 1);
+      if (rc < 0) {
+        (void)cell_fd_close(dup);
+        return rc;
+      }
+    }
+    return dup;
+  }
   struct vfs_node node;
   bool exists = vfs_lookup(path, &node);
   if (exists && (flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) { return -(int64_t)EEXIST; }

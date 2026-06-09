@@ -5,6 +5,7 @@
 #include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/pipe.h"
+#include "proc/pty.h"
 #include "proc/poll.h"
 #include "proc/socket.h"
 
@@ -87,14 +88,18 @@ void cell_release_open_file(struct open_file *file) {
     if (cell_pipe_release_file(file)) {
       cell_pipe_notify();
     } else if (file->type == OPEN_UNIX_STREAM) {
-      cell_pipe_drop_reader(file->unix_rx_pipe);
-      cell_pipe_drop_writer(file->unix_tx_pipe);
-      cell_pipe_notify();
-      cell_socket_wake_file(file);
+      if (file->unix_connected) {
+        cell_pipe_drop_reader(file->unix_rx_pipe);
+        cell_pipe_drop_writer(file->unix_tx_pipe);
+        cell_pipe_notify();
+        cell_socket_wake_file(file);
+      }
     } else if (file->type == OPEN_UNIX_LISTENER) {
       cell_socket_release_listener(file);
     } else if (file->type == OPEN_SOCKET) {
       cell_socket_release_file(file);
+    } else if (file->type == OPEN_PTY) {
+      cell_pty_release_file(file);
     }
     if (file->type == OPEN_RAMFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
     file->used = false;
@@ -122,6 +127,9 @@ bool cell_init_stdio(struct domain *domain) {
   in->type = OPEN_STDIN;
   out->type = OPEN_STDOUT;
   err->type = OPEN_STDOUT;
+  cell_copy_open_path(in, "/dev/console");
+  cell_copy_open_path(out, "/dev/console");
+  cell_copy_open_path(err, "/dev/console");
   domain->fds[0] = in;
   domain->fds[1] = out;
   domain->fds[2] = err;
@@ -278,6 +286,12 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
+  if (node->device == RAMFS_DEV_PTMX) { return cell_pty_open_master(flags, path); }
+  if (node->device == RAMFS_DEV_PTS) {
+    int id = cell_pty_id_from_path(path);
+    if (id < 0) { return id; }
+    return cell_pty_open_slave(id, flags, path);
+  }
   if ((node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
     int pipe_id = cell_fifo_pipe_for_ino(node->ino, true);
     if (pipe_id < 0) { return -23; }
@@ -463,6 +477,7 @@ int cell_fd_is_tty(int fd) {
   if (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_CONSOLE || file->node.device == RAMFS_DEV_TTY)) {
     return 1;
   }
+  if (file->type == OPEN_PTY) { return 1; }
   return 0;
 }
 
@@ -475,11 +490,11 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
       .backend = VFS_RAMFS,
       .ino = 10,
       .is_dir = false,
-      .device = RAMFS_DEV_TTY,
+      .device = RAMFS_DEV_CONSOLE,
       .mode = 0020666u,
       .links_count = 1,
       .dev_id = 0x0005,
-      .rdev = (5u << 8),
+      .rdev = (5u << 8) | 1u,
     };
     return true;
   }
@@ -514,6 +529,20 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
       .mode = 0100600u,
       .links_count = 1,
       .dev_id = 0x0005,
+    };
+    return true;
+  }
+  if (file->type == OPEN_PTY) {
+    uint64_t minor = file->pty_master ? 2u : file->pty_id;
+    *out = (struct vfs_node){
+      .backend = VFS_RAMFS,
+      .ino = 100 + (uint64_t)file->pty_id + (file->pty_master ? 0 : 1000),
+      .is_dir = false,
+      .device = file->pty_master ? RAMFS_DEV_PTMX : RAMFS_DEV_PTS,
+      .mode = 0020666u,
+      .links_count = 1,
+      .dev_id = 0x0005,
+      .rdev = ((uint64_t)(file->pty_master ? 5u : 136u) << 8) | minor,
     };
     return true;
   }

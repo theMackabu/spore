@@ -103,6 +103,7 @@ enum {
   SYS_GETTID = 178,
   SYS_SYSINFO = 179,
   SYS_SOCKET = 198,
+  SYS_SOCKETPAIR = 199,
   SYS_BIND = 200,
   SYS_LISTEN = 201,
   SYS_ACCEPT = 202,
@@ -314,6 +315,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_GETTID] = &&l_gettid,
     [SYS_SYSINFO] = &&l_sysinfo,
     [SYS_SOCKET] = &&l_socket,
+    [SYS_SOCKETPAIR] = &&l_socketpair,
     [SYS_BIND] = &&l_bind,
     [SYS_LISTEN] = &&l_listen,
     [SYS_ACCEPT] = &&l_accept,
@@ -605,6 +607,8 @@ l_memfd_create:
   return sys_memfd_create(a0, a1);
 l_socket:
   return sys_socket(a0, a1, a2);
+l_socketpair:
+  return sys_socketpair(a0, a1, a2, a3);
 l_bind:
   return sys_bind(a0, a1, a2);
 l_listen:

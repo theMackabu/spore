@@ -52,6 +52,8 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "epoll";
   case WAIT_INOTIFY:
     return "inotify";
+  case WAIT_PTY:
+    return "pty";
   }
   return "?";
 }
