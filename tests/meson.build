@@ -60,6 +60,15 @@ test_ext2 = executable('test_ext2',
 
 test('ext2', test_ext2, args: [meson.project_build_root() / 'root.ext2'])
 
+bench_ext2_inodes = executable('bench_ext2_inodes',
+  files(
+    'bench_ext2_inodes.c',
+    '../kernel/src/ext2.c',
+    '../kernel/src/lib/mem.c',
+  ),
+  include_directories: test_include,
+  native: true)
+
 test_vmm = executable('test_vmm',
   files(
     'test_vmm.c',

@@ -29,7 +29,8 @@ struct ext2plus_header {
   uint32_t free_head;
   uint32_t free_count;
   uint32_t chunk_size;
-  uint32_t reserved[6];
+  uint32_t static_inodes_used;
+  uint32_t reserved[5];
 };
 
 static bool file_read(void *ctx, uint64_t offset, void *dst, uint32_t len) {
@@ -209,6 +210,18 @@ static void test_ext2plus_dynamic_inodes(void) {
   struct ext2_info info;
   assert(ext2_info(&fs, &info));
   assert(info.inode_count == 32);
+  uint32_t static_budget = (uint32_t)info.free_inodes;
+  assert(static_budget > 0 && static_budget <= 32);
+
+  uint32_t first_static_ino = 0;
+  for (uint32_t i = 0; i < static_budget; ++i) {
+    char name[64];
+    snprintf(name, sizeof(name), "/static-%03u", i);
+    struct ext2_node node;
+    assert(ext2_create(&fs, name, false, 0644, &node));
+    assert(node.ino < EXT2PLUS_BASE_INO);
+    if (i == 0) { first_static_ino = node.ino; }
+  }
 
   struct ext2_node first;
   assert(ext2_create(&fs, "/first-dynamic", false, 0755, &first));
@@ -250,6 +263,8 @@ static void test_ext2plus_dynamic_inodes(void) {
   assert(ext2_read_file(&fs, &fresh, 0, got, sizeof(payload) - 1, &read));
   assert(read == sizeof(payload) - 1);
   assert(strcmp(got, payload) == 0);
+  assert(ext2_lookup(&fs, "/static-000", &fresh));
+  assert(fresh.ino == first_static_ino);
   assert(ext2_lookup(&fs, "/reused-dynamic", &fresh));
   assert(fresh.ino == reused_ino);
   assert(ext2_drop_cache(&fs));

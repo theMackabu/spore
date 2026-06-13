@@ -81,14 +81,14 @@ int main(int argc, char **argv) {
   }
 
   char first[160] = "";
-  char boundary[160] = "";
+  char transition[160] = "";
   char last[160] = "";
   for (int i = 0; i < files; ++i) {
     char path[160];
     snprintf(path, sizeof(path), "%s/file-%04d", dir, i);
     if (!write_file(path, i, fixed_cap)) { return EXIT_FAILURE; }
     if (i == 0) { snprintf(first, sizeof(first), "%s", path); }
-    if (i == 255) { snprintf(boundary, sizeof(boundary), "%s", path); }
+    if (i == 63) { snprintf(transition, sizeof(transition), "%s", path); }
     if (i == files - 1) { snprintf(last, sizeof(last), "%s", path); }
   }
 
@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
   printf("\n");
   if (!print_inode("directory", dir, fixed_cap)) { return EXIT_FAILURE; }
   if (first[0] != '\0' && !print_inode("first file", first, fixed_cap)) { return EXIT_FAILURE; }
-  if (boundary[0] != '\0' && !print_inode("file 255", boundary, fixed_cap)) { return EXIT_FAILURE; }
+  if (transition[0] != '\0' && !print_inode("file 063", transition, fixed_cap)) { return EXIT_FAILURE; }
   if (last[0] != '\0' && !print_inode("last file", last, fixed_cap)) { return EXIT_FAILURE; }
   return EXIT_SUCCESS;
 }

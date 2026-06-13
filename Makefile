@@ -10,7 +10,7 @@ RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --vars "$(EDK2_VARS)" --
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run-reset run run-tests run-shell-check benchmark rng-smoke kill format fetch clean
+.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run-reset run run-tests run-shell-check benchmark bench-inodes rng-smoke kill format fetch clean
 
 all: image test-image runner
 
@@ -78,6 +78,10 @@ benchmark: runner image
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
 	$(QEMU_RUNNER) --mode bench --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
+
+bench-inodes: setup
+	$(MESON) compile -C "$(BUILD_DIR)" bench_ext2_inodes
+	"$(BUILD_DIR)/tests/bench_ext2_inodes"
 
 rng-smoke: runner image
 	@root1="$$(mktemp "$(BUILD_DIR)/rng-root-a.XXXXXX.ext2")"; \

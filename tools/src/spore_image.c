@@ -37,7 +37,8 @@ struct ext2plus_header {
   uint32_t free_head;
   uint32_t free_count;
   uint32_t chunk_size;
-  uint32_t reserved[6];
+  uint32_t static_inodes_used;
+  uint32_t reserved[5];
 };
 
 static void die(const char *msg) {

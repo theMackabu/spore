@@ -47,6 +47,7 @@ struct ext2_fs {
   uint32_t ext2plus_free_head;
   uint32_t ext2plus_free_count;
   uint32_t ext2plus_chunk_size;
+  uint32_t ext2plus_static_inodes_used;
   struct ext2_node ext2plus_store;
 };
 

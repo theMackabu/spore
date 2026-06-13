@@ -21,6 +21,7 @@ enum {
   EXT2PLUS_VERSION = 1,
   EXT2PLUS_BASE_INO = 0x40000000u,
   EXT2PLUS_CHUNK_INODES = 256,
+  EXT2PLUS_STATIC_INODES_BEFORE_DYNAMIC = 64,
   EXT2PLUS_FREE_NONE = UINT32_MAX,
   BLOCK_CACHE_ENTRIES = 32,
   CHILD_CACHE_ENTRIES = 4096,
@@ -105,7 +106,8 @@ struct ext2plus_header {
   uint32_t free_head;
   uint32_t free_count;
   uint32_t chunk_size;
-  uint32_t reserved[6];
+  uint32_t static_inodes_used;
+  uint32_t reserved[5];
 };
 
 struct block_cache_entry {
@@ -322,6 +324,7 @@ static bool read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t 
 
 static void child_cache_invalidate_ino(struct ext2_fs *fs, uint32_t ino);
 static void child_cache_remove_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name);
+static bool free_inode(struct ext2_fs *fs, uint32_t ino);
 
 static bool write_bytes(struct ext2_fs *fs, uint64_t offset, const void *src, uint32_t len) {
   const uint8_t *in = src;
@@ -455,7 +458,7 @@ static bool ext2plus_header_valid(struct ext2_fs *fs, const struct ext2plus_head
          hdr->base_ino > fs->inode_count && hdr->base_ino == fs->ext2plus_base_ino &&
          hdr->chunk_size != 0 && hdr->next_index <= hdr->capacity &&
          (hdr->free_head == EXT2PLUS_FREE_NONE || hdr->free_head < hdr->capacity) &&
-         hdr->free_count <= hdr->capacity;
+         hdr->free_count <= hdr->capacity && hdr->static_inodes_used <= EXT2PLUS_STATIC_INODES_BEFORE_DYNAMIC;
 }
 
 static void ext2plus_cache_header(struct ext2_fs *fs, const struct ext2plus_header *hdr) {
@@ -464,6 +467,7 @@ static void ext2plus_cache_header(struct ext2_fs *fs, const struct ext2plus_head
   fs->ext2plus_free_head = hdr->free_head;
   fs->ext2plus_free_count = hdr->free_count;
   fs->ext2plus_chunk_size = hdr->chunk_size;
+  fs->ext2plus_static_inodes_used = hdr->static_inodes_used;
 }
 
 static bool ext2plus_load_header(struct ext2_fs *fs, struct ext2plus_header *hdr) {
@@ -478,6 +482,7 @@ static bool ext2plus_load_header(struct ext2_fs *fs, struct ext2plus_header *hdr
     .free_head = fs->ext2plus_free_head,
     .free_count = fs->ext2plus_free_count,
     .chunk_size = fs->ext2plus_chunk_size,
+    .static_inodes_used = fs->ext2plus_static_inodes_used,
   };
   return ext2plus_header_valid(fs, hdr);
 }
@@ -708,6 +713,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   fs->ext2plus_free_head = EXT2PLUS_FREE_NONE;
   fs->ext2plus_free_count = 0;
   fs->ext2plus_chunk_size = 0;
+  fs->ext2plus_static_inodes_used = 0;
   cache_reset(fs);
   if (fs->inodes_per_group == 0 || fs->blocks_per_group == 0 || fs->group_count == 0) { return false; }
   if ((sb.feature_incompat & EXT2_INCOMPAT_SPORE_EXT2PLUS) != 0 && !ext2plus_mount_init(fs)) { return false; }
@@ -738,8 +744,13 @@ bool ext2_info(struct ext2_fs *fs, struct ext2_info *out) {
   if (fs->ext2plus) {
     struct ext2plus_header hdr;
     if (ext2plus_load_header(fs, &hdr)) {
-      inode_count += hdr.capacity;
-      free_inodes += (hdr.capacity - hdr.next_index) + hdr.free_count;
+      uint32_t classic_used = sb.inodes_count - sb.free_inodes_count;
+      uint32_t static_left = hdr.static_inodes_used < EXT2PLUS_STATIC_INODES_BEFORE_DYNAMIC
+                               ? EXT2PLUS_STATIC_INODES_BEFORE_DYNAMIC - hdr.static_inodes_used
+                               : 0;
+      if (static_left > sb.free_inodes_count) { static_left = sb.free_inodes_count; }
+      inode_count = classic_used + static_left + hdr.capacity;
+      free_inodes = static_left + (hdr.capacity - hdr.next_index) + hdr.free_count;
     }
   }
   *out = (struct ext2_info){
@@ -929,8 +940,7 @@ static bool ext2plus_alloc_inode(struct ext2_fs *fs, uint32_t *out) {
   return true;
 }
 
-static bool alloc_inode(struct ext2_fs *fs, uint32_t *out) {
-  if (fs->ext2plus) { return ext2plus_alloc_inode(fs, out); }
+static bool alloc_classic_inode(struct ext2_fs *fs, uint32_t *out) {
   uint8_t bitmap[4096];
   if (fs->block_size > sizeof(bitmap)) { return false; }
   for (uint32_t group = 0; group < fs->group_count; ++group) {
@@ -955,6 +965,27 @@ static bool alloc_inode(struct ext2_fs *fs, uint32_t *out) {
     }
   }
   return false;
+}
+
+static bool ext2plus_alloc_static_inode(struct ext2_fs *fs, uint32_t *out) {
+  struct ext2plus_header hdr;
+  if (!ext2plus_load_header(fs, &hdr) || hdr.static_inodes_used >= EXT2PLUS_STATIC_INODES_BEFORE_DYNAMIC) {
+    return false;
+  }
+  if (!alloc_classic_inode(fs, out)) { return false; }
+  ++hdr.static_inodes_used;
+  if (ext2plus_write_header(fs, &hdr)) { return true; }
+  (void)free_inode(fs, *out);
+  *out = 0;
+  return false;
+}
+
+static bool alloc_inode(struct ext2_fs *fs, uint32_t *out) {
+  if (fs->ext2plus) {
+    if (ext2plus_alloc_static_inode(fs, out)) { return true; }
+    return ext2plus_alloc_inode(fs, out);
+  }
+  return alloc_classic_inode(fs, out);
 }
 
 static bool ext2plus_free_inode(struct ext2_fs *fs, uint32_t ino) {
