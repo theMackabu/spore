@@ -438,8 +438,8 @@ static int64_t send_iovecs_stream(struct trap_frame *frame, uint64_t fd, uint64_
   return total;
 }
 
-static int64_t recv_iovecs_stream(struct trap_frame *frame, uint64_t fd, const struct msghdr64 *msg,
-                                  uint64_t msg_addr, uint64_t flags) {
+static int64_t recv_iovecs_stream(struct trap_frame *frame, uint64_t fd, const struct msghdr64 *msg, uint64_t msg_addr,
+                                  uint64_t flags) {
   uint64_t iov_addr = msg->iov;
   int32_t iovlen = msg->iovlen;
   uint64_t recv_start = 0;

@@ -39,8 +39,8 @@ static bool write_file(const char *path, int index, unsigned long long fixed_cap
     return false;
   }
   char payload[128];
-  int len = snprintf(payload, sizeof(payload), "ext2+ dynamic inode demo file %d; fixed cap was %llu\n", index,
-                     fixed_cap);
+  int len =
+    snprintf(payload, sizeof(payload), "ext2+ dynamic inode demo file %d; fixed cap was %llu\n", index, fixed_cap);
   bool ok = len > 0 && write(fd, payload, (size_t)len) == len;
   if (close(fd) != 0) { ok = false; }
   if (!ok) { perror(path); }

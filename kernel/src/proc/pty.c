@@ -182,9 +182,7 @@ void cell_pty_release_file(struct open_file *file) {
   } else if (pty->slave_refs > 0) {
     --pty->slave_refs;
   }
-  if (pty->master_refs == 0 && pty->slave_refs == 0) {
-    kmemset(pty, 0, sizeof(*pty));
-  }
+  if (pty->master_refs == 0 && pty->slave_refs == 0) { kmemset(pty, 0, sizeof(*pty)); }
   pty_notify();
 }
 
@@ -336,9 +334,10 @@ int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file
   uint64_t wrote = 0;
   while (wrote < len) {
     char c;
-    if (!vmm_copy_from_user(cell_domain_as(domain), &c, buf + wrote, 1)) { return wrote == 0 ? -EFAULT : (int64_t)wrote; }
-    bool map_newline =
-      !file->pty_master && c == '\n' && (pty->oflag & TTY_OPOST) != 0 && (pty->oflag & TTY_ONLCR) != 0;
+    if (!vmm_copy_from_user(cell_domain_as(domain), &c, buf + wrote, 1)) {
+      return wrote == 0 ? -EFAULT : (int64_t)wrote;
+    }
+    bool map_newline = !file->pty_master && c == '\n' && (pty->oflag & TTY_OPOST) != 0 && (pty->oflag & TTY_ONLCR) != 0;
     size_t needed = map_newline ? 2u : 1u;
     if (ring_room(ring) < needed) { break; }
     if (map_newline) { (void)ring_push(ring, '\r'); }

@@ -664,9 +664,23 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   snprintf(block_size_arg, sizeof(block_size_arg), "%u", ROOT_EXT2_BLOCK_SIZE);
   snprintf(static_inodes_arg, sizeof(static_inodes_arg), "%u", ROOT_EXT2_STATIC_INODES);
   snprintf(block_count_arg, sizeof(block_count_arg), "%llu", (unsigned long long)ROOT_EXT2_BLOCKS);
-  char *const mkfs_argv[] = {
-    "mke2fs", "-q", "-t", "ext2", "-b", block_size_arg, "-N", static_inodes_arg, "-O", "^resize_inode",
-    "-E", "assume_storage_prezeroed=1", "-d", (char *)rootfs_dir, (char *)output_root, block_count_arg, NULL};
+  char *const mkfs_argv[] = {"mke2fs",
+                             "-q",
+                             "-t",
+                             "ext2",
+                             "-b",
+                             block_size_arg,
+                             "-N",
+                             static_inodes_arg,
+                             "-O",
+                             "^resize_inode",
+                             "-E",
+                             "assume_storage_prezeroed=1",
+                             "-d",
+                             (char *)rootfs_dir,
+                             (char *)output_root,
+                             block_count_arg,
+                             NULL};
   unlink(output_root);
   run_argv(mkfs_argv, false);
 

@@ -453,12 +453,11 @@ static uint64_t ext2plus_inode_offset(struct ext2_fs *fs, uint32_t index) {
 }
 
 static bool ext2plus_header_valid(struct ext2_fs *fs, const struct ext2plus_header *hdr) {
-  return hdr->magic == EXT2PLUS_MAGIC && hdr->version == EXT2PLUS_VERSION &&
-         hdr->header_size == sizeof(*hdr) && hdr->inode_size == fs->inode_size &&
-         hdr->base_ino > fs->inode_count && hdr->base_ino == fs->ext2plus_base_ino &&
-         hdr->chunk_size != 0 && hdr->next_index <= hdr->capacity &&
-         (hdr->free_head == EXT2PLUS_FREE_NONE || hdr->free_head < hdr->capacity) &&
-         hdr->free_count <= hdr->capacity && hdr->static_inodes_used <= EXT2PLUS_STATIC_INODES_BEFORE_DYNAMIC;
+  return hdr->magic == EXT2PLUS_MAGIC && hdr->version == EXT2PLUS_VERSION && hdr->header_size == sizeof(*hdr) &&
+         hdr->inode_size == fs->inode_size && hdr->base_ino > fs->inode_count &&
+         hdr->base_ino == fs->ext2plus_base_ino && hdr->chunk_size != 0 && hdr->next_index <= hdr->capacity &&
+         (hdr->free_head == EXT2PLUS_FREE_NONE || hdr->free_head < hdr->capacity) && hdr->free_count <= hdr->capacity &&
+         hdr->static_inodes_used <= EXT2PLUS_STATIC_INODES_BEFORE_DYNAMIC;
 }
 
 static void ext2plus_cache_header(struct ext2_fs *fs, const struct ext2plus_header *hdr) {
@@ -915,8 +914,8 @@ static bool ext2plus_alloc_inode(struct ext2_fs *fs, uint32_t *out) {
   if (hdr.free_head != EXT2PLUS_FREE_NONE) {
     index = hdr.free_head;
     uint8_t record[256];
-    if (fs->inode_size > sizeof(record) || !ext2plus_read_store(fs, ext2plus_inode_offset(fs, index), record,
-                                                                fs->inode_size)) {
+    if (fs->inode_size > sizeof(record) ||
+        !ext2plus_read_store(fs, ext2plus_inode_offset(fs, index), record, fs->inode_size)) {
       return false;
     }
     size_t next_off = offsetof(struct ext2_inode_disk, block);

@@ -67,7 +67,7 @@ uint64_t current_el(void) {
   return (el >> 2) & 3u;
 }
 
-void install_ttbr1(uint64_t root_pa) {
+void mmu_regs(uint64_t *mair_out, uint64_t *tcr_out) {
   uint64_t mair = 0xffull | (0x00ull << 16);
   uint64_t tcr;
   __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
@@ -78,6 +78,14 @@ void install_ttbr1(uint64_t root_pa) {
   tcr |= 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12);
   tcr |= (16ull << 16) | (1ull << 24) | (1ull << 26) | (3ull << 28) | (2ull << 30);
   tcr |= 1ull << 32;
+  *mair_out = mair;
+  *tcr_out = tcr;
+}
+
+void install_ttbr1(uint64_t root_pa) {
+  uint64_t mair;
+  uint64_t tcr;
+  mmu_regs(&mair, &tcr);
   __asm__ volatile("msr mair_el1, %0\n"
                    "msr tcr_el1, %1\n"
                    "msr ttbr0_el1, %2\n"
@@ -139,6 +147,15 @@ int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint
       return 0;
     }
   }
+
+  uint64_t self = (uint64_t)(uintptr_t)&build_page_tables;
+  uint64_t self_base = (self & ~0x1fffffull) - 0x200000ull;
+  for (uint64_t off = 0; off < 0x600000ull; off += PAGE_SIZE)
+    if (!map_page(root_table, self_base + off, self_base + off, kernel_rx)) {
+      uefi_puts(u"spore-boot: bootloader identity map failed\r\n");
+      return 0;
+    }
+
   *ttbr1_out = (uint64_t)(uintptr_t)root_table;
   return 1;
 }

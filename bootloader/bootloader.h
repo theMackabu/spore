@@ -47,6 +47,7 @@ EFI_STATUS load_kernel(struct loaded_file *kernel_file, uint64_t *kernel_phys_ba
 
 uint64_t current_el(void);
 void install_ttbr1(uint64_t root_pa);
+void mmu_regs(uint64_t *mair_out, uint64_t *tcr_out);
 int build_page_tables(uint64_t kernel_phys_base, uint64_t kernel_virt_base, uint64_t kernel_span, uint64_t entry,
                       uint64_t hhdm_size, uint64_t *ttbr1_out);
 

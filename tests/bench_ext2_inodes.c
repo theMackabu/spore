@@ -124,8 +124,7 @@ static void make_image(char *path, size_t path_cap, bool ext2plus, unsigned file
   if (ext2plus) {
     snprintf(cmd, sizeof(cmd), "mke2fs -q -t ext2 -b 4096 -N 32 -d %s %s %u", root_dir, path, IMAGE_BLOCKS);
   } else {
-    snprintf(cmd, sizeof(cmd), "mke2fs -q -t ext2 -b 4096 -N %u -d %s %s %u", files + 64, root_dir, path,
-             IMAGE_BLOCKS);
+    snprintf(cmd, sizeof(cmd), "mke2fs -q -t ext2 -b 4096 -N %u -d %s %s %u", files + 64, root_dir, path, IMAGE_BLOCKS);
   }
   assert(system(cmd) == 0);
   if (ext2plus) { set_ext2plus_feature(path); }

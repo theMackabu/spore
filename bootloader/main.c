@@ -105,10 +105,25 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   if (EFI_ERROR(status)) { return status; }
 
   uart_puts("spore-boot: exited boot services\n");
-  install_ttbr1(ttbr1);
-  kernel_entry_t kernel = (kernel_entry_t)(uintptr_t)entry;
-  kernel(boot);
-  for (;;) {
-    __asm__ volatile("wfe");
-  }
+  uint64_t mair;
+  uint64_t tcr;
+  mmu_regs(&mair, &tcr);
+  const struct spore_boot_info *boot_hhdm =
+    (const struct spore_boot_info *)(uintptr_t)(HHDM_OFFSET + (uint64_t)(uintptr_t)boot);
+
+  __asm__ volatile("msr daifset, #0xf\n"
+                   "msr mair_el1, %[mair]\n"
+                   "msr tcr_el1, %[tcr]\n"
+                   "msr ttbr0_el1, %[root]\n"
+                   "msr ttbr1_el1, %[root]\n"
+                   "dsb ishst\n"
+                   "tlbi vmalle1\n"
+                   "dsb ish\n"
+                   "isb\n"
+                   "mov x0, %[boot]\n"
+                   "br %[entry]\n"
+                   :
+                   : [mair] "r"(mair), [tcr] "r"(tcr), [root] "r"(ttbr1), [entry] "r"(entry), [boot] "r"(boot_hhdm)
+                   : "x0", "memory");
+  __builtin_unreachable();
 }

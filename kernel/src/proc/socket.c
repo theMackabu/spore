@@ -1583,8 +1583,8 @@ int cell_fd_unix_connect(int fd, const char *path) {
 
 int cell_fd_unix_queue_right_range(int fd, int passed_fd, uint64_t start, uint64_t end) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || passed_fd < 0 || passed_fd >= MAX_FDS ||
-      domain->fds[fd] == NULL || domain->fds[passed_fd] == NULL) {
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || passed_fd < 0 || passed_fd >= MAX_FDS || domain->fds[fd] == NULL ||
+      domain->fds[passed_fd] == NULL) {
     return -EBADF;
   }
   struct open_file *file = domain->fds[fd];
@@ -1639,16 +1639,14 @@ bool cell_fd_unix_tx_offset(int fd, uint64_t *out) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || out == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
-  return file->type == OPEN_UNIX_STREAM && file->unix_connected &&
-         cell_pipe_id_write_offset(file->unix_tx_pipe, out);
+  return file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_id_write_offset(file->unix_tx_pipe, out);
 }
 
 bool cell_fd_unix_rx_offset(int fd, uint64_t *out) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || out == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
-  return file->type == OPEN_UNIX_STREAM && file->unix_connected &&
-         cell_pipe_id_read_offset(file->unix_rx_pipe, out);
+  return file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_id_read_offset(file->unix_rx_pipe, out);
 }
 
 bool cell_fd_unix_next_right_range(int fd, uint64_t *start, uint64_t *end) {

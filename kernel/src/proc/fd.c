@@ -5,8 +5,8 @@
 #include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/pipe.h"
-#include "proc/pty.h"
 #include "proc/poll.h"
+#include "proc/pty.h"
 #include "proc/socket.h"
 
 enum {
