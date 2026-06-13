@@ -443,6 +443,12 @@ static int read_prompt_line(const char *prompt, char *buf, size_t cap, bool use_
       (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved);
       return 0;
     }
+    if (c == 0x0c) {
+      /* Ctrl+L: clear the visible screen (scrollback preserved) and redraw. */
+      fputs("\033[H\033[2J", stdout);
+      redraw_input(prompt, buf, len, cursor);
+      continue;
+    }
     if (c == '\b' || c == 0x7f) {
       erase_before_cursor(buf, &len, &cursor);
       redraw_input(prompt, buf, len, cursor);
