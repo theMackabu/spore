@@ -1278,7 +1278,8 @@ size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
   size_t n = 0;
   struct vfs_fs_info root = {0};
   if (vfs_fs_info(&root) && n < cap) {
-    set_mount_info(&out[n++], "ext2-root", "/", "ext2", root.block_size, root.block_count, root.free_blocks);
+    const char *fstype = root_ext2 != NULL && root_ext2->ext2plus ? "ext2+" : "ext2";
+    set_mount_info(&out[n++], "ext2-root", "/", fstype, root.block_size, root.block_count, root.free_blocks);
   }
 
   uint64_t tmp_blocks = pmm_total_pages();

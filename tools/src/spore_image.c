@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -15,6 +16,28 @@
 enum {
   MAX_PATH = 1024,
   MAX_LINE = 512,
+  EXT2_SUPER_OFFSET = 1024,
+  EXT2_FEATURE_INCOMPAT_OFFSET = EXT2_SUPER_OFFSET + 96,
+  EXT2_INCOMPAT_SPORE_EXT2PLUS = 0x80000000u,
+  EXT2PLUS_MAGIC = 0x4e495053u,
+  EXT2PLUS_VERSION = 1,
+  EXT2PLUS_BASE_INO = 0x40000000u,
+  EXT2PLUS_CHUNK_INODES = 256,
+  EXT2PLUS_FREE_NONE = UINT32_MAX,
+};
+
+struct ext2plus_header {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t header_size;
+  uint32_t inode_size;
+  uint32_t base_ino;
+  uint32_t capacity;
+  uint32_t next_index;
+  uint32_t free_head;
+  uint32_t free_count;
+  uint32_t chunk_size;
+  uint32_t reserved[6];
 };
 
 static void die(const char *msg) {
@@ -104,6 +127,41 @@ static void copy_file(const char *src, const char *dst) {
   fclose(out);
 }
 
+static bool all_zero(const char *buf, size_t len) {
+  for (size_t i = 0; i < len; ++i) {
+    if (buf[i] != 0) { return false; }
+  }
+  return true;
+}
+
+static void copy_sparse_file(const char *src, const char *dst) {
+  FILE *in = fopen(src, "rb");
+  if (in == NULL) { die(src); }
+  int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (out < 0) { die(dst); }
+
+  char buf[65536];
+  uint64_t size = 0;
+  for (;;) {
+    size_t n = fread(buf, 1, sizeof(buf), in);
+    if (n > 0) {
+      size += n;
+      if (all_zero(buf, n)) {
+        if (lseek(out, (off_t)n, SEEK_CUR) < 0) { die("lseek"); }
+      } else if (write(out, buf, n) != (ssize_t)n) {
+        die("write");
+      }
+    }
+    if (n < sizeof(buf)) {
+      if (ferror(in)) { die("fread"); }
+      break;
+    }
+  }
+  if (ftruncate(out, (off_t)size) != 0) { die("ftruncate"); }
+  if (close(out) != 0) { die("close"); }
+  fclose(in);
+}
+
 static void copy_tree(const char *src, const char *dst) {
   if (is_symlink_lstat(src)) {
     char target[MAX_PATH];
@@ -151,6 +209,30 @@ static void create_sparse_file(const char *path, uint64_t bytes) {
   if (out == NULL) { die(path); }
   if (ftruncate(fileno(out), (off_t)bytes) != 0) { die("ftruncate"); }
   fclose(out);
+}
+
+static uint32_t read_le32(const uint8_t bytes[4]) {
+  return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) | ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+static void write_le32(uint8_t bytes[4], uint32_t value) {
+  bytes[0] = (uint8_t)value;
+  bytes[1] = (uint8_t)(value >> 8);
+  bytes[2] = (uint8_t)(value >> 16);
+  bytes[3] = (uint8_t)(value >> 24);
+}
+
+static void set_ext2plus_feature(const char *image) {
+  FILE *file = fopen(image, "r+b");
+  if (file == NULL) { die(image); }
+  if (fseek(file, EXT2_FEATURE_INCOMPAT_OFFSET, SEEK_SET) != 0) { die("fseek"); }
+  uint8_t bytes[4];
+  if (fread(bytes, 1, sizeof(bytes), file) != sizeof(bytes)) { die("fread"); }
+  uint32_t feature_incompat = read_le32(bytes) | EXT2_INCOMPAT_SPORE_EXT2PLUS;
+  write_le32(bytes, feature_incompat);
+  if (fseek(file, EXT2_FEATURE_INCOMPAT_OFFSET, SEEK_SET) != 0) { die("fseek"); }
+  if (fwrite(bytes, 1, sizeof(bytes), file) != sizeof(bytes)) { die("fwrite"); }
+  fclose(file);
 }
 
 static void run_argv(char *const argv[], bool quiet) {
@@ -530,8 +612,32 @@ static void install_musl_devel(const char *rootfs) {
 
 enum {
   ROOT_EXT2_BLOCK_SIZE = 4096,
+  ROOT_EXT2_STATIC_INODES = 8192,
   ROOT_EXT2_BLOCKS = (10ull * 1024ull * 1024ull * 1024ull) / ROOT_EXT2_BLOCK_SIZE,
 };
+
+static void write_ext2plus_store_seed(const char *rootfs_dir) {
+  char path[MAX_PATH];
+  path_join(path, sizeof(path), rootfs_dir, ".spore-inodes");
+  FILE *file = fopen(path, "wb");
+  if (file == NULL) { die(path); }
+
+  uint8_t block[ROOT_EXT2_BLOCK_SIZE];
+  memset(block, 0, sizeof(block));
+  struct ext2plus_header hdr = {
+    .magic = EXT2PLUS_MAGIC,
+    .version = EXT2PLUS_VERSION,
+    .header_size = sizeof(hdr),
+    .inode_size = 256,
+    .base_ino = EXT2PLUS_BASE_INO,
+    .free_head = EXT2PLUS_FREE_NONE,
+    .chunk_size = EXT2PLUS_CHUNK_INODES,
+  };
+  memcpy(block, &hdr, sizeof(hdr));
+  if (fwrite(block, 1, sizeof(block), file) != sizeof(block)) { die("fwrite"); }
+  fclose(file);
+  chmod(path, 0600);
+}
 
 static void build_root_ext2(const char *rootfs_dir, const char *output_root, const char *output_copy) {
   char dev_dir[MAX_PATH];
@@ -549,14 +655,17 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   ensure_dir(proc_dir);
   ensure_dir(sys_dir);
   ensure_dir(tmp_dir);
+  write_ext2plus_store_seed(rootfs_dir);
 
   char block_size_arg[16];
+  char static_inodes_arg[16];
   char block_count_arg[32];
   snprintf(block_size_arg, sizeof(block_size_arg), "%u", ROOT_EXT2_BLOCK_SIZE);
+  snprintf(static_inodes_arg, sizeof(static_inodes_arg), "%u", ROOT_EXT2_STATIC_INODES);
   snprintf(block_count_arg, sizeof(block_count_arg), "%llu", (unsigned long long)ROOT_EXT2_BLOCKS);
   char *const mkfs_argv[] = {
-    "mke2fs",        "-q", "-t", "ext2", "-b", block_size_arg, "-d", (char *)rootfs_dir, (char *)output_root,
-    block_count_arg, NULL};
+    "mke2fs", "-q", "-t", "ext2", "-b", block_size_arg, "-N", static_inodes_arg, "-O", "^resize_inode",
+    "-E", "assume_storage_prezeroed=1", "-d", (char *)rootfs_dir, (char *)output_root, block_count_arg, NULL};
   unlink(output_root);
   run_argv(mkfs_argv, false);
 
@@ -586,7 +695,8 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
                                   "set_inode_field /etc/shadow gid 0\n"
                                   "set_inode_field /etc/sudoers uid 0\n"
                                   "set_inode_field /etc/sudoers gid 0\n");
-  copy_file(output_root, output_copy);
+  set_ext2plus_feature(output_root);
+  copy_sparse_file(output_root, output_copy);
 }
 
 int main(int argc, char **argv) {
