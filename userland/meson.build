@@ -141,5 +141,6 @@ subdir('demos/writer')
 subdir('demos/memhog')
 subdir('demos/escalate')
 subdir('demos/signal-crash')
+subdir('demos/inodes')
 
 subdir('tests/integration')

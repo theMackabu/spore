@@ -131,6 +131,7 @@ userland/demos/writer /home/spore/demos/writer
 userland/demos/memhog /home/spore/demos/memhog
 userland/demos/escalate /home/spore/demos/escalate
 userland/demos/signal-crash /home/spore/demos/signal-crash
+userland/demos/inodes /home/spore/demos/inodes
 userland/demos/something /home/spore/demos/something
 userland/demos/something-else.msh /home/spore/demos/something-else.msh
 

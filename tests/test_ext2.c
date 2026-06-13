@@ -197,6 +197,14 @@ static void test_ext2plus_dynamic_inodes(void) {
   struct ext2_fs fs;
   assert(ext2_mount_rw(&fs, file_read, file_write, f));
   assert(fs.ext2plus);
+  struct ext2_node hidden;
+  assert(!ext2_lookup(&fs, "/.spore-inodes", &hidden));
+  struct ext2_node root;
+  assert(ext2_lookup(&fs, "/", &root));
+  struct ext2_dirent hidden_ent;
+  for (size_t i = 0; ext2_dirent(&fs, &root, i, &hidden_ent); ++i) {
+    assert(strcmp(hidden_ent.name, ".spore-inodes") != 0);
+  }
 
   struct ext2_info info;
   assert(ext2_info(&fs, &info));
@@ -233,6 +241,7 @@ static void test_ext2plus_dynamic_inodes(void) {
   f = fopen(path, "rb");
   assert(f != NULL);
   assert(ext2_mount(&fs, file_read, f));
+  assert(!ext2_lookup(&fs, "/.spore-inodes", &hidden));
   struct ext2_node fresh;
   assert(ext2_lookup(&fs, "/first-dynamic", &fresh));
   assert(fresh.ino == first.ino);

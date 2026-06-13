@@ -11,24 +11,6 @@ enum {
 typedef bool (*ext2_read_fn)(void *ctx, uint64_t offset, void *dst, uint32_t len);
 typedef bool (*ext2_write_fn)(void *ctx, uint64_t offset, const void *src, uint32_t len);
 
-struct ext2_fs {
-  ext2_read_fn read;
-  ext2_write_fn write;
-  void *ctx;
-  bool ext2plus;
-  uint32_t block_size;
-  uint32_t inodes_per_group;
-  uint32_t blocks_per_group;
-  uint32_t inode_size;
-  uint32_t first_data_block;
-  uint32_t group_count;
-  uint32_t inode_count;
-  uint32_t block_count;
-  uint32_t next_alloc_block;
-  uint32_t ext2plus_store_ino;
-  uint32_t ext2plus_base_ino;
-};
-
 struct __attribute__((aligned(8))) ext2_node {
   uint32_t ino;
   uint16_t mode;
@@ -41,6 +23,31 @@ struct __attribute__((aligned(8))) ext2_node {
   uint32_t mtime;
   uint32_t sectors_count;
   uint32_t blocks[15];
+};
+
+struct ext2_fs {
+  ext2_read_fn read;
+  ext2_write_fn write;
+  void *ctx;
+  bool ext2plus;
+  bool ext2plus_store_valid;
+  uint32_t block_size;
+  uint32_t inodes_per_group;
+  uint32_t blocks_per_group;
+  uint32_t inode_size;
+  uint32_t first_data_block;
+  uint32_t group_count;
+  uint32_t inode_count;
+  uint32_t block_count;
+  uint32_t next_alloc_block;
+  uint32_t ext2plus_store_ino;
+  uint32_t ext2plus_base_ino;
+  uint32_t ext2plus_capacity;
+  uint32_t ext2plus_next_index;
+  uint32_t ext2plus_free_head;
+  uint32_t ext2plus_free_count;
+  uint32_t ext2plus_chunk_size;
+  struct ext2_node ext2plus_store;
 };
 
 struct ext2_dirent {

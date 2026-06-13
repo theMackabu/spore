@@ -321,6 +321,7 @@ static bool read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t 
 }
 
 static void child_cache_invalidate_ino(struct ext2_fs *fs, uint32_t ino);
+static void child_cache_remove_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name);
 
 static bool write_bytes(struct ext2_fs *fs, uint64_t offset, const void *src, uint32_t len) {
   const uint8_t *in = src;
@@ -425,20 +426,22 @@ static uint32_t count_allocated_blocks(struct ext2_fs *fs, const struct ext2_nod
 }
 
 static bool ext2plus_load_store(struct ext2_fs *fs, struct ext2_node *out) {
-  return fs->ext2plus_store_ino != 0 && read_inode(fs, fs->ext2plus_store_ino, out) && ext2_is_regular(out);
+  if (!fs->ext2plus_store_valid || fs->ext2plus_store_ino == 0 || !ext2_is_regular(&fs->ext2plus_store)) {
+    return false;
+  }
+  if (out != NULL) { *out = fs->ext2plus_store; }
+  return true;
 }
 
 static bool ext2plus_read_store(struct ext2_fs *fs, uint64_t off, void *dst, uint32_t len) {
-  struct ext2_node store;
   uint32_t got = 0;
-  return ext2plus_load_store(fs, &store) && off + len >= off && off + len <= store.size &&
-         ext2_read_file(fs, &store, off, dst, len, &got) && got == len;
+  return ext2plus_load_store(fs, NULL) && off + len >= off && off + len <= fs->ext2plus_store.size &&
+         ext2_read_file(fs, &fs->ext2plus_store, off, dst, len, &got) && got == len;
 }
 
 static bool ext2plus_write_store(struct ext2_fs *fs, uint64_t off, const void *src, uint32_t len) {
-  struct ext2_node store;
-  if (!ext2plus_load_store(fs, &store)) { return false; }
-  int64_t wrote = ext2_write_file(fs, &store, off, src, len);
+  if (!ext2plus_load_store(fs, NULL)) { return false; }
+  int64_t wrote = ext2_write_file(fs, &fs->ext2plus_store, off, src, len);
   return wrote == (int64_t)len;
 }
 
@@ -455,12 +458,34 @@ static bool ext2plus_header_valid(struct ext2_fs *fs, const struct ext2plus_head
          hdr->free_count <= hdr->capacity;
 }
 
+static void ext2plus_cache_header(struct ext2_fs *fs, const struct ext2plus_header *hdr) {
+  fs->ext2plus_capacity = hdr->capacity;
+  fs->ext2plus_next_index = hdr->next_index;
+  fs->ext2plus_free_head = hdr->free_head;
+  fs->ext2plus_free_count = hdr->free_count;
+  fs->ext2plus_chunk_size = hdr->chunk_size;
+}
+
 static bool ext2plus_load_header(struct ext2_fs *fs, struct ext2plus_header *hdr) {
-  return ext2plus_read_store(fs, 0, hdr, sizeof(*hdr)) && ext2plus_header_valid(fs, hdr);
+  *hdr = (struct ext2plus_header){
+    .magic = EXT2PLUS_MAGIC,
+    .version = EXT2PLUS_VERSION,
+    .header_size = sizeof(*hdr),
+    .inode_size = fs->inode_size,
+    .base_ino = fs->ext2plus_base_ino,
+    .capacity = fs->ext2plus_capacity,
+    .next_index = fs->ext2plus_next_index,
+    .free_head = fs->ext2plus_free_head,
+    .free_count = fs->ext2plus_free_count,
+    .chunk_size = fs->ext2plus_chunk_size,
+  };
+  return ext2plus_header_valid(fs, hdr);
 }
 
 static bool ext2plus_write_header(struct ext2_fs *fs, const struct ext2plus_header *hdr) {
-  return ext2plus_header_valid(fs, hdr) && ext2plus_write_store(fs, 0, hdr, sizeof(*hdr));
+  if (!ext2plus_header_valid(fs, hdr) || !ext2plus_write_store(fs, 0, hdr, sizeof(*hdr))) { return false; }
+  ext2plus_cache_header(fs, hdr);
+  return true;
 }
 
 static bool ext2plus_read_disk_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_inode_disk *inode) {
@@ -629,6 +654,8 @@ static bool ext2plus_mount_init(struct ext2_fs *fs) {
   fs->ext2plus_base_ino = EXT2PLUS_BASE_INO;
   if (!ext2_lookup(fs, "/.spore-inodes", &store) || !ext2_is_regular(&store)) { return false; }
   fs->ext2plus_store_ino = store.ino;
+  fs->ext2plus_store = store;
+  fs->ext2plus_store_valid = true;
 
   struct ext2plus_header hdr;
   uint32_t got = 0;
@@ -643,11 +670,12 @@ static bool ext2plus_mount_init(struct ext2_fs *fs) {
     hdr.base_ino = fs->ext2plus_base_ino;
     hdr.free_head = EXT2PLUS_FREE_NONE;
     hdr.chunk_size = EXT2PLUS_CHUNK_INODES;
-    int64_t wrote = ext2_write_file(fs, &store, 0, &hdr, sizeof(hdr));
-    valid = wrote == (int64_t)sizeof(hdr);
+    valid = ext2plus_write_header(fs, &hdr);
   }
   if (!valid) { return false; }
+  ext2plus_cache_header(fs, &hdr);
   fs->ext2plus = true;
+  child_cache_remove_name(fs, EXT2_ROOT_INO, ".spore-inodes");
   return true;
 }
 
@@ -663,6 +691,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   fs->write = write;
   fs->ctx = ctx;
   fs->ext2plus = false;
+  fs->ext2plus_store_valid = false;
   fs->block_size = 1024u << sb.log_block_size;
   fs->inodes_per_group = sb.inodes_per_group;
   fs->blocks_per_group = sb.blocks_per_group;
@@ -674,6 +703,11 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   fs->group_count = div_round_up(sb.blocks_count - sb.first_data_block, sb.blocks_per_group);
   fs->ext2plus_store_ino = 0;
   fs->ext2plus_base_ino = 0;
+  fs->ext2plus_capacity = 0;
+  fs->ext2plus_next_index = 0;
+  fs->ext2plus_free_head = EXT2PLUS_FREE_NONE;
+  fs->ext2plus_free_count = 0;
+  fs->ext2plus_chunk_size = 0;
   cache_reset(fs);
   if (fs->inodes_per_group == 0 || fs->blocks_per_group == 0 || fs->group_count == 0) { return false; }
   if ((sb.feature_incompat & EXT2_INCOMPAT_SPORE_EXT2PLUS) != 0 && !ext2plus_mount_init(fs)) { return false; }
@@ -886,8 +920,7 @@ static bool ext2plus_alloc_inode(struct ext2_fs *fs, uint32_t *out) {
       hdr.capacity += hdr.chunk_size;
       uint64_t store_size = (uint64_t)fs->block_size + (uint64_t)hdr.capacity * fs->inode_size;
       if (store_size > UINT32_MAX) { return false; }
-      struct ext2_node store;
-      if (!ext2plus_load_store(fs, &store) || !ext2_truncate(fs, &store, store_size)) { return false; }
+      if (!ext2plus_load_store(fs, NULL) || !ext2_truncate(fs, &fs->ext2plus_store, store_size)) { return false; }
     }
     index = hdr.next_index++;
   }
@@ -1198,6 +1231,12 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
   return write_inode(fs, node);
 }
 
+static bool ext2plus_hidden_name(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t name_len) {
+  const char hidden[] = ".spore-inodes";
+  return fs->ext2plus && dir->ino == EXT2_ROOT_INO && name_len == sizeof(hidden) - 1 &&
+         kmemcmp(name, hidden, sizeof(hidden) - 1) == 0;
+}
+
 bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
   ++ext2_stat_counters.dir_iter_count;
   if (!ext2_is_dir(dir)) { return false; }
@@ -1232,7 +1271,7 @@ bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t 
       kmemcpy(name, record + 8, name_len);
       name[name_len] = '\0';
       bool dot = (name_len == 1 && name[0] == '.') || (name_len == 2 && name[0] == '.' && name[1] == '.');
-      if (!dot) {
+      if (!dot && !ext2plus_hidden_name(fs, dir, name, name_len)) {
         kmemcpy(out->name, name, name_len + 1);
         out->ino = ino;
         out->type = type;
@@ -1504,7 +1543,7 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
   uint8_t name_len = (uint8_t)kstrlen(name);
   uint16_t need = rec_len_for(name_len);
   uint8_t block[4096];
-  if (fs->block_size > sizeof(block)) { return false; }
+  if (fs->block_size > sizeof(block) || ext2plus_hidden_name(fs, dir, name, name_len)) { return false; }
   uint32_t blocks = (dir->size + fs->block_size - 1) / fs->block_size;
   for (uint32_t bi = 0; bi < blocks; ++bi) {
     uint32_t disk_block = 0;
@@ -1608,7 +1647,7 @@ static bool ext2_readlink_node(struct ext2_fs *fs, const struct ext2_node *node,
 }
 
 static bool ext2_lookup_inner(struct ext2_fs *fs, const char *path, struct ext2_node *out, bool follow_final,
-                              int depth) {
+                              unsigned depth) {
   if (path == NULL || path[0] != '/' || depth > SYMLINK_DEPTH_MAX) { return false; }
   struct ext2_node cur;
   if (!read_inode(fs, EXT2_ROOT_INO, &cur)) { return false; }
