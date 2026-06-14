@@ -1,0 +1,4 @@
+option('console_font',
+  type: 'string',
+  value: 'kernel/src/fonts/terminus/ter-u16b.bdf',
+  description: 'BDF font used by the kernel framebuffer console, relative to the project root unless absolute')

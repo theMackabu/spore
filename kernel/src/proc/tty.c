@@ -1,5 +1,6 @@
 #include "proc/tty.h"
 
+#include "framebuffer.h"
 #include "pl011.h"
 #include "proc/domain.h"
 #include "proc/poll.h"
@@ -70,6 +71,11 @@ static bool tty_echo(void) {
   return (tty_lflag & TTY_ECHO) != 0;
 }
 
+static void tty_putc(char c) {
+  framebuffer_putc(c);
+  pl011_putc(c);
+}
+
 uint32_t cell_tty_lflag(void) {
   return tty_lflag;
 }
@@ -97,7 +103,7 @@ int64_t cell_tty_write_console_from_user(struct domain *domain, uint64_t buf, ui
   for (uint64_t i = 0; i < len; ++i) {
     char c;
     if (!vmm_copy_from_user(cell_domain_as(domain), &c, buf + i, 1)) { return -14; }
-    pl011_putc(c);
+    tty_putc(c);
     if (c == '\r' || c == '\n') {
       tty_output_line_len = 0;
       tty_output_line[0] = '\0';
@@ -108,6 +114,7 @@ int64_t cell_tty_write_console_from_user(struct domain *domain, uint64_t buf, ui
       }
     }
   }
+  framebuffer_flush();
   return (int64_t)len;
 }
 
@@ -126,32 +133,32 @@ static void tty_begin_canonical_read(void) {
 static void tty_echo_char(char c) {
   if (!tty_echo()) { return; }
   if (c == '\n') {
-    pl011_putc('\n');
+    tty_putc('\n');
     tty_output_line_len = 0;
     tty_output_line[0] = '\0';
   } else if (c == '\b' || c == 0x7f) {
-    pl011_putc('\b');
-    pl011_putc(' ');
-    pl011_putc('\b');
+    tty_putc('\b');
+    tty_putc(' ');
+    tty_putc('\b');
   } else if ((uint8_t)c >= 0x20 || c == '\t') {
-    pl011_putc(c);
+    tty_putc(c);
   }
 }
 
 static void tty_echo_str(const char *s) {
   if (!tty_echo()) { return; }
   while (*s != '\0') {
-    pl011_putc(*s++);
+    tty_putc(*s++);
   }
 }
 
 static void tty_redraw_line(void) {
   tty_echo_str("\r\033[K");
   for (size_t i = 0; i < tty_prompt_len; ++i) {
-    pl011_putc(tty_prompt[i]);
+    tty_putc(tty_prompt[i]);
   }
   for (size_t i = 0; i < tty_line_len; ++i) {
-    pl011_putc(tty_line[i]);
+    tty_putc(tty_line[i]);
   }
   if (tty_line_cursor < tty_line_len) {
     tty_echo_str("\033[");
@@ -163,10 +170,10 @@ static void tty_redraw_line(void) {
       move /= 10u;
     } while (move != 0 && n < sizeof(rev));
     while (n > 0) {
-      pl011_putc(rev[n - 1]);
+      tty_putc(rev[n - 1]);
       --n;
     }
-    pl011_putc('D');
+    tty_putc('D');
   }
 }
 
@@ -229,41 +236,46 @@ static bool tty_try_escape(void) {
 
 void cell_tty_process_input(void) {
   char c;
+  bool display_dirty = false;
   while (tty_ready_len == 0 && pl011_getc(&c)) {
     if (tty_isig() && c == 3) {
       if (tty_echo()) {
-        pl011_putc('^');
-        pl011_putc('C');
-        pl011_putc('\n');
+        tty_putc('^');
+        tty_putc('C');
+        tty_putc('\n');
+        display_dirty = true;
       }
       tty_clear_pending_input();
       tty_pending_signal = SIGINT;
-      return;
+      break;
     }
     if (!tty_canonical()) {
       if ((uint8_t)c == 0x08 || (uint8_t)c == 0x7f) { c = (char)tty_erase; }
       tty_ready_push(c);
-      return;
+      break;
     }
     if (c == 0x1b) {
       (void)tty_try_escape();
+      display_dirty = true;
       continue;
     }
     if (c == '\r') { c = '\n'; }
     if (c == '\n') {
       tty_echo_char('\n');
+      display_dirty = true;
       tty_line_commit();
-      return;
+      break;
     }
     if (c == 3) {
       if (tty_echo()) {
-        pl011_putc('^');
-        pl011_putc('C');
-        pl011_putc('\n');
+        tty_putc('^');
+        tty_putc('C');
+        tty_putc('\n');
+        display_dirty = true;
       }
       tty_clear_pending_input();
       tty_ready_push('\n');
-      return;
+      break;
     }
     if ((uint8_t)c == 0x08 || (uint8_t)c == 0x7f || (uint8_t)c == tty_erase) {
       if (tty_line_cursor > 0) {
@@ -273,6 +285,7 @@ void cell_tty_process_input(void) {
         --tty_line_len;
         --tty_line_cursor;
         tty_redraw_line();
+        display_dirty = true;
       }
       continue;
     }
@@ -288,8 +301,10 @@ void cell_tty_process_input(void) {
       } else {
         tty_redraw_line();
       }
+      display_dirty = true;
     }
   }
+  if (display_dirty) { framebuffer_flush(); }
 }
 
 int cell_tty_pending_signal(void) {

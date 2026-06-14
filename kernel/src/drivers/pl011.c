@@ -153,6 +153,10 @@ bool pl011_getc(char *out) {
   return true;
 }
 
+void pl011_inject_input(char c) {
+  tty_control_char(c);
+}
+
 bool pl011_poll_rx(void) {
   if (uart_base == NULL) { return rx_tail != rx_head; }
   while ((mmio_read32(PL011_FR) & PL011_FR_RXFE) == 0) {

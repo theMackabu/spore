@@ -9,6 +9,57 @@ uint32_t page_table_pool_count;
 
 typedef void (*kernel_entry_t)(const struct spore_boot_info *);
 
+static uint32_t framebuffer_format_from_info(const EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info) {
+  if (info == NULL) { return SPORE_FB_FORMAT_NONE; }
+  if (info->pixel_format == PixelRedGreenBlueReserved8BitPerColor) { return SPORE_FB_FORMAT_RGBX8888; }
+  if (info->pixel_format == PixelBlueGreenRedReserved8BitPerColor) { return SPORE_FB_FORMAT_BGRX8888; }
+  if (info->pixel_format == PixelBitMask) {
+    if (info->pixel_information.red_mask == 0x000000ffu && info->pixel_information.green_mask == 0x0000ff00u &&
+        info->pixel_information.blue_mask == 0x00ff0000u) {
+      return SPORE_FB_FORMAT_RGBX8888;
+    }
+    if (info->pixel_information.red_mask == 0x00ff0000u && info->pixel_information.green_mask == 0x0000ff00u &&
+        info->pixel_information.blue_mask == 0x000000ffu) {
+      return SPORE_FB_FORMAT_BGRX8888;
+    }
+  }
+  return SPORE_FB_FORMAT_NONE;
+}
+
+static void choose_graphics_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop) {
+  if (gop == NULL || gop->mode == NULL || gop->query_mode == NULL || gop->set_mode == NULL) { return; }
+  uint32_t best_mode = gop->mode->mode;
+  uint64_t best_area = 0;
+  for (UINT32 mode = 0; mode < gop->mode->max_mode; ++mode) {
+    UINTN info_size = 0;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = NULL;
+    EFI_STATUS status = gop->query_mode(gop, mode, &info_size, &info);
+    if (EFI_ERROR(status) || framebuffer_format_from_info(info) == SPORE_FB_FORMAT_NONE) { continue; }
+    uint64_t area = (uint64_t)info->horizontal_resolution * (uint64_t)info->vertical_resolution;
+    if (area > best_area) {
+      best_area = area;
+      best_mode = mode;
+    }
+  }
+  if (best_mode != gop->mode->mode) { (void)gop->set_mode(gop, best_mode); }
+}
+
+static void capture_framebuffer(struct spore_boot_info *boot) {
+  EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+  EFI_STATUS status = bs->locate_protocol((EFI_GUID *)&EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID, NULL, (void **)&gop);
+  if (EFI_ERROR(status) || gop == NULL) { return; }
+  choose_graphics_mode(gop);
+  if (gop->mode == NULL || gop->mode->info == NULL) { return; }
+  uint32_t format = framebuffer_format_from_info(gop->mode->info);
+  if (format == SPORE_FB_FORMAT_NONE) { return; }
+  boot->framebuffer_phys = gop->mode->frame_buffer_base;
+  boot->framebuffer_size = gop->mode->frame_buffer_size;
+  boot->framebuffer_width = gop->mode->info->horizontal_resolution;
+  boot->framebuffer_height = gop->mode->info->vertical_resolution;
+  boot->framebuffer_pixels_per_scanline = gop->mode->info->pixels_per_scan_line;
+  boot->framebuffer_format = format;
+}
+
 EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
   st = system_table;
   bs = system_table->boot_services;
@@ -48,6 +99,8 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     uefi_puts(u"spore-boot: metadata alloc failed\r\n");
     return EFI_LOAD_ERROR;
   }
+  memset(boot, 0, sizeof(*boot));
+  capture_framebuffer(boot);
 
   uint32_t module_count = 0;
   status = load_modules(modules, &module_count);

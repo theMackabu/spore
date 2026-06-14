@@ -233,8 +233,9 @@ static const struct bench_command bench_commands[] = {
 };
 
 static void usage(void) {
-  fputs("usage: spore-run [--mode plain|filter|shell|stdin|bench|rng] [--timings] [--log-to-stderr] --image IMAGE "
-        "[--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--memory MEM] [--smp N] [--vars VARS_FD]\n",
+  fputs("usage: spore-run [--mode plain|filter|shell|stdin|bench|rng] [--framebuffer] [--display DISPLAY] "
+        "[--timings] [--log-to-stderr] --image IMAGE [--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] "
+        "[--cpu CPU] [--memory MEM] [--smp N] [--vars VARS_FD]\n",
         stderr);
   exit(2);
 }
@@ -494,7 +495,8 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
                             const char *accel, const char *cpu, const char *memory, const char *smp, const char *vars,
                             char *firmware_arg, size_t firmware_cap, char *vars_arg, size_t vars_cap,
                             char *image_drive_arg, size_t image_drive_cap, char *root_drive_arg, size_t root_drive_cap,
-                            int log_fd, char *log_chardev_arg, size_t log_chardev_cap) {
+                            int log_fd, char *log_chardev_arg, size_t log_chardev_cap, bool framebuffer,
+                            const char *display) {
   char firmware[PATH_CAP];
   if (!find_firmware(qemu, firmware, sizeof(firmware))) {
     fputs("spore-run: edk2-aarch64-code.fd not found\n", stderr);
@@ -553,10 +555,16 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
     argv[i++] = "-device";
     argv[i++] = "virtio-blk-device,drive=sporeroot";
   }
+  if (framebuffer) {
+    argv[i++] = "-device";
+    argv[i++] = "virtio-keyboard-device";
+    argv[i++] = "-device";
+    argv[i++] = "virtio-gpu-device,xres=1280,yres=800,edid=on";
+  }
   argv[i++] = "-serial";
   argv[i++] = "stdio";
   argv[i++] = "-display";
-  argv[i++] = "none";
+  argv[i++] = framebuffer ? (char *)display : "none";
   argv[i] = NULL;
   *argc = i;
 }
@@ -1090,8 +1098,10 @@ int main(int argc, char **argv) {
   const char *memory = "8G";
   const char *smp = "4";
   const char *vars = NULL;
+  const char *display = "cocoa,show-cursor=on";
   bool timings = false;
   bool mirror_log = false;
+  bool framebuffer = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
       mode = argv[++i];
@@ -1099,6 +1109,10 @@ int main(int argc, char **argv) {
       timings = true;
     } else if (strcmp(argv[i], "--log-to-stderr") == 0) {
       mirror_log = true;
+    } else if (strcmp(argv[i], "--framebuffer") == 0) {
+      framebuffer = true;
+    } else if (strcmp(argv[i], "--display") == 0 && i + 1 < argc) {
+      display = argv[++i];
     } else if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
       image = argv[++i];
     } else if (strcmp(argv[i], "--root") == 0 && i + 1 < argc) {
@@ -1134,7 +1148,8 @@ int main(int argc, char **argv) {
   int qemu_argc = 0;
   build_qemu_args(qemu_argv, &qemu_argc, qemu, image, root, accel, cpu, memory, smp, vars, firmware_arg,
                   sizeof(firmware_arg), vars_arg, sizeof(vars_arg), image_drive_arg, sizeof(image_drive_arg),
-                  root_drive_arg, sizeof(root_drive_arg), log_pipe[1], log_chardev_arg, sizeof(log_chardev_arg));
+                  root_drive_arg, sizeof(root_drive_arg), log_pipe[1], log_chardev_arg, sizeof(log_chardev_arg),
+                  framebuffer, display);
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
       strcmp(mode, "stdin") == 0 || strcmp(mode, "bench") == 0 || strcmp(mode, "rng") == 0) {

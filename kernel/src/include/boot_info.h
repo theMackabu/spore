@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #define SPORE_BOOT_MAGIC 0x53504f5245424f4full
-#define SPORE_BOOT_VERSION 3u
+#define SPORE_BOOT_VERSION 4u
 #define SPORE_BOOT_MODULE_PATH_MAX 96u
 #define SPORE_BOOT_CPU_MAX 64u
 
@@ -40,6 +40,12 @@ struct spore_cpu_entry {
   uint32_t reserved;
 };
 
+enum spore_framebuffer_format {
+  SPORE_FB_FORMAT_NONE = 0,
+  SPORE_FB_FORMAT_RGBX8888 = 1,
+  SPORE_FB_FORMAT_BGRX8888 = 2,
+};
+
 struct spore_boot_info {
   uint64_t magic;
   uint32_t version;
@@ -54,4 +60,10 @@ struct spore_boot_info {
   uint64_t kernel_virt_base;
   uint64_t uart_phys;
   uint64_t realtime_epoch_sec;
+  uint64_t framebuffer_phys;
+  uint64_t framebuffer_size;
+  uint32_t framebuffer_width;
+  uint32_t framebuffer_height;
+  uint32_t framebuffer_pixels_per_scanline;
+  uint32_t framebuffer_format;
 };

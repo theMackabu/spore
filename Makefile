@@ -7,10 +7,11 @@ EDK2_VARS ?= $(BUILD_DIR)/edk2-vars.fd
 RUN_ROOT ?= $(BUILD_DIR)/run-root.ext2
 TEST_RUN_ROOT ?= $(BUILD_DIR)/test-run-root.ext2
 RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$(RUN_ROOT)" --qemu "$(QEMU)"
+FRAMEBUFFER_RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --framebuffer --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$(RUN_ROOT)" --qemu "$(QEMU)"
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run-reset run run-tests run-shell-check benchmark bench-inodes rng-smoke kill format fetch clean
+.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run-reset run framebuffer run-tests run-shell-check benchmark bench-inodes rng-smoke kill format fetch clean
 
 all: image test-image runner
 
@@ -55,6 +56,9 @@ test: build
 
 run: runner run-root
 	$(RUN_CMD)
+
+framebuffer: runner run-root
+	$(FRAMEBUFFER_RUN_CMD)
 
 run-reset: runner image
 	cp -f "$(BUILD_DIR)/root.ext2" "$(RUN_ROOT)"

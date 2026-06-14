@@ -87,6 +87,48 @@ typedef struct {
   uint64_t attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
+typedef enum {
+  PixelRedGreenBlueReserved8BitPerColor = 0,
+  PixelBlueGreenRedReserved8BitPerColor = 1,
+  PixelBitMask = 2,
+  PixelBltOnly = 3,
+  PixelFormatMax = 4,
+} EFI_GRAPHICS_PIXEL_FORMAT;
+
+typedef struct {
+  UINT32 red_mask;
+  UINT32 green_mask;
+  UINT32 blue_mask;
+  UINT32 reserved_mask;
+} EFI_PIXEL_BITMASK;
+
+typedef struct {
+  UINT32 version;
+  UINT32 horizontal_resolution;
+  UINT32 vertical_resolution;
+  EFI_GRAPHICS_PIXEL_FORMAT pixel_format;
+  EFI_PIXEL_BITMASK pixel_information;
+  UINT32 pixels_per_scan_line;
+} EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
+
+typedef struct {
+  UINT32 max_mode;
+  UINT32 mode;
+  EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+  UINTN size_of_info;
+  EFI_PHYSICAL_ADDRESS frame_buffer_base;
+  UINTN frame_buffer_size;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
+
+typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
+struct EFI_GRAPHICS_OUTPUT_PROTOCOL {
+  EFI_STATUS (*query_mode)(EFI_GRAPHICS_OUTPUT_PROTOCOL *self, UINT32 mode_number, UINTN *size_of_info,
+                           EFI_GRAPHICS_OUTPUT_MODE_INFORMATION **info);
+  EFI_STATUS (*set_mode)(EFI_GRAPHICS_OUTPUT_PROTOCOL *self, UINT32 mode_number);
+  void *blt;
+  EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *mode;
+};
+
 struct EFI_BOOT_SERVICES {
   EFI_TABLE_HEADER hdr;
   void *raise_tpl;
@@ -117,6 +159,17 @@ struct EFI_BOOT_SERVICES {
   void *exit;
   void *unload_image;
   EFI_STATUS (*exit_boot_services)(EFI_HANDLE image_handle, UINTN map_key);
+  void *get_next_monotonic_count;
+  void *stall;
+  void *set_watchdog_timer;
+  void *connect_controller;
+  void *disconnect_controller;
+  void *open_protocol;
+  void *close_protocol;
+  void *open_protocol_information;
+  void *protocols_per_handle;
+  void *locate_handle_buffer;
+  EFI_STATUS (*locate_protocol)(EFI_GUID *protocol, void *registration, void **interface);
 };
 
 struct EFI_RUNTIME_SERVICES {
@@ -212,3 +265,6 @@ static const EFI_GUID EFI_ACPI_20_TABLE_GUID = {
 
 static const EFI_GUID EFI_ACPI_10_TABLE_GUID = {
   0xeb9d2d30, 0x2d88, 0x11d3, {0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d}};
+
+static const EFI_GUID EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID = {
+  0x9042a9de, 0x23dc, 0x4a38, {0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a}};

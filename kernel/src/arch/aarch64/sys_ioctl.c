@@ -1,6 +1,7 @@
 #include "arch/aarch64/syscall_handlers.h"
 
 #include "cell.h"
+#include "framebuffer.h"
 #include "mem.h"
 #include "pl011.h"
 #include "proc/domain.h"
@@ -176,7 +177,8 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (file != NULL && file->type == OPEN_PTY) {
       cell_pty_get_winsize(file, &rows, &cols);
     } else {
-      pl011_get_winsize(&rows, &cols);
+      framebuffer_get_winsize(&rows, &cols);
+      if (rows == 0 || cols == 0) { pl011_get_winsize(&rows, &cols); }
     }
     struct winsize64 ws = {
       .ws_row = rows,
