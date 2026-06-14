@@ -174,6 +174,15 @@ enum {
   ENOSYS = 38,
   ENAMETOOLONG = 36,
   EOPNOTSUPP = 95,
+  SIGINT = 2,
+  SIGABRT = 6,
+  SIGKILL = 9,
+  SIGSEGV = 11,
+  SIGPIPE = 13,
+  SIGTERM = 15,
+  SIGURG = 23,
+  SEGV_MAPERR = 1,
+  SEGV_ACCERR = 2,
 };
 
 #define SYSCALL_SWITCHED ((int64_t)CELL_SWITCHED)
@@ -222,6 +231,11 @@ static void system_reboot(void) {
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-label-as-value"
+static bool signal_delivers_to_current(int signal) {
+  return signal == SIGINT || signal == SIGABRT || signal == SIGKILL || signal == SIGSEGV || signal == SIGPIPE ||
+         signal == SIGTERM || signal == SIGURG;
+}
+
 static int64_t dispatch(struct trap_frame *f) {
   static const void *linux_dispatch[] = {
     [SYS_GETCWD] = &&l_getcwd,
@@ -477,22 +491,19 @@ l_wait4: {
   return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
 }
 l_kill:
-  if ((int)a0 == cell_current_pid() &&
-      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 13 || (int)a1 == 15)) {
+  if ((int)a0 == cell_current_pid() && signal_delivers_to_current((int)a1)) {
     f->x[0] = 0;
     return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_kill((int)a0, (int)a1);
 l_tkill:
-  if ((int)a0 == cell_current_tid() &&
-      ((int)a1 == 2 || (int)a1 == 6 || (int)a1 == 9 || (int)a1 == 11 || (int)a1 == 13 || (int)a1 == 15)) {
+  if ((int)a0 == cell_current_tid() && signal_delivers_to_current((int)a1)) {
     f->x[0] = 0;
     return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tkill((int)a0, (int)a1);
 l_tgkill:
-  if ((int)a0 == cell_current_pid() && (int)a1 == cell_current_tid() &&
-      ((int)a2 == 2 || (int)a2 == 6 || (int)a2 == 9 || (int)a2 == 11 || (int)a2 == 13 || (int)a2 == 15)) {
+  if ((int)a0 == cell_current_pid() && (int)a1 == cell_current_tid() && signal_delivers_to_current((int)a2)) {
     f->x[0] = 0;
     return cell_signal_current((int)a2, f) ? SYSCALL_SWITCHED : 0;
   }
@@ -823,7 +834,8 @@ void handle_lower_sync(struct trap_frame *frame) {
     kprintf("[kernel] lower sync fault ec=%x dfsc=%x write=%u esr=%x elr=%p far=%p\n", (unsigned)ec, (unsigned)dfsc,
             write ? 1u : 0u, (unsigned)frame->esr_el1, (void *)(uintptr_t)frame->elr_el1, (void *)(uintptr_t)far);
     cell_dump_current_fault(frame, far);
-    cell_signal_current(11, frame);
+    bool translation_fault = (dfsc >= 0x04 && dfsc <= 0x07);
+    cell_signal_current_fault(SIGSEGV, frame, far, translation_fault ? SEGV_MAPERR : SEGV_ACCERR);
     return;
   }
   int64_t ret = dispatch(frame);

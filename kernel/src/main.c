@@ -374,7 +374,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
 
   struct spore_boot_info active_framebuffer = *boot;
   bool using_gpu = virtio_gpu_init(boot->hhdm_offset, &active_framebuffer);
-  bool fb_ready = framebuffer_init(&active_framebuffer);
+  bool fb_ready = using_gpu && framebuffer_init(&active_framebuffer);
   if (fb_ready) {
     if (using_gpu) {
       framebuffer_set_flush(virtio_gpu_flush);

@@ -9,6 +9,7 @@
 #include "proc/thread.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 enum {
   EFAULT = 14,
@@ -27,9 +28,12 @@ enum {
   SIGTERM = 15,
   SIGCHLD = 17,
   SIGCONT = 18,
+  SIGURG = 23,
   SIGWINCH = 28,
+  SEGV_MAPERR = 1,
   SA_SIGINFO = 4,
   SA_ONSTACK = 0x08000000,
+  SS_ONSTACK = 1,
   SS_DISABLE = 2,
   NSIG = 65,
 };
@@ -44,13 +48,52 @@ struct k_sigaction64 {
   uint32_t mask[2];
 };
 
+struct siginfo_fields64 {
+  int32_t si_signo;
+  int32_t si_errno;
+  int32_t si_code;
+  uint64_t si_addr;
+};
+
+struct siginfo64 {
+  struct siginfo_fields64 fields;
+  uint8_t pad[128 - sizeof(struct siginfo_fields64)];
+};
+
+struct stack_t64 {
+  uint64_t ss_sp;
+  int32_t ss_flags;
+  uint32_t pad;
+  uint64_t ss_size;
+};
+
+struct sigcontext64 {
+  uint64_t fault_address;
+  uint64_t regs[31];
+  uint64_t sp;
+  uint64_t pc;
+  uint64_t pstate;
+  uint8_t pad[8];
+  uint8_t reserved[4096];
+};
+
+struct ucontext64 {
+  uint64_t uc_flags;
+  uint64_t uc_link;
+  struct stack_t64 uc_stack;
+  uint64_t uc_sigmask;
+  uint8_t pad[(1024 - 64) / 8];
+  uint8_t pad2[8];
+  struct sigcontext64 uc_mcontext;
+};
+
 struct signal_frame64 {
+  struct siginfo64 siginfo;
+  struct ucontext64 ucontext;
   uint64_t magic;
   uint64_t signal;
   uint64_t saved_signal_mask;
   struct trap_frame saved;
-  uint8_t siginfo[128];
-  uint8_t ucontext[1024];
 };
 
 static struct domain *current_domain(void) {
@@ -60,11 +103,11 @@ static struct domain *current_domain(void) {
 static bool signal_is_supported(int signal) {
   return signal == SIGHUP || signal == SIGINT || signal == SIGQUIT || signal == SIGABRT || signal == SIGKILL ||
          signal == SIGUSR1 || signal == SIGSEGV || signal == SIGUSR2 || signal == SIGPIPE || signal == SIGTERM ||
-         signal == SIGCHLD || signal == SIGCONT || signal == SIGWINCH;
+         signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH;
 }
 
 static bool signal_default_ignored(int signal) {
-  return signal == SIGCHLD || signal == SIGCONT || signal == SIGWINCH;
+  return signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH;
 }
 
 static uint64_t signal_bit(int signal) {
@@ -93,6 +136,25 @@ static bool thread_on_sigaltstack(const struct thread *thread) {
   return end >= thread->sigaltstack_sp && sp >= thread->sigaltstack_sp && sp < end;
 }
 
+static void fill_signal_context(struct signal_frame64 *frame, const struct thread *thread, int signal,
+                                uint64_t fault_addr, int sig_code) {
+  frame->siginfo.fields.si_signo = signal;
+  frame->siginfo.fields.si_code = sig_code;
+  frame->siginfo.fields.si_addr = fault_addr;
+
+  frame->ucontext.uc_stack.ss_sp = thread->sigaltstack_sp;
+  frame->ucontext.uc_stack.ss_flags = thread_on_sigaltstack(thread) ? SS_ONSTACK : thread->sigaltstack_flags;
+  frame->ucontext.uc_stack.ss_size = thread->sigaltstack_size;
+  frame->ucontext.uc_sigmask = thread->signal_mask;
+  frame->ucontext.uc_mcontext.fault_address = fault_addr;
+  for (size_t i = 0; i < 31; ++i) {
+    frame->ucontext.uc_mcontext.regs[i] = thread->tf.x[i];
+  }
+  frame->ucontext.uc_mcontext.sp = thread->tf.sp_el0;
+  frame->ucontext.uc_mcontext.pc = thread->tf.elr_el1;
+  frame->ucontext.uc_mcontext.pstate = thread->tf.spsr_el1;
+}
+
 static void terminate_domain_by_signal(struct domain *domain, int signal) {
   if (domain == NULL || domain->zombie) { return; }
   domain->exit_status = 128 + signal;
@@ -115,6 +177,10 @@ static bool wait_reason_is_restartable(enum wait_reason reason) {
 }
 
 bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
+  return cell_deliver_signal_to_thread_fault(thread, signal, 0, 0);
+}
+
+bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint64_t fault_addr, int sig_code) {
   if (thread == NULL || thread->domain == NULL || signal <= 0 || signal >= (int)NSIG) { return false; }
   if (signal_is_blocked(thread, signal)) {
     thread->pending_signals |= signal_bit(signal);
@@ -167,6 +233,7 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   frame.signal = (uint64_t)signal;
   frame.saved_signal_mask = thread->signal_mask;
   frame.saved = thread->tf;
+  fill_signal_context(&frame, thread, signal, fault_addr, sig_code);
 
   uint64_t stack_top = thread->tf.sp_el0;
   if ((action->flags & SA_ONSTACK) != 0 && !thread_on_sigaltstack(thread) &&
@@ -205,12 +272,16 @@ bool cell_deliver_pending_signals(struct thread *thread) {
 }
 
 bool cell_signal_current(int signal, struct trap_frame *frame) {
+  return cell_signal_current_fault(signal, frame, 0, 0);
+}
+
+bool cell_signal_current_fault(int signal, struct trap_frame *frame, uint64_t fault_addr, int sig_code) {
   struct thread *thread = cell_current_thread_internal();
   if (thread == NULL || frame == NULL) { return false; }
   bool ignored = thread->domain != NULL && signal > 0 && signal < (int)NSIG &&
                  thread->domain->signal_actions[signal].handler == 1 && signal != SIGKILL;
   thread->tf = *frame;
-  bool delivered = cell_deliver_signal_to_thread(thread, signal);
+  bool delivered = cell_deliver_signal_to_thread_fault(thread, signal, fault_addr, sig_code);
   *frame = thread->tf;
   if (thread->state == THREAD_ZOMBIE) {
     cell_schedule(frame);
@@ -261,6 +332,12 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
     return -EFAULT;
   }
   *frame = sigframe.saved;
+  for (size_t i = 0; i < 31; ++i) {
+    frame->x[i] = sigframe.ucontext.uc_mcontext.regs[i];
+  }
+  frame->sp_el0 = sigframe.ucontext.uc_mcontext.sp;
+  frame->elr_el1 = sigframe.ucontext.uc_mcontext.pc;
+  frame->spsr_el1 = sigframe.ucontext.uc_mcontext.pstate;
   struct thread *thread = cell_current_thread_internal();
   if (thread != NULL) {
     thread->tf = *frame;

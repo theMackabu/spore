@@ -244,6 +244,11 @@ static bool contains(const char *haystack, const char *needle) {
   return strstr(haystack, needle) != NULL;
 }
 
+static void restore_host_terminal_mouse(void) {
+  static const char reset[] = "\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l\033[?2004l";
+  if (isatty(STDOUT_FILENO)) { (void)write(STDOUT_FILENO, reset, sizeof(reset) - 1); }
+}
+
 static bool ends_with(const char *s, const char *suffix) {
   size_t s_len = strlen(s);
   size_t suffix_len = strlen(suffix);
@@ -1089,6 +1094,9 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
 }
 
 int main(int argc, char **argv) {
+  restore_host_terminal_mouse();
+  atexit(restore_host_terminal_mouse);
+
   const char *mode = "filter";
   const char *image = NULL;
   const char *root = NULL;

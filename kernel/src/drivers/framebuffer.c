@@ -544,13 +544,7 @@ static void set_private_modes(bool enabled) {
     int mode = param_or(i, 0);
     if (mode == 25) {
       cursor_visible = enabled;
-      if (enabled) {
-        cursor_blink_on = true;
-        blink_ticks = 0;
-      } else {
-        cursor_blink_on = false;
-        hide_cursor();
-      }
+      if (!enabled) { hide_cursor(); }
     } else if (mode == 7) {
       autowrap = enabled;
     } else if (mode == 1049) {
@@ -974,13 +968,11 @@ void framebuffer_flush(void) {
 void framebuffer_tick(void) {
   if (fb_base == NULL || flush_display == NULL) { return; }
   bool dirty = pending_flush_chars != 0;
-  if (cursor_visible) {
-    ++blink_ticks;
-    if (blink_ticks >= 200) {
-      blink_ticks = 0;
-      cursor_blink_on = !cursor_blink_on;
-      dirty = true;
-    }
+  ++blink_ticks;
+  if (blink_ticks >= 200) {
+    blink_ticks = 0;
+    cursor_blink_on = !cursor_blink_on;
+    if (cursor_visible) { dirty = true; }
   }
   if (dirty) { framebuffer_flush(); }
 }
@@ -988,6 +980,5 @@ void framebuffer_tick(void) {
 void framebuffer_putc(char c) {
   if (fb_base == NULL) { return; }
   terminal_feed((uint8_t)c);
-  ++pending_flush_chars;
-  if (pending_flush_chars >= 128) { framebuffer_flush(); }
+  if (pending_flush_chars != UINT32_MAX) { ++pending_flush_chars; }
 }
