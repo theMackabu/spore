@@ -1,8 +1,10 @@
 #include "proc/pty.h"
 
+#include "framebuffer.h"
 #include "kstr.h"
 #include "mem.h"
 #include "proc/fd.h"
+#include "proc/poll.h"
 #include "proc/thread.h"
 
 enum {
@@ -143,8 +145,9 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
   kmemset(&ptys[id], 0, sizeof(ptys[id]));
   ptys[id].used = true;
   ptys[id].master_refs = 1;
-  ptys[id].rows = 38;
-  ptys[id].cols = 96;
+  framebuffer_get_winsize(&ptys[id].rows, &ptys[id].cols);
+  if (ptys[id].rows == 0) { ptys[id].rows = 38; }
+  if (ptys[id].cols == 0) { ptys[id].cols = 96; }
   ptys[id].foreground_pgrp = domain->pgrp_id;
   ptys[id].oflag = TTY_OPOST | TTY_ONLCR;
   ptys[id].lflag = TTY_ISIG | TTY_ICANON | TTY_ECHO;
@@ -382,6 +385,7 @@ static void wake_pty_waiters(void) {
   }
   pty_waking = false;
   cell_wake_poll_waiters_internal();
+  cell_wake_epoll_waiters_internal();
 }
 
 int cell_block_current_on_pty(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame) {

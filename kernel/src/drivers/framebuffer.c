@@ -31,16 +31,24 @@ static uint32_t cursor_x;
 static uint32_t cursor_y;
 static uint32_t saved_x;
 static uint32_t saved_y;
+static uint32_t scroll_top;
+static uint32_t scroll_bottom;
 static uint32_t alt_saved_x;
 static uint32_t alt_saved_y;
+static uint32_t alt_saved_scroll_top;
+static uint32_t alt_saved_scroll_bottom;
 static uint32_t fg_color = ANSI_DEFAULT_FG;
 static uint32_t bg_color = ANSI_DEFAULT_BG;
 static bool bold;
 static bool reverse_video;
+static bool insert_mode;
+static bool autowrap = true;
+static bool wrap_pending;
 static uint32_t alt_saved_fg;
 static uint32_t alt_saved_bg;
 static bool alt_saved_bold;
 static bool alt_saved_reverse;
+static bool alt_saved_wrap_pending;
 static bool cursor_visible = true;
 static bool cursor_drawn;
 static bool alternate_screen;
@@ -52,9 +60,13 @@ static bool csi_private;
 static int csi_params[CSI_PARAM_MAX];
 static uint8_t csi_count;
 static uint32_t utf8_codepoint;
+static uint32_t last_printable = ' ';
 static uint8_t utf8_left;
 static struct terminal_cell cells[MAX_TERM_COLS * MAX_TERM_ROWS];
 static struct terminal_cell primary_cells[MAX_TERM_COLS * MAX_TERM_ROWS];
+
+static void put_codepoint(uint32_t codepoint);
+static void redraw_rows(uint32_t top, uint32_t bottom);
 
 static const uint32_t ansi16[16] = {
   0x1d2229, 0xbf616a, 0xa3be8c, 0xebcb8b, 0x81a1c1, 0xb48ead, 0x88c0d0, 0xe5e9f0,
@@ -197,12 +209,42 @@ static void write_cell(uint32_t x, uint32_t y, uint32_t codepoint) {
   redraw_cell(x, y);
 }
 
+static void insert_cells(uint32_t n) {
+  if (cursor_y >= term_rows || cursor_x >= term_cols) { return; }
+  if (n == 0) { n = 1; }
+  if (n > term_cols - cursor_x) { n = term_cols - cursor_x; }
+  for (uint32_t col = term_cols; col-- > cursor_x + n;) {
+    *cell_at(col, cursor_y) = *cell_at(col - n, cursor_y);
+  }
+  for (uint32_t col = cursor_x; col < cursor_x + n; ++col) {
+    set_blank_cell(col, cursor_y);
+  }
+  redraw_rows(cursor_y, cursor_y);
+}
+
+static void delete_cells(uint32_t n) {
+  if (cursor_y >= term_rows || cursor_x >= term_cols) { return; }
+  if (n == 0) { n = 1; }
+  if (n > term_cols - cursor_x) { n = term_cols - cursor_x; }
+  for (uint32_t col = cursor_x; col + n < term_cols; ++col) {
+    *cell_at(col, cursor_y) = *cell_at(col + n, cursor_y);
+  }
+  for (uint32_t col = term_cols - n; col < term_cols; ++col) {
+    set_blank_cell(col, cursor_y);
+  }
+  redraw_rows(cursor_y, cursor_y);
+}
+
 static void erase_cell(uint32_t x, uint32_t y) {
   set_blank_cell(x, y);
   redraw_cell(x, y);
 }
 
 static void erase_display(int mode);
+static void reset_scroll_region(void) {
+  scroll_top = 0;
+  scroll_bottom = term_rows == 0 ? 0 : term_rows - 1u;
+}
 
 static void redraw_screen(void) {
   for (uint32_t row = 0; row < term_rows; ++row) {
@@ -221,13 +263,18 @@ static void enter_alternate_screen(void) {
   }
   alt_saved_x = cursor_x;
   alt_saved_y = cursor_y;
+  alt_saved_scroll_top = scroll_top;
+  alt_saved_scroll_bottom = scroll_bottom;
   alt_saved_fg = fg_color;
   alt_saved_bg = bg_color;
   alt_saved_bold = bold;
   alt_saved_reverse = reverse_video;
+  alt_saved_wrap_pending = wrap_pending;
   alternate_screen = true;
   cursor_x = 0;
   cursor_y = 0;
+  wrap_pending = false;
+  reset_scroll_region();
   erase_display(2);
 }
 
@@ -240,10 +287,13 @@ static void leave_alternate_screen(void) {
   }
   cursor_x = alt_saved_x;
   cursor_y = alt_saved_y;
+  scroll_top = alt_saved_scroll_top;
+  scroll_bottom = alt_saved_scroll_bottom;
   fg_color = alt_saved_fg;
   bg_color = alt_saved_bg;
   bold = alt_saved_bold;
   reverse_video = alt_saved_reverse;
+  wrap_pending = alt_saved_wrap_pending;
   alternate_screen = false;
   redraw_screen();
 }
@@ -256,6 +306,51 @@ static void draw_cursor(void) {
   cursor_drawn = true;
 }
 
+static void redraw_rows(uint32_t top, uint32_t bottom) {
+  if (bottom >= term_rows) { bottom = term_rows - 1u; }
+  for (uint32_t row = top; row <= bottom; ++row) {
+    for (uint32_t col = 0; col < term_cols; ++col) {
+      redraw_cell(col, row);
+    }
+  }
+}
+
+static void scroll_region_up(uint32_t top, uint32_t bottom, uint32_t count) {
+  if (top >= term_rows || bottom >= term_rows || top > bottom || count == 0) { return; }
+  uint32_t height = bottom - top + 1u;
+  if (count > height) { count = height; }
+
+  for (uint32_t row = top; row + count <= bottom; ++row) {
+    for (uint32_t col = 0; col < term_cols; ++col) {
+      *cell_at(col, row) = *cell_at(col, row + count);
+    }
+  }
+  for (uint32_t row = bottom - count + 1u; row <= bottom; ++row) {
+    for (uint32_t col = 0; col < term_cols; ++col) {
+      set_blank_cell(col, row);
+    }
+  }
+  redraw_rows(top, bottom);
+}
+
+static void scroll_region_down(uint32_t top, uint32_t bottom, uint32_t count) {
+  if (top >= term_rows || bottom >= term_rows || top > bottom || count == 0) { return; }
+  uint32_t height = bottom - top + 1u;
+  if (count > height) { count = height; }
+
+  for (uint32_t row = bottom + 1u; row-- > top + count;) {
+    for (uint32_t col = 0; col < term_cols; ++col) {
+      *cell_at(col, row) = *cell_at(col, row - count);
+    }
+  }
+  for (uint32_t row = top; row < top + count; ++row) {
+    for (uint32_t col = 0; col < term_cols; ++col) {
+      set_blank_cell(col, row);
+    }
+  }
+  redraw_rows(top, bottom);
+}
+
 static void hide_cursor(void) {
   if (!cursor_drawn) { return; }
   if (cursor_x < term_cols && cursor_y < term_rows) { redraw_cell(cursor_x, cursor_y); }
@@ -263,8 +358,12 @@ static void hide_cursor(void) {
 }
 
 static void scroll_if_needed(void) {
+  while (cursor_y > scroll_bottom) {
+    scroll_region_up(scroll_top, scroll_bottom, 1);
+    cursor_y = scroll_bottom;
+  }
   while (cursor_y >= term_rows) {
-    copy_cell_rows_up();
+    scroll_region_up(0, term_rows - 1u, 1);
     cursor_y = term_rows - 1u;
   }
 }
@@ -279,6 +378,13 @@ static void reset_attrs(void) {
   bg_color = ANSI_DEFAULT_BG;
   bold = false;
   reverse_video = false;
+}
+
+static void repeat_last_printable(uint32_t n) {
+  if (n == 0) { n = 1; }
+  for (uint32_t i = 0; i < n; ++i) {
+    put_codepoint(last_printable);
+  }
 }
 
 static void sgr(void) {
@@ -385,7 +491,28 @@ static void erase_chars(uint32_t n) {
   }
 }
 
+static void set_scroll_region(void) {
+  int top = param_or(0, 1);
+  int bottom = param_or(1, (int)term_rows);
+  if (top < 1) { top = 1; }
+  if (bottom < 1) { bottom = (int)term_rows; }
+  if ((uint32_t)bottom > term_rows) { bottom = (int)term_rows; }
+  if (top >= bottom) {
+    reset_scroll_region();
+    cursor_x = 0;
+    cursor_y = 0;
+    wrap_pending = false;
+    return;
+  }
+  scroll_top = (uint32_t)(top - 1);
+  scroll_bottom = (uint32_t)(bottom - 1);
+  cursor_x = 0;
+  cursor_y = 0;
+  wrap_pending = false;
+}
+
 static void csi_finish(char final) {
+  if (final != 'm' && final != 'b') { wrap_pending = false; }
   switch (final) {
   case 'm':
     sgr();
@@ -413,17 +540,37 @@ static void csi_finish(char final) {
     cursor_x += (uint32_t)param_or(0, 1);
     if (cursor_x >= term_cols) { cursor_x = term_cols - 1u; }
     break;
+  case 'a':
+    cursor_x += (uint32_t)param_or(0, 1);
+    if (cursor_x >= term_cols) { cursor_x = term_cols - 1u; }
+    break;
   case 'D': {
     uint32_t n = (uint32_t)param_or(0, 1);
     cursor_x = n > cursor_x ? 0 : cursor_x - n;
     break;
   }
+  case 'E':
+    cursor_y += (uint32_t)param_or(0, 1);
+    if (cursor_y >= term_rows) { cursor_y = term_rows - 1u; }
+    cursor_x = 0;
+    break;
+  case 'F': {
+    uint32_t n = (uint32_t)param_or(0, 1);
+    cursor_y = n > cursor_y ? 0 : cursor_y - n;
+    cursor_x = 0;
+    break;
+  }
   case 'G':
+  case '`':
     cursor_x = param_or(0, 1) <= 1 ? 0 : (uint32_t)(param_or(0, 1) - 1);
     if (cursor_x >= term_cols) { cursor_x = term_cols - 1u; }
     break;
   case 'd':
     cursor_y = param_or(0, 1) <= 1 ? 0 : (uint32_t)(param_or(0, 1) - 1);
+    if (cursor_y >= term_rows) { cursor_y = term_rows - 1u; }
+    break;
+  case 'e':
+    cursor_y += (uint32_t)param_or(0, 1);
     if (cursor_y >= term_rows) { cursor_y = term_rows - 1u; }
     break;
   case 'J':
@@ -432,8 +579,36 @@ static void csi_finish(char final) {
   case 'K':
     erase_line(param_or(0, 0));
     break;
+  case '@':
+    insert_cells((uint32_t)param_or(0, 1));
+    break;
+  case 'L': {
+    uint32_t bottom = cursor_y > scroll_bottom ? term_rows - 1u : scroll_bottom;
+    scroll_region_down(cursor_y, bottom, (uint32_t)param_or(0, 1));
+    break;
+  }
+  case 'P':
+    delete_cells((uint32_t)param_or(0, 1));
+    break;
+  case 'M': {
+    uint32_t bottom = cursor_y > scroll_bottom ? term_rows - 1u : scroll_bottom;
+    scroll_region_up(cursor_y, bottom, (uint32_t)param_or(0, 1));
+    break;
+  }
+  case 'S':
+    scroll_region_up(scroll_top, scroll_bottom, (uint32_t)param_or(0, 1));
+    break;
+  case 'T':
+    scroll_region_down(scroll_top, scroll_bottom, (uint32_t)param_or(0, 1));
+    break;
   case 'X':
     erase_chars((uint32_t)param_or(0, 1));
+    break;
+  case 'b':
+    repeat_last_printable((uint32_t)param_or(0, 1));
+    break;
+  case 'r':
+    set_scroll_region();
     break;
   case 's':
     saved_x = cursor_x;
@@ -446,16 +621,24 @@ static void csi_finish(char final) {
   case 'h':
     if (csi_private && param_or(0, 0) == 25) {
       cursor_visible = true;
+    } else if (csi_private && param_or(0, 0) == 7) {
+      autowrap = true;
     } else if (csi_private && param_or(0, 0) == 1049) {
       enter_alternate_screen();
+    } else if (!csi_private && param_or(0, 0) == 4) {
+      insert_mode = true;
     }
     break;
   case 'l':
     if (csi_private && param_or(0, 0) == 25) {
       cursor_visible = false;
       hide_cursor();
+    } else if (csi_private && param_or(0, 0) == 7) {
+      autowrap = false;
     } else if (csi_private && param_or(0, 0) == 1049) {
       leave_alternate_screen();
+    } else if (!csi_private && param_or(0, 0) == 4) {
+      insert_mode = false;
     }
     break;
   default:
@@ -482,20 +665,24 @@ static void csi_next_param(void) {
 
 static void put_codepoint(uint32_t codepoint) {
   if (codepoint == '\n') {
+    wrap_pending = false;
     cursor_x = 0;
     ++cursor_y;
     scroll_if_needed();
     return;
   }
   if (codepoint == '\r') {
+    wrap_pending = false;
     cursor_x = 0;
     return;
   }
   if (codepoint == '\b') {
+    wrap_pending = false;
     if (cursor_x > 0) { --cursor_x; }
     return;
   }
   if (codepoint == '\t') {
+    wrap_pending = false;
     cursor_x = (cursor_x + 8u) & ~7u;
     if (cursor_x >= term_cols) {
       cursor_x = 0;
@@ -506,12 +693,23 @@ static void put_codepoint(uint32_t codepoint) {
   }
   if (codepoint < 0x20) { return; }
 
-  write_cell(cursor_x, cursor_y, codepoint);
-  ++cursor_x;
-  if (cursor_x >= term_cols) {
+  if (wrap_pending) {
     cursor_x = 0;
     ++cursor_y;
+    wrap_pending = false;
     scroll_if_needed();
+  }
+  last_printable = codepoint;
+  if (insert_mode) { insert_cells(1); }
+  write_cell(cursor_x, cursor_y, codepoint);
+  if (cursor_x + 1u >= term_cols) {
+    if (autowrap) {
+      wrap_pending = true;
+    } else {
+      cursor_x = term_cols - 1u;
+    }
+  } else {
+    ++cursor_x;
   }
 }
 
@@ -580,13 +778,34 @@ static void terminal_feed(uint8_t byte) {
     } else if (byte == '8') {
       cursor_x = saved_x;
       cursor_y = saved_y;
+      wrap_pending = false;
     } else if (byte == 'c') {
       cursor_x = 0;
       cursor_y = 0;
       saved_x = 0;
       saved_y = 0;
+      reset_scroll_region();
+      insert_mode = false;
+      autowrap = true;
+      wrap_pending = false;
       reset_attrs();
       erase_display(2);
+    } else if (byte == 'D') {
+      wrap_pending = false;
+      ++cursor_y;
+      scroll_if_needed();
+    } else if (byte == 'E') {
+      wrap_pending = false;
+      cursor_x = 0;
+      ++cursor_y;
+      scroll_if_needed();
+    } else if (byte == 'M') {
+      wrap_pending = false;
+      if (cursor_y == scroll_top) {
+        scroll_region_down(scroll_top, scroll_bottom, 1);
+      } else if (cursor_y > 0) {
+        --cursor_y;
+      }
     }
     esc_state = 0;
     return;
@@ -612,46 +831,81 @@ static void terminal_feed(uint8_t byte) {
   feed_printable_byte(byte);
 }
 
-bool framebuffer_init(const struct spore_boot_info *boot) {
+static bool configure_framebuffer(const struct spore_boot_info *boot, bool preserve) {
   if (boot == NULL || boot->framebuffer_phys == 0 || boot->framebuffer_size == 0 || boot->framebuffer_width == 0 ||
       boot->framebuffer_height == 0 || boot->framebuffer_pixels_per_scanline < boot->framebuffer_width ||
       (boot->framebuffer_format != SPORE_FB_FORMAT_RGBX8888 && boot->framebuffer_format != SPORE_FB_FORMAT_BGRX8888)) {
     return false;
   }
 
+  uint32_t new_cols = boot->framebuffer_width / TERMINUS_FONT_WIDTH;
+  uint32_t new_rows = boot->framebuffer_height / TERMINUS_FONT_HEIGHT;
+  if (new_cols < 40 || new_rows < 12 || new_cols > MAX_TERM_COLS || new_rows > MAX_TERM_ROWS) { return false; }
+
+  uint32_t old_cols = term_cols;
+  uint32_t old_rows = term_rows;
   fb_base = (uint8_t *)(uintptr_t)(boot->hhdm_offset + boot->framebuffer_phys);
   fb_width = boot->framebuffer_width;
   fb_height = boot->framebuffer_height;
   fb_stride = boot->framebuffer_pixels_per_scanline;
   fb_format = boot->framebuffer_format;
-  term_cols = fb_width / TERMINUS_FONT_WIDTH;
-  term_rows = fb_height / TERMINUS_FONT_HEIGHT;
-  if (term_cols < 40 || term_rows < 12 || term_cols > MAX_TERM_COLS || term_rows > MAX_TERM_ROWS) {
-    fb_base = NULL;
-    return false;
-  }
+  term_cols = new_cols;
+  term_rows = new_rows;
 
-  cursor_x = 0;
-  cursor_y = 0;
-  saved_x = 0;
-  saved_y = 0;
-  cursor_visible = true;
   cursor_drawn = false;
-  alternate_screen = false;
   pending_flush_chars = 0;
   blink_ticks = 0;
-  esc_state = 0;
-  utf8_left = 0;
-  reset_attrs();
+
+  if (!preserve) {
+    cursor_x = 0;
+    cursor_y = 0;
+    saved_x = 0;
+    saved_y = 0;
+    cursor_visible = true;
+    alternate_screen = false;
+    reset_scroll_region();
+    insert_mode = false;
+    autowrap = true;
+    wrap_pending = false;
+    esc_state = 0;
+    utf8_left = 0;
+    reset_attrs();
+  } else {
+    if (cursor_x >= term_cols) { cursor_x = term_cols - 1u; }
+    if (cursor_y >= term_rows) { cursor_y = term_rows - 1u; }
+    if (saved_x >= term_cols) { saved_x = term_cols - 1u; }
+    if (saved_y >= term_rows) { saved_y = term_rows - 1u; }
+    if (alt_saved_x >= term_cols) { alt_saved_x = term_cols - 1u; }
+    if (alt_saved_y >= term_rows) { alt_saved_y = term_rows - 1u; }
+    if (scroll_top >= term_rows || scroll_bottom >= term_rows || scroll_top >= scroll_bottom) { reset_scroll_region(); }
+    if (alt_saved_scroll_top >= term_rows || alt_saved_scroll_bottom >= term_rows ||
+        alt_saved_scroll_top >= alt_saved_scroll_bottom) {
+      alt_saved_scroll_top = 0;
+      alt_saved_scroll_bottom = term_rows - 1u;
+    }
+  }
+
   for (uint32_t row = 0; row < term_rows; ++row) {
     for (uint32_t col = 0; col < term_cols; ++col) {
-      set_blank_cell(col, row);
-      primary_cells[row * MAX_TERM_COLS + col] = *cell_at(col, row);
+      bool new_cell = !preserve || row >= old_rows || col >= old_cols;
+      if (new_cell) {
+        set_blank_cell(col, row);
+        primary_cells[row * MAX_TERM_COLS + col] = *cell_at(col, row);
+      }
     }
   }
   fill_rect(0, 0, term_cols * TERMINUS_FONT_WIDTH, term_rows * TERMINUS_FONT_HEIGHT, bg_color);
+  redraw_screen();
   draw_cursor();
   return true;
+}
+
+bool framebuffer_init(const struct spore_boot_info *boot) {
+  return configure_framebuffer(boot, false);
+}
+
+bool framebuffer_resize(const struct spore_boot_info *boot) {
+  return configure_framebuffer(boot, fb_base != NULL);
 }
 
 bool framebuffer_ready(void) {
@@ -674,7 +928,9 @@ void framebuffer_flush(void) {
 }
 
 void framebuffer_tick(void) {
-  if (fb_base == NULL || flush_display == NULL || !cursor_visible) { return; }
+  if (fb_base == NULL || flush_display == NULL) { return; }
+  if (pending_flush_chars != 0) { framebuffer_flush(); }
+  if (!cursor_visible) { return; }
   ++blink_ticks;
   if (blink_ticks < 200) { return; }
   blink_ticks = 0;

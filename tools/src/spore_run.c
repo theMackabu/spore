@@ -1098,7 +1098,7 @@ int main(int argc, char **argv) {
   const char *memory = "8G";
   const char *smp = "4";
   const char *vars = NULL;
-  const char *display = "cocoa,show-cursor=on";
+  const char *display = "cocoa,show-cursor=off,full-screen=on";
   bool timings = false;
   bool mirror_log = false;
   bool framebuffer = false;

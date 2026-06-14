@@ -444,7 +444,7 @@ static void install_pending_framebuffer(void) {
     .framebuffer_pixels_per_scanline = fb_width,
     .framebuffer_format = SPORE_FB_FORMAT_BGRX8888,
   };
-  (void)framebuffer_init(&resized);
+  (void)framebuffer_resize(&resized);
   framebuffer_set_flush(virtio_gpu_flush);
   flush_dirty = true;
 }
