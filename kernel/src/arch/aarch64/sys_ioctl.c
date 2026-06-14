@@ -39,7 +39,7 @@ enum {
   FIONCLEX = 0x5450,
   FIOCLEX = 0x5451,
   FD_CLOEXEC = 1,
-  NCCS = 32,
+  NCCS = 19,
   I32_MAX = 2147483647,
 };
 
@@ -50,9 +50,9 @@ struct termios64 {
   uint32_t c_lflag;
   uint8_t c_line;
   uint8_t c_cc[NCCS];
-  uint32_t c_ispeed;
-  uint32_t c_ospeed;
 };
+
+_Static_assert(sizeof(struct termios64) == 36, "linux arm64 TCGETS termios ABI size");
 
 struct winsize64 {
   uint16_t ws_row;
@@ -235,8 +235,6 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
       .c_lflag = file != NULL && file->type == OPEN_PTY ? cell_pty_lflag(file) : cell_tty_lflag(),
       .c_line = 0,
       .c_cc = {0},
-      .c_ispeed = 38400,
-      .c_ospeed = 38400,
     };
     tio.c_cc[0] = 3;
     tio.c_cc[2] = file != NULL && file->type == OPEN_PTY ? cell_pty_erase_char(file) : cell_tty_erase_char();

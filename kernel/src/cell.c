@@ -9,6 +9,7 @@
 #include "proc/fd.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
+#include "proc/signal.h"
 #include "proc/snapshot.h"
 #include "proc/socket.h"
 #include "proc/thread.h"
@@ -197,6 +198,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
       return;
     }
   }
+  if (from_lower_el && cell_deliver_pending_signals_current(frame)) { return; }
   if (from_lower_el) { cell_schedule(frame); }
 }
 

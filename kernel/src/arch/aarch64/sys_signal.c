@@ -95,11 +95,7 @@ int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set,
     thread->signal_mask = mask;
     if (thread->pending_signals != 0 && frame != NULL) {
       frame->x[0] = 0;
-      thread->tf = *frame;
-      if (cell_deliver_pending_signals(thread)) {
-        *frame = thread->tf;
-        return CELL_SWITCHED;
-      }
+      if (cell_deliver_pending_signals_current(frame)) { return CELL_SWITCHED; }
     }
   }
   return 0;

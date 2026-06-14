@@ -4,6 +4,7 @@
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/vmm.h"
+#include "proc/signal.h"
 #include "vfs.h"
 
 #include <stdbool.h>
@@ -839,5 +840,8 @@ void handle_lower_sync(struct trap_frame *frame) {
     return;
   }
   int64_t ret = dispatch(frame);
-  if (ret != SYSCALL_SWITCHED) { frame->x[0] = (uint64_t)ret; }
+  if (ret != SYSCALL_SWITCHED) {
+    frame->x[0] = (uint64_t)ret;
+    (void)cell_deliver_pending_signals_current(frame);
+  }
 }

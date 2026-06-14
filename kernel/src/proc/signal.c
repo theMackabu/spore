@@ -96,6 +96,13 @@ struct signal_frame64 {
   struct trap_frame saved;
 };
 
+static_assert(offsetof(struct siginfo64, fields.si_addr) == 16, "linux arm64 siginfo si_addr offset");
+static_assert(offsetof(struct ucontext64, uc_mcontext) == 176, "linux arm64 ucontext mcontext offset");
+static_assert(offsetof(struct sigcontext64, regs) == 8, "linux arm64 sigcontext regs offset");
+static_assert(offsetof(struct sigcontext64, sp) == 256, "linux arm64 sigcontext sp offset");
+static_assert(offsetof(struct sigcontext64, pc) == 264, "linux arm64 sigcontext pc offset");
+static_assert(offsetof(struct sigcontext64, pstate) == 272, "linux arm64 sigcontext pstate offset");
+
 static struct domain *current_domain(void) {
   return cell_current_domain_internal();
 }
@@ -176,6 +183,16 @@ static bool wait_reason_is_restartable(enum wait_reason reason) {
          reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FUTEX;
 }
 
+static bool thread_requires_deferred_signal_frame(const struct thread *thread) {
+  return thread != NULL && thread != cell_current_thread_internal() && thread->state == THREAD_RUNNABLE &&
+         thread->running_cpu >= 0;
+}
+
+static void queue_signal_to_thread(struct thread *thread, int signal) {
+  thread->pending_signals |= signal_bit(signal);
+  __asm__ volatile("sev" ::: "memory");
+}
+
 bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   return cell_deliver_signal_to_thread_fault(thread, signal, 0, 0);
 }
@@ -183,7 +200,7 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
 bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint64_t fault_addr, int sig_code) {
   if (thread == NULL || thread->domain == NULL || signal <= 0 || signal >= (int)NSIG) { return false; }
   if (signal_is_blocked(thread, signal)) {
-    thread->pending_signals |= signal_bit(signal);
+    queue_signal_to_thread(thread, signal);
     return false;
   }
   struct domain *domain = thread->domain;
@@ -197,6 +214,10 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
   if (action->restorer == 0) {
     terminate_domain_by_signal(domain, signal);
     return true;
+  }
+  if (thread_requires_deferred_signal_frame(thread)) {
+    queue_signal_to_thread(thread, signal);
+    return false;
   }
 
   if (thread->state == THREAD_BLOCKED) {
@@ -271,6 +292,19 @@ bool cell_deliver_pending_signals(struct thread *thread) {
   return false;
 }
 
+bool cell_deliver_pending_signals_current(struct trap_frame *frame) {
+  struct thread *thread = cell_current_thread_internal();
+  if (thread == NULL || frame == NULL || thread->pending_signals == 0) { return false; }
+  thread->tf = *frame;
+  bool delivered = cell_deliver_pending_signals(thread);
+  *frame = thread->tf;
+  if (thread->state == THREAD_ZOMBIE) {
+    cell_schedule(frame);
+    return true;
+  }
+  return delivered;
+}
+
 bool cell_signal_current(int signal, struct trap_frame *frame) {
   return cell_signal_current_fault(signal, frame, 0, 0);
 }
@@ -342,8 +376,7 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
   if (thread != NULL) {
     thread->tf = *frame;
     thread->signal_mask = signal_mask_sanitized(sigframe.saved_signal_mask);
-    cell_deliver_pending_signals(thread);
-    *frame = thread->tf;
+    (void)cell_deliver_pending_signals_current(frame);
   }
   return 0;
 }

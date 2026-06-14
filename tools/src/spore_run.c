@@ -234,8 +234,8 @@ static const struct bench_command bench_commands[] = {
 
 static void usage(void) {
   fputs("usage: spore-run [--mode plain|filter|shell|stdin|bench|rng] [--framebuffer] [--display DISPLAY] "
-        "[--timings] [--log-to-stderr] --image IMAGE [--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] "
-        "[--cpu CPU] [--memory MEM] [--smp N] [--vars VARS_FD]\n",
+        "[--timings] --image IMAGE [--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--memory MEM] "
+        "[--smp N] [--vars VARS_FD]\n",
         stderr);
   exit(2);
 }
@@ -500,8 +500,7 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
                             const char *accel, const char *cpu, const char *memory, const char *smp, const char *vars,
                             char *firmware_arg, size_t firmware_cap, char *vars_arg, size_t vars_cap,
                             char *image_drive_arg, size_t image_drive_cap, char *root_drive_arg, size_t root_drive_cap,
-                            int log_fd, char *log_chardev_arg, size_t log_chardev_cap, bool framebuffer,
-                            const char *display) {
+                            bool framebuffer, const char *display) {
   char firmware[PATH_CAP];
   if (!find_firmware(qemu, firmware, sizeof(firmware))) {
     fputs("spore-run: edk2-aarch64-code.fd not found\n", stderr);
@@ -512,7 +511,6 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
   if (vars != NULL) { snprintf(vars_arg, vars_cap, "if=pflash,format=raw,file=%s", vars); }
   snprintf(image_drive_arg, image_drive_cap, "if=none,format=raw,readonly=on,file=%s,id=sporeesp", image);
   if (root != NULL) { snprintf(root_drive_arg, root_drive_cap, "if=none,format=raw,file=%s,id=sporeroot", root); }
-  snprintf(log_chardev_arg, log_chardev_cap, "file,id=sporelog,path=/dev/fd/%d", log_fd);
   int i = 0;
   argv[i++] = (char *)qemu;
   argv[i++] = "-M";
@@ -531,12 +529,6 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
   argv[i++] = "user,id=sporenet";
   argv[i++] = "-device";
   argv[i++] = "virtio-net-device,netdev=sporenet,mac=52:54:00:12:34:56";
-  argv[i++] = "-chardev";
-  argv[i++] = log_chardev_arg;
-  argv[i++] = "-device";
-  argv[i++] = "virtio-serial-device";
-  argv[i++] = "-device";
-  argv[i++] = "virtconsole,chardev=sporelog,name=spore.log";
   argv[i++] = "-boot";
   argv[i++] = "order=d,menu=off,strict=on";
   argv[i++] = "-drive";
@@ -703,6 +695,13 @@ static void write_serial_output(const char *chunk, size_t n, struct startup_seri
   startup->len = 0;
 }
 
+static void flush_startup_serial(struct startup_serial *startup) {
+  if (startup == NULL || startup->done || startup->len == 0) { return; }
+  write_raw_to(startup->buf, startup->len, stdout);
+  startup->done = true;
+  startup->len = 0;
+}
+
 struct boot_milestone {
   const char *needle;
   const char *label;
@@ -812,7 +811,7 @@ static void drain_available(int fd, char *buf, size_t *len, bool print_boot_outp
   if (old_flags >= 0) { (void)fcntl(fd, F_SETFL, old_flags); }
 }
 
-static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mirror_log, int log_pipe[2]) {
+static int run_harness(char **qemu_argv, const char *mode, bool timings) {
   int in_pipe[2];
   int serial_pipe[2];
   if (pipe(in_pipe) != 0 || pipe(serial_pipe) != 0) {
@@ -832,14 +831,12 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
     close(in_pipe[1]);
     close(serial_pipe[0]);
     close(serial_pipe[1]);
-    close(log_pipe[0]);
     execvp(qemu_argv[0], qemu_argv);
     perror(qemu_argv[0]);
     _exit(127);
   }
   close(in_pipe[0]);
   close(serial_pipe[1]);
-  close(log_pipe[1]);
   pid_t echo_pid = start_udp_echo_server();
   pid_t http_pid = start_http_server();
   resize_pending = 1;
@@ -892,7 +889,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
     int status = 0;
     if (waitpid(pid, &status, WNOHANG) == pid) {
       drain_available(serial_pipe[0], buf, &len, plain || shell, false, stderr, &startup_serial);
-      drain_available(log_pipe[0], buf, &len, false, mirror_log, stderr, &startup_serial);
+      if (plain || shell) { flush_startup_serial(&startup_serial); }
       if (rng && rng_sample[0] != '\0') { printf("[rng] %s\n", rng_sample); }
       if (strcmp(mode, "filter") == 0 || strcmp(mode, "stdin") == 0) {
         print_filtered(buf);
@@ -931,9 +928,8 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(serial_pipe[0], &rfds);
-    FD_SET(log_pipe[0], &rfds);
     if (interactive) { FD_SET(STDIN_FILENO, &rfds); }
-    int max_fd = serial_pipe[0] > log_pipe[0] ? serial_pipe[0] : log_pipe[0];
+    int max_fd = serial_pipe[0];
     if (interactive && STDIN_FILENO > max_fd) { max_fd = STDIN_FILENO; }
     struct timeval tv = {.tv_sec = 0, .tv_usec = 50000};
     int ready = select(max_fd + 1, &rfds, NULL, NULL, &tv);
@@ -951,15 +947,6 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings, bool mi
           record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
                         start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
           if (plain || shell) { write_serial_output(chunk, (size_t)n, &startup_serial); }
-        }
-      }
-      if (FD_ISSET(log_pipe[0], &rfds)) {
-        ssize_t n = read(log_pipe[0], chunk, sizeof(chunk));
-        if (n > 0) {
-          if (shell) { last_shell_output_at = now_seconds(); }
-          if (mirror_log) { write_raw_to(chunk, (size_t)n, stderr); }
-          record_output(buf, &len, chunk, (size_t)n, milestones, sizeof(milestones) / sizeof(milestones[0]), timings,
-                        start, &first_output, &first_output_at, &timing_summary_printed, log_stream);
         }
       }
       if (len > 0) {
@@ -1108,15 +1095,12 @@ int main(int argc, char **argv) {
   const char *vars = NULL;
   const char *display = "cocoa,show-cursor=off,full-screen=on";
   bool timings = false;
-  bool mirror_log = false;
   bool framebuffer = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
       mode = argv[++i];
     } else if (strcmp(argv[i], "--timings") == 0) {
       timings = true;
-    } else if (strcmp(argv[i], "--log-to-stderr") == 0) {
-      mirror_log = true;
     } else if (strcmp(argv[i], "--framebuffer") == 0) {
       framebuffer = true;
     } else if (strcmp(argv[i], "--display") == 0 && i + 1 < argc) {
@@ -1146,22 +1130,15 @@ int main(int argc, char **argv) {
   char vars_arg[PATH_CAP];
   char image_drive_arg[PATH_CAP];
   char root_drive_arg[PATH_CAP];
-  char log_chardev_arg[PATH_CAP];
-  int log_pipe[2];
-  if (pipe(log_pipe) != 0) {
-    perror("pipe");
-    return 1;
-  }
   char *qemu_argv[96];
   int qemu_argc = 0;
   build_qemu_args(qemu_argv, &qemu_argc, qemu, image, root, accel, cpu, memory, smp, vars, firmware_arg,
                   sizeof(firmware_arg), vars_arg, sizeof(vars_arg), image_drive_arg, sizeof(image_drive_arg),
-                  root_drive_arg, sizeof(root_drive_arg), log_pipe[1], log_chardev_arg, sizeof(log_chardev_arg),
-                  framebuffer, display);
+                  root_drive_arg, sizeof(root_drive_arg), framebuffer, display);
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
       strcmp(mode, "stdin") == 0 || strcmp(mode, "bench") == 0 || strcmp(mode, "rng") == 0) {
-    return run_harness(qemu_argv, mode, timings, mirror_log, log_pipe);
+    return run_harness(qemu_argv, mode, timings);
   }
   usage();
   return 2;
