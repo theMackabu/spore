@@ -511,6 +511,24 @@ static void set_scroll_region(void) {
   wrap_pending = false;
 }
 
+static void set_private_modes(bool enabled) {
+  for (uint8_t i = 0; i < csi_count; ++i) {
+    int mode = param_or(i, 0);
+    if (mode == 25) {
+      cursor_visible = enabled;
+      if (!enabled) { hide_cursor(); }
+    } else if (mode == 7) {
+      autowrap = enabled;
+    } else if (mode == 1049) {
+      if (enabled) {
+        enter_alternate_screen();
+      } else {
+        leave_alternate_screen();
+      }
+    }
+  }
+}
+
 static void csi_finish(char final) {
   if (final != 'm' && final != 'b') { wrap_pending = false; }
   switch (final) {
@@ -619,24 +637,15 @@ static void csi_finish(char final) {
     cursor_y = saved_y;
     break;
   case 'h':
-    if (csi_private && param_or(0, 0) == 25) {
-      cursor_visible = true;
-    } else if (csi_private && param_or(0, 0) == 7) {
-      autowrap = true;
-    } else if (csi_private && param_or(0, 0) == 1049) {
-      enter_alternate_screen();
+    if (csi_private) {
+      set_private_modes(true);
     } else if (!csi_private && param_or(0, 0) == 4) {
       insert_mode = true;
     }
     break;
   case 'l':
-    if (csi_private && param_or(0, 0) == 25) {
-      cursor_visible = false;
-      hide_cursor();
-    } else if (csi_private && param_or(0, 0) == 7) {
-      autowrap = false;
-    } else if (csi_private && param_or(0, 0) == 1049) {
-      leave_alternate_screen();
+    if (csi_private) {
+      set_private_modes(false);
     } else if (!csi_private && param_or(0, 0) == 4) {
       insert_mode = false;
     }
@@ -666,7 +675,6 @@ static void csi_next_param(void) {
 static void put_codepoint(uint32_t codepoint) {
   if (codepoint == '\n') {
     wrap_pending = false;
-    cursor_x = 0;
     ++cursor_y;
     scroll_if_needed();
     return;

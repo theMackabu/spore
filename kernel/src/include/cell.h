@@ -550,6 +550,8 @@ uint64_t cell_cpu_busy_ticks(uint32_t cpu);
 uint64_t cell_cpu_idle_ticks(uint32_t cpu);
 void cell_loadavg_scaled(uint64_t out[3]);
 uint64_t cell_boot_epoch_seconds(void);
+uint32_t cell_tty_oflag(void);
+void cell_tty_set_oflag(uint32_t oflag);
 uint32_t cell_tty_lflag(void);
 void cell_tty_set_lflag(uint32_t lflag);
 uint8_t cell_tty_erase_char(void);

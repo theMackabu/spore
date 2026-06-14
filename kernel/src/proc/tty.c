@@ -9,12 +9,15 @@
 
 enum {
   EINTR = 4,
+  TTY_OPOST = 0000001,
+  TTY_ONLCR = 0000004,
   TTY_ISIG = 0000001,
   TTY_ICANON = 0000002,
   TTY_ECHO = 0000010,
   SIGINT = 2,
 };
 
+static uint32_t tty_oflag = TTY_OPOST | TTY_ONLCR;
 static uint32_t tty_lflag = TTY_ISIG | TTY_ICANON | TTY_ECHO;
 static uint8_t tty_erase = 0x7f;
 static char tty_line[8192];
@@ -32,6 +35,7 @@ static bool tty_prompt_active;
 static int tty_foreground_pgrp;
 
 void cell_tty_reset(void) {
+  tty_oflag = TTY_OPOST | TTY_ONLCR;
   tty_lflag = TTY_ISIG | TTY_ICANON | TTY_ECHO;
   tty_erase = 0x7f;
   tty_line_len = 0;
@@ -72,8 +76,17 @@ static bool tty_echo(void) {
 }
 
 static void tty_putc(char c) {
+  if (c == '\n' && (tty_oflag & TTY_OPOST) != 0 && (tty_oflag & TTY_ONLCR) != 0) { framebuffer_putc('\r'); }
   framebuffer_putc(c);
   pl011_putc(c);
+}
+
+uint32_t cell_tty_oflag(void) {
+  return tty_oflag;
+}
+
+void cell_tty_set_oflag(uint32_t oflag) {
+  tty_oflag = oflag;
 }
 
 uint32_t cell_tty_lflag(void) {
