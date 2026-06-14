@@ -76,9 +76,12 @@ static bool tty_echo(void) {
 }
 
 static void tty_putc(char c) {
+  if (!framebuffer_ready()) {
+    pl011_putc(c);
+    return;
+  }
   if (c == '\n' && (tty_oflag & TTY_OPOST) != 0 && (tty_oflag & TTY_ONLCR) != 0) { framebuffer_putc('\r'); }
   framebuffer_putc(c);
-  pl011_putc(c);
 }
 
 uint32_t cell_tty_oflag(void) {

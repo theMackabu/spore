@@ -30,8 +30,9 @@ static bool wanted_codepoint(int codepoint) {
   if (codepoint >= 0x2500 && codepoint < 0x25a0) { return true; }
 
   static const int extra[] = {
-    0x2190, 0x2191, 0x2192, 0x2193, 0x21b5, 0x2219, 0x221a, 0x221e, 0x2260, 0x2261,
-    0x2264, 0x2265, 0x2320, 0x2321, 0x23ba, 0x23bb, 0x23bc, 0x23bd, 0xfffd,
+    0x203a, 0x2190, 0x2191, 0x2192, 0x2193, 0x21b5, 0x2219, 0x221a, 0x221e, 0x2260,
+    0x2261, 0x2264, 0x2265, 0x2320, 0x2321, 0x23ba, 0x23bb, 0x23bc, 0x23bd, 0x276f,
+    0xfffd,
   };
   for (size_t i = 0; i < sizeof(extra) / sizeof(extra[0]); ++i) {
     if (codepoint == extra[i]) { return true; }
@@ -57,6 +58,14 @@ static struct glyph *upsert_glyph(struct glyph_set *set, uint32_t codepoint) {
   memset(glyph, 0, sizeof(*glyph));
   glyph->codepoint = codepoint;
   return glyph;
+}
+
+static void clone_glyph_if_missing(struct glyph_set *set, uint32_t dst_codepoint, uint32_t src_codepoint) {
+  if (find_glyph(set, dst_codepoint) != NULL) { return; }
+  struct glyph *src = find_glyph(set, src_codepoint);
+  if (src == NULL) { return; }
+  struct glyph *dst = upsert_glyph(set, dst_codepoint);
+  memcpy(dst->rows, src->rows, sizeof(dst->rows));
 }
 
 static int compare_glyphs(const void *a, const void *b) {
@@ -198,6 +207,7 @@ static void parse_bdf(const char *path, int *width_out, int *height_out, struct 
       memcpy(replacement->rows, question->rows, sizeof(replacement->rows));
     }
   }
+  clone_glyph_if_missing(set, 0x276f, 0x203a);
   qsort(set->glyphs, set->count, sizeof(set->glyphs[0]), compare_glyphs);
   *width_out = font_width;
   *height_out = font_height;

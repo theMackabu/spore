@@ -50,7 +50,10 @@ static bool alt_saved_bold;
 static bool alt_saved_reverse;
 static bool alt_saved_wrap_pending;
 static bool cursor_visible = true;
+static bool cursor_blink_on = true;
 static bool cursor_drawn;
+static uint32_t cursor_drawn_x;
+static uint32_t cursor_drawn_y;
 static bool alternate_screen;
 static void (*flush_display)(void);
 static uint32_t pending_flush_chars;
@@ -67,6 +70,9 @@ static struct terminal_cell primary_cells[MAX_TERM_COLS * MAX_TERM_ROWS];
 
 static void put_codepoint(uint32_t codepoint);
 static void redraw_rows(uint32_t top, uint32_t bottom);
+static bool cursor_over_cell(uint32_t x, uint32_t y);
+static void hide_cursor(void);
+static void sync_cursor_overlay(void);
 
 static const uint32_t ansi16[16] = {
   0x1d2229, 0xbf616a, 0xa3be8c, 0xebcb8b, 0x81a1c1, 0xb48ead, 0x88c0d0, 0xe5e9f0,
@@ -196,8 +202,13 @@ static void draw_glyph_at(uint32_t cell_x, uint32_t cell_y, uint32_t codepoint, 
 }
 
 static void redraw_cell(uint32_t x, uint32_t y) {
+  if (cursor_over_cell(x, y)) { cursor_drawn = false; }
   const struct terminal_cell *cell = cell_at(x, y);
   draw_glyph_at(x, y, cell->codepoint, cell->fg, cell->bg, cell->bold);
+}
+
+static bool cursor_over_cell(uint32_t x, uint32_t y) {
+  return cursor_drawn && cursor_drawn_x == x && cursor_drawn_y == y;
 }
 
 static void write_cell(uint32_t x, uint32_t y, uint32_t codepoint) {
@@ -299,10 +310,16 @@ static void leave_alternate_screen(void) {
 }
 
 static void draw_cursor(void) {
-  if (!cursor_visible || cursor_drawn || cursor_x >= term_cols || cursor_y >= term_rows) { return; }
+  if (!cursor_visible || cursor_x >= term_cols || cursor_y >= term_rows) { return; }
+  if (cursor_drawn) {
+    if (cursor_drawn_x == cursor_x && cursor_drawn_y == cursor_y) { return; }
+    hide_cursor();
+  }
   uint32_t px = cursor_x * TERMINUS_FONT_WIDTH;
   uint32_t py = cursor_y * TERMINUS_FONT_HEIGHT + TERMINUS_FONT_HEIGHT - 3u;
   fill_rect(px, py, TERMINUS_FONT_WIDTH, 3, current_fg());
+  cursor_drawn_x = cursor_x;
+  cursor_drawn_y = cursor_y;
   cursor_drawn = true;
 }
 
@@ -353,8 +370,19 @@ static void scroll_region_down(uint32_t top, uint32_t bottom, uint32_t count) {
 
 static void hide_cursor(void) {
   if (!cursor_drawn) { return; }
-  if (cursor_x < term_cols && cursor_y < term_rows) { redraw_cell(cursor_x, cursor_y); }
+  if (cursor_drawn_x < term_cols && cursor_drawn_y < term_rows) {
+    const struct terminal_cell *cell = cell_at(cursor_drawn_x, cursor_drawn_y);
+    draw_glyph_at(cursor_drawn_x, cursor_drawn_y, cell->codepoint, cell->fg, cell->bg, cell->bold);
+  }
   cursor_drawn = false;
+}
+
+static void sync_cursor_overlay(void) {
+  if (cursor_visible && cursor_blink_on) {
+    draw_cursor();
+  } else {
+    hide_cursor();
+  }
 }
 
 static void scroll_if_needed(void) {
@@ -516,7 +544,13 @@ static void set_private_modes(bool enabled) {
     int mode = param_or(i, 0);
     if (mode == 25) {
       cursor_visible = enabled;
-      if (!enabled) { hide_cursor(); }
+      if (enabled) {
+        cursor_blink_on = true;
+        blink_ticks = 0;
+      } else {
+        cursor_blink_on = false;
+        hide_cursor();
+      }
     } else if (mode == 7) {
       autowrap = enabled;
     } else if (mode == 1049) {
@@ -861,6 +895,7 @@ static bool configure_framebuffer(const struct spore_boot_info *boot, bool prese
   term_rows = new_rows;
 
   cursor_drawn = false;
+  cursor_blink_on = true;
   pending_flush_chars = 0;
   blink_ticks = 0;
 
@@ -931,31 +966,28 @@ void framebuffer_set_flush(void (*flush)(void)) {
 
 void framebuffer_flush(void) {
   if (flush_display == NULL) { return; }
+  sync_cursor_overlay();
   pending_flush_chars = 0;
   flush_display();
 }
 
 void framebuffer_tick(void) {
   if (fb_base == NULL || flush_display == NULL) { return; }
-  if (pending_flush_chars != 0) { framebuffer_flush(); }
-  if (!cursor_visible) { return; }
-  ++blink_ticks;
-  if (blink_ticks < 200) { return; }
-  blink_ticks = 0;
-  if (cursor_drawn) {
-    hide_cursor();
-  } else {
-    draw_cursor();
+  bool dirty = pending_flush_chars != 0;
+  if (cursor_visible) {
+    ++blink_ticks;
+    if (blink_ticks >= 200) {
+      blink_ticks = 0;
+      cursor_blink_on = !cursor_blink_on;
+      dirty = true;
+    }
   }
-  framebuffer_flush();
+  if (dirty) { framebuffer_flush(); }
 }
 
 void framebuffer_putc(char c) {
   if (fb_base == NULL) { return; }
-  hide_cursor();
   terminal_feed((uint8_t)c);
-  draw_cursor();
-  blink_ticks = 0;
   ++pending_flush_chars;
   if (pending_flush_chars >= 128) { framebuffer_flush(); }
 }
