@@ -17,6 +17,10 @@ enum {
   TCSETS = 0x5402,
   TCSETSW = 0x5403,
   TCSETSF = 0x5404,
+  TCGETS2 = 0x802c542a,
+  TCSETS2 = 0x402c542b,
+  TCSETSW2 = 0x402c542c,
+  TCSETSF2 = 0x402c542d,
   TCSBRK = 0x5409,
   TCXONC = 0x540A,
   TCFLSH = 0x540B,
@@ -40,6 +44,7 @@ enum {
   FIOCLEX = 0x5451,
   FD_CLOEXEC = 1,
   NCCS = 19,
+  B38400 = 0000017,
   I32_MAX = 2147483647,
 };
 
@@ -53,6 +58,19 @@ struct termios64 {
 };
 
 _Static_assert(sizeof(struct termios64) == 36, "linux arm64 TCGETS termios ABI size");
+
+struct termios2_64 {
+  uint32_t c_iflag;
+  uint32_t c_oflag;
+  uint32_t c_cflag;
+  uint32_t c_lflag;
+  uint8_t c_line;
+  uint8_t c_cc[NCCS];
+  uint32_t c_ispeed;
+  uint32_t c_ospeed;
+};
+
+_Static_assert(sizeof(struct termios2_64) == 44, "linux arm64 TCGETS2 termios2 ABI size");
 
 struct winsize64 {
   uint16_t ws_row;
@@ -71,6 +89,39 @@ static struct open_file *fd_file(uint64_t fd) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd >= MAX_FDS) { return NULL; }
   return domain->fds[fd];
+}
+
+static uint8_t tty_erase_char(struct open_file *file) {
+  return file != NULL && file->type == OPEN_PTY ? cell_pty_erase_char(file) : cell_tty_erase_char();
+}
+
+static void fill_termios(struct open_file *file, struct termios64 *tio) {
+  *tio = (struct termios64){
+    .c_iflag = 0,
+    .c_oflag = file != NULL && file->type == OPEN_PTY ? cell_pty_oflag(file) : cell_tty_oflag(),
+    .c_cflag = B38400,
+    .c_lflag = file != NULL && file->type == OPEN_PTY ? cell_pty_lflag(file) : cell_tty_lflag(),
+    .c_line = 0,
+    .c_cc = {0},
+  };
+  tio->c_cc[0] = 3;
+  tio->c_cc[2] = tty_erase_char(file);
+  tio->c_cc[3] = 21;
+  tio->c_cc[4] = 4;
+  tio->c_cc[5] = 0;
+  tio->c_cc[6] = 1;
+}
+
+static void apply_termios(struct open_file *file, const struct termios64 *tio) {
+  if (file != NULL && file->type == OPEN_PTY) {
+    cell_pty_set_oflag(file, tio->c_oflag);
+    cell_pty_set_lflag(file, tio->c_lflag);
+    cell_pty_set_erase_char(file, tio->c_cc[2]);
+  } else {
+    cell_tty_set_oflag(tio->c_oflag);
+    cell_tty_set_lflag(tio->c_lflag);
+    cell_tty_set_erase_char(tio->c_cc[2]);
+  }
 }
 
 int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
@@ -228,20 +279,31 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct open_file *file = fd_file(fd);
-    struct termios64 tio = {
-      .c_iflag = 0,
-      .c_oflag = file != NULL && file->type == OPEN_PTY ? cell_pty_oflag(file) : cell_tty_oflag(),
-      .c_cflag = 0,
-      .c_lflag = file != NULL && file->type == OPEN_PTY ? cell_pty_lflag(file) : cell_tty_lflag(),
-      .c_line = 0,
+    struct termios64 tio;
+    fill_termios(file, &tio);
+    return syscall_user_writable(arg, sizeof(tio)) && vmm_copy_to_user(syscall_active_as(), arg, &tio, sizeof(tio))
+             ? 0
+             : -(int64_t)EFAULT;
+  }
+  if (req == TCGETS2) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
+    struct open_file *file = fd_file(fd);
+    struct termios64 base;
+    fill_termios(file, &base);
+    struct termios2_64 tio = {
+      .c_iflag = base.c_iflag,
+      .c_oflag = base.c_oflag,
+      .c_cflag = base.c_cflag,
+      .c_lflag = base.c_lflag,
+      .c_line = base.c_line,
       .c_cc = {0},
+      .c_ispeed = 38400,
+      .c_ospeed = 38400,
     };
-    tio.c_cc[0] = 3;
-    tio.c_cc[2] = file != NULL && file->type == OPEN_PTY ? cell_pty_erase_char(file) : cell_tty_erase_char();
-    tio.c_cc[3] = 21;
-    tio.c_cc[4] = 4;
-    tio.c_cc[5] = 0;
-    tio.c_cc[6] = 1;
+    for (uint32_t i = 0; i < NCCS; ++i) {
+      tio.c_cc[i] = base.c_cc[i];
+    }
     return syscall_user_writable(arg, sizeof(tio)) && vmm_copy_to_user(syscall_active_as(), arg, &tio, sizeof(tio))
              ? 0
              : -(int64_t)EFAULT;
@@ -254,15 +316,29 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
       return -(int64_t)EFAULT;
     }
     struct open_file *file = fd_file(fd);
-    if (file != NULL && file->type == OPEN_PTY) {
-      cell_pty_set_oflag(file, tio.c_oflag);
-      cell_pty_set_lflag(file, tio.c_lflag);
-      cell_pty_set_erase_char(file, tio.c_cc[2]);
-    } else {
-      cell_tty_set_oflag(tio.c_oflag);
-      cell_tty_set_lflag(tio.c_lflag);
-      cell_tty_set_erase_char(tio.c_cc[2]);
+    apply_termios(file, &tio);
+    return 0;
+  }
+  if (req == TCSETS2 || req == TCSETSW2 || req == TCSETSF2) {
+    int64_t tty = require_tty_fd(fd);
+    if (tty != 0) { return tty; }
+    struct termios2_64 tio2;
+    if (!syscall_user_readable(arg, sizeof(tio2)) ||
+        !vmm_copy_from_user(syscall_active_as(), &tio2, arg, sizeof(tio2))) {
+      return -(int64_t)EFAULT;
     }
+    struct termios64 tio = {
+      .c_iflag = tio2.c_iflag,
+      .c_oflag = tio2.c_oflag,
+      .c_cflag = tio2.c_cflag,
+      .c_lflag = tio2.c_lflag,
+      .c_line = tio2.c_line,
+      .c_cc = {0},
+    };
+    for (uint32_t i = 0; i < NCCS; ++i) {
+      tio.c_cc[i] = tio2.c_cc[i];
+    }
+    apply_termios(fd_file(fd), &tio);
     return 0;
   }
   cell_note_unsupported_ioctl(req);
