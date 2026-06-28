@@ -299,6 +299,19 @@ static int exec_private_data_regression(void) {
   return ok;
 }
 
+static int proc_self_links_regression(void) {
+  char exe[128];
+  char cwd[128];
+  ssize_t exe_len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+  ssize_t cwd_len = readlink("/proc/self/cwd", cwd, sizeof(cwd) - 1);
+  if (exe_len >= 0) { exe[exe_len] = '\0'; }
+  if (cwd_len >= 0) { cwd[cwd_len] = '\0'; }
+  int ok = exe_len > 0 && cwd_len > 0 && strcmp(exe, "/sbin/init") == 0 && cwd[0] == '/';
+  printf("[spore] proc self links: %s exe=%s cwd=%s errno=%d\n", ok ? "PASS" : "FAIL", exe_len >= 0 ? exe : "-",
+         cwd_len >= 0 ? cwd : "-", errno);
+  return ok;
+}
+
 static int phase_c_stdin_demo(void) {
   pid_t pid = fork();
   if (pid < 0) { return 0; }
@@ -2394,6 +2407,7 @@ int main(void) {
   printf("[spore] v2c fork/exec/wait demo: %s\n", ok_v2c ? "PASS" : "FAIL");
   ok_all = ok_all && ok_v2c;
   ok_all = ok_all && exec_private_data_regression();
+  ok_all = ok_all && proc_self_links_regression();
 
   (void)phase_c_stdin_demo();
   ok_all = ok_all && phase_d_fs_demo();

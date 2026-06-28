@@ -142,6 +142,7 @@ enum {
   SYS_CLONE3 = 435,
   SYS_CLOSE_RANGE = 436,
   SYS_FACCESSAT2 = 439,
+  SYS_FCHMODAT2 = 452,
   SYS_SPORE_SNAPSHOT = 0x4000,
   SYS_SPORE_SPAWN = 0x4001,
   SYS_SPORE_REAP = 0x4002,
@@ -368,6 +369,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_CLONE3] = &&l_enosys,
     [SYS_CLOSE_RANGE] = &&l_close_range,
     [SYS_FACCESSAT2] = &&l_faccessat2,
+    [SYS_FCHMODAT2] = &&l_fchmodat2,
   };
   static const void *spore_dispatch[] = {
     [SYS_SPORE_SNAPSHOT - SYS_SPORE_SNAPSHOT] = &&l_spore_snapshot,
@@ -769,6 +771,8 @@ l_statx:
 l_fchmod:
   return sys_fchmod(a0, a1);
 l_fchmodat:
+  return sys_fchmodat(a0, a1, a2, 0);
+l_fchmodat2:
   return sys_fchmodat(a0, a1, a2, a3);
 l_fchownat:
   return sys_fchownat(a0, a1, a2, a3, a4);
