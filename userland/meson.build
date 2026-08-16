@@ -125,6 +125,7 @@ subdir('libexec/spore-test/uds-client')
 
 subdir('usr/bin/env')
 subdir('usr/local/bin/fastfetch')
+subdir('usr/local/bin/codex')
 subdir('usr/local/bin/curl')
 subdir('usr/local/bin/jq')
 subdir('usr/local/bin/wget')
