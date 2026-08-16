@@ -136,6 +136,7 @@ userland/demos/something /home/spore/demos/something
 userland/demos/something-else.msh /home/spore/demos/something-else.msh
 
 userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
+userland/usr/local/bin/codex /usr/local/bin/codex
 userland/usr/local/bin/curl /usr/local/bin/curl
 userland/usr/local/bin/jq /usr/local/bin/jq
 userland/usr/local/bin/apk/spm /usr/local/bin/spm
