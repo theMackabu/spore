@@ -718,13 +718,11 @@ static void report_milestones(struct boot_milestone *milestones, size_t count, c
   }
 }
 
-static void print_timing_summary(FILE *out, const struct boot_milestone *milestones, size_t count,
-                                 double first_output_at) {
-  fputs("\n[host] boot timings:\n", out);
-  if (first_output_at >= 0.0) { fprintf(out, "[host]   +%.3fs first qemu output\n", first_output_at); }
-  for (size_t i = 0; i < count; ++i) {
-    if (milestones[i].seen) { fprintf(out, "[host]   +%.3fs %s\n", milestones[i].at, milestones[i].label); }
-  }
+static void print_timing_summary(FILE *out, const struct boot_milestone *milestones, size_t count, double first_output_at) {
+  fputs("\r\n[host] boot timings:\r\n", out);
+  if (first_output_at >= 0.0) { fprintf(out, "[host]   +%.3fs first qemu output\r\n", first_output_at); }
+  for (size_t i = 0; i < count; ++i)
+    if (milestones[i].seen) { fprintf(out, "[host]   +%.3fs %s\r\n", milestones[i].at, milestones[i].label); }
   fflush(out);
 }
 
@@ -882,7 +880,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
     {"$ ", "shell prompt", false, 0.0},
   };
   if (timings) {
-    fprintf(log_stream, "[host] qemu launched; timing summary prints at shell prompt\n");
+    fprintf(log_stream, "[host] qemu launched; timing summary prints at shell prompt\r\n");
     fflush(log_stream);
   }
   for (;;) {
