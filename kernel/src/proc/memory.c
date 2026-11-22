@@ -400,8 +400,9 @@ bool cell_remove_vma(uint64_t start, uint64_t end) {
   struct vma_list *vmas = cell_domain_vmas(domain);
   if (as == NULL || vmas == NULL) { return false; }
   if (domain->mm != NULL && !flush_shared_file_vmas(domain->mm, start, end)) { return false; }
+  if (!vma_remove(vmas, start, end)) { return false; }
   vmm_unmap_range(as, start, end);
-  return vma_remove(vmas, start, end);
+  return true;
 }
 
 bool cell_sync_shared_vmas(uint64_t start, uint64_t end) {

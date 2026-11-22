@@ -66,7 +66,7 @@ int main(void) {
 
   struct vma_list many;
   vma_list_init(&many);
-  size_t target = (VMA_CHUNK_BYTES / sizeof(struct vma)) + 5;
+  size_t target = 6000;
   for (size_t i = 0; i < target; ++i) {
     uint64_t start = 0x100000 + i * 0x2000;
     assert(vma_insert(&many, start, start + 0x1000, 3, 0x22, VMA_ANON));
@@ -76,6 +76,12 @@ int main(void) {
   struct vma_list many_clone;
   assert(vma_clone(&many_clone, &many));
   assert(vma_count(&many_clone) == target);
+  uint64_t last = 0x100000 + (target - 1) * 0x2000;
+  assert(vma_lookup(&many_clone, last)->end == last + 0x1000);
+  assert(vma_remove(&many, 0x101000, last));
+  assert(vma_count(&many) == 2);
+  assert(vma_lookup(&many, last) && !vma_lookup(&many, last - 0x2000));
+  assert(vma_lookup(&many_clone, last - 0x2000));
   vma_list_destroy(&many_clone);
   vma_list_destroy(&many);
 

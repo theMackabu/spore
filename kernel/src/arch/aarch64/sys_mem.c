@@ -95,10 +95,10 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   }
   if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
   if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }
-  if ((flags & MAP_FIXED) != 0) { (void)cell_remove_vma(base, end); }
+  if ((flags & MAP_FIXED) != 0 && !cell_remove_vma(base, end)) { return -(int64_t)ENOMEM; }
   if (anon) {
     enum vma_type type = (flags & MAP_GROWSDOWN) != 0 ? VMA_STACK : VMA_ANON;
-    if (!cell_add_vma_typed(base, end, prot_to_vmm(prot), (uint32_t)flags, type)) { return -(int64_t)EINVAL; }
+    if (!cell_add_vma_typed(base, end, prot_to_vmm(prot), (uint32_t)flags, type)) { return -(int64_t)ENOMEM; }
     if (shared && type == VMA_ANON && !cell_prefault_anon_vma(base, end)) {
       (void)cell_remove_vma(base, end);
       return -(int64_t)ENOMEM;
@@ -110,7 +110,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
       return -(int64_t)EPERM;
     }
     if (!cell_add_file_vma(base, end, prot_to_vmm(prot), (uint32_t)flags, &node, base, off, len)) {
-      return -(int64_t)EINVAL;
+      return -(int64_t)ENOMEM;
     }
   }
   if (!fixed && end > as->mmap_base) { as->mmap_base = end; }

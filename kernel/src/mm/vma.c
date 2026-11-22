@@ -6,7 +6,6 @@
 
 #if __STDC_HOSTED__
 #include <stdlib.h>
-#else
 #endif
 
 #define VMAS_PER_CHUNK (VMA_CHUNK_BYTES / sizeof(struct vma))
@@ -14,10 +13,6 @@
 enum { MAP_SHARED = 0x01 };
 
 static uint64_t vma_hhdm_offset;
-
-static bool overlaps(uint64_t a_start, uint64_t a_end, uint64_t b_start, uint64_t b_end) {
-  return a_start < b_end && b_start < a_end;
-}
 
 static bool compatible(const struct vma *a, const struct vma *b) {
   if (a->prot != b->prot || a->flags != b->flags || a->type != b->type) { return false; }
@@ -31,331 +26,302 @@ void vma_set_hhdm_offset(uint64_t hhdm_offset) {
   vma_hhdm_offset = hhdm_offset;
 }
 
-static struct vma *chunk_alloc(uint64_t *pa_out) {
+static void *alloc_pages(size_t pages) {
 #if __STDC_HOSTED__
-  struct vma *chunk = malloc(VMA_CHUNK_BYTES);
-  if (chunk == NULL) { return NULL; }
-  kmemset(chunk, 0, VMA_CHUNK_BYTES);
-  *pa_out = 0;
-  return chunk;
+  return calloc(pages, VMA_CHUNK_BYTES);
 #else
   if (vma_hhdm_offset == 0) { return NULL; }
-  uint64_t pa = pmm_alloc_zero_page();
-  if (pa == 0) { return NULL; }
-  *pa_out = pa;
-  return (struct vma *)(uintptr_t)(vma_hhdm_offset + pa);
+  if (pages == 1) {
+    uint64_t pa = pmm_alloc_zero_page();
+    return pa ? (void *)(uintptr_t)(vma_hhdm_offset + pa) : NULL;
+  }
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (!pa) { return NULL; }
+  void *ptr = (void *)(uintptr_t)(vma_hhdm_offset + pa);
+  kmemset(ptr, 0, pages * PAGE_SIZE);
+  return ptr;
 #endif
 }
 
-static void chunk_free(struct vma *chunk, uint64_t pa) {
-  if (chunk == NULL) { return; }
+static void free_pages(void *ptr, size_t pages) {
 #if __STDC_HOSTED__
-  (void)pa;
-  free(chunk);
+  (void)pages;
+  free(ptr);
 #else
-  if (pa != 0) { pmm_free_page(pa); }
+  uint64_t pa = (uintptr_t)ptr - vma_hhdm_offset;
+  for (size_t i = 0; i < pages; ++i) {
+    pmm_free_page(pa + i * PAGE_SIZE);
+  }
 #endif
 }
 
-static bool ensure_chunk(struct vma_list *list) {
-  if (list->chunk_count >= VMA_MAX_CHUNKS) { return false; }
-  uint64_t pa = 0;
-  struct vma *chunk = chunk_alloc(&pa);
-  if (chunk == NULL) { return false; }
-  list->chunks[list->chunk_count] = chunk;
-  list->chunk_pa[list->chunk_count] = pa;
-  ++list->chunk_count;
-  return true;
-}
-
-const struct vma *vma_at(const struct vma_list *list, size_t index) {
-  if (list == NULL || index >= vma_capacity(list)) { return NULL; }
-  return &list->chunks[index / VMAS_PER_CHUNK][index % VMAS_PER_CHUNK];
-}
-
-static struct vma *vma_at_mut(struct vma_list *list, size_t index) {
-  return (struct vma *)(uintptr_t)vma_at(list, index);
-}
-
-static struct vma *alloc_slot(struct vma_list *list) {
-  for (;;) {
-    for (size_t i = 0; i < vma_capacity(list); ++i) {
-      struct vma *slot = vma_at_mut(list, i);
-      if (!slot->used) { return slot; }
-    }
-    if (!ensure_chunk(list)) { return NULL; }
+static void trim_chunks(struct vma_list *list) {
+  size_t needed = list->count / VMAS_PER_CHUNK + (list->count % VMAS_PER_CHUNK != 0);
+  while (list->chunk_count > needed) {
+    free_pages(list->chunks[--list->chunk_count], 1);
+  }
+  if (needed == 0) {
+    free_pages(list->chunks, list->directory_pages);
+    vma_list_init(list);
   }
 }
 
-static bool add_raw_vma(struct vma_list *list, const struct vma *src) {
-  if (src == NULL || src->start >= src->end) { return false; }
-  struct vma *slot = alloc_slot(list);
-  if (slot == NULL) { return false; }
-  *slot = *src;
-  slot->used = true;
-  if (slot->type == VMA_FILE) {
-    vfs_retain_node(&slot->file_node);
-    if ((slot->flags & MAP_SHARED) != 0 && (slot->prot & VMM_USER_WRITE) != 0) {
-      vfs_note_shared_writable_mapping(&slot->file_node, true);
+static bool reserve_slots(struct vma_list *list, size_t count) {
+  size_t needed = count / VMAS_PER_CHUNK + (count % VMAS_PER_CHUNK != 0);
+  size_t pointers_per_page = VMA_CHUNK_BYTES / sizeof(*list->chunks);
+  if (needed > list->directory_pages * pointers_per_page) {
+    size_t pages = list->directory_pages ? list->directory_pages : 1;
+    while (needed > pages * pointers_per_page) {
+      if (pages > SIZE_MAX / VMA_CHUNK_BYTES / 2) { return false; }
+      pages *= 2;
     }
+    struct vma **chunks = alloc_pages(pages);
+    if (!chunks) { return false; }
+    if (list->chunks) {
+      kmemcpy(chunks, list->chunks, list->chunk_count * sizeof(*chunks));
+      free_pages(list->chunks, list->directory_pages);
+    }
+    list->chunks = chunks;
+    list->directory_pages = pages;
+  }
+  while (list->chunk_count < needed) {
+    struct vma *chunk = alloc_pages(1);
+    if (!chunk) {
+      trim_chunks(list);
+      return false;
+    }
+    list->chunks[list->chunk_count++] = chunk;
   }
   return true;
 }
 
-static void release_vma(struct vma *vma) {
-  if (vma == NULL || !vma->used) { return; }
-  if (vma->type == VMA_FILE) {
-    if ((vma->flags & MAP_SHARED) != 0 && (vma->prot & VMM_USER_WRITE) != 0) {
-      vfs_note_shared_writable_mapping(&vma->file_node, false);
-    }
-    vfs_release_node(&vma->file_node);
-  }
-  vma->used = false;
+static struct vma *slot_at(const struct vma_list *list, size_t i) {
+  return &list->chunks[i / VMAS_PER_CHUNK][i % VMAS_PER_CHUNK];
 }
 
-static bool add_raw(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
-                    enum vma_type type) {
-  if (start >= end) { return false; }
-  struct vma *slot = alloc_slot(list);
-  if (slot == NULL) { return false; }
-  kmemset(slot, 0, sizeof(*slot));
-  slot->used = true;
-  slot->start = start;
-  slot->end = end;
-  slot->prot = prot;
-  slot->flags = flags;
-  slot->type = type;
+const struct vma *vma_at(const struct vma_list *list, size_t i) {
+  return list && i < vma_capacity(list) ? slot_at(list, i) : NULL;
+}
+
+static size_t first_ending_after(const struct vma_list *list, uint64_t addr) {
+  size_t lo = 0, hi = list->count;
+  while (lo < hi) {
+    size_t mid = lo + (hi - lo) / 2;
+    if (slot_at(list, mid)->end <= addr) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+static void retain_mapping(const struct vma *vma) {
+  if (vma->type != VMA_FILE) { return; }
+  vfs_retain_node(&vma->file_node);
+  if ((vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE)) {
+    vfs_note_shared_writable_mapping(&vma->file_node, true);
+  }
+}
+
+static void release_mapping(const struct vma *vma) {
+  if (vma->type != VMA_FILE) { return; }
+  if ((vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE)) {
+    vfs_note_shared_writable_mapping(&vma->file_node, false);
+  }
+  vfs_release_node(&vma->file_node);
+}
+
+static void erase_slots(struct vma_list *list, size_t first, size_t end) {
+  if (first == end) { return; }
+  for (size_t i = first; i < end; ++i) {
+    release_mapping(slot_at(list, i));
+  }
+  size_t remaining = list->count - (end - first);
+  for (size_t i = end; i < list->count; ++i) {
+    *slot_at(list, first++) = *slot_at(list, i);
+  }
+  while (list->count > remaining) {
+    slot_at(list, --list->count)->used = false;
+  }
+  trim_chunks(list);
+}
+
+static void insert_slot(struct vma_list *list, size_t i, const struct vma *vma) {
+  for (size_t j = list->count; j > i; --j) {
+    *slot_at(list, j) = *slot_at(list, j - 1);
+  }
+  *slot_at(list, i) = *vma;
+  retain_mapping(vma);
+  ++list->count;
+}
+
+static bool insert_mapping(struct vma_list *list, const struct vma *vma) {
+  if (vma->start >= vma->end) { return false; }
+  size_t i = first_ending_after(list, vma->start);
+  struct vma *next = i < list->count ? slot_at(list, i) : NULL;
+  if (next && next->start < vma->end) { return false; }
+  struct vma *prev = i ? slot_at(list, i - 1) : NULL;
+  bool join_next = next && vma->end == next->start && compatible(vma, next);
+  if (prev && prev->end == vma->start && compatible(prev, vma)) {
+    prev->end = join_next ? next->end : vma->end;
+    if (join_next) { erase_slots(list, i, i + 1); }
+  } else if (join_next) {
+    next->start = vma->start;
+  } else {
+    if (!reserve_slots(list, list->count + 1)) { return false; }
+    insert_slot(list, i, vma);
+  }
   return true;
-}
-
-static void merge_adjacent(struct vma_list *list) {
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    struct vma *a = vma_at_mut(list, i);
-    if (!a->used) { continue; }
-    for (size_t j = 0; j < vma_capacity(list); ++j) {
-      struct vma *b = vma_at_mut(list, j);
-      if (i == j || !b->used) { continue; }
-      if (a->end == b->start && compatible(a, b)) {
-        a->end = b->end;
-        release_vma(b);
-        j = 0;
-      } else if (b->end == a->start && compatible(a, b)) {
-        a->start = b->start;
-        release_vma(b);
-        j = 0;
-      }
-    }
-  }
 }
 
 void vma_list_init(struct vma_list *list) {
-  kmemset(list, 0, sizeof(*list));
+  *list = (struct vma_list){0};
 }
 
 void vma_list_destroy(struct vma_list *list) {
-  if (list == NULL) { return; }
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    release_vma(vma_at_mut(list, i));
+  if (!list) { return; }
+  for (size_t i = 0; i < list->count; ++i) {
+    release_mapping(slot_at(list, i));
   }
-  for (size_t i = 0; i < list->chunk_count; ++i) {
-    chunk_free(list->chunks[i], list->chunk_pa[i]);
-  }
-  vma_list_init(list);
+  list->count = 0;
+  trim_chunks(list);
 }
 
 size_t vma_capacity(const struct vma_list *list) {
-  return list == NULL ? 0 : list->chunk_count * VMAS_PER_CHUNK;
+  return list ? list->chunk_count * VMAS_PER_CHUNK : 0;
 }
 
 const struct vma *vma_lookup(const struct vma_list *list, uint64_t va) {
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    const struct vma *vma = vma_at(list, i);
-    if (vma->used && va >= vma->start && va < vma->end) { return vma; }
-  }
-  return NULL;
+  if (!list) { return NULL; }
+  size_t i = first_ending_after(list, va);
+  if (i == list->count) { return NULL; }
+  const struct vma *vma = slot_at(list, i);
+  return va >= vma->start ? vma : NULL;
 }
 
 const struct vma *vma_lookup_range(const struct vma_list *list, uint64_t start, uint64_t end) {
-  if (start >= end) { return NULL; }
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    const struct vma *vma = vma_at(list, i);
-    if (vma->used && start >= vma->start && end <= vma->end) { return vma; }
-  }
-  return NULL;
+  const struct vma *vma = vma_lookup(list, start);
+  return start < end && vma && end <= vma->end ? vma : NULL;
 }
 
 bool vma_overlaps(const struct vma_list *list, uint64_t start, uint64_t end) {
   if (start >= end) { return true; }
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    const struct vma *vma = vma_at(list, i);
-    if (vma->used && overlaps(start, end, vma->start, vma->end)) { return true; }
-  }
-  return false;
+  if (!list) { return false; }
+  size_t i = first_ending_after(list, start);
+  return i < list->count && slot_at(list, i)->start < end;
 }
 
 bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
                 enum vma_type type) {
-  if (start >= end) { return false; }
-  if (vma_overlaps(list, start, end)) { return false; }
-  if (!add_raw(list, start, end, prot, flags, type)) { return false; }
-  merge_adjacent(list);
-  return true;
+  struct vma vma = {.used = true, .start = start, .end = end, .prot = prot, .flags = flags, .type = type};
+  return insert_mapping(list, &vma);
 }
 
 bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
                      const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
-  if (start >= end || node == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
-  if (vma_overlaps(list, start, end)) { return false; }
-  struct vma *slot = alloc_slot(list);
-  if (slot == NULL) { return false; }
-  kmemset(slot, 0, sizeof(*slot));
-  slot->used = true;
-  slot->start = start;
-  slot->end = end;
-  slot->prot = prot;
-  slot->flags = flags;
-  slot->type = VMA_FILE;
-  slot->file_node = *node;
-  vfs_retain_node(&slot->file_node);
-  if ((flags & MAP_SHARED) != 0 && (prot & VMM_USER_WRITE) != 0) {
-    vfs_note_shared_writable_mapping(&slot->file_node, true);
-  }
-  slot->file_start = file_start;
-  slot->file_offset = file_offset;
-  slot->file_size = file_size;
-  merge_adjacent(list);
-  return true;
+  if (!node || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
+  struct vma vma = {.used = true,
+                    .start = start,
+                    .end = end,
+                    .prot = prot,
+                    .flags = flags,
+                    .type = VMA_FILE,
+                    .file_node = *node,
+                    .file_start = file_start,
+                    .file_offset = file_offset,
+                    .file_size = file_size};
+  return insert_mapping(list, &vma);
 }
 
 bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end) {
   if (start >= end) { return false; }
-
-  struct vma_list next;
-  vma_list_init(&next);
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    const struct vma *vma = vma_at(list, i);
-    if (!vma->used) { continue; }
-    if (!overlaps(start, end, vma->start, vma->end)) {
-      if (!add_raw_vma(&next, vma)) {
-        vma_list_destroy(&next);
-        return false;
-      }
-      continue;
+  size_t i = first_ending_after(list, start);
+  if (i == list->count || slot_at(list, i)->start >= end) { return true; }
+  struct vma *first = slot_at(list, i);
+  if (first->start < start) {
+    if (first->end > end) {
+      if (!reserve_slots(list, list->count + 1)) { return false; }
+      struct vma tail = *first;
+      tail.start = end;
+      insert_slot(list, i + 1, &tail);
     }
-    struct vma part = *vma;
-    if (vma->start < start) {
-      part.end = start;
-      if (!add_raw_vma(&next, &part)) {
-        vma_list_destroy(&next);
-        return false;
-      }
-    }
-    if (end < vma->end) {
-      part = *vma;
-      part.start = end;
-      if (!add_raw_vma(&next, &part)) {
-        vma_list_destroy(&next);
-        return false;
-      }
-    }
+    first->end = start;
+    ++i;
   }
-  merge_adjacent(&next);
-  vma_list_destroy(list);
-  *list = next;
+  size_t j = i;
+  while (j < list->count && slot_at(list, j)->end <= end) {
+    ++j;
+  }
+  if (j < list->count && slot_at(list, j)->start < end) { slot_at(list, j)->start = end; }
+  erase_slots(list, i, j);
   return true;
+}
+
+static bool append_part(struct vma_list *list, const struct vma *src, uint64_t start, uint64_t end, uint32_t prot) {
+  if (start >= end) { return true; }
+  struct vma part = *src;
+  part.start = start;
+  part.end = end;
+  part.prot = prot;
+  return insert_mapping(list, &part);
 }
 
 bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot) {
   if (start >= end) { return false; }
-
-  struct vma_list next;
-  vma_list_init(&next);
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    const struct vma *vma = vma_at(list, i);
-    if (!vma->used) { continue; }
-    if (!overlaps(start, end, vma->start, vma->end)) {
-      if (!add_raw_vma(&next, vma)) {
-        vma_list_destroy(&next);
-        return false;
-      }
+  struct vma_list next = {0};
+  for (size_t i = 0; i < list->count; ++i) {
+    const struct vma *vma = slot_at(list, i);
+    if (end <= vma->start || start >= vma->end || prot == vma->prot) {
+      if (!insert_mapping(&next, vma)) { goto fail; }
       continue;
     }
-    struct vma part = *vma;
-    if (vma->start < start) {
-      part.end = start;
-      if (!add_raw_vma(&next, &part)) {
-        vma_list_destroy(&next);
-        return false;
-      }
-    }
-    uint64_t mid_start = vma->start > start ? vma->start : start;
-    uint64_t mid_end = vma->end < end ? vma->end : end;
-    part = *vma;
-    part.start = mid_start;
-    part.end = mid_end;
-    part.prot = prot;
-    if (!add_raw_vma(&next, &part)) {
-      vma_list_destroy(&next);
-      return false;
-    }
-    if (end < vma->end) {
-      part = *vma;
-      part.start = end;
-      if (!add_raw_vma(&next, &part)) {
-        vma_list_destroy(&next);
-        return false;
-      }
+    uint64_t mid_start = start > vma->start ? start : vma->start;
+    uint64_t mid_end = end < vma->end ? end : vma->end;
+    if (!append_part(&next, vma, vma->start, mid_start, vma->prot) ||
+        !append_part(&next, vma, mid_start, mid_end, prot) || !append_part(&next, vma, mid_end, vma->end, vma->prot)) {
+      goto fail;
     }
   }
-  merge_adjacent(&next);
   vma_list_destroy(list);
   *list = next;
   return true;
+
+fail:
+  vma_list_destroy(&next);
+  return false;
 }
 
 bool vma_grow_down(struct vma_list *list, uint64_t page, uint32_t required_flags, struct vma *out) {
-  if (list == NULL || (page & (PAGE_SIZE - 1)) != 0) { return false; }
-  enum { MAX_GROWDOWN_PAGES = 2048 };
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    struct vma *vma = vma_at_mut(list, i);
-    if (!vma->used || page >= vma->start || (vma->flags & required_flags) != required_flags) { continue; }
-    uint64_t grow_pages = (vma->start - page) / PAGE_SIZE;
-    if (grow_pages == 0 || grow_pages > MAX_GROWDOWN_PAGES) { return false; }
-    if (vma_overlaps(list, page, vma->start)) { return false; }
-    vma->start = page;
-    if (out != NULL) { *out = *vma; }
-    return true;
+  if (!list || (page & (PAGE_SIZE - 1))) { return false; }
+  size_t i = first_ending_after(list, page);
+  if (i == list->count) { return false; }
+  struct vma *vma = slot_at(list, i);
+  if (page >= vma->start || (vma->flags & required_flags) != required_flags || (vma->start - page) / PAGE_SIZE > 2048) {
+    return false;
   }
-  return false;
+  vma->start = page;
+  if (out) { *out = *vma; }
+  return true;
 }
 
 bool vma_clone(struct vma_list *dst, const struct vma_list *src) {
   vma_list_init(dst);
-  for (size_t i = 0; i < vma_capacity(src); ++i) {
-    const struct vma *vma = vma_at(src, i);
-    if (!vma->used) { continue; }
-    if (!add_raw_vma(dst, vma)) {
-      vma_list_destroy(dst);
-      return false;
-    }
+  if (!reserve_slots(dst, src->count)) { return false; }
+  for (size_t i = 0; i < src->count; ++i) {
+    insert_slot(dst, i, slot_at(src, i));
   }
   return true;
 }
 
 size_t vma_count(const struct vma_list *list) {
-  size_t count = 0;
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    const struct vma *vma = vma_at(list, i);
-    if (vma->used) { ++count; }
-  }
-  return count;
+  return list ? list->count : 0;
 }
 
 uint64_t vma_virtual_pages(const struct vma_list *list) {
   uint64_t pages = 0;
-  for (size_t i = 0; i < vma_capacity(list); ++i) {
-    const struct vma *vma = vma_at(list, i);
-    if (!vma->used) { continue; }
+  for (size_t i = 0; i < vma_count(list); ++i) {
+    const struct vma *vma = slot_at(list, i);
     pages += (vma->end - vma->start + PAGE_SIZE - 1) / PAGE_SIZE;
   }
   return pages;

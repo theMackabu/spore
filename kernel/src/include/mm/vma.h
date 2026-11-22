@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 enum {
-  VMA_MAX_CHUNKS = 64,
   VMA_CHUNK_BYTES = 4096,
 };
 
@@ -31,8 +30,9 @@ struct vma {
 };
 
 struct vma_list {
-  struct vma *chunks[VMA_MAX_CHUNKS];
-  uint64_t chunk_pa[VMA_MAX_CHUNKS];
+  struct vma **chunks;
+  size_t directory_pages;
+  size_t count;
   size_t chunk_count;
 };
 
