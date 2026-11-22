@@ -102,7 +102,7 @@ jobs:
           sudo apt-get install -y \
             autoconf automake build-essential ca-certificates clang-21 cmake curl dosfstools \
             e2fsprogs file gettext git lld-21 llvm-21 make mtools ninja-build perl pkg-config \
-            python3-jsonschema python3-venv qemu-system-arm xz-utils zip
+            python3-jsonschema python3-venv qemu-system-arm xz-utils zip zstd
 
       - name: Check out submodules
         if: steps.release_gate.outputs.should_release == 'true'
@@ -222,7 +222,7 @@ jobs:
             \) -print | sort | while IFS= read -r file; do
               sha256sum "$file"
             done
-            sha256sum meson.build
+            sha256sum meson.build userland/prebuilt/*.py userland/lib/ncurses/terminfo.sh
           } > "$RUNNER_TEMP/userland-cache-inputs"
           hash="$(sha256sum "$RUNNER_TEMP/userland-cache-inputs" | cut -d' ' -f1)"
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
@@ -232,7 +232,9 @@ jobs:
         id: userland_cache
         uses: actions/cache/restore@v5
         with:
-          path: .ci-cache/userland-build
+          path: |
+            .ci-cache/userland-build
+            .cache/packages
           key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
           restore-keys: |
             ${{ runner.os }}-spore-userland-
@@ -279,7 +281,9 @@ jobs:
         if: steps.release_gate.outputs.should_release == 'true' && steps.userland_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: .ci-cache/userland-build
+          path: |
+            .ci-cache/userland-build
+            .cache/packages
           key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
 
       - name: Package artifacts

@@ -118,10 +118,12 @@ struct statx64 {
   uint32_t stx_dev_major;
   uint32_t stx_dev_minor;
   uint64_t stx_mnt_id;
-  uint64_t stx_dio_mem_align;
-  uint64_t stx_dio_offset_align;
+  uint32_t stx_dio_mem_align;
+  uint32_t stx_dio_offset_align;
   uint64_t __spare3[12];
 };
+
+static_assert(sizeof(struct statx64) == 256, "Linux statx ABI size");
 
 struct linux_dirent64_header {
   uint64_t d_ino;

@@ -1,42 +1,6 @@
-[submodule "userland/third_party/fastfetch"]
-	path = userland/third_party/fastfetch
-	url = https://github.com/fastfetch-cli/fastfetch
-[submodule "userland/third_party/htop"]
-	path = userland/third_party/htop
-	url = https://github.com/htop-dev/htop.git
-[submodule "userland/third_party/ncurses"]
-	path = userland/third_party/ncurses
-	url = https://github.com/mirror/ncurses.git
-[submodule "userland/third_party/nano"]
-	path = userland/third_party/nano
-	url = https://https.git.savannah.gnu.org/git/nano.git
-[submodule "userland/third_party/vim"]
-	path = userland/third_party/vim
-	url = https://github.com/vim/vim.git
-[submodule "userland/third_party/dash"]
-	path = userland/third_party/dash
-	url = https://git.kernel.org/pub/scm/utils/dash/dash.git
-[submodule "userland/third_party/tinycc"]
-	path = userland/third_party/tinycc
-	url = https://github.com/TinyCC/tinycc.git
 [submodule "userland/third_party/curl"]
 	path = userland/third_party/curl
 	url = https://github.com/curl/curl.git
-[submodule "userland/third_party/jq"]
-	path = userland/third_party/jq
-	url = https://github.com/jqlang/jq.git
-[submodule "userland/third_party/mbedtls"]
-	path = userland/third_party/mbedtls
-	url = https://github.com/Mbed-TLS/mbedtls
-[submodule "userland/third_party/dropbear"]
-	path = userland/third_party/dropbear
-	url = https://github.com/mkj/dropbear.git
-[submodule "userland/third_party/zlib"]
-	path = userland/third_party/zlib
-	url = https://github.com/madler/zlib.git
 [submodule "userland/third_party/apk-tools"]
 	path = userland/third_party/apk-tools
 	url = https://gitlab.alpinelinux.org/alpine/apk-tools.git
-[submodule "userland/third_party/busybox"]
-	path = userland/third_party/busybox
-	url = https://github.com/mirror/busybox.git

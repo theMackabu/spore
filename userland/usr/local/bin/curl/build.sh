@@ -24,14 +24,14 @@ curl_src="$root/userland/third_party/curl"
 curl_work_src="$build/curl-src"
 curl_build="$build/curl-build"
 patch_dir="$root/userland/usr/local/bin/curl/patches"
-mbedtls_inst="$project_build/userland/lib/mbedtls/mbedtls-install"
+mbedtls_inst="$project_build/userland/prebuilt/tls-sdk/usr"
 stamp="$build/.curl.stamp"
 stamp_new="$build/.curl.stamp.new"
 
 mkdir -p "$build"
 {
   git -C "$curl_src" rev-parse HEAD
-  test -f "$mbedtls_inst/lib/libmbedtls.a" && cksum "$mbedtls_inst/lib/libmbedtls.a"
+  cat "$project_build/userland/prebuilt/tls-sdk.stamp"
   if [ -d "$patch_dir" ]; then
     find "$patch_dir" -type f -name '*.patch' -print | sort | while IFS= read -r patch_file; do
       cksum "$patch_file"
@@ -67,7 +67,10 @@ fi
     -DCMAKE_RANLIB="$musl_ranlib" \
     -DCMAKE_STRIP="$musl_strip" \
     -DCMAKE_EXE_LINKER_FLAGS=-static \
-    -DCMAKE_PREFIX_PATH="$mbedtls_inst" \
+    -DMBEDTLS_INCLUDE_DIR="$mbedtls_inst/include" \
+    -DMBEDTLS_LIBRARY="$mbedtls_inst/lib/libmbedtls.a" \
+    -DMBEDX509_LIBRARY="$mbedtls_inst/lib/libmbedx509.a" \
+    -DMBEDCRYPTO_LIBRARY="$mbedtls_inst/lib/libtfpsacrypto.a" \
     -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
     -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \

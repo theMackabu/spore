@@ -1,9 +1,4 @@
-userland_ncurses = custom_target('userland-ncurses',
-  output: 'libncurses.so.6.4',
-  command: [
-    files('build.sh'),
-    meson.project_source_root(),
-    meson.current_build_dir(),
-    '@OUTPUT@',
-  ])
-userland_image_targets += userland_ncurses
+userland_image_targets += custom_target('spore-terminfo',
+  input: 'terminfo/spore.src',
+  output: ['xterm-256color', 'spore'],
+  command: [files('terminfo.sh'), '@INPUT@', '@OUTPUT0@', '@OUTPUT1@'])

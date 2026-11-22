@@ -1,4 +1,4 @@
-mbedtls_install = meson.project_build_root() / 'userland/lib/mbedtls/mbedtls-install'
+mbedtls_install = meson.project_build_root() / 'userland/prebuilt/tls-sdk/usr'
 mbedtls_include = mbedtls_install / 'include'
 
 userland_trustd = custom_target('userland-trustd',
@@ -9,8 +9,8 @@ userland_trustd = custom_target('userland-trustd',
     '@INPUT@',
     mbedtls_install / 'lib/libmbedtls.a',
     mbedtls_install / 'lib/libmbedx509.a',
-    mbedtls_install / 'lib/libmbedcrypto.a',
+    mbedtls_install / 'lib/libtfpsacrypto.a',
     '-o', '@OUTPUT@',
   ],
-  depends: userland_mbedtls)
+  depends: sdks['tls'])
 userland_image_targets += userland_trustd

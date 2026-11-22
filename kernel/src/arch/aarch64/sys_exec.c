@@ -243,22 +243,6 @@ static bool parse_shebang(const void *data, uint64_t size, char *interp, size_t 
   return true;
 }
 
-static bool vfs_elf_read_at(void *ctx, uint64_t offset, void *dst, size_t len) {
-  const struct vfs_node *node = ctx;
-  return node != NULL && vfs_read(node, offset, dst, len) == len;
-}
-
-static bool make_elf_reader(const struct vfs_node *node, struct elf_reader *reader) {
-  if (node == NULL || reader == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
-  *reader = (struct elf_reader){
-    .read_at = vfs_elf_read_at,
-    .ctx = (void *)node,
-    .node = node,
-    .size = node->size,
-  };
-  return true;
-}
-
 static bool parse_shebang_node(const struct vfs_node *node, char *interp, size_t interp_cap, char *arg, size_t arg_cap,
                                bool *has_arg) {
   char head[256];
@@ -328,7 +312,7 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     goto out_scratch;
   }
   struct elf_reader exec_reader;
-  if (!make_elf_reader(&exec_node, &exec_reader)) {
+  if (!elf_reader_from_vfs(&exec_node, &exec_reader)) {
     ret = -(int64_t)ENOENT;
     goto out_scratch;
   }
@@ -337,8 +321,7 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
   bool shebang_has_arg = false;
   if (parse_shebang_node(&exec_node, shebang_interp, sizeof(shebang_interp), shebang_arg, sizeof(shebang_arg),
                          &shebang_has_arg)) {
-    struct vfs_node shebang_node;
-    if (!vfs_lookup(shebang_interp, &shebang_node) || !make_elf_reader(&shebang_node, &exec_reader)) {
+    if (!vfs_lookup(shebang_interp, &exec_node) || !elf_reader_from_vfs(&exec_node, &exec_reader)) {
       ret = -(int64_t)ENOENT;
       goto out_scratch;
     }
@@ -372,7 +355,6 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
       goto out_scratch;
     }
     argc = new_argc;
-    exec_node = shebang_node;
   }
   char interp_path[128];
   bool has_interp = elf_find_interp_aarch64(&exec_reader, interp_path, sizeof(interp_path));
@@ -396,7 +378,7 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     struct vfs_node interp_node;
     struct elf_reader interp_reader;
     struct loaded_elf interp;
-    if (!vfs_lookup(interp_path, &interp_node) || !make_elf_reader(&interp_node, &interp_reader) ||
+    if (!vfs_lookup(interp_path, &interp_node) || !elf_reader_from_vfs(&interp_node, &interp_reader) ||
         !elf_load_aarch64(&new_as, &new_vmas, &interp_reader, INTERP_LOAD_BASE, &interp)) {
       vmm_destroy(&new_as);
       vma_list_destroy(&new_vmas);

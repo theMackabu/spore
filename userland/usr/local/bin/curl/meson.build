@@ -8,5 +8,5 @@ userland_curl = custom_target('userland-curl',
     meson.project_build_root(),
     '@OUTPUT@',
   ],
-  depends: userland_mbedtls)
+  depends: sdks['tls'])
 userland_image_targets += userland_curl

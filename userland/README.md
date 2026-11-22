@@ -1,7 +1,25 @@
 # Spore Userland
 
-Spore userland is organized as one static musl binary per program. That keeps
-each tool independently confineable by the policy layer.
+Spore builds its own commands against musl. Each command has its own executable
+and can be confined independently by the policy layer.
+
+## Third-party programs
+
+The interactive image uses Alpine AArch64 packages for dash, fastfetch, jq, htop, nano,
+Vim, TinyCC, GNU wget, GNU which and the Dropbear SSH client and key tools.
+Alpine supplies wide-character ncurses. The narrow-character library comes
+from Void Linux’s AArch64 musl package. The host uses zstd to unpack it and
+infocmp and tic to build Spore’s terminal descriptions. Ant comes from its
+upstream musl release.
+`prebuilt/meson.build` pins each archive URL and SHA-256 and lists the files
+to extract. The image manifest sets their guest paths and shared-library links. The first build downloads the
+archives. Subsequent builds reuse verified copies from `.cache/packages/`,
+including after `make clean`.
+
+The build also downloads target headers and static libraries. Spore's patched
+curl and trustd link against mbedTLS 4. The patched apk-tools (spm) links
+against mbedTLS 3 and zlib in a separate build directory. These build-time
+headers and archives stay outside the guest image.
 
 ## Layout
 

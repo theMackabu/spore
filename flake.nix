@@ -43,6 +43,7 @@
             libtool
             mtools
             ncurses
+            zstd
             ninja
             patch
             pkg-config
@@ -199,6 +200,7 @@ EOF
               libtool
               mtools
               ncurses
+              zstd
               ninja
               patch
               pkg-config

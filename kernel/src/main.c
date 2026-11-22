@@ -170,22 +170,6 @@ static bool ext2_blk_write(void *ctx, uint64_t offset, const void *src, uint32_t
   return virtio_blk_write(offset, src, len);
 }
 
-static bool vfs_elf_read_at(void *ctx, uint64_t offset, void *dst, size_t len) {
-  const struct vfs_node *node = ctx;
-  return node != NULL && vfs_read(node, offset, dst, len) == len;
-}
-
-static bool make_elf_reader(const struct vfs_node *node, struct elf_reader *reader) {
-  if (node == NULL || reader == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
-  *reader = (struct elf_reader){
-    .read_at = vfs_elf_read_at,
-    .ctx = (void *)node,
-    .node = node,
-    .size = node->size,
-  };
-  return true;
-}
-
 static void probe_ext2_root(void) {
   if (!ext2_mount_rw(&root_ext2, ext2_blk_read, ext2_blk_write, NULL)) {
     kprintf("[spore] ext2: mount failed\n");
@@ -406,7 +390,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   syscall_set_ramfs(&boot_ramfs);
   struct vfs_node init_node;
   struct elf_reader init_reader;
-  if (!vfs_lookup("/sbin/init", &init_node) || !make_elf_reader(&init_node, &init_reader)) {
+  if (!vfs_lookup("/sbin/init", &init_node) || !elf_reader_from_vfs(&init_node, &init_reader)) {
     kprintf("[kernel] missing /sbin/init\n");
     for (;;) {
       __asm__ volatile("wfe");
@@ -432,7 +416,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
     struct vfs_node interp_node;
     struct elf_reader interp_reader;
     struct loaded_elf interp;
-    if (!vfs_lookup(interp_path, &interp_node) || !make_elf_reader(&interp_node, &interp_reader) ||
+    if (!vfs_lookup(interp_path, &interp_node) || !elf_reader_from_vfs(&interp_node, &interp_reader) ||
         !elf_load_aarch64(&as, &vmas, &interp_reader, 0x0000006000000000ull, &interp)) {
       kprintf("[kernel] failed to load %s\n", interp_path);
       for (;;) {

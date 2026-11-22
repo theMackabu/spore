@@ -28,7 +28,7 @@ userland/bin/myc /lib/mycelium/myc
 symlink /lib/mycelium/myc /sbin/myc
 userland/libexec/trustd /libexec/trustd
 userland/bin/msh /bin/msh
-userland/bin/dash /bin/dash
+userland/prebuilt/dash /bin/dash
 symlink dash /bin/sh
 
 userland/bin/shutdown /bin/shutdown
@@ -68,10 +68,10 @@ userland/bin/whoami /bin/whoami
 userland/bin/hostname /bin/hostname
 userland/bin/dhcpc /bin/dhcpc
 userland/bin/nslookup /bin/nslookup
-userland/bin/ssh /bin/ssh
-userland/bin/ssh/dbclient /bin/dbclient
-userland/bin/ssh/dropbearkey /bin/dropbearkey
-userland/bin/ssh/dropbearconvert /bin/dropbearconvert
+symlink dbclient /bin/ssh
+userland/prebuilt/dbclient /bin/dbclient
+userland/prebuilt/dropbearkey /bin/dropbearkey
+userland/prebuilt/dropbearconvert /bin/dropbearconvert
 symlink dropbearkey /bin/ssh-keygen
 userland/bin/hostid /bin/hostid
 userland/bin/id /bin/id
@@ -135,32 +135,74 @@ userland/demos/inodes /home/spore/demos/inodes
 userland/demos/something /home/spore/demos/something
 userland/demos/something-else.msh /home/spore/demos/something-else.msh
 
-userland/usr/local/bin/fastfetch /usr/local/bin/fastfetch
+userland/prebuilt/fastfetch /usr/local/bin/fastfetch
+userland/prebuilt/pci.ids /usr/share/hwdata/pci.ids
 userland/usr/local/bin/curl /usr/local/bin/curl
-userland/usr/local/bin/jq /usr/local/bin/jq
+userland/prebuilt/jq /usr/local/bin/jq
 userland/usr/local/bin/apk/spm /usr/local/bin/spm
-userland/usr/local/bin/wget /usr/local/bin/wget
-userland/usr/local/bin/wget/which /usr/local/bin/which
-userland/usr/local/bin/htop /usr/local/bin/htop
-userland/usr/local/bin/nano /usr/local/bin/nano
-userland/third_party/ant /usr/local/bin/ant
-userland/usr/local/bin/tcc /usr/local/bin/tcc
-userland/usr/local/bin/tcc/libtcc1.a /usr/local/lib/tcc/libtcc1.a
-userland/usr/local/bin/vim /usr/local/bin/vim
+userland/prebuilt/htop /usr/local/bin/htop
+userland/prebuilt/nano /usr/local/bin/nano
+userland/prebuilt/ant /usr/local/bin/ant
 
+userland/prebuilt/libutmps.so.0.1.3.1 /usr/lib/libutmps.so.0.1.3.1
+symlink libutmps.so.0.1.3.1 /usr/lib/libutmps.so.0.1
+userland/prebuilt/libskarnet.so.2.14.4.0 /usr/lib/libskarnet.so.2.14.4.0
+symlink libskarnet.so.2.14.4.0 /usr/lib/libskarnet.so.2.14
+userland/prebuilt/libjq.so.1.0.4 /lib/libjq.so.1.0.4
+symlink libjq.so.1.0.4 /lib/libjq.so.1
+userland/prebuilt/libonig.so.5.5.0 /lib/libonig.so.5.5.0
+symlink libonig.so.5.5.0 /lib/libonig.so.5
+userland/prebuilt/libncursesw.so.6.5 /lib/libncursesw.so.6.5
+symlink libncursesw.so.6.5 /lib/libncursesw.so.6
+
+userland/prebuilt/libcrypto.so.3 /usr/lib/libcrypto.so.3
+userland/prebuilt/libidn2.so.0.4.0 /usr/lib/libidn2.so.0.4.0
+symlink libidn2.so.0.4.0 /usr/lib/libidn2.so.0
+userland/prebuilt/libssl.so.3 /usr/lib/libssl.so.3
+userland/prebuilt/libunistring.so.5.2.1 /usr/lib/libunistring.so.5.2.1
+symlink libunistring.so.5.2.1 /usr/lib/libunistring.so.5
+userland/prebuilt/libpcre2-8.so.0.16.1 /usr/lib/libpcre2-8.so.0.16.1
+symlink libpcre2-8.so.0.16.1 /usr/lib/libpcre2-8.so.0
+userland/prebuilt/libpixman-1.so.0.46.4 /usr/lib/libpixman-1.so.0.46.4
+symlink libpixman-1.so.0.46.4 /usr/lib/libpixman-1.so.0
+userland/prebuilt/vim /usr/local/bin/vim
+userland/prebuilt/wget /usr/local/bin/wget
+userland/prebuilt/which /usr/local/bin/which
+userland/prebuilt/libz.so.1.4 /usr/lib/libz.so.1.4
+symlink libz.so.1.4 /usr/lib/libz.so.1
+userland/prebuilt/tcc /usr/local/bin/tcc
+userland/prebuilt/bcheck.o /usr/lib/tcc/bcheck.o
+userland/prebuilt/bt-exe.o /usr/lib/tcc/bt-exe.o
+userland/prebuilt/bt-log.o /usr/lib/tcc/bt-log.o
+userland/prebuilt/float.h /usr/lib/tcc/include/float.h
+userland/prebuilt/stdalign.h /usr/lib/tcc/include/stdalign.h
+userland/prebuilt/stdarg.h /usr/lib/tcc/include/stdarg.h
+userland/prebuilt/stdatomic.h /usr/lib/tcc/include/stdatomic.h
+userland/prebuilt/stdbool.h /usr/lib/tcc/include/stdbool.h
+userland/prebuilt/stddef.h /usr/lib/tcc/include/stddef.h
+userland/prebuilt/stdnoreturn.h /usr/lib/tcc/include/stdnoreturn.h
+userland/prebuilt/tccdefs.h /usr/lib/tcc/include/tccdefs.h
+userland/prebuilt/tcclib.h /usr/lib/tcc/include/tcclib.h
+userland/prebuilt/tgmath.h /usr/lib/tcc/include/tgmath.h
+userland/prebuilt/varargs.h /usr/lib/tcc/include/varargs.h
+userland/prebuilt/runmain.o /usr/lib/tcc/runmain.o
+userland/prebuilt/libtcc.so /usr/lib/libtcc.so
+userland/prebuilt/libtcc1.a /usr/lib/tcc/libtcc1.a
+
+symlink /usr/lib/tcc /usr/local/lib/tcc
+symlink /usr/local/share/vim /usr/share/vim
 symlink vim /usr/local/bin/vi
 symlink tcc /usr/local/bin/cc
 dir /usr/local/share/vim/vim92
 
-userland/third_party/tinycc/include /usr/local/lib/tcc/include
-userland/third_party/tinycc/tcclib.h /usr/local/lib/tcc/include/tcclib.h
 userland/usr/local/share/vim/vim92/defaults.vim /usr/local/share/vim/vim92/defaults.vim
-userland/lib/ncurses/libncurses.so.6.4 /lib/libncurses.so.6.4
+userland/prebuilt/libncurses.so.6.6 /lib/libncurses.so.6.6
 
-symlink libncurses.so.6.4 /lib/libncurses.so.6
+symlink libncurses.so.6.6 /lib/libncurses.so.6.4
+symlink libncurses.so.6.6 /lib/libncurses.so.6
 symlink libncurses.so.6 /lib/libncurses.so
-userland/lib/ncurses/terminfo/x/xterm-256color /usr/share/terminfo/x/xterm-256color
-userland/lib/ncurses/terminfo/s/spore /usr/share/terminfo/s/spore
+userland/lib/ncurses/xterm-256color /usr/share/terminfo/x/xterm-256color
+userland/lib/ncurses/spore /usr/share/terminfo/s/spore
 
 userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd

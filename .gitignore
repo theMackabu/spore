@@ -5,7 +5,9 @@ wasm/
 /.nova
 /goal.md
 
-.DS_Store
 *.o
 *.iso
 *.img
+
+.DS_Store
+__pycache__

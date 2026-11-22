@@ -77,6 +77,7 @@ kernel_sources = files(
   'src/drivers/virtio_keyboard.c',
   'src/drivers/virtio_net.c',
   'src/elf/loader.c',
+  'src/elf/vfs_reader.c',
   'src/exec/stack.c',
   'src/lib/mem.c',
   'src/mm/pmm.c',

@@ -54,6 +54,7 @@ static const char *shell_commands[] = {
   "echo full > /dev/full\n",
   "cat /etc/motd\n",
   "uname -a\n",
+  "/bin/dash -c 'fastfetch || echo __SPORE\"\"_SHELL_CHECK_FAIL_FASTFETCH__'\n",
   "myc status\n",
   "myc list-units\n",
   "myc list-dependencies multi-user.target\n",
@@ -69,6 +70,11 @@ static const char *shell_commands[] = {
   "nslookup example.com\n",
   "printf '10.0.2.2 example.test\\n' | sudo tee -a /etc/hosts\n",
   "curl http://example.test:8080/\n",
+  "/bin/dash -c 'which wget && wget -qO /tmp/download "
+  "http://10.0.2.2:8080/ && grep \"hello from host http\" /tmp/download || echo __SPORE\"\"_SHELL_CHECK_FAIL_WGET__'\n",
+  "printf '#include <stdio.h>\\nint main(void) { puts(\"compiler-ok\"); return 0; }\\n' > /tmp/check.c\n",
+  "/bin/dash -c 'vi -es -c \"w! /tmp/edited.c\" -c qa! /tmp/check.c && "
+  "cc /tmp/edited.c -o ./cc-check && ./cc-check | grep compiler-ok || echo __SPORE\"\"_SHELL_CHECK_FAIL_CC__'\n",
   "curl -sS https://example.com/ > /tmp/https-example\n",
   "grep 'Example Domain' /tmp/https-example\n",
   "p=__SPORE; q=_SHELL_CHECK_FAIL_TLS_BADCERT_ACCEPTED__; curl -fsS https://expired.badssl.com/ >/tmp/badcert "
@@ -176,7 +182,9 @@ static const char *shell_commands[] = {
   "cat /tmp/coreutils.link\n",
   "tee /tmp/coreutils.tee < /tmp/coreutils\n",
   "cat /tmp/coreutils.tee\n",
-  "printf '{\"spore\":true}\\n' | jq .\n",
+  "printf '#!/usr/local/bin/jq -nef\\n\"spore\" | test(\"^spore$\")\\n' > /tmp/check-jq\n",
+  "p=__SPORE; q=_SHELL_CHECK_FAIL_PACKAGES__; /bin/dash -c 'chmod 755 /tmp/check-jq && /tmp/check-jq && "
+  "htop --version' || echo \"$p$q\"\n",
   "printf 'one\\ntwo\\n' | more\n",
   "printf 'one\\ntwo\\n' | less\n",
   "hexdump /tmp/coreutils\n",

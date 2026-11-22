@@ -14,5 +14,5 @@ userland_apk = custom_target('userland-apk',
     '@OUTPUT@',
   ],
   depend_files: apk_patch_files,
-  depends: [userland_zlib])
+  depends: sdks['apk'])
 userland_image_targets += userland_apk
