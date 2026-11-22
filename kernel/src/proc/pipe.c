@@ -2,6 +2,9 @@
 
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
 #include "proc/socket.h"
@@ -229,7 +232,7 @@ static void wake_pipe_waiters(void) {
     }
     int fd = thread->wait_target;
     if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] == NULL) {
-      thread->tf.x[0] = (uint64_t)-9;
+      trap_set_result(&thread->tf, (uint64_t)-9);
     } else {
       struct open_file *file = thread->domain->fds[fd];
       int64_t rc;
@@ -242,7 +245,7 @@ static void wake_pipe_waiters(void) {
                                 : cell_pipe_read_to_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len);
       }
       if (rc == -EAGAIN) { continue; }
-      thread->tf.x[0] = (uint64_t)rc;
+      trap_set_result(&thread->tf, (uint64_t)rc);
     }
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;

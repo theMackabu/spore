@@ -1,6 +1,10 @@
 #pragma once
 
-#include "cell.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+struct domain;
+struct open_file;
 
 int cell_alloc_pipe_obj(uint64_t fifo_ino);
 void cell_pipe_free(uint8_t pipe_id);

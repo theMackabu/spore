@@ -1,9 +1,11 @@
 #pragma once
 
-#include "cell.h"
-
 #include <stdbool.h>
 #include <stdint.h>
+
+struct domain;
+struct open_file;
+struct trap_frame;
 
 enum { CELL_PTY_CAP = 16 };
 

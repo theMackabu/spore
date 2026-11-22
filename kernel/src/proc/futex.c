@@ -1,6 +1,8 @@
 #include "proc/futex.h"
 
+#include "arch/aarch64/regs.h"
 #include "proc/domain.h"
+#include "proc/memory.h"
 #include "proc/thread.h"
 
 enum {
@@ -26,7 +28,7 @@ int cell_futex_wake_domain(struct domain *domain, uint64_t uaddr, uint32_t count
       thread->state = THREAD_RUNNABLE;
       thread->wait_reason = WAIT_NONE;
       thread->futex_addr = 0;
-      thread->tf.x[0] = 0;
+      trap_set_result(&thread->tf, 0);
       ++woke;
     }
   }

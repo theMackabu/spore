@@ -1,6 +1,7 @@
 #pragma once
 
 #include "boot_info.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -27,3 +28,5 @@ void smp_note_cpu_busy_tick(uint32_t cpu);
 void smp_note_cpu_idle_tick(uint32_t cpu);
 uint64_t smp_cpu_busy_ticks(uint32_t cpu);
 uint64_t smp_cpu_idle_ticks(uint32_t cpu);
+void smp_wait_for_irq(void);
+void smp_notify(void);

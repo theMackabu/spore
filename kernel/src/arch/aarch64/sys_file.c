@@ -1,9 +1,12 @@
 #include "arch/aarch64/syscall_handlers.h"
-
 #include "cell.h"
 #include "kstr.h"
 #include "mem.h"
 #include "mm/pmm.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/limits.h"
+#include "proc/policy.h"
 #include "vfs.h"
 
 #include <stdbool.h>

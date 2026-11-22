@@ -1,12 +1,14 @@
-#include "arch/aarch64/syscall_handlers.h"
-
 #include "arch/aarch64/smp.h"
+#include "arch/aarch64/syscall_handlers.h"
 #include "cell.h"
 #include "exec/stack.h"
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "net.h"
+#include "proc/domain.h"
+#include "proc/limits.h"
+#include "proc/procfs.h"
 #include "spore_version.h"
 
 #include <stddef.h>

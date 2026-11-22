@@ -1,0 +1,11 @@
+#pragma once
+
+enum {
+  MAX_DOMAINS = 1024,
+  MAX_THREADS = 2048,
+  MAX_SNAPSHOTS = 8,
+  MAX_FDS = 64,
+  MAX_OPEN_FILES = 4096,
+  CELL_DGRAM_RX_QUEUE_CAP = 8,
+  CELL_PATH_MAX = 256,
+};

@@ -70,7 +70,7 @@ contract is to print a result.
 1. Create `userland/demos/<name>/main.c`.
 2. Add a `manifest` file describing the policy fixture.
 3. Add `userland/demos/<name> /home/spore/demos/<name>` to `userland/image.manifest`.
-4. Update `tools/src/spore_run.c`'s shell mode if the demo is part of the policy gate.
+4. Update `tools/src/runner/shell_check.c` if the demo is part of the policy gate.
 
 If a harness depends on the binary, bake it to `/libexec/spore-test` instead of
 the demos directory.

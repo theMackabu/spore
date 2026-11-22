@@ -3,10 +3,11 @@
 #include "arch/aarch64/exceptions.h"
 #include "arch/aarch64/regs.h"
 #include "arch/aarch64/timer.h"
-#include "cell.h"
 #include "kprintf.h"
 #include "limine.h"
 #include "mm/vmm.h"
+#include "proc/thread.h"
+
 #include <stddef.h>
 
 struct smp_cpu {
@@ -176,4 +177,17 @@ uint64_t smp_cpu_busy_ticks(uint32_t cpu) {
 
 uint64_t smp_cpu_idle_ticks(uint32_t cpu) {
   return cpu < smp_present_cpu_count() ? smp_cpus[cpu].idle_ticks : 0;
+}
+
+void smp_wait_for_irq(void) {
+  __asm__ volatile("msr daifclr, #2\n"
+                   "wfi\n"
+                   "msr daifset, #2\n"
+                   :
+                   :
+                   : "memory");
+}
+
+void smp_notify(void) {
+  __asm__ volatile("sev" : : : "memory");
 }

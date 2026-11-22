@@ -1,9 +1,9 @@
 #include "arch/aarch64/syscall_handlers.h"
-
 #include "cell.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
+#include "proc/procfs.h"
 #include "random.h"
 
 #include <stddef.h>

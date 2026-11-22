@@ -1,14 +1,16 @@
 #include "proc/process.h"
 
+#include "arch/aarch64/regs.h"
+#include "arch/aarch64/smp.h"
 #include "kprintf.h"
 #include "kstr.h"
 #include "mem.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/futex.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
 #include "proc/thread.h"
-
-extern void arch_fp_restore(const struct fp_state *state);
 
 enum {
   EAGAIN = 11,
@@ -45,12 +47,12 @@ void cell_wake_parent_of(struct domain *child) {
     bool child_is_running = domain_has_running_thread(child);
     int status = child->exit_status << 8;
     if (child->term_signal != 0) { status = child->term_signal; }
-    uint64_t status_addr = parent->tf.x[1];
+    uint64_t status_addr = trap_syscall_arg(&parent->tf, 1);
     struct user_address_space *parent_as = cell_domain_as(parent_domain);
     if (status_addr != 0 && parent_as != NULL) {
       (void)vmm_copy_to_user(parent_as, status_addr, &status, sizeof(status));
     }
-    parent->tf.x[0] = (uint64_t)child->id;
+    trap_set_result(&parent->tf, (uint64_t)child->id);
     struct thread *child_thread = cell_thread_for_domain(child);
     if (child_thread != NULL) {
       child_thread->state = (child_is_current || child_is_running) ? THREAD_ZOMBIE : THREAD_UNUSED;
@@ -63,7 +65,7 @@ void cell_wake_parent_of(struct domain *child) {
     parent->state = THREAD_RUNNABLE;
     parent->wait_reason = WAIT_NONE;
     parent->wait_target = -1;
-    __asm__ volatile("sev" : : : "memory");
+    smp_notify();
   }
 }
 
@@ -152,17 +154,16 @@ int cell_fork_current(struct trap_frame *frame) {
   child_domain->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   child_thread->tf = cell_current_thread_internal()->tf;
-  child_thread->fp = cell_current_thread_internal()->fp;
+  child_thread->context = cell_current_thread_internal()->context;
   child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
   child_thread->pending_signals = 0;
   child_thread->sigaltstack_sp = cell_current_thread_internal()->sigaltstack_sp;
   child_thread->sigaltstack_size = cell_current_thread_internal()->sigaltstack_size;
   child_thread->sigaltstack_flags = cell_current_thread_internal()->sigaltstack_flags;
-  child_thread->tf.x[0] = 0;
-  child_thread->tpidr_el0 = cell_current_thread_internal()->tpidr_el0;
-  cell_current_thread_internal()->tf.x[0] = (uint64_t)child_domain->id;
+  trap_set_result(&child_thread->tf, 0);
+  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)child_domain->id);
   copy_cstr(child_domain->name, sizeof(child_domain->name), parent->name);
-  __asm__ volatile("sev" : : : "memory");
+  smp_notify();
   return child_domain->id;
 }
 
@@ -188,15 +189,15 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   child->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   child_thread->tf = cell_current_thread_internal()->tf;
-  child_thread->fp = cell_current_thread_internal()->fp;
+  child_thread->context = cell_current_thread_internal()->context;
   child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
   child_thread->pending_signals = 0;
   child_thread->sigaltstack_sp = cell_current_thread_internal()->sigaltstack_sp;
   child_thread->sigaltstack_size = cell_current_thread_internal()->sigaltstack_size;
   child_thread->sigaltstack_flags = cell_current_thread_internal()->sigaltstack_flags;
-  child_thread->tf.x[0] = 0;
-  if (newsp != 0 && child_thread != NULL) { child_thread->tf.sp_el0 = newsp; }
-  child_thread->tpidr_el0 = ((flags & CLONE_SETTLS) != 0) ? tls : cell_current_thread_internal()->tpidr_el0;
+  trap_set_result(&child_thread->tf, 0);
+  if (newsp != 0 && child_thread != NULL) { trap_set_stack(&child_thread->tf, newsp); }
+  if ((flags & CLONE_SETTLS) != 0) { child_thread->context.thread_pointer = tls; }
   child_thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
   if ((flags & CLONE_PARENT_SETTID) != 0 && parent_tid != 0) {
     uint32_t pid = (uint32_t)child->id;
@@ -216,14 +217,14 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
       return -EFAULT;
     }
   }
-  cell_current_thread_internal()->tf.x[0] = (uint64_t)child->id;
-  frame->x[0] = (uint64_t)child->id;
+  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)child->id);
+  trap_set_result(frame, (uint64_t)child->id);
   copy_cstr(child->name, sizeof(child->name), parent->name);
   cell_current_thread_internal()->state = THREAD_BLOCKED;
   cell_current_thread_internal()->running_cpu = -1;
   cell_current_thread_internal()->wait_reason = WAIT_VFORK;
   cell_current_thread_internal()->wait_target = child->id;
-  __asm__ volatile("sev" : : : "memory");
+  smp_notify();
   cell_schedule(frame);
   return CELL_SWITCHED;
 }
@@ -237,13 +238,13 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   cell_save_current(frame);
   thread->state = THREAD_RUNNABLE;
   thread->tf = cell_current_thread_internal()->tf;
-  thread->fp = cell_current_thread_internal()->fp;
+  thread->context = cell_current_thread_internal()->context;
   thread->signal_mask = cell_current_thread_internal()->signal_mask;
   thread->pending_signals = 0;
   thread->sigaltstack_flags = 2;
-  thread->tf.x[0] = 0;
-  thread->tf.sp_el0 = newsp;
-  thread->tpidr_el0 = ((flags & 0x00080000ull) != 0) ? tls : cell_current_thread_internal()->tpidr_el0;
+  trap_set_result(&thread->tf, 0);
+  trap_set_stack(&thread->tf, newsp);
+  if ((flags & 0x00080000ull) != 0) { thread->context.thread_pointer = tls; }
   thread->clear_child_tid = ((flags & 0x00200000ull) != 0) ? child_tid : 0;
   if ((flags & 0x00100000ull) != 0 && parent_tid != 0) {
     uint32_t tid = (uint32_t)thread->tid;
@@ -255,8 +256,8 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
     struct user_address_space *as = cell_domain_as(domain);
     if (as != NULL) { (void)vmm_copy_to_user(as, child_tid, &tid, sizeof(tid)); }
   }
-  cell_current_thread_internal()->tf.x[0] = (uint64_t)thread->tid;
-  __asm__ volatile("sev" : : : "memory");
+  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)thread->tid);
+  smp_notify();
   return thread->tid;
 }
 
@@ -352,15 +353,11 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   cell_set_domain_identity(domain, path, argv, argc);
   vmm_install_user(cell_domain_as(domain));
 
-  kmemset(frame, 0, sizeof(*frame));
-  frame->elr_el1 = entry;
-  frame->sp_el0 = sp;
-  frame->spsr_el1 = 0x340;
+  aarch64_init_user_frame(frame, entry, sp);
   cell_current_thread_internal()->tf = *frame;
-  kmemset(&cell_current_thread_internal()->fp, 0, sizeof(cell_current_thread_internal()->fp));
-  arch_fp_restore(&cell_current_thread_internal()->fp);
-  cell_current_thread_internal()->tpidr_el0 = 0;
-  __asm__ volatile("msr tpidr_el0, %0" : : "r"(0ull));
+  struct aarch64_thread_context *context = &cell_current_thread_internal()->context;
+  kmemset(context, 0, sizeof(*context));
+  aarch64_restore_context(context);
   cell_wake_vfork_parent_of(domain->id);
   return true;
 }

@@ -1,9 +1,10 @@
 #include "arch/aarch64/syscall_handlers.h"
-
-#include "cell.h"
 #include "pl011.h"
 #include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/limits.h"
 #include "proc/pty.h"
+#include "proc/tty.h"
 
 #include <stdint.h>
 

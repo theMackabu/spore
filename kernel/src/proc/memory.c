@@ -2,6 +2,8 @@
 
 #include "mem.h"
 #include "mm/pmm.h"
+#include "proc/domain.h"
+#include "proc/limits.h"
 #include "proc/thread.h"
 #include "vfs.h"
 
@@ -13,6 +15,11 @@ enum {
 
 static struct process_mm *process_mms;
 static size_t process_mm_capacity;
+
+struct user_address_space *cell_current_as(void) {
+  struct domain *domain = cell_current_domain_internal();
+  return cell_domain_as(domain);
+}
 
 static bool vma_is_shared_writable_file(const struct vma *vma);
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end);

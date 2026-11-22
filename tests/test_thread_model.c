@@ -1,5 +1,7 @@
-#include "cell.h"
 
+#include "proc/domain.h"
+#include "proc/limits.h"
+#include "proc/thread.h"
 #include <assert.h>
 #include <string.h>
 

@@ -1,7 +1,8 @@
 #include "arch/aarch64/syscall_handlers.h"
-
-#include "cell.h"
 #include "mm/pmm.h"
+#include "proc/fd.h"
+#include "proc/memory.h"
+#include "proc/policy.h"
 #include "ramfs.h"
 
 #include <stdbool.h>

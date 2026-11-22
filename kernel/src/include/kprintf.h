@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+void klog_init_console(uint64_t hhdm_offset, unsigned cpus);
 void kputc(char c);
 void kputs(const char *s);
 void kprintf(const char *fmt, ...);

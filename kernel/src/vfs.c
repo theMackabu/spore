@@ -1,941 +1,83 @@
-#include "vfs.h"
+#include "vfs_internal.h"
 
-#include "cell.h"
 #include "mem.h"
-#include "mm/pmm.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-static struct ramfs *root_ramfs;
-static struct ext2_fs *root_ext2;
-static uint64_t vfs_hhdm_offset;
-
-enum {
-  VFS_PAGE_SIZE = 4096,
-  VFS_PAGE_CACHE_MIN_ENTRIES = 2048,
-  VFS_PAGE_CACHE_MAX_ENTRIES = 32768,
-  VFS_PAGE_CACHE_MIN_BUCKETS = 512,
-  VFS_PAGE_CACHE_MAX_BUCKETS = 4096,
-  VFS_PAGE_CACHE_NONE = UINT32_MAX,
-  VFS_LOOKUP_CACHE_ENTRIES = 128,
-  VFS_LOOKUP_CACHE_PATH_MAX = 255,
-  VFS_READAHEAD_PAGES = 2,
-  VFS_PROC_FD_MAX = 64,
-  VFS_PROC_FD_PATH_MAX = 256,
-};
-
-struct vfs_page_cache_entry {
-  bool valid;
-  enum vfs_backend backend;
-  uint64_t ino;
-  uint64_t dev_id;
-  uint64_t off;
-  uint64_t age;
-  uint64_t pa;
-  uint32_t hash_next;
-};
-
-struct vfs_lookup_cache_entry {
-  bool valid;
-  bool lstat;
-  uint64_t age;
-  char path[VFS_LOOKUP_CACHE_PATH_MAX + 1];
-  struct vfs_node node;
-};
-
-static struct vfs_page_cache_entry *page_cache;
-static uint32_t *page_cache_buckets;
-static size_t page_cache_capacity;
-static size_t page_cache_bucket_count;
-static struct vfs_lookup_cache_entry lookup_cache[VFS_LOOKUP_CACHE_ENTRIES];
-static uint64_t page_cache_clock;
-static uint32_t page_cache_evict_hand;
-static uint64_t lookup_cache_clock;
-static struct vfs_stats vfs_stat_counters;
-
-static uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
-
-bool cell_proc_exists(int pid);
-int cell_proc_pid_at(size_t index);
-int cell_current_pid(void);
-bool cell_fd_path(int fd, char *out, size_t cap);
-bool cell_fd_stat(int fd, struct vfs_node *out);
-uint32_t cell_proc_uid(int pid);
-uint32_t cell_proc_gid(int pid);
-uint64_t cell_realtime_seconds(void);
-
-static void *alloc_kernel_table(size_t count, size_t elem_size) {
-  uint64_t bytes = count * elem_size;
-  uint64_t pages = (bytes + VFS_PAGE_SIZE - 1) / VFS_PAGE_SIZE;
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (pa == 0) { return NULL; }
-  void *ptr = (void *)(uintptr_t)(vfs_hhdm_offset + pa);
-  kmemset(ptr, 0, pages * VFS_PAGE_SIZE);
-  return ptr;
-}
-
-static void free_kernel_table(void *ptr, size_t count, size_t elem_size) {
-  if (ptr == NULL) { return; }
-  uint64_t bytes = count * elem_size;
-  uint64_t pages = (bytes + VFS_PAGE_SIZE - 1) / VFS_PAGE_SIZE;
-  uint64_t pa = (uint64_t)(uintptr_t)ptr - vfs_hhdm_offset;
-  for (uint64_t i = 0; i < pages; ++i) {
-    pmm_free_page(pa + i * VFS_PAGE_SIZE);
-  }
-}
-
-static size_t page_cache_bucket_count_for(size_t entries) {
-  if (entries >= VFS_PAGE_CACHE_MAX_ENTRIES) { return VFS_PAGE_CACHE_MAX_BUCKETS; }
-  return VFS_PAGE_CACHE_MIN_BUCKETS;
-}
-
-static void page_cache_configure(void) {
-  if (page_cache != NULL && page_cache_buckets != NULL) { return; }
-  for (size_t entries = VFS_PAGE_CACHE_MAX_ENTRIES; entries >= VFS_PAGE_CACHE_MIN_ENTRIES; entries >>= 1) {
-    size_t buckets = page_cache_bucket_count_for(entries);
-    struct vfs_page_cache_entry *entries_table = alloc_kernel_table(entries, sizeof(*entries_table));
-    if (entries_table == NULL) { continue; }
-    uint32_t *bucket_table = alloc_kernel_table(buckets, sizeof(*bucket_table));
-    if (bucket_table == NULL) {
-      free_kernel_table(entries_table, entries, sizeof(*entries_table));
-      continue;
-    }
-    page_cache = entries_table;
-    page_cache_buckets = bucket_table;
-    page_cache_capacity = entries;
-    page_cache_bucket_count = buckets;
-    return;
-  }
-}
-
-enum {
-  BOOT_IMAGE_BYTES = 16 * 1024 * 1024,
-  VFS_DEV_EXT2_ROOT = 0x0801,
-  VFS_DEV_DEVFS = 0x0005,
-  VFS_DEV_PROC = 0x0006,
-  VFS_DEV_RAM0 = 0x0010,
-  VFS_DEV_TMPFS = 0x0011,
-  VFS_DEV_RUNFS = 0x0012,
-  VFS_DEV_SYSFS = 0x0013,
-};
-
-static bool starts_with(const char *s, const char *prefix) {
-  while (*prefix != '\0') {
-    if (*s++ != *prefix++) { return false; }
-  }
-  return true;
-}
-
-static bool path_is_mount(const char *path, const char *mount) {
-  if (!starts_with(path, mount)) { return false; }
-  char next = path[kstrlen(mount)];
-  return next == '\0' || next == '/';
-}
-
-static bool ramfs_route(const char *path) {
-  return path_is_mount(path, "/dev") || path_is_mount(path, "/proc") || path_is_mount(path, "/sys") ||
-         path_is_mount(path, "/tmp") || path_is_mount(path, "/run");
-}
-
-static bool same_ramfs_route(const char *a, const char *b) {
-  return (path_is_mount(a, "/dev") && path_is_mount(b, "/dev")) ||
-         (path_is_mount(a, "/proc") && path_is_mount(b, "/proc")) ||
-         (path_is_mount(a, "/sys") && path_is_mount(b, "/sys")) ||
-         (path_is_mount(a, "/tmp") && path_is_mount(b, "/tmp")) ||
-         (path_is_mount(a, "/run") && path_is_mount(b, "/run"));
-}
-
-static bool ramfs_device_is_block(enum ramfs_device device) {
-  return device == RAMFS_DEV_BLK_ROOT || device == RAMFS_DEV_BLK_BOOT;
-}
-
-static uint64_t make_rdev(uint64_t major, uint64_t minor) {
-  return (major << 8) | minor;
-}
-
-static uint64_t ramfs_mount_dev_id(enum ramfs_mount mount) {
-  switch (mount) {
-  case RAMFS_MOUNT_DEV:
-    return VFS_DEV_DEVFS;
-  case RAMFS_MOUNT_PROC:
-    return VFS_DEV_PROC;
-  case RAMFS_MOUNT_SYS:
-    return VFS_DEV_SYSFS;
-  case RAMFS_MOUNT_TMP:
-    return VFS_DEV_TMPFS;
-  case RAMFS_MOUNT_RUN:
-    return VFS_DEV_RUNFS;
-  case RAMFS_MOUNT_RAM0:
-    return VFS_DEV_RAM0;
-  }
-  return VFS_DEV_RAM0;
-}
-
-static uint64_t ramfs_device_rdev(enum ramfs_device device) {
-  switch (device) {
-  case RAMFS_DEV_NULL:
-    return make_rdev(1, 3);
-  case RAMFS_DEV_ZERO:
-    return make_rdev(1, 5);
-  case RAMFS_DEV_FULL:
-    return make_rdev(1, 7);
-  case RAMFS_DEV_RANDOM:
-    return make_rdev(1, 8);
-  case RAMFS_DEV_URANDOM:
-    return make_rdev(1, 9);
-  case RAMFS_DEV_CONSOLE:
-    return make_rdev(5, 1);
-  case RAMFS_DEV_TTY:
-    return make_rdev(5, 0);
-  case RAMFS_DEV_PTMX:
-    return make_rdev(5, 2);
-  case RAMFS_DEV_PTS:
-    return make_rdev(136, 0);
-  case RAMFS_DEV_BLK_ROOT:
-    return make_rdev(254, 0);
-  case RAMFS_DEV_BLK_BOOT:
-    return make_rdev(254, 1);
-  default:
-    return 0;
-  }
-}
-
-static void update_time_sources(void) {
-  uint64_t now = cell_realtime_seconds();
-  ramfs_set_now(now);
-  ext2_set_now((uint32_t)now);
-}
-
-static void from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
-  uint16_t perms = node->mode & 07777u;
-  uint16_t type = (uint16_t)(node->mode & 0170000u);
-  uint16_t mode =
-    type != 0 ? (uint16_t)(type | perms) : (node->is_dir ? (uint16_t)(0040000u | perms) : (uint16_t)(0100000u | perms));
-  if (node->device != RAMFS_DEV_NONE) {
-    if (ramfs_device_is_block(node->device)) {
-      mode = (uint16_t)(0060000u | perms);
-    } else if (node->mount == RAMFS_MOUNT_PROC) {
-      mode = (uint16_t)(0100000u | perms);
-    } else {
-      mode = (uint16_t)(0020000u | perms);
-    }
-  }
-  *out = (struct vfs_node){
-    .backend = VFS_RAMFS,
-    .ino = node->ino,
-    .is_dir = node->is_dir,
-    .writable = true,
-    .device = node->device,
-    .mode = mode,
-    .links_count = node->links_count,
-    .uid = node->uid,
-    .gid = node->gid,
-    .seals = node->seals,
-    .shared_write_mappings = node->shared_write_mappings,
-    .sealable = node->sealable,
-    .dev_id = ramfs_mount_dev_id(node->mount),
-    .rdev = ramfs_device_rdev(node->device),
-    .atime = node->atime,
-    .ctime = node->ctime,
-    .mtime = node->mtime,
-    .size = node->size,
-    .ramfs = *node,
-  };
-}
-
-static void from_ext2(const struct ext2_node *node, struct vfs_node *out) {
-  *out = (struct vfs_node){
-    .backend = VFS_EXT2,
-    .ino = node->ino,
-    .is_dir = ext2_is_dir(node),
-    .writable = false,
-    .device = RAMFS_DEV_NONE,
-    .mode = node->mode,
-    .links_count = node->links_count,
-    .uid = node->uid,
-    .gid = node->gid,
-    .dev_id = VFS_DEV_EXT2_ROOT,
-    .rdev = 0,
-    .atime = node->atime,
-    .ctime = node->ctime,
-    .mtime = node->mtime,
-    .size = node->size,
-    .ext2 = *node,
-  };
-}
+struct ramfs *vfs_root_ramfs;
+struct ext2_fs *vfs_root_ext2;
+uint64_t vfs_hhdm_offset;
+struct vfs_stats vfs_stat_counters;
 
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset) {
   vfs_hhdm_offset = hhdm_offset;
-  root_ramfs = ramfs;
-  root_ext2 = ext2;
-  page_cache_configure();
-  update_time_sources();
-}
-
-static bool streq(const char *a, const char *b) {
-  while (*a != '\0' && *b != '\0') {
-    if (*a++ != *b++) { return false; }
-  }
-  return *a == '\0' && *b == '\0';
+  vfs_root_ramfs = ramfs;
+  vfs_root_ext2 = ext2;
+  vfs_page_cache_configure();
+  vfs_update_time_sources();
 }
 
 struct vfs_stats vfs_get_stats(void) {
   struct vfs_stats stats = vfs_stat_counters;
-  uint64_t pages = 0;
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    if (page_cache[i].valid && page_cache[i].pa != 0) { ++pages; }
-  }
-  stats.page_cache_pages = pages;
-  stats.page_cache_capacity = page_cache_capacity;
-  stats.page_cache_buckets = page_cache_bucket_count;
+  vfs_page_cache_stats(&stats);
   return stats;
 }
 
 bool vfs_sync(void) {
-  bool ok = true;
-  if (root_ext2 != NULL && !ext2_flush(root_ext2)) { ok = false; }
-  return ok;
+  return vfs_root_ext2 == NULL || ext2_flush(vfs_root_ext2);
 }
 
-static bool copy_cache_path(char *dst, const char *path) {
-  size_t len = kstrlen(path);
-  if (len > VFS_LOOKUP_CACHE_PATH_MAX) { return false; }
-  kmemcpy(dst, path, len + 1);
-  return true;
-}
-
-static bool lookup_cache_get(const char *path, bool lstat, struct vfs_node *out) {
-  for (size_t i = 0; i < VFS_LOOKUP_CACHE_ENTRIES; ++i) {
-    if (lookup_cache[i].valid && lookup_cache[i].lstat == lstat && streq(lookup_cache[i].path, path)) {
-      lookup_cache[i].age = ++lookup_cache_clock;
-      *out = lookup_cache[i].node;
-      ++vfs_stat_counters.lookup_cache_hits;
-      return true;
-    }
-  }
-  ++vfs_stat_counters.lookup_cache_misses;
-  return false;
-}
-
-static struct vfs_lookup_cache_entry *lookup_cache_victim(void) {
-  struct vfs_lookup_cache_entry *victim = &lookup_cache[0];
-  for (size_t i = 0; i < VFS_LOOKUP_CACHE_ENTRIES; ++i) {
-    if (!lookup_cache[i].valid) { return &lookup_cache[i]; }
-    if (lookup_cache[i].age < victim->age) { victim = &lookup_cache[i]; }
-  }
-  return victim;
-}
-
-static void lookup_cache_put(const char *path, bool lstat, const struct vfs_node *node) {
-  if (node == NULL || node->backend == VFS_PROC) { return; }
-  struct vfs_lookup_cache_entry *entry = lookup_cache_victim();
-  char path_copy[VFS_LOOKUP_CACHE_PATH_MAX + 1];
-  if (!copy_cache_path(path_copy, path)) { return; }
-  entry->valid = false;
-  entry->lstat = lstat;
-  kmemcpy(entry->path, path_copy, kstrlen(path_copy) + 1);
-  entry->node = *node;
-  entry->age = ++lookup_cache_clock;
-  entry->valid = true;
-}
-
-static void lookup_cache_invalidate_all(void) {
-  bool any = false;
-  for (size_t i = 0; i < VFS_LOOKUP_CACHE_ENTRIES; ++i) {
-    if (lookup_cache[i].valid) {
-      lookup_cache[i].valid = false;
-      any = true;
-    }
-  }
-  if (any) { ++vfs_stat_counters.lookup_cache_invalidations; }
-}
-
-static bool node_cacheable(const struct vfs_node *node) {
-  return node != NULL && !node->is_dir && node->device == RAMFS_DEV_NONE &&
-         (node->backend == VFS_RAMFS || node->backend == VFS_EXT2);
-}
-
-static uint32_t page_cache_hash(enum vfs_backend backend, uint64_t ino, uint64_t dev_id, uint64_t off) {
-  uint64_t h = ((uint64_t)backend * 0x9e3779b185ebca87ull) ^ ino ^ (dev_id << 17) ^ (off >> 12);
-  h ^= h >> 33;
-  h *= 0xff51afd7ed558ccdull;
-  h ^= h >> 33;
-  return (uint32_t)(h & (page_cache_bucket_count - 1));
-}
-
-static void page_cache_init_buckets_once(void) {
-  static bool initialized;
-  if (initialized) { return; }
-  if (page_cache == NULL || page_cache_buckets == NULL || page_cache_capacity == 0 || page_cache_bucket_count == 0) {
-    return;
-  }
-  for (size_t i = 0; i < page_cache_bucket_count; ++i) {
-    page_cache_buckets[i] = VFS_PAGE_CACHE_NONE;
-  }
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    page_cache[i].hash_next = VFS_PAGE_CACHE_NONE;
-  }
-  initialized = true;
-}
-
-static bool cache_key_eq(const struct vfs_page_cache_entry *entry, const struct vfs_node *node, uint64_t off) {
-  return entry->valid && entry->backend == node->backend && entry->ino == node->ino && entry->dev_id == node->dev_id &&
-         entry->off == off;
-}
-
-static struct vfs_page_cache_entry *page_cache_find(const struct vfs_node *node, uint64_t off) {
-  if (page_cache == NULL || page_cache_buckets == NULL || page_cache_bucket_count == 0) { return NULL; }
-  page_cache_init_buckets_once();
-  uint32_t bucket = page_cache_hash(node->backend, node->ino, node->dev_id, off);
-  for (uint32_t index = page_cache_buckets[bucket]; index != VFS_PAGE_CACHE_NONE; index = page_cache[index].hash_next) {
-    if (cache_key_eq(&page_cache[index], node, off)) {
-      page_cache[index].age = ++page_cache_clock;
-      return &page_cache[index];
-    }
-  }
-  return NULL;
-}
-
-static void page_cache_unlink(size_t index) {
-  struct vfs_page_cache_entry *entry = &page_cache[index];
-  if (!entry->valid) { return; }
-  uint32_t bucket = page_cache_hash(entry->backend, entry->ino, entry->dev_id, entry->off);
-  uint32_t *slot = &page_cache_buckets[bucket];
-  while (*slot != VFS_PAGE_CACHE_NONE) {
-    if (*slot == index) {
-      *slot = page_cache[*slot].hash_next;
-      break;
-    }
-    slot = &page_cache[*slot].hash_next;
-  }
-  entry->hash_next = VFS_PAGE_CACHE_NONE;
-}
-
-static void page_cache_clear(size_t index) {
-  page_cache_unlink(index);
-  if (page_cache[index].valid && page_cache[index].pa != 0) { pmm_free_page(page_cache[index].pa); }
-  kmemset(&page_cache[index], 0, sizeof(page_cache[index]));
-  page_cache[index].hash_next = VFS_PAGE_CACHE_NONE;
-}
-
-static uint64_t page_cache_alloc_page(void) {
-  uint64_t pa = pmm_alloc_zero_page();
-  if (pa != 0) { return pa; }
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    uint32_t index = (page_cache_evict_hand + (uint32_t)i) % (uint32_t)page_cache_capacity;
-    if (!page_cache[index].valid) { continue; }
-    page_cache_clear(index);
-    pa = pmm_alloc_zero_page();
-    if (pa != 0) {
-      page_cache_evict_hand = (index + 1) % (uint32_t)page_cache_capacity;
-      return pa;
-    }
-  }
-  return 0;
-}
-
-static struct vfs_page_cache_entry *page_cache_victim(void) {
-  if (page_cache == NULL || page_cache_capacity == 0) { return NULL; }
-  page_cache_init_buckets_once();
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    uint32_t index = (page_cache_evict_hand + (uint32_t)i) % (uint32_t)page_cache_capacity;
-    if (!page_cache[index].valid) {
-      page_cache_evict_hand = (index + 1) % (uint32_t)page_cache_capacity;
-      return &page_cache[index];
-    }
-  }
-  uint32_t index = page_cache_evict_hand++ % (uint32_t)page_cache_capacity;
-  page_cache_clear(index);
-  return &page_cache[index];
-}
-
-static void page_cache_link(size_t index) {
-  struct vfs_page_cache_entry *entry = &page_cache[index];
-  uint32_t bucket = page_cache_hash(entry->backend, entry->ino, entry->dev_id, entry->off);
-  entry->hash_next = page_cache_buckets[bucket];
-  page_cache_buckets[bucket] = (uint32_t)index;
-}
-
-static bool page_cache_load(const struct vfs_node *node, uint64_t off) {
-  if (!node_cacheable(node)) { return false; }
-  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  if (page_cache_find(node, off) != NULL) { return true; }
-  ++vfs_stat_counters.page_cache_loads;
-  struct vfs_page_cache_entry *entry = page_cache_victim();
-  if (entry == NULL) { return false; }
-  size_t index = (size_t)(entry - page_cache);
-  entry->valid = false;
-  entry->backend = node->backend;
-  entry->ino = node->ino;
-  entry->dev_id = node->dev_id;
-  entry->off = off;
-  entry->age = ++page_cache_clock;
-  entry->pa = page_cache_alloc_page();
-  if (entry->pa == 0) {
-    page_cache_clear(index);
-    return false;
-  }
-  if (vfs_hhdm_offset == 0) {
-    page_cache_clear(index);
-    return false;
-  }
-  uint8_t *data = (uint8_t *)(uintptr_t)(entry->pa + vfs_hhdm_offset);
-  uint64_t readable = 0;
-  if (off < node->size) {
-    readable = node->size - off;
-    if (readable > VFS_PAGE_SIZE) { readable = VFS_PAGE_SIZE; }
-  }
-  if (readable != 0 && vfs_read_uncached(node, off, data, readable) != readable) {
-    page_cache_clear(index);
-    return false;
-  }
-  entry->valid = true;
-  page_cache_link(index);
-  return true;
-}
-
-bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst) {
-  if (dst == NULL || !node_cacheable(node)) { return false; }
-  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  if (page_cache_find(node, off) != NULL) {
-    ++vfs_stat_counters.page_cache_hits;
-  } else {
-    ++vfs_stat_counters.page_cache_misses;
-  }
-  if (!page_cache_load(node, off)) { return false; }
-  for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
-    uint64_t ahead = off + i * VFS_PAGE_SIZE;
-    if (ahead >= node->size) { break; }
-    (void)page_cache_load(node, ahead);
-  }
-  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
-  if (entry == NULL) { return false; }
-  kmemcpy(dst, (const void *)(uintptr_t)(vfs_hhdm_offset + entry->pa), VFS_PAGE_SIZE);
-  return true;
-}
-
-bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out) {
-  if (pa_out == NULL || !node_cacheable(node)) { return false; }
-  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  if (page_cache_find(node, off) != NULL) {
-    ++vfs_stat_counters.page_cache_hits;
-  } else {
-    ++vfs_stat_counters.page_cache_misses;
-  }
-  if (!page_cache_load(node, off)) { return false; }
-  for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
-    uint64_t ahead = off + i * VFS_PAGE_SIZE;
-    if (ahead >= node->size) { break; }
-    (void)page_cache_load(node, ahead);
-  }
-  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
-  if (entry == NULL || entry->pa == 0 || !pmm_share_page(entry->pa)) { return false; }
-  *pa_out = entry->pa;
-  return true;
-}
-
-void vfs_page_cache_invalidate(const struct vfs_node *node) {
-  if (node == NULL || page_cache == NULL) { return; }
-  bool any = false;
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    if (page_cache[i].valid && page_cache[i].backend == node->backend && page_cache[i].ino == node->ino &&
-        page_cache[i].dev_id == node->dev_id) {
-      page_cache_clear(i);
-      any = true;
-    }
-  }
-  if (any) { ++vfs_stat_counters.page_cache_invalidations; }
-}
-
-static uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
+uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
   if (node->backend == VFS_RAMFS) { return ramfs_read(node->ramfs.fs, node->ramfs.index, off, dst, len); }
   if (node->backend == VFS_EXT2) {
-    uint32_t got = 0;
+    uint32_t read = 0;
     if (len > UINT32_MAX) { len = UINT32_MAX; }
-    return ext2_read_file(root_ext2, &node->ext2, off, dst, (uint32_t)len, &got) ? got : 0;
+    return ext2_read_file(vfs_root_ext2, &node->ext2, off, dst, (uint32_t)len, &read) ? read : 0;
   }
   return 0;
-}
-
-static bool parse_uint_component(const char **p, int *out) {
-  int value = 0;
-  const char *s = *p;
-  if (*s < '0' || *s > '9') { return false; }
-  while (*s >= '0' && *s <= '9') {
-    value = value * 10 + (*s - '0');
-    ++s;
-  }
-  *p = s;
-  *out = value;
-  return true;
-}
-
-static bool proc_kind_for_name(const char *name, enum ramfs_device *device) {
-  if (streq(name, "stat")) {
-    *device = RAMFS_DEV_PROC_PID_STAT;
-  } else if (streq(name, "status")) {
-    *device = RAMFS_DEV_PROC_PID_STATUS;
-  } else if (streq(name, "cmdline")) {
-    *device = RAMFS_DEV_PROC_PID_CMDLINE;
-  } else if (streq(name, "statm")) {
-    *device = RAMFS_DEV_PROC_PID_STATM;
-  } else if (streq(name, "comm")) {
-    *device = RAMFS_DEV_PROC_PID_COMM;
-  } else if (streq(name, "mounts")) {
-    *device = RAMFS_DEV_PROC_PID_MOUNTS;
-  } else if (streq(name, "cwd")) {
-    *device = RAMFS_DEV_PROC_PID_CWD;
-  } else if (streq(name, "exe")) {
-    *device = RAMFS_DEV_PROC_PID_EXE;
-  } else {
-    return false;
-  }
-  return true;
-}
-
-static bool proc_pid_file_node(int pid, enum ramfs_device device, struct vfs_node *out) {
-  uint64_t now = cell_realtime_seconds();
-  uint16_t mode = 0100444u;
-  uint64_t size = 0;
-  
-  if (device == RAMFS_DEV_PROC_PID_CWD || device == RAMFS_DEV_PROC_PID_EXE) {
-    struct proc_info info;
-    mode = 0120777u;
-    if (cell_proc_info_for_pid(pid, &info)) {
-      const char *target = device == RAMFS_DEV_PROC_PID_CWD ? info.cwd : info.exec_path;
-      size = kstrlen(target[0] == '\0' ? "-" : target);
-    }
-  }
-  
-  *out = (struct vfs_node){
-    .backend = VFS_PROC,
-    .ino = 110000u + (uint64_t)pid * 16u + (uint64_t)device,
-    .is_dir = false,
-    .writable = false,
-    .device = device,
-    .mode = mode,
-    .links_count = 1,
-    .uid = cell_proc_uid(pid),
-    .gid = cell_proc_gid(pid),
-    .dev_id = VFS_DEV_PROC,
-    .atime = now,
-    .ctime = now,
-    .mtime = now,
-    .proc_pid = pid,
-    .size = size,
-  };
-  return true;
-}
-
-static bool proc_fd_dir_node(int pid, struct vfs_node *out) {
-  uint64_t now = cell_realtime_seconds();
-  *out = (struct vfs_node){
-    .backend = VFS_PROC,
-    .ino = 140000u + (uint64_t)pid,
-    .is_dir = true,
-    .writable = false,
-    .device = RAMFS_DEV_PROC_PID_FD,
-    .mode = 0040555u,
-    .links_count = 1,
-    .uid = cell_proc_uid(pid),
-    .gid = cell_proc_gid(pid),
-    .dev_id = VFS_DEV_PROC,
-    .atime = now,
-    .ctime = now,
-    .mtime = now,
-    .proc_pid = pid,
-    .proc_fd = -1,
-  };
-  return true;
-}
-
-static bool proc_fd_link_node(int pid, int fd, struct vfs_node *out) {
-  if (pid != cell_current_pid()) { return false; }
-  struct vfs_node fd_node;
-  if (!cell_fd_stat(fd, &fd_node)) { return false; }
-  uint64_t now = cell_realtime_seconds();
-  *out = (struct vfs_node){
-    .backend = VFS_PROC,
-    .ino = 150000u + (uint64_t)pid * 64u + (uint64_t)fd,
-    .is_dir = false,
-    .writable = false,
-    .device = RAMFS_DEV_PROC_PID_FD,
-    .mode = 0120777u,
-    .links_count = 1,
-    .uid = cell_proc_uid(pid),
-    .gid = cell_proc_gid(pid),
-    .dev_id = VFS_DEV_PROC,
-    .atime = now,
-    .ctime = now,
-    .mtime = now,
-    .proc_pid = pid,
-    .proc_fd = fd,
-  };
-  return true;
-}
-
-static void utoa_dec(uint64_t value, char *dst, size_t cap) {
-  char tmp[32];
-  size_t n = 0;
-  if (cap == 0) { return; }
-  if (value == 0) { tmp[n++] = '0'; }
-  while (value != 0 && n < sizeof(tmp)) {
-    tmp[n++] = (char)('0' + (value % 10));
-    value /= 10;
-  }
-  size_t out = 0;
-  while (n > 0 && out + 1 < cap) {
-    dst[out++] = tmp[--n];
-  }
-  dst[out] = '\0';
-}
-
-static size_t append_text(char *dst, size_t cap, size_t len, const char *text) {
-  while (*text != '\0' && len + 1 < cap) {
-    dst[len++] = *text++;
-  }
-  if (cap != 0) { dst[len] = '\0'; }
-  return len;
-}
-
-static size_t append_dec_text(char *dst, size_t cap, size_t len, uint64_t value) {
-  char tmp[32];
-  utoa_dec(value, tmp, sizeof(tmp));
-  return append_text(dst, cap, len, tmp);
-}
-
-static bool fd_link_target(int fd, char *out, size_t cap, size_t *len_out) {
-  if (cell_fd_path(fd, out, cap)) {
-    if (len_out != NULL) { *len_out = kstrlen(out); }
-    return true;
-  }
-  struct vfs_node node;
-  if (!cell_fd_stat(fd, &node)) { return false; }
-  uint32_t type = node.mode & 0170000u;
-  size_t len = 0;
-  if (type == 0010000u) {
-    len = append_text(out, cap, len, "pipe:[");
-    len = append_dec_text(out, cap, len, node.ino);
-    len = append_text(out, cap, len, "]");
-  } else if (type == 0140000u) {
-    len = append_text(out, cap, len, "socket:[");
-    len = append_dec_text(out, cap, len, node.ino);
-    len = append_text(out, cap, len, "]");
-  } else {
-    len = append_text(out, cap, len, "anon_inode:[fd");
-    len = append_dec_text(out, cap, len, (uint64_t)fd);
-    len = append_text(out, cap, len, "]");
-  }
-  if (len_out != NULL) { *len_out = len; }
-  return cap != 0;
-}
-
-static bool proc_pid_link_target(const struct vfs_node *node, char *out, size_t cap, size_t *len_out) {
-  struct proc_info info;
-  if (!cell_proc_info_for_pid(node->proc_pid, &info)) { return false; }
-  const char *target = NULL;
-  if (node->device == RAMFS_DEV_PROC_PID_CWD) {
-    target = info.cwd;
-  } else if (node->device == RAMFS_DEV_PROC_PID_EXE) {
-    target = info.exec_path;
-  } else {
-    return false;
-  }
-  if (target == NULL || target[0] == '\0') { target = "-"; }
-  size_t target_len = kstrlen(target);
-  if (len_out != NULL) { *len_out = target_len; }
-  size_t copy_len = target_len;
-  if (copy_len > cap) { copy_len = cap; }
-  if (copy_len != 0) { kmemcpy(out, target, copy_len); }
-  return true;
-}
-
-static bool lookup_proc_dynamic(const char *path, struct vfs_node *out) {
-  if (!path_is_mount(path, "/proc")) { return false; }
-  const char *p = path + 5;
-  if (*p != '/') { return false; }
-  ++p;
-  int pid = 0;
-  if (starts_with(p, "self") && (p[4] == '\0' || p[4] == '/')) {
-    p += 4;
-    pid = cell_current_pid();
-  } else if (!parse_uint_component(&p, &pid)) {
-    return false;
-  }
-  if (!cell_proc_exists(pid)) { return false; }
-  if (*p == '\0') {
-    uint64_t now = cell_realtime_seconds();
-    *out = (struct vfs_node){
-      .backend = VFS_PROC,
-      .ino = 100000u + (uint64_t)pid,
-      .is_dir = true,
-      .writable = false,
-      .device = RAMFS_DEV_NONE,
-      .mode = 0040555u,
-      .links_count = 1,
-      .uid = cell_proc_uid(pid),
-      .gid = cell_proc_gid(pid),
-      .dev_id = VFS_DEV_PROC,
-      .atime = now,
-      .ctime = now,
-      .mtime = now,
-      .proc_pid = pid,
-    };
-    return true;
-  }
-  if (*p != '/') { return false; }
-  ++p;
-  if (streq(p, "fd")) { return proc_fd_dir_node(pid, out); }
-  if (starts_with(p, "fd/")) {
-    p += 3;
-    int fd = 0;
-    if (!parse_uint_component(&p, &fd) || *p != '\0') { return false; }
-    return proc_fd_link_node(pid, fd, out);
-  }
-  if (streq(p, "task")) {
-    uint64_t now = cell_realtime_seconds();
-    *out = (struct vfs_node){
-      .backend = VFS_PROC,
-      .ino = 120000u + (uint64_t)pid,
-      .is_dir = true,
-      .writable = false,
-      .device = RAMFS_DEV_NONE,
-      .mode = 0040555u,
-      .links_count = 1,
-      .uid = cell_proc_uid(pid),
-      .gid = cell_proc_gid(pid),
-      .dev_id = VFS_DEV_PROC,
-      .atime = now,
-      .ctime = now,
-      .mtime = now,
-      .proc_pid = -pid,
-    };
-    return true;
-  }
-  if (starts_with(p, "task/")) {
-    p += 5;
-    int tid = 0;
-    if (!parse_uint_component(&p, &tid) || tid != pid || !cell_proc_exists(tid)) { return false; }
-    if (*p == '\0') {
-      uint64_t now = cell_realtime_seconds();
-      *out = (struct vfs_node){
-        .backend = VFS_PROC,
-        .ino = 130000u + (uint64_t)pid,
-        .is_dir = true,
-        .writable = false,
-        .device = RAMFS_DEV_NONE,
-        .mode = 0040555u,
-        .links_count = 1,
-        .uid = cell_proc_uid(pid),
-        .gid = cell_proc_gid(pid),
-        .dev_id = VFS_DEV_PROC,
-        .atime = now,
-        .ctime = now,
-        .mtime = now,
-        .proc_pid = pid,
-      };
-      return true;
-    }
-    if (*p != '/') { return false; }
-    ++p;
-  }
-  enum ramfs_device device;
-  if (!proc_kind_for_name(p, &device)) { return false; }
-  return proc_pid_file_node(pid, device, out);
-}
-
-static bool lookup_ramfs(const char *path, struct vfs_node *out) {
-  struct ramfs_node node;
-  if (root_ramfs == NULL || !ramfs_lookup_node(root_ramfs, path, &node)) { return false; }
-  from_ramfs(&node, out);
-  return true;
-}
-
-bool vfs_lookup(const char *path, struct vfs_node *out) {
-  ++vfs_stat_counters.lookup_count;
-  if (lookup_cache_get(path, false, out)) { return true; }
-  if (ramfs_route(path)) {
-    if (lookup_proc_dynamic(path, out)) { return true; }
-    if (lookup_ramfs(path, out)) {
-      lookup_cache_put(path, false, out);
-      return true;
-    }
-  }
-  if (root_ext2 != NULL) {
-    struct ext2_node node;
-    if (ext2_lookup(root_ext2, path, &node)) {
-      from_ext2(&node, out);
-      lookup_cache_put(path, false, out);
-      return true;
-    }
-  }
-  if (!lookup_ramfs(path, out)) { return false; }
-  lookup_cache_put(path, false, out);
-  return true;
-}
-
-bool vfs_lstat(const char *path, struct vfs_node *out) {
-  ++vfs_stat_counters.lstat_count;
-  if (lookup_cache_get(path, true, out)) { return true; }
-  if (ramfs_route(path)) {
-    if (lookup_proc_dynamic(path, out)) { return true; }
-    if (lookup_ramfs(path, out)) {
-      lookup_cache_put(path, true, out);
-      return true;
-    }
-  }
-  if (root_ext2 != NULL) {
-    struct ext2_node node;
-    if (ext2_lstat(root_ext2, path, &node)) {
-      from_ext2(&node, out);
-      lookup_cache_put(path, true, out);
-      return true;
-    }
-  }
-  if (!lookup_ramfs(path, out)) { return false; }
-  lookup_cache_put(path, true, out);
-  return true;
 }
 
 bool vfs_mkdir(const char *path, uint32_t mode) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
-  if (root_ext2 != NULL && !ramfs_route(path)) {
+  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
     struct ext2_node node;
-    ok = ext2_create(root_ext2, path, true, (uint16_t)mode, &node);
+    ok = ext2_create(vfs_root_ext2, path, true, (uint16_t)mode, &node);
   } else {
-    ok = root_ramfs != NULL && ramfs_mkdir(root_ramfs, path, (uint16_t)mode);
+    ok = vfs_root_ramfs != NULL && ramfs_mkdir(vfs_root_ramfs, path, (uint16_t)mode);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
-  update_time_sources();
-  if (root_ext2 != NULL && !ramfs_route(path)) {
+  vfs_update_time_sources();
+  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
     struct ext2_node node;
-    if (!ext2_create(root_ext2, path, false, mode, &node)) { return false; }
-    from_ext2(&node, out);
+    if (!ext2_create(vfs_root_ext2, path, false, mode, &node)) { return false; }
+    vfs_from_ext2(&node, out);
     out->writable = true;
-    lookup_cache_invalidate_all();
+    vfs_lookup_cache_clear();
     return true;
   }
   struct ramfs_node node;
-  if (root_ramfs == NULL || !ramfs_create(root_ramfs, path, mode, &node)) { return false; }
-  from_ramfs(&node, out);
-  lookup_cache_invalidate_all();
+  if (vfs_root_ramfs == NULL || !ramfs_create(vfs_root_ramfs, path, mode, &node)) { return false; }
+  vfs_from_ramfs(&node, out);
+  vfs_lookup_cache_clear();
   return true;
 }
 
 int vfs_tmpfile(const struct vfs_node *dir, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable,
                 struct vfs_node *out) {
-  update_time_sources();
+  vfs_update_time_sources();
   if (dir->backend == VFS_EXT2) {
     struct ext2_node node;
-    if (!root_ext2->write) { return -30; }
-    if (!ext2_tmpfile(root_ext2, mode, uid, gid, linkable, &node)) { return -28; }
-    from_ext2(&node, out);
+    if (!vfs_root_ext2->write) { return -30; }
+    if (!ext2_tmpfile(vfs_root_ext2, mode, uid, gid, linkable, &node)) { return -28; }
+    vfs_from_ext2(&node, out);
     out->writable = true;
     vfs_page_cache_invalidate(out);
     return 0;
@@ -944,186 +86,169 @@ int vfs_tmpfile(const struct vfs_node *dir, uint16_t mode, uint32_t uid, uint32_
                                     dir->ramfs.mount == RAMFS_MOUNT_RAM0 || dir->ramfs.mount == RAMFS_MOUNT_DEV)) {
     struct ramfs_node node;
     if (!ramfs_tmpfile(&dir->ramfs, mode, uid, gid, linkable, &node)) { return -28; }
-    from_ramfs(&node, out);
+    vfs_from_ramfs(&node, out);
     return 0;
   }
   return -95;
 }
 
 bool vfs_link_node(const struct vfs_node *node, const char *new_path) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
-  if (node->backend == VFS_EXT2 && !ramfs_route(new_path)) {
-    ok = ext2_link_inode(root_ext2, node->ext2.ino, new_path);
+  if (node->backend == VFS_EXT2 && !vfs_path_uses_ramfs(new_path)) {
+    ok = ext2_link_inode(vfs_root_ext2, node->ext2.ino, new_path);
   } else if (node->backend == VFS_RAMFS && node->ramfs.fs != NULL) {
     ok = ramfs_link_node(node->ramfs.fs, node->ramfs.index, new_path);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out) {
-  update_time_sources();
+  vfs_update_time_sources();
   struct ramfs_node node;
-  if (root_ramfs == NULL || !ramfs_route(path) || !ramfs_mkfifo(root_ramfs, path, (uint16_t)mode, &node)) {
+  if (vfs_root_ramfs == NULL || !vfs_path_uses_ramfs(path) ||
+      !ramfs_mkfifo(vfs_root_ramfs, path, (uint16_t)mode, &node)) {
     return false;
   }
-  from_ramfs(&node, out);
-  lookup_cache_invalidate_all();
+  vfs_from_ramfs(&node, out);
+  vfs_lookup_cache_clear();
   return true;
 }
 
 bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
-  update_time_sources();
+  vfs_update_time_sources();
   struct ramfs_node node;
-  if (root_ramfs == NULL || !ramfs_route(path) || !ramfs_mksock(root_ramfs, path, (uint16_t)mode, &node)) {
+  if (vfs_root_ramfs == NULL || !vfs_path_uses_ramfs(path) ||
+      !ramfs_mksock(vfs_root_ramfs, path, (uint16_t)mode, &node)) {
     return false;
   }
-  from_ramfs(&node, out);
-  lookup_cache_invalidate_all();
+  vfs_from_ramfs(&node, out);
+  vfs_lookup_cache_clear();
   return true;
 }
 
 bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
-  update_time_sources();
+  vfs_update_time_sources();
   if (vfs_truncate_sealed(node, size)) { return false; }
   vfs_page_cache_invalidate(node);
   bool ok = false;
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;
-    ok = ext2_inode(root_ext2, node->ext2.ino, &ext) && ext2_truncate(root_ext2, &ext, size);
+    ok = ext2_inode(vfs_root_ext2, node->ext2.ino, &ext) && ext2_truncate(vfs_root_ext2, &ext, size);
   } else if (node->backend == VFS_RAMFS) {
     ok = ramfs_truncate(node->ramfs.fs, node->ramfs.index, size);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_unlink(const char *path) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
-  if (root_ext2 != NULL && !ramfs_route(path)) {
-    ok = ext2_unlink(root_ext2, path);
+  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
+    ok = ext2_unlink(vfs_root_ext2, path);
   } else {
-    ok = root_ramfs != NULL && ramfs_unlink(root_ramfs, path);
+    ok = vfs_root_ramfs != NULL && ramfs_unlink(vfs_root_ramfs, path);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_link(const char *old_path, const char *new_path) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
-  if (root_ext2 != NULL && !ramfs_route(old_path) && !ramfs_route(new_path)) {
-    ok = ext2_link(root_ext2, old_path, new_path);
-  } else if (root_ramfs != NULL && same_ramfs_route(old_path, new_path)) {
-    ok = ramfs_link(root_ramfs, old_path, new_path);
+  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(old_path) && !vfs_path_uses_ramfs(new_path)) {
+    ok = ext2_link(vfs_root_ext2, old_path, new_path);
+  } else if (vfs_root_ramfs != NULL && vfs_paths_share_ramfs(old_path, new_path)) {
+    ok = ramfs_link(vfs_root_ramfs, old_path, new_path);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_symlink(const char *target, const char *link_path) {
-  update_time_sources();
-  bool ok = root_ext2 != NULL && !ramfs_route(link_path) && ext2_symlink(root_ext2, target, link_path);
-  if (ok) { lookup_cache_invalidate_all(); }
+  vfs_update_time_sources();
+  bool ok = vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(link_path) && ext2_symlink(vfs_root_ext2, target, link_path);
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
-bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
-  struct vfs_node node;
-  if (ramfs_route(path) && lookup_proc_dynamic(path, &node)) {
-    if (node.device == RAMFS_DEV_PROC_PID_FD && node.proc_fd >= 0) {
-      char target[VFS_PROC_FD_PATH_MAX];
-      size_t target_len = 0;
-      if (!fd_link_target(node.proc_fd, target, sizeof(target), &target_len)) { return false; }
-      if (len_out != NULL) { *len_out = target_len; }
-      size_t copy_len = target_len;
-      if (copy_len > cap) { copy_len = cap; }
-      if (copy_len != 0) { kmemcpy(out, target, copy_len); }
-      return true;
-    }
-    if (node.device == RAMFS_DEV_PROC_PID_CWD || node.device == RAMFS_DEV_PROC_PID_EXE) {
-      return proc_pid_link_target(&node, out, cap, len_out);
-    }
-  }
-  if (root_ext2 != NULL && !ramfs_route(path)) { return ext2_readlink(root_ext2, path, out, cap, len_out); }
-  return false;
-}
-
 bool vfs_chmod(const char *path, uint32_t mode) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
-  if (root_ext2 != NULL && !ramfs_route(path)) {
-    ok = ext2_chmod(root_ext2, path, mode);
+  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
+    ok = ext2_chmod(vfs_root_ext2, path, mode);
   } else {
     struct ramfs_node node;
-    ok = root_ramfs != NULL && ramfs_route(path) && ramfs_lookup_node(root_ramfs, path, &node) &&
-         ramfs_chmod_node(root_ramfs, node.index, (uint16_t)mode);
+    ok = vfs_root_ramfs != NULL && vfs_path_uses_ramfs(path) && ramfs_lookup_node(vfs_root_ramfs, path, &node) &&
+         ramfs_chmod_node(vfs_root_ramfs, node.index, (uint16_t)mode);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
   if (node->backend == VFS_EXT2) {
-    ok = ext2_chmod_node(root_ext2, &node->ext2, mode);
+    ok = ext2_chmod_node(vfs_root_ext2, &node->ext2, mode);
   } else if (node->backend == VFS_RAMFS) {
     ok = ramfs_chmod_node(node->ramfs.fs, node->ramfs.index, (uint16_t)mode);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
-  if (root_ext2 != NULL && !ramfs_route(path)) {
-    ok = ext2_chown(root_ext2, path, uid, gid);
+  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
+    ok = ext2_chown(vfs_root_ext2, path, uid, gid);
   } else {
     struct ramfs_node node;
-    ok = root_ramfs != NULL && ramfs_route(path) && ramfs_lookup_node(root_ramfs, path, &node) &&
-         ramfs_chown_node(root_ramfs, node.index, uid, gid);
+    ok = vfs_root_ramfs != NULL && vfs_path_uses_ramfs(path) && ramfs_lookup_node(vfs_root_ramfs, path, &node) &&
+         ramfs_chown_node(vfs_root_ramfs, node.index, uid, gid);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
   if (node->backend == VFS_EXT2) {
-    ok = ext2_chown_node(root_ext2, &node->ext2, uid, gid);
+    ok = ext2_chown_node(vfs_root_ext2, &node->ext2, uid, gid);
   } else if (node->backend == VFS_RAMFS) {
     ok = ramfs_chown_node(node->ramfs.fs, node->ramfs.index, uid, gid);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 bool vfs_rename(const char *old_path, const char *new_path) {
-  update_time_sources();
+  vfs_update_time_sources();
   bool ok = false;
-  if (root_ext2 != NULL && !ramfs_route(old_path) && !ramfs_route(new_path)) {
-    ok = ext2_rename(root_ext2, old_path, new_path);
-  } else if (root_ramfs != NULL && same_ramfs_route(old_path, new_path)) {
-    ok = ramfs_rename(root_ramfs, old_path, new_path);
+  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(old_path) && !vfs_path_uses_ramfs(new_path)) {
+    ok = ext2_rename(vfs_root_ext2, old_path, new_path);
+  } else if (vfs_root_ramfs != NULL && vfs_paths_share_ramfs(old_path, new_path)) {
+    ok = ramfs_rename(vfs_root_ramfs, old_path, new_path);
   }
-  if (ok) { lookup_cache_invalidate_all(); }
+  if (ok) { vfs_lookup_cache_clear(); }
   return ok;
 }
 
 void vfs_retain_node(const struct vfs_node *node) {
   if (node == NULL) { return; }
-  if (node->backend == VFS_EXT2) { ext2_tmpfile_retain(root_ext2, node->ext2.ino); }
+  if (node->backend == VFS_EXT2) { ext2_tmpfile_retain(vfs_root_ext2, node->ext2.ino); }
   if (node->backend == VFS_RAMFS) { (void)ramfs_retain_node(node->ramfs.fs, node->ramfs.index); }
 }
 
 void vfs_release_node(const struct vfs_node *node) {
   if (node == NULL) { return; }
-  if (node->backend == VFS_EXT2 && ext2_tmpfile_release(root_ext2, node->ext2.ino)) { vfs_page_cache_invalidate(node); }
+  if (node->backend == VFS_EXT2 && ext2_tmpfile_release(vfs_root_ext2, node->ext2.ino)) {
+    vfs_page_cache_invalidate(node);
+  }
   if (node->backend == VFS_RAMFS) { ramfs_release_node(node->ramfs.fs, node->ramfs.index); }
 }
 
@@ -1161,17 +286,17 @@ void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add) {
 }
 
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
-  if (!node_cacheable(node) || len == 0 || off >= node->size) { return vfs_read_uncached(node, off, dst, len); }
+  if (!vfs_node_cacheable(node) || len == 0 || off >= node->size) { return vfs_read_uncached(node, off, dst, len); }
   uint64_t available = node->size - off;
   if (len > available) { len = available; }
   uint8_t *out = dst;
   uint64_t done = 0;
   while (done < len) {
-    uint64_t page_off = (off + done) & ~(uint64_t)(VFS_PAGE_SIZE - 1);
+    uint64_t page_off = (off + done) & ~(uint64_t)(4096 - 1);
     uint64_t in_page = (off + done) - page_off;
-    uint8_t page[VFS_PAGE_SIZE];
+    uint8_t page[4096];
     if (!vfs_read_page_cached(node, page_off, page)) { break; }
-    uint64_t chunk = VFS_PAGE_SIZE - in_page;
+    uint64_t chunk = 4096 - in_page;
     if (chunk > len - done) { chunk = len - done; }
     kmemcpy(out + done, page + in_page, chunk);
     done += chunk;
@@ -1180,32 +305,18 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 }
 
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
-  update_time_sources();
+  vfs_update_time_sources();
   if (vfs_write_sealed(node)) { return -1; }
-  if (len && off <= UINT64_MAX - (len - 1) && len <= 128 * 1024) {
-    uint64_t first = off / VFS_PAGE_SIZE;
-    uint64_t last = (off + len - 1) / VFS_PAGE_SIZE;
-    bool invalidated = false;
-    for (uint64_t i = first; i <= last; ++i) {
-      struct vfs_page_cache_entry *entry = page_cache_find(node, i * VFS_PAGE_SIZE);
-      if (entry != NULL) {
-        page_cache_clear((size_t)(entry - page_cache));
-        invalidated = true;
-      }
-    }
-    if (invalidated) { ++vfs_stat_counters.page_cache_invalidations; }
-  } else if (len) {
-    vfs_page_cache_invalidate(node);
-  }
+  vfs_page_cache_invalidate_range(node, off, len);
   int64_t written = -28;
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;
-    if (!ext2_inode(root_ext2, node->ext2.ino, &ext)) { return -5; }
-    written = ext2_write_file(root_ext2, &ext, off, src, len);
+    if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &ext)) { return -5; }
+    written = ext2_write_file(vfs_root_ext2, &ext, off, src, len);
   } else if (node->backend == VFS_RAMFS) {
     written = ramfs_write(node->ramfs.fs, node->ramfs.index, off, src, len);
   }
-  if (written >= 0) { lookup_cache_invalidate_all(); }
+  if (written >= 0) { vfs_lookup_cache_clear(); }
   return written;
 }
 
@@ -1213,14 +324,14 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
   if (node->backend == VFS_RAMFS) {
     struct ramfs_node fresh;
     if (!ramfs_refresh_node(node->ramfs.fs, node->ramfs.index, &fresh)) { return false; }
-    from_ramfs(&fresh, out);
+    vfs_from_ramfs(&fresh, out);
     return true;
   }
   if (node->backend == VFS_EXT2) {
     struct ext2_node fresh;
-    if (!ext2_inode(root_ext2, node->ext2.ino, &fresh)) { return false; }
+    if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &fresh)) { return false; }
     *out = *node;
-    from_ext2(&fresh, out);
+    vfs_from_ext2(&fresh, out);
     out->writable = true;
     return true;
   }
@@ -1233,155 +344,4 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
     return cell_proc_exists(node->proc_pid);
   }
   return false;
-}
-
-bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out) {
-  ++vfs_stat_counters.dirent_count;
-  if (dir->backend == VFS_PROC) {
-    if (dir->device == RAMFS_DEV_PROC_PID_FD && dir->proc_fd < 0) {
-      if (dir->proc_pid != cell_current_pid()) { return false; }
-      struct vfs_node fd_node;
-      size_t seen = 0;
-      for (int fd = 0; fd < (int)VFS_PROC_FD_MAX; ++fd) {
-        if (!cell_fd_stat(fd, &fd_node)) { continue; }
-        if (seen++ != index) { continue; }
-        *out = (struct vfs_dirent){.ino = 150000u + (uint64_t)dir->proc_pid * 64u + (uint64_t)fd,
-                                   .is_dir = false,
-                                   .is_device = false,
-                                   .type = 10};
-        utoa_dec((uint64_t)fd, out->name, sizeof(out->name));
-        return true;
-      }
-      return false;
-    }
-    if (dir->proc_pid < 0) {
-      if (index != 0) { return false; }
-      int pid = -dir->proc_pid;
-      *out = (struct vfs_dirent){.ino = 130000u + (uint64_t)pid, .is_dir = true, .is_device = false};
-      utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
-      return true;
-    }
-    static const char *names[] = {"stat", "status", "cmdline", "statm", "comm", "mounts", "cwd", "exe", "fd", "task"};
-    if (!dir->is_dir || index >= sizeof(names) / sizeof(names[0])) { return false; }
-    bool is_task = streq(names[index], "task") || streq(names[index], "fd");
-    *out = (struct vfs_dirent){.ino = dir->ino + index + 1, .is_dir = is_task, .is_device = false};
-    kmemcpy(out->name, names[index], kstrlen(names[index]) + 1);
-    return true;
-  }
-  if (dir->backend == VFS_RAMFS) {
-    struct ramfs_dirent ent;
-    if (ramfs_dirent(dir->ramfs.fs, dir->ramfs.index, index, &ent)) {
-      *out = (struct vfs_dirent){.ino = ent.ino, .is_dir = ent.is_dir, .is_device = ent.is_device, .type = ent.type};
-      kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
-      return true;
-    }
-    if (dir->ramfs.mount == RAMFS_MOUNT_PROC && streq(dir->ramfs.name, "proc")) {
-      size_t static_count = 0;
-      while (ramfs_dirent(dir->ramfs.fs, dir->ramfs.index, static_count, &ent)) {
-        ++static_count;
-      }
-      if (index >= static_count) {
-        int pid = cell_proc_pid_at(index - static_count);
-        if (pid != 0) {
-          *out = (struct vfs_dirent){.ino = 100000u + (uint64_t)pid, .is_dir = true, .is_device = false};
-          utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-  if (dir->backend == VFS_EXT2) {
-    struct ext2_dirent ent;
-    if (!ext2_dirent(root_ext2, &dir->ext2, index, &ent)) { return false; }
-    *out = (struct vfs_dirent){.ino = ent.ino, .is_dir = ent.type == 2, .is_device = false};
-    kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
-    return true;
-  }
-  return false;
-}
-
-bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
-  ++vfs_stat_counters.next_dirent_count;
-  if (cursor == NULL) { return false; }
-  if (dir->backend == VFS_EXT2) {
-    struct ext2_dirent ent;
-    if (!ext2_next_dirent(root_ext2, &dir->ext2, cursor, &ent)) { return false; }
-    *out = (struct vfs_dirent){.ino = ent.ino, .is_dir = ent.type == 2, .is_device = false};
-    kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
-    return true;
-  }
-  size_t index = (size_t)*cursor;
-  if (!vfs_dirent(dir, index, out)) { return false; }
-  *cursor = index + 1;
-  return true;
-}
-
-bool vfs_fs_info(struct vfs_fs_info *out) {
-  if (out == NULL) { return false; }
-  if (root_ext2 != NULL) {
-    struct ext2_info info;
-    if (!ext2_info(root_ext2, &info)) { return false; }
-    *out = (struct vfs_fs_info){
-      .block_size = info.block_size,
-      .block_count = info.block_count,
-      .free_blocks = info.free_blocks,
-      .inode_count = info.inode_count,
-      .free_inodes = info.free_inodes,
-    };
-    return true;
-  }
-  *out = (struct vfs_fs_info){
-    .block_size = 1,
-    .block_count = 0,
-    .free_blocks = 0,
-    .inode_count = 0,
-    .free_inodes = 0,
-  };
-  return true;
-}
-
-static void copy_cstr(char *dst, size_t cap, const char *src) {
-  if (cap == 0) { return; }
-  size_t i = 0;
-  for (; i + 1 < cap && src[i] != '\0'; ++i) {
-    dst[i] = src[i];
-  }
-  dst[i] = '\0';
-}
-
-static void set_mount_info(struct vfs_mount_info *out, const char *source, const char *target, const char *fstype,
-                           uint64_t block_size, uint64_t block_count, uint64_t free_blocks) {
-  copy_cstr(out->source, sizeof(out->source), source);
-  copy_cstr(out->target, sizeof(out->target), target);
-  copy_cstr(out->fstype, sizeof(out->fstype), fstype);
-  out->block_size = block_size;
-  out->block_count = block_count;
-  out->free_blocks = free_blocks;
-}
-
-size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
-  enum { MOUNT_COUNT = 8 };
-  if (out == NULL || cap == 0) { return MOUNT_COUNT; }
-
-  size_t n = 0;
-  struct vfs_fs_info root = {0};
-  if (vfs_fs_info(&root) && n < cap) {
-    const char *fstype = root_ext2 != NULL && root_ext2->ext2plus ? "ext2+" : "ext2";
-    set_mount_info(&out[n++], "ext2-root", "/", fstype, root.block_size, root.block_count, root.free_blocks);
-  }
-
-  uint64_t tmp_blocks = pmm_total_pages();
-  uint64_t tmp_free = pmm_free_pages();
-  if (n < cap) { set_mount_info(&out[n++], "tmpfs", "/tmp", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free); }
-  if (n < cap) { set_mount_info(&out[n++], "runfs", "/run", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free); }
-  if (n < cap) {
-    uint64_t boot_blocks = BOOT_IMAGE_BYTES / 1024;
-    set_mount_info(&out[n++], "bootfs", "/dev/fs/boot", "fat16", 1024, boot_blocks, 0);
-  }
-  if (n < cap) { set_mount_info(&out[n++], "ramfs", "/dev/fs/ram0", "ramfs", 1024, 0, 0); }
-  if (n < cap) { set_mount_info(&out[n++], "proc", "/proc", "proc", 1024, 0, 0); }
-  if (n < cap) { set_mount_info(&out[n++], "sysfs", "/sys", "sysfs", 1024, 0, 0); }
-  if (n < cap) { set_mount_info(&out[n++], "devfs", "/dev", "devfs", 1024, 0, 0); }
-  return MOUNT_COUNT;
 }

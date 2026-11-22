@@ -1,7 +1,9 @@
 #include "proc/tty.h"
 
+#include "arch/aarch64/regs.h"
 #include "pl011.h"
 #include "proc/domain.h"
+#include "proc/memory.h"
 #include "proc/poll.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
@@ -365,7 +367,7 @@ void cell_wake_stdin(struct trap_frame *frame) {
       continue;
     }
     if (n <= 0) { continue; }
-    thread->tf.x[0] = (uint64_t)n;
+    trap_set_result(&thread->tf, (uint64_t)n);
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;
     thread->stdin_buf = 0;

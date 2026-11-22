@@ -1,6 +1,7 @@
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/syscall_handlers.h"
-
 #include "cell.h"
+#include "proc/poll.h"
 #include "proc/thread.h"
 
 #include <stdbool.h>

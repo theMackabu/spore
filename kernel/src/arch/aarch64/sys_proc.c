@@ -1,7 +1,8 @@
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/syscall_handlers.h"
-
-#include "cell.h"
 #include "kprintf.h"
+#include "proc/futex.h"
+#include "proc/process.h"
 
 #include <stdint.h>
 

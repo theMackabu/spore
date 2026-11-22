@@ -1,9 +1,12 @@
 #include "proc/domain.h"
 
+#include "cell.h"
 #include "kstr.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "proc/fd.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
 #include "proc/process.h"
 #include "proc/thread.h"
 #include "proc/tty.h"
@@ -167,19 +170,9 @@ void cell_set_domain_identity(struct domain *domain, const char *path, const cha
   }
 }
 
-struct user_address_space *cell_current_as(void) {
-  struct domain *domain = cell_current_domain_internal();
-  return cell_domain_as(domain);
-}
-
 int cell_current_pid(void) {
   struct domain *domain = cell_current_domain_internal();
   return domain == NULL ? 0 : domain->id;
-}
-
-int cell_current_tid(void) {
-  struct thread *thread = cell_current_thread_internal();
-  return thread == NULL ? 0 : thread->tid;
 }
 
 int cell_current_ppid(void) {
@@ -305,4 +298,43 @@ bool cell_set_chroot(const char *path) {
   if (len >= sizeof(domain->chroot)) { return false; }
   kmemcpy(domain->chroot, path, len + 1);
   return true;
+}
+
+bool cell_proc_exists(int pid) {
+  return cell_find_domain(pid) != NULL;
+}
+
+uint32_t cell_proc_uid(int pid) {
+  struct domain *domain = cell_find_domain(pid);
+  return domain == NULL ? 0 : domain->uid;
+}
+
+uint32_t cell_proc_gid(int pid) {
+  struct domain *domain = cell_find_domain(pid);
+  return domain == NULL ? 0 : domain->gid;
+}
+
+void cell_note_unsupported_syscall(uint64_t nr) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return; }
+  ++domain->unsupported_syscalls;
+  domain->last_unsupported_syscall = nr;
+}
+
+void cell_note_unsupported_ioctl(uint64_t request) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return; }
+  ++domain->unsupported_ioctls;
+  domain->last_unsupported_ioctl = request;
+}
+
+int cell_proc_pid_at(size_t index) {
+  size_t seen = 0;
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+    struct domain *domain = cell_domain_slot(i);
+    if (domain == NULL || !domain->used) { continue; }
+    if (seen == index) { return domain->id; }
+    ++seen;
+  }
+  return 0;
 }

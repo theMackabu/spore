@@ -1,8 +1,10 @@
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/syscall_handlers.h"
-
-#include "cell.h"
 #include "mem.h"
+#include "proc/fd.h"
 #include "proc/io.h"
+#include "proc/limits.h"
+#include "proc/thread.h"
 #include "vfs.h"
 
 #include <stdint.h>

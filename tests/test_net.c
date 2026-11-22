@@ -1,4 +1,7 @@
+#include "cell.h"
 #include "net.h"
+#include "proc/policy.h"
+#include "proc/socket.h"
 #include "virtio_net.h"
 
 #include <assert.h>

@@ -1,14 +1,16 @@
 #include "proc/thread.h"
 
+#include "arch/aarch64/platform.h"
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/smp.h"
+#include "cell.h"
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
-
-extern void arch_fp_save(struct fp_state *state);
-extern void arch_fp_restore(const struct fp_state *state);
+#include "proc/limits.h"
+#include "proc/memory.h"
 
 enum {
   EINVAL = 22,
@@ -17,15 +19,6 @@ enum {
 static struct thread *threads;
 static size_t thread_capacity;
 static int next_thread_id = 1;
-
-static void poweroff(void) {
-  __asm__ volatile("mov x0, #0x0008\n"
-                   "movk x0, #0x8400, lsl #16\n"
-                   "hvc #0\n"
-                   :
-                   :
-                   : "x0", "memory");
-}
 
 static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
   if (count == 0 || elem_size == 0) { return NULL; }
@@ -49,6 +42,11 @@ bool cell_thread_reset(size_t capacity, uint64_t hhdm_offset) {
   }
   next_thread_id = 1;
   return true;
+}
+
+int cell_current_tid(void) {
+  struct thread *thread = cell_current_thread_internal();
+  return thread == NULL ? 0 : thread->tid;
 }
 
 size_t cell_thread_capacity(void) {
@@ -155,7 +153,7 @@ void cell_wake_sleep_waiters(uint64_t scheduler_ticks) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SLEEP) { continue; }
     if (scheduler_ticks < thread->sleep_deadline_tick) { continue; }
-    thread->tf.x[0] = 0;
+    trap_set_result(&thread->tf, 0);
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;
     thread->sleep_deadline_tick = 0;
@@ -166,15 +164,12 @@ void cell_save_current(const struct trap_frame *frame) {
   struct thread *current_thread = cell_current_thread_internal();
   if (current_thread == NULL) { return; }
   current_thread->tf = *frame;
-  arch_fp_save(&current_thread->fp);
-  __asm__ volatile("mrs %0, tpidr_el0" : "=r"(current_thread->tpidr_el0));
+  aarch64_save_context(&current_thread->context);
 }
 
-static void restore_thread(struct thread *thread, struct trap_frame *frame, struct domain *old_domain) {
-  (void)old_domain;
+static void restore_thread(struct thread *thread, struct trap_frame *frame) {
   vmm_install_user(cell_domain_as(thread->domain));
-  arch_fp_restore(&thread->fp);
-  __asm__ volatile("msr tpidr_el0, %0" : : "r"(thread->tpidr_el0));
+  aarch64_restore_context(&thread->context);
   *frame = thread->tf;
 }
 
@@ -190,10 +185,7 @@ static void cleanup_reaped_current_domain(struct domain *old_domain, struct thre
 void cell_restore_current(struct trap_frame *frame) {
   struct thread *current_thread = cell_current_thread_internal();
   if (current_thread == NULL) { return; }
-  vmm_install_user(cell_domain_as(current_thread->domain));
-  arch_fp_restore(&current_thread->fp);
-  __asm__ volatile("msr tpidr_el0, %0" : : "r"(current_thread->tpidr_el0));
-  *frame = current_thread->tf;
+  restore_thread(current_thread, frame);
 }
 
 void cell_schedule(struct trap_frame *frame) {
@@ -214,7 +206,7 @@ void cell_schedule(struct trap_frame *frame) {
           smp_set_current_thread_slot(cpu, candidate);
           candidate->running_cpu = (int)cpu;
           cleanup_reaped_current_domain(old_domain, candidate);
-          restore_thread(candidate, frame, old_domain);
+          restore_thread(candidate, frame);
           return;
         }
       }
@@ -226,7 +218,7 @@ void cell_schedule(struct trap_frame *frame) {
         smp_set_current_thread_slot(cpu, candidate);
         candidate->running_cpu = (int)cpu;
         cleanup_reaped_current_domain(old_domain, candidate);
-        restore_thread(candidate, frame, old_domain);
+        restore_thread(candidate, frame);
         return;
       }
     }
@@ -241,36 +233,15 @@ void cell_schedule(struct trap_frame *frame) {
         has_running_elsewhere = true;
       }
     }
-    if (!has_blocked && has_running_elsewhere) {
-      smp_set_scheduler_waiting(cpu, true);
-      smp_kernel_unlock();
-      __asm__ volatile("msr daifclr, #2\n"
-                       "wfi\n"
-                       "msr daifset, #2\n"
-                       :
-                       :
-                       : "memory");
-      smp_kernel_lock();
-      smp_set_scheduler_waiting(cpu, false);
-      continue;
-    }
-    if (!has_blocked) { break; }
+    if (!has_blocked && !has_running_elsewhere) { break; }
     smp_set_scheduler_waiting(cpu, true);
     smp_kernel_unlock();
-    __asm__ volatile("msr daifclr, #2\n"
-                     "wfi\n"
-                     "msr daifset, #2\n"
-                     :
-                     :
-                     : "memory");
+    smp_wait_for_irq();
     smp_kernel_lock();
     smp_set_scheduler_waiting(cpu, false);
   }
   kprintf("[kernel] no runnable threads\n");
-  poweroff();
-  for (;;) {
-    __asm__ volatile("wfe");
-  }
+  aarch64_poweroff();
 }
 
 int cell_block_current_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame) {

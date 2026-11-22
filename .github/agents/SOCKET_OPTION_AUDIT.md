@@ -40,7 +40,7 @@ surface currently implemented in the kernel and pinned by integration tests.
 
 ## Regression Coverage
 
-`userland/tests/integration/main.c` exercises the option surface above through
+`userland/tests/integration/socket.c` exercises the option surface above through
 `socket_options_regression()` plus targeted TCP/UDP tests for broadcast,
 receive-low-water polling, linger reset, timeouts, SIGPIPE, and loopback/refused
 connection behavior.

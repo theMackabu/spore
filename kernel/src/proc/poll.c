@@ -1,8 +1,12 @@
 #include "proc/poll.h"
 
+#include "arch/aarch64/regs.h"
+#include "cell.h"
 #include "net.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/pty.h"
 #include "proc/socket.h"
@@ -216,7 +220,7 @@ static void wake_poll_waiters(void) {
     if (ready < 0 || ready != 0 || expired) {
       if (ready >= 0) { ready = poll_wait_check(thread, true); }
       if (ready < 0) { ready = -EFAULT; }
-      thread->tf.x[0] = (uint64_t)ready;
+      trap_set_result(&thread->tf, (uint64_t)ready);
       thread->state = THREAD_RUNNABLE;
       thread->wait_reason = WAIT_NONE;
       clear_poll_wait(thread);
@@ -241,7 +245,7 @@ void cell_socket_wake_unix_accept_waiters(struct open_file *listener) {
     if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] != listener) { continue; }
     int accepted = cell_socket_take_pending_unix(thread->domain, listener, thread->socket_accept_flags);
     if (accepted == -EAGAIN) { continue; }
-    thread->tf.x[0] = (uint64_t)accepted;
+    trap_set_result(&thread->tf, (uint64_t)accepted);
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;
     thread->wait_target = -1;
@@ -298,7 +302,7 @@ static void wake_epoll_waiters(void) {
         epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, true);
     }
     if (ready < 0) { ready = -EINTR; }
-    thread->tf.x[0] = (uint64_t)ready;
+    trap_set_result(&thread->tf, (uint64_t)ready);
     thread->state = THREAD_RUNNABLE;
     thread->wait_reason = WAIT_NONE;
     clear_epoll_wait(thread);

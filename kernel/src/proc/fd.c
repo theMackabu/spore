@@ -4,6 +4,8 @@
 #include "mem.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
 #include "proc/pty.h"

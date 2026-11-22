@@ -1,10 +1,12 @@
 #include "proc/io.h"
 
-#include "cell.h"
+#include "arch/aarch64/regs.h"
 #include "mem.h"
 #include "net.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/procfs.h"
 #include "proc/pty.h"
@@ -261,7 +263,7 @@ static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame) {
   if (signal == 0) { return -EINTR; }
   if (frame == NULL || cell_current_thread_internal() == NULL) { return -EINTR; }
   cell_current_thread_internal()->tf = *frame;
-  cell_current_thread_internal()->tf.x[0] = (uint64_t)(-(int64_t)EINTR);
+  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)(-(int64_t)EINTR));
   (void)cell_deliver_signal_to_thread(cell_current_thread_internal(), signal);
   *frame = cell_current_thread_internal()->tf;
   return CELL_SWITCHED;

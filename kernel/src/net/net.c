@@ -3,6 +3,8 @@
 #include "cell.h"
 #include "kprintf.h"
 #include "mem.h"
+#include "proc/policy.h"
+#include "proc/socket.h"
 #include "virtio_net.h"
 
 enum {

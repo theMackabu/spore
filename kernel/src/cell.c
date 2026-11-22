@@ -1,5 +1,6 @@
 #include "cell.h"
 
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/smp.h"
 #include "exec/stack.h"
 #include "kprintf.h"
@@ -7,8 +8,11 @@
 #include "net.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
+#include "proc/process.h"
 #include "proc/signal.h"
 #include "proc/snapshot.h"
 #include "proc/socket.h"
@@ -147,9 +151,7 @@ bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint
     return false;
   }
   thread->state = THREAD_RUNNABLE;
-  thread->tf.elr_el1 = entry;
-  thread->tf.sp_el0 = sp;
-  thread->tf.spsr_el1 = 0x340;
+  aarch64_init_user_frame(&thread->tf, entry, sp);
   cell_set_current_thread(thread);
   kprintf("[spore] booting... domain %d / thread %d\n", domain->id, thread->tid);
   return true;
@@ -225,43 +227,4 @@ void cell_loadavg_scaled(uint64_t out[3]) {
 
 uint64_t cell_boot_epoch_seconds(void) {
   return boot_epoch_sec;
-}
-
-bool cell_proc_exists(int pid) {
-  return cell_find_domain(pid) != NULL;
-}
-
-uint32_t cell_proc_uid(int pid) {
-  struct domain *domain = cell_find_domain(pid);
-  return domain == NULL ? 0 : domain->uid;
-}
-
-uint32_t cell_proc_gid(int pid) {
-  struct domain *domain = cell_find_domain(pid);
-  return domain == NULL ? 0 : domain->gid;
-}
-
-void cell_note_unsupported_syscall(uint64_t nr) {
-  struct domain *domain = current_domain();
-  if (domain == NULL) { return; }
-  ++domain->unsupported_syscalls;
-  domain->last_unsupported_syscall = nr;
-}
-
-void cell_note_unsupported_ioctl(uint64_t request) {
-  struct domain *domain = current_domain();
-  if (domain == NULL) { return; }
-  ++domain->unsupported_ioctls;
-  domain->last_unsupported_ioctl = request;
-}
-
-int cell_proc_pid_at(size_t index) {
-  size_t seen = 0;
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
-    struct domain *domain = cell_domain_slot(i);
-    if (domain == NULL || !domain->used) { continue; }
-    if (seen == index) { return domain->id; }
-    ++seen;
-  }
-  return 0;
 }

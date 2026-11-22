@@ -1,5 +1,6 @@
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/syscall_handlers.h"
-
+#include "proc/domain.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
 

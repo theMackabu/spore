@@ -1,9 +1,13 @@
 #include "arch/aarch64/timer.h"
 
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/smp.h"
 #include "cell.h"
 #include "kprintf.h"
 #include "pl011.h"
+#include "proc/tty.h"
+
+#include <stddef.h>
 
 enum {
   VIRTUAL_TIMER_INTID = 27,

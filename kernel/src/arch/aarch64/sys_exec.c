@@ -1,6 +1,5 @@
+#include "arch/aarch64/regs.h"
 #include "arch/aarch64/syscall_handlers.h"
-
-#include "cell.h"
 #include "elf/loader.h"
 #include "exec/stack.h"
 #include "kprintf.h"
@@ -8,6 +7,10 @@
 #include "mm/pmm.h"
 #include "mm/vma.h"
 #include "mm/vmm.h"
+#include "proc/domain.h"
+#include "proc/limits.h"
+#include "proc/policy.h"
+#include "proc/process.h"
 #include "vfs.h"
 
 #include <stdbool.h>

@@ -1,9 +1,21 @@
 #include "proc/snapshot.h"
 
+#include "arch/aarch64/regs.h"
+#include "arch/aarch64/smp.h"
 #include "mem.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
+#include "proc/process.h"
 #include "proc/thread.h"
+
+struct snapshot {
+  bool used;
+  int id;
+  struct user_address_space as;
+  struct vma_list vmas;
+};
 
 static struct snapshot snapshots[MAX_SNAPSHOTS];
 static int next_snapshot_id;
@@ -88,13 +100,9 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   child_thread->state = THREAD_RUNNABLE;
   cell_save_current(frame);
   child_thread->tf = *frame;
-  child_thread->fp = cell_current_thread_internal()->fp;
-  child_thread->tf.elr_el1 = entry;
-  child_thread->tf.x[0] = arg;
-  child_thread->tf.x[1] = (uint64_t)child_domain->id;
-  child_thread->tf.spsr_el1 &= ~(1ull << 7);
-  child_thread->tpidr_el0 = cell_current_thread_internal()->tpidr_el0;
-  __asm__ volatile("sev" : : : "memory");
+  child_thread->context = cell_current_thread_internal()->context;
+  aarch64_set_snapshot_entry(&child_thread->tf, entry, arg, (uint64_t)child_domain->id);
+  smp_notify();
   return child_domain->id;
 }
 

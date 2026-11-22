@@ -1,8 +1,10 @@
 #include "arch/aarch64/syscall_handlers.h"
-
-#include "cell.h"
 #include "mem.h"
-#include "ramfs.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
+#include "proc/policy.h"
 #include "vfs.h"
 
 #include <stdbool.h>
@@ -38,10 +40,6 @@ static bool streq(const char *a, const char *b) {
 
 void syscall_set_address_space(struct user_address_space *as) {
   current_as = as;
-}
-
-void syscall_set_ramfs(struct ramfs *fs) {
-  (void)fs;
 }
 
 void syscall_set_boot_time(uint64_t epoch_sec) {

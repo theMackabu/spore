@@ -1,10 +1,22 @@
+#include "arch/aarch64/platform.h"
 #include "arch/aarch64/regs.h"
+#include "arch/aarch64/signal_frame.h"
 #include "arch/aarch64/syscall_handlers.h"
-#include "cell.h"
 #include "kprintf.h"
 #include "mem.h"
 #include "mm/vmm.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/futex.h"
+#include "proc/limits.h"
+#include "proc/memory.h"
+#include "proc/policy.h"
+#include "proc/poll.h"
+#include "proc/process.h"
+#include "proc/procfs.h"
 #include "proc/signal.h"
+#include "proc/snapshot.h"
+#include "proc/thread.h"
 #include "vfs.h"
 
 #include <stdbool.h>
@@ -208,30 +220,6 @@ struct mount_info64 {
   uint64_t free_blocks;
 };
 
-static void system_poweroff(void) {
-  __asm__ volatile("mov x0, #0x0008\n"
-                   "movk x0, #0x8400, lsl #16\n"
-                   "hvc #0\n"
-                   :
-                   :
-                   : "x0", "memory");
-  for (;;) {
-    __asm__ volatile("wfe");
-  }
-}
-
-static void system_reboot(void) {
-  __asm__ volatile("mov x0, #0x0009\n"
-                   "movk x0, #0x8400, lsl #16\n"
-                   "hvc #0\n"
-                   :
-                   :
-                   : "x0", "memory");
-  for (;;) {
-    __asm__ volatile("wfe");
-  }
-}
-
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-label-as-value"
 static bool signal_delivers_to_current(int signal) {
@@ -386,12 +374,12 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_SPORE_NET_CONFIG - SYS_SPORE_SNAPSHOT] = &&l_spore_net_config,
   };
   uint64_t nr = f->x[8];
-  uint64_t a0 = f->x[0];
-  uint64_t a1 = f->x[1];
-  uint64_t a2 = f->x[2];
-  uint64_t a3 = f->x[3];
-  uint64_t a4 = f->x[4];
-  uint64_t a5 = f->x[5];
+  uint64_t a0 = trap_syscall_arg(f, 0);
+  uint64_t a1 = trap_syscall_arg(f, 1);
+  uint64_t a2 = trap_syscall_arg(f, 2);
+  uint64_t a3 = trap_syscall_arg(f, 3);
+  uint64_t a4 = trap_syscall_arg(f, 4);
+  uint64_t a5 = trap_syscall_arg(f, 5);
 
   if (!cell_syscall_allowed(nr)) {
     kprintf("[spore] syscall denied nr=%d\n", (int)nr);
@@ -548,10 +536,10 @@ l_spore_shutdown:
   (void)vfs_sync();
   if (a0 == 1) {
     kprintf("[kernel] reboot\n");
-    system_reboot();
+    aarch64_reboot();
   } else {
     kprintf("[kernel] shutdown\n");
-    system_poweroff();
+    aarch64_poweroff();
   }
   return 0;
 l_spore_procinfo: {

@@ -1,13 +1,15 @@
 #include "proc/procfs.h"
 
-#include "proc/procfs_format.h"
-#include "proc/procfs_text.h"
-
 #include "arch/aarch64/smp.h"
+#include "cell.h"
 #include "kstr.h"
 #include "mem.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/memory.h"
+#include "proc/procfs_format.h"
+#include "proc/procfs_text.h"
 #include "proc/thread.h"
 
 #include <stddef.h>

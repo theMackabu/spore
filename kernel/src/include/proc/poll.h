@@ -1,6 +1,20 @@
 #pragma once
 
-#include "cell.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+struct open_file;
+struct trap_frame;
+
+enum { CELL_MAX_POLL_FDS = 64 };
+
+enum cell_poll_events {
+  CELL_POLLIN = 0x0001,
+  CELL_POLLOUT = 0x0004,
+  CELL_POLLERR = 0x0008,
+  CELL_POLLHUP = 0x0010,
+  CELL_POLLNVAL = 0x0020,
+};
 
 int cell_fd_poll_events(int fd, int events);
 int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks, struct trap_frame *frame);
