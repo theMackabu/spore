@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum { SYSCALL_UMASK = 0022 };
+
 struct user_address_space *syscall_active_as(void);
 struct vfs_node;
 bool syscall_user_readable(uint64_t buf, uint64_t len);
@@ -55,7 +57,7 @@ int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t
 int64_t sys_inotify_init1(uint64_t flags);
 int64_t sys_inotify_add_watch(uint64_t fd, uint64_t path_addr, uint64_t mask);
 int64_t sys_inotify_rm_watch(uint64_t fd, uint64_t wd);
-int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags);
+int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode);
 int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags);
 int64_t sys_fstat(uint64_t fd, uint64_t stat_addr);
 int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr);

@@ -79,7 +79,7 @@ int main(void) {
   assert((node.mode & 0170000u) == 0010000u);
   assert(ramfs_mksock(&fs, "/run/s", 0666, &node));
   assert((node.mode & 0170000u) == 0140000u);
-  assert(ramfs_create(&fs, "/tmp/d/a", &node));
+  assert(ramfs_create(&fs, "/tmp/d/a", 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "hello", 5) == 5);
   assert(ramfs_chmod_node(&fs, node.index, 0600));
   assert(ramfs_refresh_node(&fs, node.index, &node));
@@ -91,11 +91,11 @@ int main(void) {
   const char *pack = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.pack";
   const char *idx = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.idx";
   const char *keep = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.keep";
-  assert(ramfs_create(&fs, pack, &node));
+  assert(ramfs_create(&fs, pack, 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "pack", 4) == 4);
-  assert(ramfs_create(&fs, idx, &node));
+  assert(ramfs_create(&fs, idx, 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "idx", 3) == 3);
-  assert(ramfs_create(&fs, keep, &node));
+  assert(ramfs_create(&fs, keep, 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "keep", 4) == 4);
   assert(ramfs_lookup_node(&fs, pack, &node));
   memset(buf, 0, sizeof(buf));
@@ -136,12 +136,12 @@ int main(void) {
   assert(ramfs_lookup_node(&fs, "/tmp/d/b", &node));
   assert(ramfs_unlink(&fs, "/tmp/d/b"));
 
-  assert(ramfs_create(&fs, "/tmp/d/no-seal", &node));
+  assert(ramfs_create(&fs, "/tmp/d/no-seal", 0644, &node));
   assert(ramfs_set_sealable(&fs, node.index, false));
   assert(ramfs_get_seals(&fs, node.index) == RAMFS_F_SEAL_SEAL);
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_GROW) == -EPERM);
 
-  assert(ramfs_create(&fs, "/tmp/d/sealed", &node));
+  assert(ramfs_create(&fs, "/tmp/d/sealed", 0644, &node));
   assert(ramfs_set_sealable(&fs, node.index, true));
   assert(ramfs_get_seals(&fs, node.index) == 0);
   assert(ramfs_write(&fs, node.index, 0, "seal", 4) == 4);
@@ -156,7 +156,7 @@ int main(void) {
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_SEAL) == 0);
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_WRITE) == -EPERM);
 
-  assert(ramfs_create(&fs, "/tmp/d/busy-seal", &node));
+  assert(ramfs_create(&fs, "/tmp/d/busy-seal", 0644, &node));
   assert(ramfs_set_sealable(&fs, node.index, true));
   assert(ramfs_truncate(&fs, node.index, 4096));
   ramfs_note_shared_writable_mapping(&fs, node.index, true);

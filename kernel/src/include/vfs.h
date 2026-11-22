@@ -94,7 +94,7 @@ void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset);
 bool vfs_lookup(const char *path, struct vfs_node *out);
 bool vfs_lstat(const char *path, struct vfs_node *out);
 bool vfs_mkdir(const char *path, uint32_t mode);
-bool vfs_create(const char *path, struct vfs_node *out);
+bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out);
 bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out);
 bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out);
 bool vfs_truncate(const struct vfs_node *node, uint64_t size);

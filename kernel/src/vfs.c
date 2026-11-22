@@ -911,18 +911,18 @@ bool vfs_mkdir(const char *path, uint32_t mode) {
   return ok;
 }
 
-bool vfs_create(const char *path, struct vfs_node *out) {
+bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
   update_time_sources();
   if (root_ext2 != NULL && !ramfs_route(path)) {
     struct ext2_node node;
-    if (!ext2_create(root_ext2, path, false, 0755, &node)) { return false; }
+    if (!ext2_create(root_ext2, path, false, mode, &node)) { return false; }
     from_ext2(&node, out);
     out->writable = true;
     lookup_cache_invalidate_all();
     return true;
   }
   struct ramfs_node node;
-  if (root_ramfs == NULL || !ramfs_create(root_ramfs, path, &node)) { return false; }
+  if (root_ramfs == NULL || !ramfs_create(root_ramfs, path, mode, &node)) { return false; }
   from_ramfs(&node, out);
   lookup_cache_invalidate_all();
   return true;

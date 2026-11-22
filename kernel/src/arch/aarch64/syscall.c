@@ -652,7 +652,7 @@ l_getsockopt:
 l_shutdown:
   return sys_shutdown(a0, a1);
 l_openat:
-  return sys_openat(a0, a1, a2);
+  return sys_openat(a0, a1, a2, a3);
 l_close:
   return cell_fd_close((int)a0);
 l_close_range: {
@@ -735,7 +735,7 @@ l_uname:
 l_sethostname:
   return sys_sethostname(a0, a1);
 l_umask:
-  return 022;
+  return SYSCALL_UMASK;
 l_prctl:
   return sys_prctl(a0, a1, a2, a3, a4);
 l_chroot:

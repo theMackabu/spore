@@ -147,7 +147,7 @@ static bool proc_self_fd_number(const char *path, int *fd_out) {
   return true;
 }
 
-int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
+int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode) {
   char path[CELL_PATH_MAX];
   char virtual_path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
@@ -181,11 +181,13 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   bool exists = vfs_lookup(path, &node);
   if (exists && (flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) { return -(int64_t)EEXIST; }
   if (!exists) {
-    if ((flags & O_CREAT) == 0 || !vfs_create(path, &node)) { return -(int64_t)ENOENT; }
+    uint16_t create_mode = (uint16_t)(mode & 07777u & ~SYSCALL_UMASK);
+    if ((flags & O_CREAT) == 0 || !vfs_create(path, create_mode, &node)) { return -(int64_t)ENOENT; }
     (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
     (void)vfs_lookup(path, &node);
+  } else if (!syscall_node_access_allowed(&node, access)) {
+    return -(int64_t)EACCES;
   }
-  if (!syscall_node_access_allowed(&node, access)) { return -(int64_t)EACCES; }
   if ((flags & O_TRUNC) != 0 && !node.is_dir) {
     (void)vfs_truncate(&node, 0);
     (void)vfs_lookup(path, &node);
@@ -238,7 +240,7 @@ int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
     len = append_literal(path, sizeof(path), len, name[0] == '\0' ? "memfd" : name);
     if (len + 1 >= sizeof(path)) { return -(int64_t)ENAMETOOLONG; }
     struct vfs_node node;
-    if (!vfs_create(path, &node)) { continue; }
+    if (!vfs_create(path, 0666, &node)) { continue; }
     (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
     (void)vfs_lookup(path, &node);
     (void)vfs_set_sealable(&node, (flags & MFD_ALLOW_SEALING) != 0);

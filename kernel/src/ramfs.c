@@ -670,13 +670,15 @@ bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode) {
   return true;
 }
 
-bool ramfs_create(struct ramfs *fs, const char *path, struct ramfs_node *out) {
+bool ramfs_create(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out) {
   int existing = lookup_index(fs, path);
   if (existing >= 0) { return ramfs_refresh_node(fs, existing, out); }
   int parent;
   const char *name;
   if (!split_parent(fs, path, &parent, &name)) { return false; }
   int index = add_node(fs, parent, name, false, true);
+  if (index < 0) { return false; }
+  fs->nodes[index].mode = (uint16_t)(0100000u | (mode & 07777u));
   return ramfs_refresh_node(fs, index, out);
 }
 
