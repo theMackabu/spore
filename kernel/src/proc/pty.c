@@ -1,6 +1,5 @@
 #include "proc/pty.h"
 
-#include "framebuffer.h"
 #include "kstr.h"
 #include "mem.h"
 #include "proc/fd.h"
@@ -145,9 +144,8 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
   kmemset(&ptys[id], 0, sizeof(ptys[id]));
   ptys[id].used = true;
   ptys[id].master_refs = 1;
-  framebuffer_get_winsize(&ptys[id].rows, &ptys[id].cols);
-  if (ptys[id].rows == 0) { ptys[id].rows = 38; }
-  if (ptys[id].cols == 0) { ptys[id].cols = 96; }
+  ptys[id].rows = 38;
+  ptys[id].cols = 96;
   ptys[id].foreground_pgrp = domain->pgrp_id;
   ptys[id].oflag = TTY_OPOST | TTY_ONLCR;
   ptys[id].lflag = TTY_ISIG | TTY_ICANON | TTY_ECHO;

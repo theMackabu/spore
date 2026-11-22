@@ -6,7 +6,6 @@
 #include "elf/loader.h"
 #include "exec/stack.h"
 #include "ext2.h"
-#include "framebuffer.h"
 #include "kprintf.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
@@ -17,8 +16,6 @@
 #include "vfs.h"
 #include "virtio_blk.h"
 #include "virtio_console.h"
-#include "virtio_gpu.h"
-#include "virtio_keyboard.h"
 #include "virtio_net.h"
 
 #include <stdarg.h>
@@ -270,15 +267,6 @@ static void map_device_page(uint64_t pa) {
   l3[l3i] = (pa & ~0xfffull) | attr_index_device | ap_el1_rw | sh_inner | af | pxn | uxn | 0x3ull;
 }
 
-static void map_device_range(uint64_t pa, uint64_t size) {
-  if (pa == 0 || size == 0) { return; }
-  uint64_t start = pa & ~(EARLY_PAGE_SIZE - 1ull);
-  uint64_t end = (pa + size + EARLY_PAGE_SIZE - 1ull) & ~(EARLY_PAGE_SIZE - 1ull);
-  for (uint64_t page = start; page < end; page += EARLY_PAGE_SIZE) {
-    map_device_page(page);
-  }
-}
-
 static void map_device_pages(void) {
   zero_page(early_l1);
   zero_page(early_l2);
@@ -306,7 +294,6 @@ static void map_device_pages(void) {
   map_device_page(GICD_PHYS);
   map_device_page(GICR_PHYS);
   map_device_page(GICR_SGI_PHYS);
-  map_device_range(boot->framebuffer_phys, boot->framebuffer_size);
 
   __asm__ volatile("dsb ishst\n"
                    "tlbi vmalle1\n"
@@ -356,24 +343,10 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   kernel_log_handoff = true;
   (void)virtio_console_init(boot->hhdm_offset);
 
-  struct spore_boot_info active_framebuffer = *boot;
-  bool using_gpu = virtio_gpu_init(boot->hhdm_offset, &active_framebuffer);
-  bool fb_ready = using_gpu && framebuffer_init(&active_framebuffer);
-  if (fb_ready) {
-    if (using_gpu) {
-      framebuffer_set_flush(virtio_gpu_flush);
-      virtio_gpu_flush();
-    }
-    kprintf("[kernel] framebuffer %ux%u stride=%u format=%u\n", (unsigned)active_framebuffer.framebuffer_width,
-            (unsigned)active_framebuffer.framebuffer_height,
-            (unsigned)active_framebuffer.framebuffer_pixels_per_scanline,
-            (unsigned)active_framebuffer.framebuffer_format);
-  }
   smp_init_topology(boot->hhdm_offset, cpu_entries, boot->cpu_count);
   syscall_set_boot_time(boot->realtime_epoch_sec);
   cell_set_boot_epoch(boot->realtime_epoch_sec);
   random_init(boot->realtime_epoch_sec ^ boot->hhdm_offset ^ boot->memmap_phys ^ boot->modules_phys);
-  (void)virtio_keyboard_init(boot->hhdm_offset);
   kprintf("[kernel] booted at EL%u\n", (unsigned)current_el());
   exceptions_init();
   smp_boot_parked_secondaries(boot->kernel_phys_base, boot->kernel_virt_base);

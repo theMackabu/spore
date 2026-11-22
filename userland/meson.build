@@ -26,7 +26,6 @@ subdir('etc')
 userland_image_data += files('usr/local/htoprc')
 userland_image_data += files('demos/something', 'demos/something-else.msh')
 
-subdir('lib/ncurses')
 subdir('lib/spore')
 
 subdir('bin/init')

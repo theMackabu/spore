@@ -2,6 +2,8 @@ alpine = 'https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/'
 community = 'https://dl-cdn.alpinelinux.org/alpine/v3.23/community/aarch64/'
 alpine24 = 'https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/'
 packages = [
+  [alpine + 'ncurses-terminfo-base-6.5_p20251123-r0.apk',
+   '6952a6b39abaf7bbc498cb085f0f59bf23619b53b3f7328b08fe50c0198a2bd4', ['etc/terminfo/x/xterm-256color']],
   ['https://dl-cdn.alpinelinux.org/alpine/v3.24/community/aarch64/fastfetch-2.64.2-r0.apk',
    'dfe8fadfe0d497aa345a267c507939a3063f4f13118b4ab4d538611a88217962', ['usr/bin/fastfetch']],
   [alpine24 + 'hwdata-pci-0.408-r0.apk',

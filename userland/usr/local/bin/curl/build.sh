@@ -106,9 +106,9 @@ fi
     -DUSE_NGHTTP2=OFF \
     -DUSE_NGTCP2=OFF \
     -DUSE_NGHTTP3=OFF \
-    -DZLIB_FOUND=OFF \
-    -DBROTLI_FOUND=OFF \
-    -DZSTD_FOUND=OFF \
+    -DCURL_ZLIB=OFF \
+    -DCURL_BROTLI=OFF \
+    -DCURL_ZSTD=OFF \
     >/dev/null
 )
 cmake --build "$curl_build" --target curl -j "$jobs" >/dev/null

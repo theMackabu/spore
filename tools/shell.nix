@@ -8,7 +8,7 @@ let
 in
 pkgs.mkShellNoCC {
   packages = with pkgs; [
-    cmake dosfstools e2fsprogs git gnumake meson mtools ncurses ninja
+    cmake dosfstools e2fsprogs git gnumake meson mtools ninja
     patch pkg-config python3 qemu zstd
     llvmPackages.clang llvmPackages.lld llvmPackages.llvm
   ];

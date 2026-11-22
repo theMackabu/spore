@@ -201,8 +201,7 @@ userland/prebuilt/libncurses.so.6.6 /lib/libncurses.so.6.6
 symlink libncurses.so.6.6 /lib/libncurses.so.6.4
 symlink libncurses.so.6.6 /lib/libncurses.so.6
 symlink libncurses.so.6 /lib/libncurses.so
-userland/lib/ncurses/xterm-256color /usr/share/terminfo/x/xterm-256color
-userland/lib/ncurses/spore /usr/share/terminfo/s/spore
+userland/prebuilt/xterm-256color /usr/share/terminfo/x/xterm-256color
 
 userland/usr/local/htoprc /usr/local/htoprc
 userland/etc/motd /etc/motd

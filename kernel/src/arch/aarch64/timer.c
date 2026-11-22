@@ -2,11 +2,8 @@
 
 #include "arch/aarch64/smp.h"
 #include "cell.h"
-#include "framebuffer.h"
 #include "kprintf.h"
 #include "pl011.h"
-#include "virtio_gpu.h"
-#include "virtio_keyboard.h"
 
 enum {
   VIRTUAL_TIMER_INTID = 27,
@@ -189,9 +186,7 @@ void handle_irq(struct trap_frame *frame, uint64_t from_lower_el) {
                      :
                      : "r"((uint64_t)timer_interval), "r"(1ull)
                      : "memory");
-    if (pl011_poll_rx() || virtio_keyboard_poll()) { cell_wake_stdin(from_lower_el != 0 ? frame : NULL); }
-    framebuffer_tick();
-    virtio_gpu_poll();
+    if (pl011_poll_rx()) { cell_wake_stdin(from_lower_el != 0 ? frame : NULL); }
     irq_eoi(iar);
     cell_timer_tick(frame, from_lower_el != 0);
     return;

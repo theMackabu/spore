@@ -8,8 +8,8 @@ and can be confined independently by the policy layer.
 The interactive image uses Alpine AArch64 packages for dash, fastfetch, jq, htop, nano,
 Vim, TinyCC, GNU wget, GNU which and the Dropbear SSH client and key tools.
 Alpine supplies wide-character ncurses. The narrow-character library comes
-from Void Linux’s AArch64 musl package. The host uses zstd to unpack it and
-infocmp and tic to build Spore’s terminal descriptions. Ant comes from its
+from Void Linux’s AArch64 musl package. The host uses zstd to unpack it. The serial
+console uses Alpine’s xterm-256color terminal description. Ant comes from its
 upstream musl release.
 `prebuilt/meson.build` pins each archive URL and SHA-256 and lists the files
 to extract. The image manifest sets their guest paths and shared-library links. The first build downloads the

@@ -28,23 +28,6 @@ kernel_link_args = kernel_target_args + [
   '-T', meson.current_source_dir() / 'linker.ld',
 ]
 
-fs = import('fs')
-console_font = get_option('console_font')
-console_font_path = console_font.startswith('/') ? console_font : meson.project_source_root() / console_font
-if not fs.exists(console_font_path)
-  error('console_font "' + console_font + '" does not exist. Vendored choices: ' +
-        'kernel/src/fonts/terminus/ter-u16b.bdf, kernel/src/fonts/terminus/ter-u16n.bdf')
-endif
-terminus_font = custom_target('terminus_font',
-  input: console_font_path,
-  output: ['terminus_font.c', 'terminus_font.h'],
-  command: [
-    bdf_to_kernel_font,
-    '@INPUT@',
-    '@OUTPUT0@',
-    '@OUTPUT1@',
-  ])
-
 kernel_sources = files(
   'src/arch/aarch64/boot.S',
   'src/arch/aarch64/exceptions.c',
@@ -68,12 +51,9 @@ kernel_sources = files(
   'src/cell.c',
   'src/ext2.c',
   'src/main.c',
-  'src/drivers/framebuffer.c',
   'src/drivers/pl011.c',
   'src/drivers/virtio_blk.c',
   'src/drivers/virtio_console.c',
-  'src/drivers/virtio_gpu.c',
-  'src/drivers/virtio_keyboard.c',
   'src/drivers/virtio_net.c',
   'src/elf/loader.c',
   'src/elf/vfs_reader.c',
@@ -104,7 +84,6 @@ kernel_sources = files(
   'src/random.c',
   'src/vfs.c',
 )
-kernel_sources += terminus_font
 
 spore_version_conf = configuration_data()
 spore_version_conf.set_quoted('SPORE_UTS_SYSNAME', spore_sysname)
