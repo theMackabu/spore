@@ -11,7 +11,7 @@ Alpine supplies wide-character ncurses. The narrow-character library comes
 from Void Linux’s AArch64 musl package. The host uses zstd to unpack it. The serial
 console uses Alpine’s xterm-256color terminal description. Ant comes from its
 upstream musl release.
-`prebuilt/meson.build` pins each archive URL and SHA-256 and lists the files
+`prebuilt/packages.json` pins each archive URL and SHA-256 and lists the files
 to extract. The image manifest sets their guest paths and shared-library links. The first build downloads the
 archives. Subsequent builds reuse verified copies from `.cache/packages/`,
 including after `make clean`.

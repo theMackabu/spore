@@ -222,7 +222,7 @@ jobs:
             \) -print | sort | while IFS= read -r file; do
               sha256sum "$file"
             done
-            sha256sum meson.build userland/prebuilt/*.py
+            sha256sum meson.build userland/prebuilt/packages.json userland/prebuilt/*.py
           } > "$RUNNER_TEMP/userland-cache-inputs"
           hash="$(sha256sum "$RUNNER_TEMP/userland-cache-inputs" | cut -d' ' -f1)"
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
