@@ -108,9 +108,6 @@ void cell_system_init(uint64_t hhdm_offset) {
   cell_tty_reset();
   kprintf("[spore] process tables: domains=%u threads=%u mms=%u open-files=%u\n", (unsigned)domain_count,
           (unsigned)thread_count, (unsigned)mm_count, (unsigned)open_file_count);
-  // v2 Phase A object model: domains own isolation/policy state, threads own
-  // EL0 execution state. Kernel mutation is serialized by the big kernel lock;
-  // user execution may run on multiple CPUs.
 }
 
 bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp) {
@@ -177,6 +174,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
     ++scheduler_ticks;
     if (cell_scheduler_waiting_for_interrupt()) { ++scheduler_idle_ticks; }
     update_loadavg();
+    cell_expire_real_timers(scheduler_ticks);
     cell_wake_sleep_waiters(scheduler_ticks);
     net_poll();
     cell_socket_timer_tick(scheduler_ticks);

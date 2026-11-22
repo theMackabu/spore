@@ -1,11 +1,13 @@
 #include "mm/vmm.h"
 
+#include "arch/aarch64/smp.h"
 #include "mem.h"
 #include "mm/pmm.h"
 
 enum {
   PTE_VALID = 1ull << 0,
   PTE_TABLE = 1ull << 1,
+  PTE_NG = 1ull << 11,
   PTE_AF = 1ull << 10,
   PTE_SH_INNER = 3ull << 8,
   PTE_AP_MASK = 3ull << 6,
@@ -55,7 +57,6 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   as->brk_base = 0;
   as->brk_current = 0;
   as->mmap_base = 0x0000007000000000ull;
-  as->asid = 0;
   return true;
 }
 
@@ -85,7 +86,8 @@ bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint3
 
   uint64_t ap = (flags & VMM_USER_WRITE) != 0 ? PTE_AP_USER_RW : PTE_AP_USER_RO;
   uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
-  l3[pt_index(va, 12)] = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_AF | PTE_SH_INNER | ap | PTE_PXN | xn;
+  l3[pt_index(va, 12)] =
+    (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER | ap | PTE_PXN | xn;
   vmm_flush_user_va(va);
   return true;
 }
@@ -102,8 +104,8 @@ bool vmm_map_page_cow(struct user_address_space *as, uint64_t va, uint64_t pa, u
   }
 
   uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
-  l3[pt_index(va, 12)] =
-    (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_AF | PTE_SH_INNER | PTE_AP_USER_RO | PTE_PXN | xn | PTE_COW;
+  l3[pt_index(va, 12)] = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER |
+                         PTE_AP_USER_RO | PTE_PXN | xn | PTE_COW;
   vmm_flush_user_va(va);
   return true;
 }
@@ -154,7 +156,7 @@ static bool clone_table_cow(struct user_address_space *dst, struct user_address_
   return true;
 }
 
-bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src, uint16_t asid) {
+bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src) {
   uint64_t root = pmm_alloc_zero_page();
   if (root == 0) { return false; }
   dst->root_pa = root;
@@ -162,11 +164,7 @@ bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *sr
   dst->brk_base = src->brk_base;
   dst->brk_current = src->brk_current;
   dst->mmap_base = src->mmap_base;
-  dst->asid = asid;
 
-  // The big kernel lock serializes page-table mutation; broadcast TLB flushes
-  // make source PTE downgrades visible to every CPU that may have cached them.
-  // Hardware DBM is left off; CoW is represented only by AP[2] + PTE_COW.
   bool ok = clone_table_cow(dst, src, root, src->root_pa, 0);
   flush_all_user_tlb();
   return ok;
@@ -425,7 +423,7 @@ bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t
 
 uint64_t vmm_tcr_with_ttbr0(uint64_t tcr) {
   const uint64_t clear =
-    0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14);
+    0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) | (1ull << 22);
   tcr &= ~clear;
   return tcr | 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12);
 }
@@ -442,6 +440,7 @@ void vmm_enable_ttbr0(void) {
                    :
                    : "r"(tcr)
                    : "memory");
+  flush_all_user_tlb();
 #endif
 }
 
@@ -450,14 +449,16 @@ void vmm_install_user(const struct user_address_space *as) {
   (void)as;
   return;
 #else
-  uint64_t ttbr = as->root_pa | ((uint64_t)as->asid << 48);
-  __asm__ volatile("msr ttbr0_el1, %0\n"
-                   "dsb ishst\n"
-                   "tlbi vmalle1is\n"
+  uint64_t tag = ((uint64_t)smp_current_cpu() + 1) << 48;
+  uint64_t ttbr = as->root_pa | tag;
+  __asm__ volatile("dsb ishst\n"
+                   "msr ttbr0_el1, %0\n"
+                   "isb\n"
+                   "tlbi aside1is, %1\n"
                    "dsb ish\n"
                    "isb\n"
                    :
-                   : "r"(ttbr)
+                   : "r"(ttbr), "r"(tag)
                    : "memory");
 #endif
 }
@@ -469,7 +470,7 @@ void vmm_flush_user_va(uint64_t va) {
 #else
   uint64_t op = va >> 12;
   __asm__ volatile("dsb ishst\n"
-                   "tlbi vae1is, %0\n"
+                   "tlbi vaae1is, %0\n"
                    "dsb ish\n"
                    "isb\n"
                    :

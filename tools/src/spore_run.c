@@ -1044,7 +1044,6 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
                (scripted_input == SCRIPT_ANT_FIRST_INTERRUPT || scripted_input == SCRIPT_ANT_SECOND_INTERRUPT) &&
                contains(buf, "❯") && now_seconds() - last_shell_output_at > 0.3 &&
                (scripted_input == SCRIPT_ANT_FIRST_INTERRUPT || contains(buf, "press Ctrl+C again"))) {
-      /* Ant prints the prompt before starting the reader, which clears pending interrupts on startup. */
       write_serial_input(in_pipe[1], "\x03", 1);
       scripted_input = scripted_input == SCRIPT_ANT_FIRST_INTERRUPT ? SCRIPT_ANT_SECOND_INTERRUPT : SCRIPT_ANT_EXIT;
       buf[0] = 0;

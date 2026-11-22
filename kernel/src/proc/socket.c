@@ -428,7 +428,7 @@ static uint16_t tcp_syn_window(const struct open_file *file) {
 
 static bool tcp_send_syn(struct open_file *file, uint32_t seq) {
   uint8_t options[8] = {
-    2, 4, 0x05, 0xb4, // MSS 1460
+    2, 4, 0x05, 0xb4,
     1, 3, 3,    TCP_RCV_WINDOW_SCALE,
   };
   return net_tcp_send_segment_options_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,

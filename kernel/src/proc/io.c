@@ -33,10 +33,6 @@ enum {
   ENOTCONN = 107,
 };
 
-/*
- * The big kernel lock serializes synchronous VFS/device copies, so one shared
- * scratch page avoids placing a 4 KiB buffer on every exception stack.
- */
 static uint8_t file_io_tmp[FILE_IO_CHUNK];
 
 static struct domain *current_domain(void) {

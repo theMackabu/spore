@@ -87,7 +87,7 @@ int main(void) {
   uint64_t cow_pa = pmm_alloc_zero_page();
   memcpy(&phys[cow_pa], "parent", 7);
   assert(vmm_map_page(&as, 0x500000, cow_pa, VMM_USER_READ | VMM_USER_WRITE));
-  assert(vmm_clone_cow(&child, &as, 1));
+  assert(vmm_clone_cow(&child, &as));
   assert(refs[page_index(cow_pa)] == 2);
   assert(!vmm_user_range_accessible(&as, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(!vmm_user_range_accessible(&child, 0x500000, 1, VMM_ACCESS_WRITE));

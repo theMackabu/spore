@@ -22,14 +22,13 @@ struct user_address_space {
   uint64_t brk_base;
   uint64_t brk_current;
   uint64_t mmap_base;
-  uint16_t asid;
 };
 
 bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset);
 bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags);
 bool vmm_map_page_cow(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags);
 bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags);
-bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src, uint16_t asid);
+bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src);
 bool vmm_restore_shared_range(struct user_address_space *a, struct user_address_space *b, uint64_t start, uint64_t end,
                               uint32_t flags);
 void vmm_destroy(struct user_address_space *as);

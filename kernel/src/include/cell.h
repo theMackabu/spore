@@ -264,6 +264,8 @@ struct domain {
   uint32_t egid;
   uint64_t start_ticks;
   uint64_t cpu_ticks;
+  uint64_t alarm_deadline;
+  uint64_t alarm_interval;
   uint64_t minor_faults;
   uint64_t major_faults;
   uint64_t unsupported_syscalls;

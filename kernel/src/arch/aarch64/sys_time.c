@@ -3,6 +3,7 @@
 #include "cell.h"
 #include "mem.h"
 #include "mm/pmm.h"
+#include "proc/domain.h"
 #include "random.h"
 
 #include <stddef.h>
@@ -24,6 +25,50 @@ struct timeval64 {
   int64_t tv_sec;
   int64_t tv_usec;
 };
+
+struct itimerval64 {
+  struct timeval64 interval;
+  struct timeval64 value;
+};
+
+static bool timer_ticks(struct timeval64 tv, uint64_t *ticks) {
+  if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000) { return false; }
+  uint64_t fraction = ((uint64_t)tv.tv_usec + 9999) / 10000;
+  if ((uint64_t)tv.tv_sec > (UINT64_MAX - fraction) / 100) { return false; }
+  *ticks = (uint64_t)tv.tv_sec * 100 + fraction;
+  return true;
+}
+
+static struct timeval64 ticks_to_timeval(uint64_t ticks) {
+  return (struct timeval64){.tv_sec = ticks / 100, .tv_usec = (ticks % 100) * 10000};
+}
+
+int64_t sys_setitimer(uint64_t which, uint64_t new_addr, uint64_t old_addr) {
+  if (which != 0) { return -EINVAL; }
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return -EINVAL; }
+  struct itimerval64 next = {0};
+  uint64_t delay, interval, now = cell_uptime_ticks();
+  if (new_addr && (!syscall_user_readable(new_addr, sizeof(next)) ||
+                   !vmm_copy_from_user(syscall_active_as(), &next, new_addr, sizeof(next)))) {
+    return -EFAULT;
+  }
+  if (!timer_ticks(next.value, &delay) || !timer_ticks(next.interval, &interval) || delay > UINT64_MAX - now) {
+    return -EINVAL;
+  }
+  if (old_addr) {
+    uint64_t remaining = domain->alarm_deadline > now ? domain->alarm_deadline - now : 0;
+    struct itimerval64 old = {.value = ticks_to_timeval(remaining),
+                              .interval = ticks_to_timeval(domain->alarm_interval)};
+    if (!syscall_user_writable(old_addr, sizeof(old)) ||
+        !vmm_copy_to_user(syscall_active_as(), old_addr, &old, sizeof(old))) {
+      return -EFAULT;
+    }
+  }
+  domain->alarm_deadline = delay ? now + delay : 0;
+  domain->alarm_interval = delay ? interval : 0;
+  return 0;
+}
 
 struct timezone32 {
   int32_t tz_minuteswest;
@@ -162,10 +207,6 @@ int64_t sys_times(uint64_t buf_addr) {
   return ticks;
 }
 
-static void ticks_to_timeval(uint64_t ticks, struct timeval64 *tv) {
-  tv->tv_sec = (int64_t)(ticks / 100);
-  tv->tv_usec = (int64_t)((ticks % 100) * 10000);
-}
 
 int64_t sys_getrusage(int who, uint64_t usage_addr) {
   enum {
@@ -181,7 +222,7 @@ int64_t sys_getrusage(int who, uint64_t usage_addr) {
   if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
     struct proc_info proc;
     if (cell_proc_info_for_pid(cell_current_pid(), &proc)) {
-      ticks_to_timeval(proc.cpu_ticks, &usage.ru_utime);
+      usage.ru_utime = ticks_to_timeval(proc.cpu_ticks);
       usage.ru_maxrss = (int64_t)((proc.resident_pages * PAGE_SIZE) / 1024);
       usage.ru_minflt = (int64_t)proc.minor_faults;
       usage.ru_majflt = (int64_t)proc.major_faults;

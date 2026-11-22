@@ -65,7 +65,6 @@ void smp_boot_parked_secondaries(void) {
 void smp_secondary_main(const struct limine_mp_info *info) {
   uint32_t cpu = (uint32_t)info->extra_argument;
   smp_set_current_cpu(cpu);
-  // Match the BSP's device-memory attribute and user translation regime.
   uint64_t mair;
   __asm__ volatile("mrs %0, mair_el1" : "=r"(mair));
   mair &= ~(0xffull << 16);

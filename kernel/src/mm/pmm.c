@@ -233,7 +233,6 @@ void *pmm_phys_to_virt(uint64_t pa) {
 void pmm_free_page(uint64_t pa) {
   if ((pa % PAGE_SIZE) != 0) { return; }
 
-  // PMM callers run under the big kernel lock; refcounts stay plain scalars.
   uint64_t page = pa / PAGE_SIZE;
   if (!valid_page(page)) { return; }
   if (refcounts[page] == 0) { return; }
@@ -247,7 +246,6 @@ void pmm_free_page(uint64_t pa) {
 bool pmm_share_page(uint64_t pa) {
   if ((pa % PAGE_SIZE) != 0) { return false; }
 
-  // PMM callers run under the big kernel lock; refcounts stay plain scalars.
   uint64_t page = pa / PAGE_SIZE;
   if (!valid_page(page)) { return false; }
   if (refcounts[page] == 0 || refcounts[page] == UINT16_MAX) { return false; }

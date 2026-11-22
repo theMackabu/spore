@@ -1804,6 +1804,26 @@ static void sleep_ms(long ms) {
   nanosleep(&ts, NULL);
 }
 
+static int interval_timer_regression(void) {
+  struct sigaction action = {.sa_handler = signal_interrupt_handler}, old_action;
+  struct itimerval timer = {.it_value.tv_usec = 20000, .it_interval.tv_usec = 20000}, previous;
+  struct itimerval stop = {0};
+  interrupted_signals = 0;
+  if (sigaction(SIGALRM, &action, &old_action)) { return 0; }
+  int ok = setitimer(ITIMER_REAL, &timer, NULL) == 0;
+  for (int i = 0; ok && i < 20 && interrupted_signals < 2 * SIGALRM; ++i) {
+    sleep_ms(30);
+  }
+  ok = setitimer(ITIMER_REAL, &stop, &previous) == 0 && ok && previous.it_interval.tv_usec == 20000 &&
+       interrupted_signals >= 2 * SIGALRM;
+  sig_atomic_t count = interrupted_signals;
+  sleep_ms(60);
+  ok = ok && interrupted_signals == count;
+  sigaction(SIGALRM, &old_action, NULL);
+  printf("[spore] periodic real timer: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int signal_mask_regression(void) {
   saw_sigint = 0;
   struct sigaction sa;
@@ -2442,6 +2462,7 @@ int main(void) {
   int ok_v3f = phase_f_egress_demo();
   ok_all = ok_all && ok_v3f;
   ok_all = ok_all && absolute_sleep_regression();
+  ok_all = ok_all && interval_timer_regression();
   ok_all = ok_all && signal_mask_regression();
   ok_all = ok_all && signal_altstack_regression();
   ok_all = ok_all && signal_interrupted_read_regression();

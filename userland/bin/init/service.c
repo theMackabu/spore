@@ -20,11 +20,6 @@ void redirect_output(const char *mode, int fd, int fallback_fd) {
 }
 
 void close_inherited_manager_fds(void) {
-  /*
-   * The kernel is single-core/run-to-completion, but forked services inherit
-   * PID 1's accepted AF_UNIX control sockets unless we close them before exec.
-   * Keep only stdio after all requested dup2() routing is complete.
-   */
   for (int fd = 3; fd < 64; ++fd) {
     close(fd);
   }

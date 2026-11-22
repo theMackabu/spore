@@ -92,12 +92,12 @@ static void gic_enable_spi(uint32_t intid) {
 
 static void gic_cpu_init(void) {
   uint64_t sre;
-  __asm__ volatile("mrs %0, S3_0_C12_C12_5" : "=r"(sre)); // ICC_SRE_EL1
+  __asm__ volatile("mrs %0, S3_0_C12_C12_5" : "=r"(sre));
   sre |= 1;
-  __asm__ volatile("msr S3_0_C12_C12_5, %0\n" // ICC_SRE_EL1
+  __asm__ volatile("msr S3_0_C12_C12_5, %0\n"
                    "isb\n"
-                   "msr S3_0_C4_C6_0, %1\n"   // ICC_PMR_EL1
-                   "msr S3_0_C12_C12_7, %2\n" // ICC_IGRPEN1_EL1
+                   "msr S3_0_C4_C6_0, %1\n"
+                   "msr S3_0_C12_C12_7, %2\n"
                    "isb\n"
                    :
                    : "r"(sre), "r"(0xffull), "r"(1ull)
@@ -110,16 +110,16 @@ void timer_init(uint64_t hhdm_offset) {
   __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
   uint64_t cntkctl;
   __asm__ volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
-  cntkctl |= 3ull; // EL0PCTEN | EL0VCTEN: userland may read generic counters.
+  cntkctl |= 3ull;
   __asm__ volatile("msr cntkctl_el1, %0" : : "r"(cntkctl) : "memory");
   uint64_t cpacr;
   __asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
-  cpacr |= 3ull << 20; // FPEN: EL0/EL1 may use FP/SIMD; scheduler saves it per thread.
+  cpacr |= 3ull << 20;
   __asm__ volatile("msr cpacr_el1, %0\nisb" : : "r"(cpacr) : "memory");
   uint64_t sctlr;
   __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
-  sctlr |= 1ull << 15; // UCT: userland may read CTR_EL0 like Linux permits.
-  sctlr |= 1ull << 26; // UCI: userland JITs may issue cache maintenance.
+  sctlr |= 1ull << 15;
+  sctlr |= 1ull << 26;
   __asm__ volatile("msr sctlr_el1, %0\nisb" : : "r"(sctlr) : "memory");
   timer_interval = (uint32_t)(freq / 100);
   if (timer_interval == 0) { timer_interval = 1; }
@@ -163,12 +163,12 @@ void timer_cpu_init(uint32_t cpu) {
 
 static uint64_t irq_ack(void) {
   uint64_t iar;
-  __asm__ volatile("mrs %0, S3_0_C12_C12_0" : "=r"(iar)); // ICC_IAR1_EL1
+  __asm__ volatile("mrs %0, S3_0_C12_C12_0" : "=r"(iar));
   return iar;
 }
 
 static void irq_eoi(uint64_t iar) {
-  __asm__ volatile("msr S3_0_C12_C12_1, %0\n" // ICC_EOIR1_EL1
+  __asm__ volatile("msr S3_0_C12_C12_1, %0\n"
                    "isb\n"
                    :
                    : "r"(iar)

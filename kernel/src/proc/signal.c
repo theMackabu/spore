@@ -25,6 +25,7 @@ enum {
   SIGSEGV = 11,
   SIGUSR2 = 12,
   SIGPIPE = 13,
+  SIGALRM = 14,
   SIGTERM = 15,
   SIGCHLD = 17,
   SIGCONT = 18,
@@ -109,8 +110,8 @@ static struct domain *current_domain(void) {
 
 static bool signal_is_supported(int signal) {
   return signal == SIGHUP || signal == SIGINT || signal == SIGQUIT || signal == SIGABRT || signal == SIGKILL ||
-         signal == SIGUSR1 || signal == SIGSEGV || signal == SIGUSR2 || signal == SIGPIPE || signal == SIGTERM ||
-         signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH;
+         signal == SIGUSR1 || signal == SIGSEGV || signal == SIGUSR2 || signal == SIGPIPE || signal == SIGALRM ||
+         signal == SIGTERM || signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH;
 }
 
 static bool signal_default_ignored(int signal) {
@@ -250,7 +251,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
 
   struct signal_frame64 frame;
   kmemset(&frame, 0, sizeof(frame));
-  frame.magic = 0x5350475349474652ull; // "SPGSIGFR"
+  frame.magic = 0x5350475349474652ull;
   frame.signal = (uint64_t)signal;
   frame.saved_signal_mask = thread->signal_mask;
   frame.saved = thread->tf;
@@ -281,7 +282,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
   return true;
 }
 
-void cell_signal_foreground_domain(struct domain *domain, int signal, struct trap_frame *frame) {
+void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *frame) {
   struct thread *target = NULL;
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *t = cell_thread_slot(i);
@@ -296,8 +297,20 @@ void cell_signal_foreground_domain(struct domain *domain, int signal, struct tra
     domain->pending_signals |= signal_bit(signal);
   } else if (target == cell_current_thread_internal() && frame != NULL) {
     cell_signal_current(signal, frame);
+  } else if (target->state == THREAD_RUNNABLE && target->running_cpu >= 0) {
+    queue_signal_to_thread(target, signal);
   } else {
     cell_deliver_signal_to_thread(target, signal);
+  }
+}
+
+void cell_expire_real_timers(uint64_t now) {
+  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+    struct domain *domain = cell_domain_slot(i);
+    if (!domain->used || domain->zombie || !domain->alarm_deadline || now < domain->alarm_deadline) { continue; }
+    uint64_t interval = domain->alarm_interval;
+    domain->alarm_deadline = interval && interval <= UINT64_MAX - now ? now + interval : 0;
+    cell_signal_domain(domain, SIGALRM, NULL);
   }
 }
 

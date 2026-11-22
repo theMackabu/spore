@@ -50,7 +50,6 @@ def install(cache, url, digest, dest, members):
             tar = subprocess.run(['zstd', '-dc'], input=data.getvalue(), stdout=subprocess.PIPE, check=True)
             data = io.BytesIO(tar.stdout)
             mode = 'r:'
-        # APK v2 concatenates signature, metadata and data tar streams.
         with tarfile.open(fileobj=data, mode=mode, ignore_zeros=True) as archive:
             for member in members:
                 info = archive.getmember(member)

@@ -11,10 +11,6 @@ build=$2
 project_build=$3
 out=$4
 
-# Spore curl is HTTP(S)-only, static-musl, and uses mbedTLS plus the baked
-# Mozilla CA bundle at /etc/ssl/certs/ca-certificates.crt. Build for network/TLS
-# runtime speed; the image can afford a slightly larger curl.
-
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 musl_cc=$(command -v aarch64-unknown-linux-musl-gcc)
 musl_ar=$(command -v aarch64-unknown-linux-musl-ar)

@@ -195,8 +195,6 @@ static void invalidate_boot_mapping(uint64_t *entry) {
   __asm__ volatile("dsb ishst\ntlbi vmalle1is\ndsb ish\nisb" : : : "memory");
 }
 
-// Limine maps normal RAM. Install QEMU MMIO in the holes of its direct map,
-// preserving adjacent pages if firmware described the region as mapped.
 static void map_device_page(uint64_t pa) {
   const uint64_t pa_mask = 0x0000fffffffff000ull;
   uint64_t va = boot->hhdm_offset + pa;
@@ -234,7 +232,7 @@ static void map_device_page(uint64_t pa) {
 static void map_device_pages(void) {
   uint64_t mair;
   __asm__ volatile("mrs %0, mair_el1" : "=r"(mair));
-  mair &= ~(0xffull << 16); // Attr2: Device-nGnRnE; Limine uses Attr0 and Attr1.
+  mair &= ~(0xffull << 16);
   __asm__ volatile("msr mair_el1, %0\nisb" : : "r"(mair) : "memory");
   map_device_page(PL011_PHYS);
   for (size_t i = 0; i < VIRTIO_MMIO_PAGES; ++i) {

@@ -56,7 +56,6 @@ int main(void) {
     return EXIT_FAILURE;
   }
 
-  // Spore currently presents the shell as a Pacific-local sandbox.
   struct civil_time ct;
   civil_from_epoch((long long)ts.tv_sec - 7 * 60 * 60, &ct);
   printf("%s %s %d %02d:%02d:%02d PDT %d\n", weekdays[ct.weekday], months[ct.month - 1], ct.day, ct.hour, ct.minute,

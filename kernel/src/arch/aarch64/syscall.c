@@ -181,6 +181,7 @@ enum {
   SIGKILL = 9,
   SIGSEGV = 11,
   SIGPIPE = 13,
+  SIGALRM = 14,
   SIGTERM = 15,
   SIGURG = 23,
   SEGV_MAPERR = 1,
@@ -235,7 +236,7 @@ static void system_reboot(void) {
 #pragma clang diagnostic ignored "-Wgnu-label-as-value"
 static bool signal_delivers_to_current(int signal) {
   return signal == SIGINT || signal == SIGABRT || signal == SIGKILL || signal == SIGSEGV || signal == SIGPIPE ||
-         signal == SIGTERM || signal == SIGURG;
+         signal == SIGALRM || signal == SIGTERM || signal == SIGURG;
 }
 
 static int64_t dispatch(struct trap_frame *f) {
@@ -294,7 +295,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_FUTEX] = &&l_futex,
     [SYS_SET_ROBUST_LIST] = &&l_set_robust_list,
     [SYS_NANOSLEEP] = &&l_nanosleep,
-    [SYS_SETITIMER] = &&l_zero,
+    [SYS_SETITIMER] = &&l_setitimer,
     [SYS_CLOCK_GETTIME] = &&l_clock_gettime,
     [SYS_CLOCK_GETRES] = &&l_clock_getres,
     [SYS_CLOCK_NANOSLEEP] = &&l_clock_nanosleep,
@@ -479,8 +480,6 @@ l_setuid:
   return cell_setuid_current((uint32_t)a0) == 0 ? 0 : -(int64_t)EPERM;
 l_setgid:
   return cell_setgid_current((uint32_t)a0) == 0 ? 0 : -(int64_t)EPERM;
-l_zero:
-  return 0;
 l_clone:
   return sys_clone(f, a0, a1, a2, a3, a4);
 l_futex: {
@@ -519,6 +518,8 @@ l_rt_sigreturn:
   return cell_rt_sigreturn(f) == 0 ? SYSCALL_SWITCHED : -(int64_t)EFAULT;
 l_sigaltstack:
   return sys_sigaltstack(f, a0, a1);
+l_setitimer:
+  return sys_setitimer(a0, a1, a2);
 l_times:
   return sys_times(a0);
 l_spore_snapshot:

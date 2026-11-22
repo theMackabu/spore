@@ -77,7 +77,7 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
   if (src == NULL || !src->used) { return NULL; }
   struct process_mm *mm = alloc_mm();
   if (mm == NULL) { return NULL; }
-  if (!vmm_clone_cow(&mm->as, &src->as, 0)) {
+  if (!vmm_clone_cow(&mm->as, &src->as)) {
     mm->used = false;
     return NULL;
   }

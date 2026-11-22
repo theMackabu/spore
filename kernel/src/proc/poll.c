@@ -297,12 +297,6 @@ static void wake_epoll_waiters(void) {
       ready =
         epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, true);
     }
-    /*
-     * The original syscall arguments were already validated before blocking.
-     * If the saved wait can no longer be committed after an asynchronous wake
-     * (for example because another thread changed the fd table), report an
-     * interrupted wait instead of surfacing a fresh EINVAL/EFAULT to userland.
-     */
     if (ready < 0) { ready = -EINTR; }
     thread->tf.x[0] = (uint64_t)ready;
     thread->state = THREAD_RUNNABLE;

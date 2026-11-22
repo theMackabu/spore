@@ -346,7 +346,7 @@ static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
   for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used || domain->zombie || domain->pgrp_id != pgrp) { continue; }
-    cell_signal_foreground_domain(domain, signal, frame);
+    cell_signal_domain(domain, signal, frame);
   }
 }
 

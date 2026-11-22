@@ -2,7 +2,6 @@
 .global _start
 .type _start, %function
 _start:
-    // Keep Limine's stack, but select the EL1 stack before entering C.
     mov x1, sp
     msr spsel, #1
     mov sp, x1

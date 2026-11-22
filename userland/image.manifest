@@ -1,9 +1,3 @@
-# source baked-path
-#
-# Placement follows the invoker:
-# - /bin is for human-interactive tools in PATH.
-# - /libexec/spore-test is for regression instruments invoked by test harnesses.
-# - /home/spore/demos is for curiosity/demo fixtures.
 dir /home
 dir /root
 dir /etc/mycelium
@@ -135,7 +129,6 @@ userland/demos/inodes /home/spore/demos/inodes
 userland/demos/something /home/spore/demos/something
 userland/demos/something-else.msh /home/spore/demos/something-else.msh
 
-# Git and its HTTP transport
 symlink libbrotlicommon.so.1.2.1 /usr/lib/libbrotlicommon.so.1
 userland/prebuilt/libbrotlicommon.so.1.2.1 /usr/lib/libbrotlicommon.so.1.2.1
 symlink libbrotlidec.so.1.2.1 /usr/lib/libbrotlidec.so.1

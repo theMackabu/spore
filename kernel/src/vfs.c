@@ -928,7 +928,6 @@ bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
   return true;
 }
 
-/* The creator owns one reference until the descriptor takes its own. */
 int vfs_tmpfile(const struct vfs_node *dir, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable,
                 struct vfs_node *out) {
   update_time_sources();
@@ -1183,7 +1182,21 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
   update_time_sources();
   if (vfs_write_sealed(node)) { return -1; }
-  vfs_page_cache_invalidate(node);
+  if (len && off <= UINT64_MAX - (len - 1) && len <= 128 * 1024) {
+    uint64_t first = off / VFS_PAGE_SIZE;
+    uint64_t last = (off + len - 1) / VFS_PAGE_SIZE;
+    bool invalidated = false;
+    for (uint64_t i = first; i <= last; ++i) {
+      struct vfs_page_cache_entry *entry = page_cache_find(node, i * VFS_PAGE_SIZE);
+      if (entry != NULL) {
+        page_cache_clear((size_t)(entry - page_cache));
+        invalidated = true;
+      }
+    }
+    if (invalidated) { ++vfs_stat_counters.page_cache_invalidations; }
+  } else if (len) {
+    vfs_page_cache_invalidate(node);
+  }
   int64_t written = -28;
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;

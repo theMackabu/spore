@@ -32,7 +32,6 @@ const struct spore_boot_info *limine_boot_info(void) {
   boot.hhdm_offset = hhdm.response->offset;
   boot.mp = mp.response;
   boot.memmap = usable;
-  // The live translation tables and per-CPU stacks remain in bootloader-reclaimable memory.
   for (uint64_t i = 0; i < memory.response->entry_count; ++i) {
     const struct limine_memmap_entry *e = memory.response->entries[i];
     if (e->type != LIMINE_MEMMAP_USABLE) { continue; }

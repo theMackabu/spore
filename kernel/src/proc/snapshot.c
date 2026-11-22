@@ -38,7 +38,7 @@ int snapshot_create_current(void) {
   if (domain == NULL || snap == NULL) { return -12; }
   struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
-  if (as == NULL || vmas == NULL || !vmm_clone_cow(&snap->as, as, 0)) {
+  if (as == NULL || vmas == NULL || !vmm_clone_cow(&snap->as, as)) {
     snap->used = false;
     return -12;
   }
@@ -62,7 +62,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   }
   struct user_address_space child_as;
   struct vma_list child_vmas;
-  if (!vmm_clone_cow(&child_as, &snap->as, 0)) {
+  if (!vmm_clone_cow(&child_as, &snap->as)) {
     child_thread->state = THREAD_UNUSED;
     child_domain->used = false;
     return -12;

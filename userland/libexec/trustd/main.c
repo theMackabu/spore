@@ -47,7 +47,7 @@ static int write_full(int fd, const void *buf, size_t len) {
 }
 
 static void reply(int fd, int32_t rc, uint32_t flags) {
-  uint32_t magic = 0x54525350u; /* PSRT */
+  uint32_t magic = 0x54525350u;
   (void)write_full(fd, &magic, sizeof(magic));
   (void)write_full(fd, &rc, sizeof(rc));
   (void)write_full(fd, &flags, sizeof(flags));
@@ -91,7 +91,7 @@ static void handle_client(int fd, mbedtls_x509_crt *trust) {
   int rc = -1;
 
   mbedtls_x509_crt_init(&chain);
-  if (read_full(fd, &magic, sizeof(magic)) != 0 || magic != 0x31525453u) { goto out; } /* STR1 */
+  if (read_full(fd, &magic, sizeof(magic)) != 0 || magic != 0x31525453u) { goto out; }
   if (read_full(fd, &host_len, sizeof(host_len)) != 0 || host_len == 0 || host_len > MAX_HOST) { goto out; }
   if (read_full(fd, host, host_len) != 0) { goto out; }
   host[host_len] = '\0';
