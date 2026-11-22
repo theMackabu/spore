@@ -3,6 +3,12 @@ CompileFlags:
 
 ---
 If:
+  PathMatch: kernel/.*\.h
+CompileFlags:
+  Add: [-xc-header, -std=c23]
+
+---
+If:
   PathMatch: userland/.*
 CompileFlags:
   Remove:

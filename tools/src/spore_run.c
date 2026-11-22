@@ -654,16 +654,6 @@ static ssize_t find_shell_prompt(const char *data, size_t len) {
   return -1;
 }
 
-static ssize_t find_after_last_marker(const char *data, size_t len, const char *marker) {
-  size_t marker_len = strlen(marker);
-  ssize_t found = -1;
-  if (marker_len == 0 || len < marker_len) { return -1; }
-  for (size_t i = 0; i + marker_len <= len; ++i) {
-    if (memcmp(data + i, marker, marker_len) == 0) { found = (ssize_t)(i + marker_len); }
-  }
-  return found;
-}
-
 static void write_serial_output(const char *chunk, size_t n, struct startup_serial *startup) {
   if (startup->done) {
     write_raw_to(chunk, n, stdout);
@@ -671,25 +661,16 @@ static void write_serial_output(const char *chunk, size_t n, struct startup_seri
   }
 
   startup_append(startup, chunk, n);
-  ssize_t prompt_at = find_shell_prompt(startup->buf, startup->len);
-  if (prompt_at < 0) { return; }
-
-  const char *boot_ui_marker = "\033[1;36m       .-.";
-  ssize_t handoff_at = find_after_last_marker(startup->buf, startup->len, boot_ui_marker);
-  if (handoff_at >= 0) {
-    handoff_at -= (ssize_t)strlen(boot_ui_marker);
-  } else {
-    const char *mycelium_marker = "spore: mycelium starting";
-    handoff_at = find_after_last_marker(startup->buf, startup->len, mycelium_marker);
-    if (handoff_at >= 0) {
-      handoff_at -= (ssize_t)strlen(mycelium_marker);
-    } else {
-      handoff_at = prompt_at;
+  static const char handoff[] = "[kernel] Limine handoff";
+  ssize_t handoff_at = -1;
+  for (size_t i = 0; i + sizeof(handoff) - 1 <= startup->len; ++i) {
+    if (memcmp(startup->buf + i, handoff, sizeof(handoff) - 1) == 0) {
+      handoff_at = (ssize_t)i;
+      break;
     }
   }
-  while ((size_t)handoff_at < startup->len && (startup->buf[handoff_at] == '\r' || startup->buf[handoff_at] == '\n')) {
-    ++handoff_at;
-  }
+  if (handoff_at < 0) { handoff_at = find_shell_prompt(startup->buf, startup->len); }
+  if (handoff_at < 0) { return; }
 
   write_raw_to(startup->buf + handoff_at, startup->len - (size_t)handoff_at, stdout);
   startup->done = true;
@@ -838,7 +819,6 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
   close(serial_pipe[1]);
   pid_t echo_pid = start_udp_echo_server();
   pid_t http_pid = start_http_server();
-  resize_pending = 1;
   (void)signal(SIGWINCH, on_sigwinch);
 
   char buf[BUF_CAP] = {0};
@@ -919,7 +899,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
       }
       return finish_harness(124, raw_terminal, &saved_termios);
     }
-    if (resize_pending) {
+    if (shell_size_sent && resize_pending) {
       resize_pending = 0;
       send_terminal_size(in_pipe[1]);
     }
@@ -953,6 +933,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
           kill(pid, SIGTERM);
         }
         if (!shell_size_sent && find_shell_prompt(buf, len) >= 0) {
+          resize_pending = 0;
           send_terminal_size(in_pipe[1]);
           shell_size_sent = true;
         }
