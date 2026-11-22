@@ -2,18 +2,11 @@
 
 #include <stdint.h>
 
-#define SPORE_BOOT_MAGIC 0x53504f5245424f4full
-#define SPORE_BOOT_VERSION 4u
 #define SPORE_BOOT_MODULE_PATH_MAX 96u
 #define SPORE_BOOT_CPU_MAX 64u
 
 enum spore_memmap_type {
   SPORE_MEMMAP_USABLE = 1,
-  SPORE_MEMMAP_RESERVED = 2,
-  SPORE_MEMMAP_ACPI_RECLAIMABLE = 3,
-  SPORE_MEMMAP_ACPI_NVS = 4,
-  SPORE_MEMMAP_MMIO = 5,
-  SPORE_MEMMAP_BOOTLOADER_RECLAIMABLE = 6,
 };
 
 struct spore_memmap_entry {
@@ -29,30 +22,16 @@ struct spore_boot_module {
   char path[SPORE_BOOT_MODULE_PATH_MAX];
 };
 
-enum spore_cpu_flags {
-  SPORE_CPU_PRESENT = 1u << 0,
-  SPORE_CPU_BOOT = 1u << 1,
-};
-
-struct spore_cpu_entry {
-  uint64_t mpidr;
-  uint32_t flags;
-  uint32_t reserved;
-};
+struct limine_mp_response;
 
 struct spore_boot_info {
-  uint64_t magic;
-  uint32_t version;
-  uint32_t memmap_count;
-  uint64_t memmap_phys;
-  uint32_t module_count;
-  uint32_t cpu_count;
-  uint64_t modules_phys;
-  uint64_t cpu_entries_phys;
   uint64_t hhdm_offset;
-  uint64_t kernel_phys_base;
-  uint64_t kernel_virt_base;
-  uint64_t uart_phys;
   uint64_t realtime_epoch_sec;
-  uint64_t reserved[4]; /* Preserve the version 4 handoff layout. */
+  const struct spore_memmap_entry *memmap;
+  uint32_t memmap_count;
+  const struct spore_boot_module *modules;
+  uint32_t module_count;
+  struct limine_mp_response *mp;
 };
+
+const struct spore_boot_info *limine_boot_info(void);

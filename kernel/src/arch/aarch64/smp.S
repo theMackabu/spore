@@ -2,51 +2,10 @@
 .global smp_secondary_entry
 .type smp_secondary_entry, %function
 smp_secondary_entry:
-    mov x21, x0
-    cbz x21, 3f
-    ldr x20, [x21, #0]
-    ldr x19, [x21, #16]
-    ldr x1, [x21, #8]
-    cbz x1, 3f
+    mov x1, sp
+    msr spsel, #1
     mov sp, x1
-
-    ldr x2, [x21, #24]
-    dsb sy
-    ldr x3, [x21, #40]
-    msr mair_el1, x3
-    dsb sy
-    ldr x3, [x21, #32]
-    msr tcr_el1, x3
-    dsb sy
-    msr ttbr0_el1, x2
-    msr ttbr1_el1, x2
-    dsb sy
-    isb
-    dsb ishst
-    tlbi vmalle1
-    dsb ish
-    isb
-    dsb sy
-
-    ldr x3, [x21, #48]
-    orr x3, x3, #1
-    msr sctlr_el1, x3
-    dsb sy
-    isb
-
-    ldr x2, [x21, #56]
-    adr x3, 1f
-    add x3, x3, x2
-    br x3
-
-1:
-    mov sp, x19
-    mov x0, x20
-    bl smp_secondary_main
-
-3:
-    wfe
-    b 3b
+    b smp_secondary_main
 
 .global smp_enter_trap_frame
 .type smp_enter_trap_frame, %function

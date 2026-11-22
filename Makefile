@@ -111,7 +111,7 @@ kill:
 	@pkill -f '(^|/)spore-run( |$$)' >/dev/null 2>&1 || true
 
 format:
-	find bootloader kernel tests tools/src userland \( -path userland/third_party -o -path userland/third_party/\* \) -prune -o -type f \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 $(CLANG_FORMAT) -i
+	find kernel tests tools/src userland \( -path userland/third_party -o -path userland/third_party/\* \) -prune -o -type f \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 $(CLANG_FORMAT) -i
 
 fetch:
 	onefetch -e userland/third_party

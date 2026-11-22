@@ -143,15 +143,9 @@ enum {
   GICD_PHYS = 0x08000000,
   GICR_PHYS = 0x080a0000,
   GICR_SGI_PHYS = 0x080b0000,
-  EARLY_PAGE_SIZE = 0x1000,
-  PT_ENTRIES = 512,
-  EARLY_L3_TABLES = 32,
+  GICR_STRIDE = 0x20000,
 };
 
-static uint64_t early_l1[PT_ENTRIES] __attribute__((aligned(EARLY_PAGE_SIZE)));
-static uint64_t early_l2[PT_ENTRIES] __attribute__((aligned(EARLY_PAGE_SIZE)));
-static uint64_t early_l3[EARLY_L3_TABLES][PT_ENTRIES] __attribute__((aligned(EARLY_PAGE_SIZE)));
-static size_t early_l3_used;
 static uint8_t kernel_stack[64 * 1024] __attribute__((aligned(16)));
 static struct ramfs boot_ramfs;
 static struct ext2_fs root_ext2;
@@ -190,118 +184,68 @@ static void probe_ext2_root(void) {
   }
 }
 
-static uint64_t kernel_virt_to_phys(uintptr_t va) {
-  return (uint64_t)va - boot->kernel_virt_base + boot->kernel_phys_base;
-}
-
-static uint64_t *phys_to_hhdm(uint64_t pa) {
-  return (uint64_t *)(uintptr_t)(boot->hhdm_offset + pa);
-}
-
-static uint64_t pt_entry_address(uint64_t entry) {
-  return entry & 0x0000fffffffff000ull;
-}
-
-static uint64_t table_descriptor(uint64_t *table) {
-  return kernel_virt_to_phys((uintptr_t)table) | 0x3ull;
-}
-
-static void zero_page(uint64_t *page) {
-  for (size_t i = 0; i < PT_ENTRIES; ++i) {
-    page[i] = 0;
+static void boot_halt(void) {
+  for (;;) {
+    __asm__ volatile("wfe");
   }
 }
 
-static uint64_t *alloc_early_l3(void) {
-  if (early_l3_used >= EARLY_L3_TABLES) { return NULL; }
-  uint64_t *table = early_l3[early_l3_used++];
-  zero_page(table);
-  return table;
+static void invalidate_boot_mapping(uint64_t *entry) {
+  *entry = 0;
+  __asm__ volatile("dsb ishst\ntlbi vmalle1is\ndsb ish\nisb" : : : "memory");
 }
 
-static void split_l2_block(uint64_t *l2, size_t index) {
-  uint64_t entry = l2[index];
-  if ((entry & 0x3ull) != 0x1ull) { return; }
-  uint64_t *table = alloc_early_l3();
-  if (table == NULL) { return; }
-  uint64_t base = entry & 0x0000ffffffe00000ull;
-  uint64_t attrs = entry & ~0x0000ffffffe00000ull;
-  attrs &= ~0x3ull;
-  for (size_t i = 0; i < PT_ENTRIES; ++i) {
-    table[i] = (base + i * EARLY_PAGE_SIZE) | attrs | 0x3ull;
-  }
-  l2[index] = table_descriptor(table);
-}
-
+// Limine maps normal RAM. Install QEMU MMIO in the holes of its direct map,
+// preserving adjacent pages if firmware described the region as mapped.
 static void map_device_page(uint64_t pa) {
-  const uint64_t va = boot->hhdm_offset + pa;
+  const uint64_t pa_mask = 0x0000fffffffff000ull;
+  uint64_t va = boot->hhdm_offset + pa;
   uint64_t ttbr1;
   __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
+  uint64_t *table = pmm_phys_to_virt(ttbr1 & pa_mask);
 
-  uint64_t *l0 = phys_to_hhdm(pt_entry_address(ttbr1));
-  const size_t l0i = (va >> 39) & 0x1ff;
-  const size_t l1i = (va >> 30) & 0x1ff;
-  const size_t l2i = (va >> 21) & 0x1ff;
-  const size_t l3i = (va >> 12) & 0x1ff;
-
-  if ((l0[l0i] & 0x1) == 0) { l0[l0i] = table_descriptor(early_l1); }
-  uint64_t *l1 = phys_to_hhdm(pt_entry_address(l0[l0i]));
-
-  if ((l1[l1i] & 0x1) == 0) { l1[l1i] = table_descriptor(early_l2); }
-  uint64_t *l2 = phys_to_hhdm(pt_entry_address(l1[l1i]));
-
-  if ((l2[l2i] & 0x1) == 0) {
-    uint64_t *table = alloc_early_l3();
-    if (table == NULL) { return; }
-    l2[l2i] = table_descriptor(table);
+  for (unsigned shift = 39; shift > 12; shift -= 9) {
+    uint64_t *entry = &table[(va >> shift) & 511];
+    uint64_t desc = *entry;
+    if ((desc & 3) != 3) {
+      uint64_t next_pa = pmm_alloc_zero_page();
+      if (next_pa == 0) { boot_halt(); }
+      if (desc & 1) {
+        uint64_t *next = pmm_phys_to_virt(next_pa);
+        uint64_t stride = 1ull << (shift - 9);
+        uint64_t base = (desc & pa_mask) & ~((1ull << shift) - 1);
+        uint64_t attrs = desc & ~(pa_mask | 3ull | (1ull << 52));
+        for (size_t i = 0; i < 512; ++i) {
+          next[i] = (base + i * stride) | attrs | (shift == 21 ? 3ull : 1ull);
+        }
+        invalidate_boot_mapping(entry);
+      }
+      desc = next_pa | 3;
+      *entry = desc;
+      __asm__ volatile("dsb ishst" : : : "memory");
+    }
+    table = pmm_phys_to_virt(desc & pa_mask);
   }
-  split_l2_block(l2, l2i);
-  uint64_t *l3 = phys_to_hhdm(pt_entry_address(l2[l2i]));
-
-  const uint64_t attr_index_device = 2ull << 2;
-  const uint64_t ap_el1_rw = 0ull << 6;
-  const uint64_t sh_inner = 3ull << 8;
-  const uint64_t af = 1ull << 10;
-  const uint64_t pxn = 1ull << 53;
-  const uint64_t uxn = 1ull << 54;
-  l3[l3i] = (pa & ~0xfffull) | attr_index_device | ap_el1_rw | sh_inner | af | pxn | uxn | 0x3ull;
+  uint64_t *pte = &table[(va >> 12) & 511];
+  if (*pte & 1) { invalidate_boot_mapping(pte); }
+  *pte = pa | (2ull << 2) | (3ull << 8) | (1ull << 10) | (1ull << 53) | (1ull << 54) | 3;
 }
 
 static void map_device_pages(void) {
-  zero_page(early_l1);
-  zero_page(early_l2);
-  for (size_t i = 0; i < EARLY_L3_TABLES; ++i) {
-    zero_page(early_l3[i]);
-  }
-  early_l3_used = 0;
-
   uint64_t mair;
   __asm__ volatile("mrs %0, mair_el1" : "=r"(mair));
-  mair &= ~0xffull;
-  mair |= 0xffull;
-  mair &= ~(0xffull << 16);
-  mair |= 0x00ull << 16;
-  __asm__ volatile("msr mair_el1, %0\n"
-                   "isb\n"
-                   :
-                   : "r"(mair)
-                   : "memory");
-
+  mair &= ~(0xffull << 16); // Attr2: Device-nGnRnE; Limine uses Attr0 and Attr1.
+  __asm__ volatile("msr mair_el1, %0\nisb" : : "r"(mair) : "memory");
   map_device_page(PL011_PHYS);
   for (size_t i = 0; i < VIRTIO_MMIO_PAGES; ++i) {
-    map_device_page(VIRTIO_MMIO_PHYS + i * EARLY_PAGE_SIZE);
+    map_device_page(VIRTIO_MMIO_PHYS + i * PAGE_SIZE);
   }
   map_device_page(GICD_PHYS);
-  map_device_page(GICR_PHYS);
-  map_device_page(GICR_SGI_PHYS);
-
-  __asm__ volatile("dsb ishst\n"
-                   "tlbi vmalle1\n"
-                   "dsb ish\n"
-                   "isb\n"
-                   :
-                   :
-                   : "memory");
+  for (uint32_t cpu = 0; cpu < smp_present_cpu_count(); ++cpu) {
+    map_device_page(GICR_PHYS + cpu * GICR_STRIDE);
+    map_device_page(GICR_SGI_PHYS + cpu * GICR_STRIDE);
+  }
+  __asm__ volatile("dsb ishst\ntlbi vmalle1is\ndsb ish\nisb" : : : "memory");
 }
 
 void finish_enter_el0(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t user_sp) {
@@ -319,37 +263,23 @@ void finish_enter_el0(struct user_address_space *as, struct vma_list *vmas, uint
   enter_el0(entry, user_sp);
 }
 
-void kernel_main(const struct spore_boot_info *boot_info) {
-  if (boot_info == NULL || boot_info->magic != SPORE_BOOT_MAGIC || boot_info->version != SPORE_BOOT_VERSION ||
-      boot_info->hhdm_offset == 0 || boot_info->memmap_phys == 0 || boot_info->modules_phys == 0 ||
-      boot_info->cpu_entries_phys == 0 || boot_info->cpu_count == 0) {
-    for (;;) {
-      __asm__ volatile("wfe");
-    }
-  }
-  boot = boot_info;
-
+void kernel_main(void) {
+  boot = limine_boot_info();
+  if (boot == NULL || current_el() != 1) { boot_halt(); }
+  pmm_init(boot->hhdm_offset, boot->memmap, boot->memmap_count);
+  smp_init_topology(boot->mp);
   map_device_pages();
   pl011_init(boot->hhdm_offset);
-
-  const struct spore_memmap_entry *memmap =
-    (const struct spore_memmap_entry *)(uintptr_t)(boot->hhdm_offset + boot->memmap_phys);
-  const struct spore_boot_module *modules =
-    (const struct spore_boot_module *)(uintptr_t)(boot->hhdm_offset + boot->modules_phys);
-  const struct spore_cpu_entry *cpu_entries =
-    (const struct spore_cpu_entry *)(uintptr_t)(boot->hhdm_offset + boot->cpu_entries_phys);
-
-  pmm_init(boot->hhdm_offset, memmap, boot->memmap_count);
+  kprintf("[kernel] Limine handoff at EL1, %u CPU(s)\n", smp_present_cpu_count());
   kernel_log_handoff = true;
   (void)virtio_console_init(boot->hhdm_offset);
 
-  smp_init_topology(boot->hhdm_offset, cpu_entries, boot->cpu_count);
   syscall_set_boot_time(boot->realtime_epoch_sec);
   cell_set_boot_epoch(boot->realtime_epoch_sec);
-  random_init(boot->realtime_epoch_sec ^ boot->hhdm_offset ^ boot->memmap_phys ^ boot->modules_phys);
+  random_init(boot->realtime_epoch_sec ^ boot->hhdm_offset ^ (uintptr_t)boot->mp ^ (uintptr_t)boot->memmap);
   kprintf("[kernel] booted at EL%u\n", (unsigned)current_el());
   exceptions_init();
-  smp_boot_parked_secondaries(boot->kernel_phys_base, boot->kernel_virt_base);
+  smp_boot_parked_secondaries();
   timer_init(boot->hhdm_offset);
   if (virtio_blk_init(boot->hhdm_offset)) { probe_ext2_root(); }
   if (virtio_net_init(boot->hhdm_offset)) {
@@ -358,7 +288,7 @@ void kernel_main(const struct spore_boot_info *boot_info) {
   }
   cell_system_init(boot->hhdm_offset);
 
-  ramfs_init(&boot_ramfs, modules, boot->module_count, boot->hhdm_offset);
+  ramfs_init(&boot_ramfs, boot->modules, boot->module_count, boot->hhdm_offset);
   vfs_init(&boot_ramfs, root_ext2_ready ? &root_ext2 : NULL, boot->hhdm_offset);
   syscall_set_ramfs(&boot_ramfs);
   struct vfs_node init_node;

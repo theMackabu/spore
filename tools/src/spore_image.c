@@ -715,7 +715,7 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
 }
 
 int main(int argc, char **argv) {
-  if (argc != 9 && argc != 10 && argc != 11) {
+  if (argc < 9 || argc > 11) {
     fputs("usage: spore-image SOURCE_ROOT ISO_ROOT KERNEL_ELF BOOT_EFI OUTPUT_IMAGE OUTPUT_COPY OUTPUT_ROOT_EXT2 "
           "OUTPUT_ROOT_COPY [MANIFEST] [PREBUILT_ROOT]\n",
           stderr);
@@ -730,36 +730,40 @@ int main(int argc, char **argv) {
   const char *output_root = argv[7];
   const char *output_root_copy = argv[8];
   char default_manifest[MAX_PATH];
-  snprintf(default_manifest, sizeof(default_manifest), "%s/userland/image.manifest", source_root);
+  path_join(default_manifest, sizeof(default_manifest), source_root, "userland/image.manifest");
   const char *manifest = argc >= 10 ? argv[9] : default_manifest;
   const char *prebuilt_root = argc == 11 ? argv[10] : NULL;
+  char config[MAX_PATH];
+  char license[MAX_PATH];
+  path_join(config, sizeof(config), source_root, "boot/limine.conf");
+  path_join(license, sizeof(license), source_root, "boot/LIMINE-LICENSE");
 
   remove_tree(iso_root);
   char programs_dir[MAX_PATH];
-  char modules_dir[MAX_PATH];
+  char boot_dir[MAX_PATH];
   char efi_boot_dir[MAX_PATH];
   char rootfs_dir[MAX_PATH];
   path_join(programs_dir, sizeof(programs_dir), iso_root, "programs");
-  path_join(modules_dir, sizeof(modules_dir), iso_root, "boot/modules");
+  path_join(boot_dir, sizeof(boot_dir), iso_root, "boot");
   path_join(efi_boot_dir, sizeof(efi_boot_dir), iso_root, "EFI/BOOT");
   path_join(rootfs_dir, sizeof(rootfs_dir), iso_root, "rootfs");
   ensure_dir(programs_dir);
-  ensure_dir(modules_dir);
+  ensure_dir(boot_dir);
   ensure_dir(efi_boot_dir);
   ensure_dir(rootfs_dir);
 
   char kernel_dst[MAX_PATH];
   char boot_dst[MAX_PATH];
+  char config_dst[MAX_PATH];
+  char license_dst[MAX_PATH];
   path_join(kernel_dst, sizeof(kernel_dst), iso_root, "boot/kernel.elf");
   path_join(boot_dst, sizeof(boot_dst), efi_boot_dir, "BOOTAA64.EFI");
   copy_file(kernel_elf, kernel_dst);
   copy_file(boot_efi, boot_dst);
-
-  char modules_txt[MAX_PATH];
-  path_join(modules_txt, sizeof(modules_txt), iso_root, "boot/modules.txt");
-  FILE *mods = fopen(modules_txt, "w");
-  if (mods == NULL) { die(modules_txt); }
-  fprintf(mods, "# esp-path baked-path\n");
+  path_join(config_dst, sizeof(config_dst), iso_root, "limine.conf");
+  path_join(license_dst, sizeof(license_dst), efi_boot_dir, "LICENSE");
+  copy_file(config, config_dst);
+  copy_file(license, license_dst);
 
   FILE *mf = fopen(manifest, "r");
   if (mf == NULL) { die(manifest); }
@@ -794,23 +798,22 @@ int main(int argc, char **argv) {
     copy_into_rootfs(out, rootfs_dir, target);
   }
   fclose(mf);
-  fclose(mods);
   install_musl_runtime(source_root, rootfs_dir);
   install_musl_devel(rootfs_dir);
   install_default_accounts(rootfs_dir);
 
-  uint64_t esp_payload = file_size(boot_efi) + file_size(kernel_elf) + file_size(modules_txt);
+  uint64_t esp_payload = file_size(boot_efi) + file_size(kernel_elf) + file_size(config) + file_size(license);
   uint64_t esp_size = align_up_u64(esp_payload * 2u + 2u * 1024u * 1024u, 1024u * 1024u);
   if (esp_size < 9u * 1024u * 1024u) { esp_size = 9u * 1024u * 1024u; }
   create_sparse_file(output_image, esp_size);
   char *const mkfs_argv[] = {"mkfs.fat", "-F", "16", (char *)output_image, NULL};
   run_argv(mkfs_argv, true);
-  char *const mmd_argv[] = {"mmd",         "-i",      (char *)output_image, "::/EFI",
-                            "::/EFI/BOOT", "::/boot", "::/boot/modules",    NULL};
+  char *const mmd_argv[] = {"mmd", "-i", (char *)output_image, "::/EFI", "::/EFI/BOOT", "::/boot", NULL};
   run_argv(mmd_argv, false);
   mcopy_into(output_image, boot_efi, "/EFI/BOOT/BOOTAA64.EFI");
   mcopy_into(output_image, kernel_elf, "/boot/kernel.elf");
-  mcopy_into(output_image, modules_txt, "/boot/modules.txt");
+  mcopy_into(output_image, config, "/limine.conf");
+  mcopy_into(output_image, license, "/EFI/BOOT/LICENSE");
   copy_file(output_image, output_copy);
   build_root_ext2(rootfs_dir, output_root, output_root_copy);
   return 0;

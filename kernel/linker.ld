@@ -25,6 +25,10 @@ SECTIONS
 
   .data : ALIGN(0x1000)
   {
+    . = ALIGN(8);
+    KEEP(*(.limine_requests_start))
+    KEEP(*(.limine_requests))
+    KEEP(*(.limine_requests_end))
     *(.data .data.*)
   } :data
 

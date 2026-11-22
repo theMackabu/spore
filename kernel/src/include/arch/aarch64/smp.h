@@ -4,8 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-void smp_init_topology(uint64_t hhdm_offset, const struct spore_cpu_entry *entries, uint32_t count);
-void smp_boot_parked_secondaries(uint64_t kernel_phys_base, uint64_t kernel_virt_base);
+void smp_init_topology(const struct limine_mp_response *mp);
+void smp_boot_parked_secondaries(void);
 void smp_start_scheduler_cpus(void);
 uint32_t smp_present_cpu_count(void);
 uint32_t smp_possible_cpu_count(void);

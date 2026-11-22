@@ -17,5 +17,6 @@ spore_uts_version = spore_sysname + ' Kernel Version ' + spore_release + ': ' + 
 
 subdir('userland')
 subdir('tools')
+subdir('boot')
 subdir('kernel')
 subdir('tests')

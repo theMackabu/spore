@@ -521,7 +521,7 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
   int i = 0;
   argv[i++] = (char *)qemu;
   argv[i++] = "-M";
-  argv[i++] = "virt,gic-version=3";
+  argv[i++] = "virt,gic-version=3,virtualization=off";
   argv[i++] = "-accel";
   argv[i++] = (char *)accel;
   argv[i++] = "-cpu";
@@ -874,8 +874,7 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
   struct boot_milestone milestones[] = {
     {"UEFI firmware", "edk2 first banner", false, 0.0},
     {"BdsDxe: starting", "edk2 starts boot option", false, 0.0},
-    {"spore-boot: loading", "spore bootloader starts", false, 0.0},
-    {"spore-boot: exited boot services", "exit boot services", false, 0.0},
+    {"[kernel] Limine handoff", "Limine entered kernel", false, 0.0},
     {"[kernel] booted", "kernel first log", false, 0.0},
     {"[kernel] entering EL0", "enter EL0", false, 0.0},
     {"$ ", "shell prompt", false, 0.0},

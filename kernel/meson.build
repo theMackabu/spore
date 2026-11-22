@@ -51,6 +51,7 @@ kernel_sources = files(
   'src/cell.c',
   'src/ext2.c',
   'src/main.c',
+  'src/arch/aarch64/limine_boot.c',
   'src/drivers/pl011.c',
   'src/drivers/virtio_blk.c',
   'src/drivers/virtio_console.c',
@@ -97,10 +98,11 @@ configure_file(
   configuration: spore_version_conf)
 
 kernel_elf = executable('kernel.elf',
-  kernel_sources,
+  kernel_sources, limine_header,
   include_directories: [
     include_directories('.'),
     include_directories('src/include'),
+    include_directories('../boot'),
   ],
   c_args: kernel_target_args + kernel_c_args,
   link_args: kernel_link_args,
@@ -114,42 +116,12 @@ test_image_root = meson.current_build_dir() / 'test_image_root'
 test_image_img = meson.project_build_root() / 'test_image.img'
 test_root_ext2 = meson.project_build_root() / 'test_root.ext2'
 
-boot_efi = custom_target('BOOTAA64.EFI',
-  input: files(
-    '../bootloader/main.c',
-    '../bootloader/util.c',
-    '../bootloader/files.c',
-    '../bootloader/elf.c',
-    '../bootloader/paging.c',
-    '../bootloader/handoff.c',
-    '../bootloader/topology.c',
-  ),
-  output: 'BOOTAA64.EFI',
-  command: [
-    'clang',
-    '--target=aarch64-unknown-windows',
-    '-ffreestanding',
-    '-fshort-wchar',
-    '-fno-stack-protector',
-    '-fno-builtin',
-    '-nostdlib',
-    '-Wno-builtin-requires-header',
-    '-Wno-unused-command-line-argument',
-    '-fuse-ld=lld-link',
-    '-Wl,/subsystem:efi_application',
-    '-Wl,/entry:efi_main',
-    '@INPUT@',
-    '-o',
-    '@OUTPUT@',
-  ],
-  build_by_default: true)
-
 image = custom_target('image.img',
   input: [
     kernel_elf,
     files('../userland/image.manifest'),
     userland_image_data,
-    boot_efi,
+    boot_efi, limine_data,
   ],
   output: ['image.img', 'root.ext2'],
   command: [
@@ -173,7 +145,7 @@ test_image = custom_target('test_image.img',
     kernel_elf,
     files('../userland/tests/integration/image.manifest'),
     userland_image_data,
-    boot_efi,
+    boot_efi, limine_data,
   ],
   output: ['test_image.img', 'test_root.ext2'],
   command: [
