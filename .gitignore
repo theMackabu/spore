@@ -3,7 +3,7 @@ wasm/
 
 /.cache
 /.nova
-/goal.md
+/.direnv/
 
 *.o
 *.iso

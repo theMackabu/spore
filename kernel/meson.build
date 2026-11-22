@@ -17,17 +17,16 @@ kernel_c_args = [
 ]
 
 kernel_target_args = []
-kernel_link_args = []
 if not meson.is_cross_build()
   kernel_target_args = ['--target=aarch64-none-elf', '-Wno-unused-command-line-argument']
-  kernel_link_args = kernel_target_args + [
-    '-fuse-ld=lld',
-    '-nostdlib',
-    '-static',
-    '-Wl,-z,max-page-size=0x1000',
-    '-T', meson.current_source_dir() / 'linker.ld',
-  ]
 endif
+kernel_link_args = kernel_target_args + [
+  '-fuse-ld=lld',
+  '-nostdlib',
+  '-static',
+  '-Wl,-z,max-page-size=0x1000',
+  '-T', meson.current_source_dir() / 'linker.ld',
+]
 
 fs = import('fs')
 console_font = get_option('console_font')
