@@ -135,6 +135,76 @@ userland/demos/inodes /home/spore/demos/inodes
 userland/demos/something /home/spore/demos/something
 userland/demos/something-else.msh /home/spore/demos/something-else.msh
 
+# Git and its HTTP transport
+symlink libbrotlicommon.so.1.2.1 /usr/lib/libbrotlicommon.so.1
+userland/prebuilt/libbrotlicommon.so.1.2.1 /usr/lib/libbrotlicommon.so.1.2.1
+symlink libbrotlidec.so.1.2.1 /usr/lib/libbrotlidec.so.1
+userland/prebuilt/libbrotlidec.so.1.2.1 /usr/lib/libbrotlidec.so.1.2.1
+symlink libcares.so.2.19.8 /usr/lib/libcares.so.2
+userland/prebuilt/libcares.so.2.19.8 /usr/lib/libcares.so.2.19.8
+userland/prebuilt/git /usr/bin/git
+symlink git /usr/bin/git-receive-pack
+userland/prebuilt/git-shell /usr/bin/git-shell
+symlink git /usr/bin/git-upload-archive
+symlink git /usr/bin/git-upload-pack
+symlink ../../bin/git /usr/libexec/git-core/git
+userland/prebuilt/git-difftool--helper /usr/libexec/git-core/git-difftool--helper
+userland/prebuilt/git-filter-branch /usr/libexec/git-core/git-filter-branch
+userland/prebuilt/git-gui--askyesno /usr/libexec/git-core/git-gui--askyesno
+userland/prebuilt/git-http-fetch /usr/libexec/git-core/git-http-fetch
+userland/prebuilt/git-http-push /usr/libexec/git-core/git-http-push
+userland/prebuilt/git-merge-octopus /usr/libexec/git-core/git-merge-octopus
+userland/prebuilt/git-merge-one-file /usr/libexec/git-core/git-merge-one-file
+userland/prebuilt/git-merge-resolve /usr/libexec/git-core/git-merge-resolve
+userland/prebuilt/git-mergetool /usr/libexec/git-core/git-mergetool
+userland/prebuilt/git-mergetool--lib /usr/libexec/git-core/git-mergetool--lib
+userland/prebuilt/git-quiltimport /usr/libexec/git-core/git-quiltimport
+symlink git-remote-http /usr/libexec/git-core/git-remote-ftp
+symlink git-remote-http /usr/libexec/git-core/git-remote-ftps
+userland/prebuilt/git-remote-http /usr/libexec/git-core/git-remote-http
+symlink git-remote-http /usr/libexec/git-core/git-remote-https
+userland/prebuilt/git-request-pull /usr/libexec/git-core/git-request-pull
+userland/prebuilt/git-sh-i18n /usr/libexec/git-core/git-sh-i18n
+userland/prebuilt/git-sh-i18n--envsubst /usr/libexec/git-core/git-sh-i18n--envsubst
+userland/prebuilt/git-sh-setup /usr/libexec/git-core/git-sh-setup
+userland/prebuilt/git-submodule /usr/libexec/git-core/git-submodule
+userland/prebuilt/git-web--browse /usr/libexec/git-core/git-web--browse
+userland/prebuilt/araxis /usr/libexec/git-core/mergetools/araxis
+userland/prebuilt/bc /usr/libexec/git-core/mergetools/bc
+userland/prebuilt/codecompare /usr/libexec/git-core/mergetools/codecompare
+userland/prebuilt/deltawalker /usr/libexec/git-core/mergetools/deltawalker
+userland/prebuilt/diffmerge /usr/libexec/git-core/mergetools/diffmerge
+userland/prebuilt/diffuse /usr/libexec/git-core/mergetools/diffuse
+userland/prebuilt/ecmerge /usr/libexec/git-core/mergetools/ecmerge
+userland/prebuilt/emerge /usr/libexec/git-core/mergetools/emerge
+userland/prebuilt/examdiff /usr/libexec/git-core/mergetools/examdiff
+userland/prebuilt/guiffy /usr/libexec/git-core/mergetools/guiffy
+userland/prebuilt/gvimdiff /usr/libexec/git-core/mergetools/gvimdiff
+userland/prebuilt/kdiff3 /usr/libexec/git-core/mergetools/kdiff3
+userland/prebuilt/kompare /usr/libexec/git-core/mergetools/kompare
+userland/prebuilt/meld /usr/libexec/git-core/mergetools/meld
+userland/prebuilt/nvimdiff /usr/libexec/git-core/mergetools/nvimdiff
+userland/prebuilt/opendiff /usr/libexec/git-core/mergetools/opendiff
+userland/prebuilt/smerge /usr/libexec/git-core/mergetools/smerge
+userland/prebuilt/tkdiff /usr/libexec/git-core/mergetools/tkdiff
+userland/prebuilt/tortoisemerge /usr/libexec/git-core/mergetools/tortoisemerge
+userland/prebuilt/vimdiff /usr/libexec/git-core/mergetools/vimdiff
+userland/prebuilt/vscode /usr/libexec/git-core/mergetools/vscode
+userland/prebuilt/winmerge /usr/libexec/git-core/mergetools/winmerge
+userland/prebuilt/xxdiff /usr/libexec/git-core/mergetools/xxdiff
+userland/prebuilt/description /usr/share/git-core/templates/description
+userland/prebuilt/exclude /usr/share/git-core/templates/info/exclude
+symlink libcurl.so.4.8.0 /usr/lib/libcurl.so.4
+userland/prebuilt/libcurl.so.4.8.0 /usr/lib/libcurl.so.4.8.0
+symlink libexpat.so.1.13.1 /usr/lib/libexpat.so.1
+userland/prebuilt/libexpat.so.1.13.1 /usr/lib/libexpat.so.1.13.1
+symlink libpsl.so.5.3.5 /usr/lib/libpsl.so.5
+userland/prebuilt/libpsl.so.5.3.5 /usr/lib/libpsl.so.5.3.5
+symlink libnghttp2.so.14.29.4 /usr/lib/libnghttp2.so.14
+userland/prebuilt/libnghttp2.so.14.29.4 /usr/lib/libnghttp2.so.14.29.4
+symlink libzstd.so.1.5.7 /usr/lib/libzstd.so.1
+userland/prebuilt/libzstd.so.1.5.7 /usr/lib/libzstd.so.1.5.7
+
 userland/prebuilt/fastfetch /usr/local/bin/fastfetch
 userland/prebuilt/pci.ids /usr/share/hwdata/pci.ids
 userland/usr/local/bin/curl /usr/local/bin/curl

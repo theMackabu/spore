@@ -2284,6 +2284,72 @@ static int phase_d_fs_demo(void) {
   return ok;
 }
 
+static int tmpfile_regression(const char *directory) {
+  int dir = open(directory, O_RDONLY | O_DIRECTORY);
+  int fd = -1, named = -1, ok = 0;
+  struct stat st, published;
+  char procfd[64], data[4];
+  const char *name = "spore-tmpfile-check";
+  if (dir < 0) { goto done; }
+  fd = openat(dir, ".", O_TMPFILE | O_RDONLY, 0600);
+  if (fd >= 0 || errno != EINVAL) { goto done; }
+  fd = openat(dir, ".", O_TMPFILE | O_RDWR | O_CLOEXEC, 0640);
+  if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || (st.st_mode & 0777) != 0640 || st.st_nlink ||
+      !(fcntl(fd, F_GETFD) & FD_CLOEXEC) || write(fd, "data", 4) != 4) {
+    goto done;
+  }
+  snprintf(procfd, sizeof(procfd), "/proc/self/fd/%d", fd);
+  if (linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) ||
+      linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) == 0 || errno != EEXIST) {
+    goto done;
+  }
+  named = openat(dir, name, O_RDWR);
+  if (named < 0 || fstat(named, &published) || published.st_ino != st.st_ino || published.st_dev != st.st_dev ||
+      published.st_nlink != 1 || read(named, data, 4) != 4 || memcmp(data, "data", 4)) {
+    goto done;
+  }
+  if (linkat(AT_FDCWD, procfd, AT_FDCWD, !strcmp(directory, "/") ? "/tmp/spore-cross-link" : "/spore-cross-link",
+             AT_SYMLINK_FOLLOW) == 0 ||
+      errno != EXDEV) {
+    goto done;
+  }
+  if (geteuid() == 0) {
+    if (linkat(fd, "", dir, "spore-tmpfile-alias", AT_EMPTY_PATH) || fstat(named, &published) ||
+        published.st_nlink != 2 || unlinkat(dir, "spore-tmpfile-alias", 0)) {
+      goto done;
+    }
+  }
+  if (unlinkat(dir, name, 0) || fstat(named, &published) || published.st_nlink || lseek(named, 0, SEEK_SET) ||
+      read(named, data, 4) != 4 || memcmp(data, "data", 4)) {
+    goto done;
+  }
+
+  if (linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) == 0 || errno != ENOENT) { goto done; }
+  void *mapping = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (mapping == MAP_FAILED) { goto done; }
+  close(fd);
+  close(named);
+  fd = named = -1;
+  int readable = memcmp(mapping, "data", 4) == 0;
+  munmap(mapping, 4096);
+  if (!readable) { goto done; }
+
+  fd = openat(dir, ".", O_WRONLY | O_TMPFILE | O_EXCL, 0600);
+  if (fd < 0) { goto done; }
+  snprintf(procfd, sizeof(procfd), "/proc/self/fd/%d", fd);
+  ok = linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) == -1 && errno == ENOENT;
+done:
+  printf("[spore] O_TMPFILE %s ... %s\n", directory, ok ? "ok" : "FAIL");
+  if (fd >= 0) { close(fd); }
+  if (named >= 0) { close(named); }
+  if (dir >= 0) {
+    unlinkat(dir, "spore-tmpfile-alias", 0);
+    unlinkat(dir, name, 0);
+    close(dir);
+  }
+  return ok;
+}
+
 int main(void) {
   size_t len = 8 * 1024 * 1024;
   unsigned char *mem = malloc(len);
@@ -2337,7 +2403,9 @@ int main(void) {
   printf("\n");
   close(dfd);
 
-  int ok_all = 1;
+  int ok_all = tmpfile_regression("/tmp");
+  ok_all &= tmpfile_regression("/");
+  ok_all &= tmpfile_regression("/dev/shm");
   int ok_v3a = phase_a_thread_demo();
   ok_all = ok_all && ok_v3a;
   int ok_v3b = phase_b_futex_demo();

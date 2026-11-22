@@ -33,7 +33,9 @@ enum scripted_input {
   SCRIPT_PICO_SIMPLE,
   SCRIPT_PICO_PASTE,
   SCRIPT_NANO_PASTE,
-  SCRIPT_ANT_CTRL_C,
+  SCRIPT_ANT_FIRST_INTERRUPT,
+  SCRIPT_ANT_SECOND_INTERRUPT,
+  SCRIPT_ANT_EXIT,
 };
 
 static const char *shell_commands[] = {
@@ -828,7 +830,6 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
   bool shell_check_failed = false;
   bool shell_size_sent = false;
   enum scripted_input scripted_input = SCRIPT_NONE;
-  int ant_ctrl_c_stage = 0;
   bool editor_prompt_nudge_pending = false;
   bool plain = strcmp(mode, "plain") == 0;
   bool shell = strcmp(mode, "shell") == 0;
@@ -977,18 +978,6 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
           buf[0] = '\0';
           len = 0;
         }
-        if (shell && scripted_input == SCRIPT_ANT_CTRL_C && ant_ctrl_c_stage == 0 &&
-            contains(buf, "for more information")) {
-          static const char ctrl_c[] = "\x03";
-          static const char exit_ant[] = ".exit\n";
-          write_serial_input(in_pipe[1], ctrl_c, sizeof(ctrl_c) - 1);
-          struct timespec ts = {.tv_sec = 0, .tv_nsec = 20000000};
-          (void)nanosleep(&ts, NULL);
-          write_serial_input(in_pipe[1], exit_ant, sizeof(exit_ant) - 1);
-          ant_ctrl_c_stage = 2;
-          buf[0] = '\0';
-          len = 0;
-        }
         ssize_t prompt = find_shell_prompt(buf, len);
         if (bench && prompt >= 0) {
           if (bench_waiting) {
@@ -1026,10 +1015,12 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
         }
         if (shell && sent < sizeof(shell_commands) / sizeof(shell_commands[0]) && prompt >= 0) {
           editor_prompt_nudge_pending = false;
-          if (scripted_input == SCRIPT_ANT_CTRL_C && ant_ctrl_c_stage > 0) {
-            scripted_input = SCRIPT_NONE;
-            ant_ctrl_c_stage = 0;
+          if (scripted_input == SCRIPT_ANT_FIRST_INTERRUPT || scripted_input == SCRIPT_ANT_SECOND_INTERRUPT) {
+            shell_check_failed = true;
+            kill(pid, SIGTERM);
+            continue;
           }
+          if (scripted_input == SCRIPT_ANT_EXIT) { scripted_input = SCRIPT_NONE; }
           if (strcmp(shell_commands[sent], "__spore_harness_msh_paste__\n") == 0) {
             send_shell_printf_paste(in_pipe[1]);
             ++sent;
@@ -1042,16 +1033,22 @@ static int run_harness(char **qemu_argv, const char *mode, bool timings) {
           if (strcmp(shell_commands[sent], "pico /tmp/pico-test\n") == 0) { scripted_input = SCRIPT_PICO_SIMPLE; }
           if (strcmp(shell_commands[sent], "pico /tmp/pico-paste\n") == 0) { scripted_input = SCRIPT_PICO_PASTE; }
           if (strcmp(shell_commands[sent], "nano /tmp/nano-paste\n") == 0) { scripted_input = SCRIPT_NANO_PASTE; }
-          if (strcmp(shell_commands[sent], "ant\n") == 0) {
-            scripted_input = SCRIPT_ANT_CTRL_C;
-            ant_ctrl_c_stage = 0;
-          }
+          if (strcmp(shell_commands[sent], "ant\n") == 0) { scripted_input = SCRIPT_ANT_FIRST_INTERRUPT; }
           write_serial_input(in_pipe[1], shell_commands[sent], strlen(shell_commands[sent]));
           ++sent;
           buf[0] = '\0';
           len = 0;
         }
       }
+    } else if (ready == 0 && shell &&
+               (scripted_input == SCRIPT_ANT_FIRST_INTERRUPT || scripted_input == SCRIPT_ANT_SECOND_INTERRUPT) &&
+               contains(buf, "❯") && now_seconds() - last_shell_output_at > 0.3 &&
+               (scripted_input == SCRIPT_ANT_FIRST_INTERRUPT || contains(buf, "press Ctrl+C again"))) {
+      /* Ant prints the prompt before starting the reader, which clears pending interrupts on startup. */
+      write_serial_input(in_pipe[1], "\x03", 1);
+      scripted_input = scripted_input == SCRIPT_ANT_FIRST_INTERRUPT ? SCRIPT_ANT_SECOND_INTERRUPT : SCRIPT_ANT_EXIT;
+      buf[0] = 0;
+      len = 0;
     } else if (ready == 0 && shell && editor_prompt_nudge_pending && now_seconds() - last_shell_output_at > 1.0) {
       write_serial_input(in_pipe[1], "\n", 1);
       editor_prompt_nudge_pending = false;

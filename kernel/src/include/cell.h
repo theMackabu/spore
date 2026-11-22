@@ -283,6 +283,7 @@ struct domain {
   struct capability_set caps;
   struct cpu_budget budget;
   struct signal_action signal_actions[65];
+  uint64_t pending_signals;
 };
 
 struct thread {

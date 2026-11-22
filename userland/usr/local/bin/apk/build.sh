@@ -43,9 +43,6 @@ fi
 rm -rf "$apk_work" "$apk_build"
 mkdir -p "$apk_work" "$apk_build"
 git -C "$apk_src" archive --format=tar HEAD | tar -x -C "$apk_work"
-# Spore does not implement Linux O_TMPFILE yet. Force apk-tools onto its
-# named-temporary-file fallback in the build copy.
-sed -i.bak 's|#define HAVE_O_TMPFILE|/* #undef HAVE_O_TMPFILE */|g' "$apk_work/src/io.c"
 
 for patch_file in "$root"/userland/usr/local/bin/apk/patches/*.patch; do
   [ -e "$patch_file" ] || continue

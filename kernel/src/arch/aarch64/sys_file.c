@@ -14,6 +14,7 @@ enum {
   AT_FDCWD = -100,
   AT_EMPTY_PATH = 0x1000,
   AT_SYMLINK_NOFOLLOW = 0x100,
+  AT_SYMLINK_FOLLOW = 0x400,
   AT_EACCESS = 0x200,
   F_OK = 0,
   X_OK = 1,
@@ -25,6 +26,8 @@ enum {
   O_CREAT = 0100,
   O_EXCL = 0200,
   O_TRUNC = 01000,
+  O_DIRECTORY = 040000,
+  O_TMPFILE_BIT = 020000000,
   O_CLOEXEC = 02000000,
   MFD_CLOEXEC = 1,
   MFD_ALLOW_SEALING = 2,
@@ -33,6 +36,7 @@ enum {
   DT_REG = 8,
   DT_DIR = 4,
   DT_CHR = 2,
+  EXDEV = 18,
   EROFS = 30,
   ENOENT = 2,
   EPERM = 1,
@@ -140,11 +144,34 @@ static bool proc_self_fd_number(const char *path, int *fd_out) {
   int fd = 0;
   while (*p != '\0') {
     if (*p < '0' || *p > '9') { return false; }
+    if (fd > (INT32_MAX - (*p - '0')) / 10) { return false; }
     fd = fd * 10 + (*p - '0');
     ++p;
   }
   *fd_out = fd;
   return true;
+}
+
+static size_t append_literal(char *dst, size_t cap, size_t len, const char *text) {
+  while (*text != '\0' && len + 1 < cap) {
+    dst[len++] = *text++;
+  }
+  if (cap != 0) { dst[len] = '\0'; }
+  return len;
+}
+
+static size_t append_u64(char *dst, size_t cap, size_t len, uint64_t value) {
+  char tmp[20];
+  size_t n = 0;
+  do {
+    tmp[n++] = (char)('0' + (value % 10));
+    value /= 10;
+  } while (value != 0 && n < sizeof(tmp));
+  while (n > 0 && len + 1 < cap) {
+    dst[len++] = tmp[--n];
+  }
+  if (cap != 0) { dst[len] = '\0'; }
+  return len;
 }
 
 int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode) {
@@ -164,6 +191,29 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
   }
   if ((flags & O_TRUNC) != 0) { access |= W_OK; }
   if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(access))) { return -(int64_t)EPERM; }
+  if ((flags & O_TMPFILE_BIT) != 0) {
+    if ((flags & (O_CREAT | O_DIRECTORY)) != O_DIRECTORY ||
+        ((flags & O_ACCMODE) != O_RDWR && (flags & O_ACCMODE) != O_WRONLY)) {
+      return -EINVAL;
+    }
+    char first;
+    if (!vmm_copy_from_user(syscall_active_as(), &first, path_addr, 1)) { return -EFAULT; }
+    if (!first) { return -ENOENT; }
+    struct vfs_node dir, tmp;
+    if (!vfs_lookup(path, &dir)) { return -ENOENT; }
+    if (!dir.is_dir) { return -ENOTDIR; }
+    if (!syscall_node_access_allowed(&dir, W_OK | X_OK)) { return -EACCES; }
+    int rc = vfs_tmpfile(&dir, mode & 07777u & ~SYSCALL_UMASK, cell_current_euid(), cell_current_egid(),
+                         (flags & O_EXCL) == 0, &tmp);
+    if (rc < 0) { return rc; }
+    size_t len = kstrlen(virtual_path);
+    len = append_literal(virtual_path, sizeof(virtual_path), len, len == 1 ? "#" : "/#");
+    len = append_u64(virtual_path, sizeof(virtual_path), len, tmp.ino);
+    append_literal(virtual_path, sizeof(virtual_path), len, " (deleted)");
+    int fd = cell_fd_open_node(&tmp, flags, virtual_path);
+    vfs_release_node(&tmp);
+    return fd;
+  }
   int proc_fd = -1;
   if (proc_self_fd_number(path, &proc_fd)) {
     int dup = cell_fd_dup(proc_fd, 0);
@@ -193,28 +243,6 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
     (void)vfs_lookup(path, &node);
   }
   return cell_fd_open_node(&node, (uint32_t)flags, virtual_path);
-}
-
-static size_t append_literal(char *dst, size_t cap, size_t len, const char *text) {
-  while (*text != '\0' && len + 1 < cap) {
-    dst[len++] = *text++;
-  }
-  if (cap != 0) { dst[len] = '\0'; }
-  return len;
-}
-
-static size_t append_u64(char *dst, size_t cap, size_t len, uint64_t value) {
-  char tmp[20];
-  size_t n = 0;
-  do {
-    tmp[n++] = (char)('0' + (value % 10));
-    value /= 10;
-  } while (value != 0 && n < sizeof(tmp));
-  while (n > 0 && len + 1 < cap) {
-    dst[len++] = tmp[--n];
-  }
-  if (cap != 0) { dst[len] = '\0'; }
-  return len;
 }
 
 static bool memfd_name_char_ok(char ch) {
@@ -257,7 +285,7 @@ static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   st->st_dev = node->dev_id;
   st->st_ino = node->ino;
   st->st_mode = node->mode;
-  st->st_nlink = node->links_count == 0 ? 1 : node->links_count;
+  st->st_nlink = node->links_count;
   st->st_uid = node->uid;
   st->st_gid = node->gid;
   st->st_rdev = node->rdev;
@@ -323,7 +351,7 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
   kmemset(st, 0, sizeof(*st));
   st->stx_mask = STATX_BASIC_STATS;
   st->stx_blksize = PAGE_SIZE;
-  st->stx_nlink = node->links_count == 0 ? 1 : node->links_count;
+  st->stx_nlink = node->links_count;
   st->stx_uid = node->uid;
   st->stx_gid = node->gid;
   st->stx_mode = node->mode;
@@ -569,14 +597,49 @@ int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_di
 
 int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr,
                    uint64_t flags) {
-  if (flags != 0) { return -(int64_t)EINVAL; }
-  char old_path[CELL_PATH_MAX];
-  char new_path[CELL_PATH_MAX];
-  int64_t old_rc = syscall_copy_resolved_path_at(old_dirfd, old_path_addr, old_path, sizeof(old_path));
-  if (old_rc != 0) { return old_rc; }
-  int64_t new_rc = syscall_copy_resolved_path_at(new_dirfd, new_path_addr, new_path, sizeof(new_path));
-  if (new_rc != 0) { return new_rc; }
-  return vfs_link(old_path, new_path) ? 0 : -(int64_t)ENOENT;
+  if ((flags & ~(uint64_t)(AT_EMPTY_PATH | AT_SYMLINK_FOLLOW)) != 0) { return -EINVAL; }
+  char first;
+  if (!syscall_user_readable(new_path_addr, 1) || !vmm_copy_from_user(syscall_active_as(), &first, new_path_addr, 1)) {
+    return -EFAULT;
+  }
+  if (!first) { return -ENOENT; }
+  char old_path[CELL_PATH_MAX], new_path[CELL_PATH_MAX];
+  int64_t rc = syscall_copy_resolved_path_at(new_dirfd, new_path_addr, new_path, sizeof(new_path));
+  if (rc != 0) { return rc; }
+  if (!cell_fs_path_allowed(new_path, syscall_fs_rights_from_access(W_OK))) { return -EPERM; }
+
+  if (!syscall_user_readable(old_path_addr, 1) || !vmm_copy_from_user(syscall_active_as(), &first, old_path_addr, 1)) {
+    return -EFAULT;
+  }
+  int fd = -1;
+  if (first == 0) {
+    if (!(flags & AT_EMPTY_PATH) || cell_current_euid() != 0) { return -ENOENT; }
+    fd = (int)old_dirfd;
+  } else {
+    rc = syscall_copy_resolved_path_at(old_dirfd, old_path_addr, old_path, sizeof(old_path));
+    if (rc != 0) { return rc; }
+    if (!(flags & AT_SYMLINK_FOLLOW) || !proc_self_fd_number(old_path, &fd)) {
+      return vfs_link(old_path, new_path) ? 0 : -ENOENT;
+    }
+  }
+  struct vfs_node src, parent;
+  int open_flags = cell_fd_get_flags(fd);
+  if (open_flags < 0 || !cell_fd_stat(fd, &src)) { return first == 0 ? -EBADF : -ENOENT; }
+  if (src.is_dir) { return -EPERM; }
+  if (!(open_flags & O_TMPFILE_BIT)) { return -ENOENT; }
+  if (cell_current_euid() != 0 && cell_current_euid() != src.uid) { return -EPERM; }
+  if (vfs_lstat(new_path, &parent)) { return -EEXIST; }
+  size_t component = (size_t)(base_name(new_path) - new_path);
+  size_t split = component > 1 ? component - 1 : 1;
+  char saved = new_path[split];
+  new_path[split] = 0;
+  bool found = vfs_lookup(new_path, &parent);
+  new_path[split] = saved;
+  if (!found) { return -ENOENT; }
+  if (!parent.is_dir) { return -ENOTDIR; }
+  if (src.dev_id != parent.dev_id) { return -EXDEV; }
+  if (!syscall_node_access_allowed(&parent, W_OK | X_OK)) { return -EACCES; }
+  return vfs_link_node(&src, new_path) ? 0 : -ENOENT;
 }
 
 int64_t sys_symlinkat(uint64_t target_addr, uint64_t new_dirfd, uint64_t link_path_addr) {

@@ -5,7 +5,7 @@ and can be confined independently by the policy layer.
 
 ## Third-party programs
 
-The interactive image uses Alpine AArch64 packages for dash, fastfetch, jq, htop, nano,
+The interactive image uses Alpine AArch64 packages for dash, fastfetch, Git, jq, htop, nano,
 Vim, TinyCC, GNU wget, GNU which and the Dropbear SSH client and key tools.
 Alpine supplies wide-character ncurses. The narrow-character library comes
 from Void Linux’s AArch64 musl package. The host uses zstd to unpack it. The serial

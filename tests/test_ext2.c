@@ -322,6 +322,16 @@ static void test_mutations(const char *image_path) {
   assert(f != NULL);
   struct ext2_fs fs;
   assert(ext2_mount_rw(&fs, file_read, file_write, f));
+  struct ext2_info before, after;
+  struct ext2_node anonymous;
+  assert(ext2_info(&fs, &before));
+  assert(ext2_tmpfile(&fs, 0600, 0, 0, true, &anonymous));
+  assert(ext2_write_file(&fs, &anonymous, 0, "x", 1) == 1);
+  assert(ext2_tmpfile_release(&fs, anonymous.ino));
+  assert(ext2_info(&fs, &after));
+  assert(before.inode_count - before.free_inodes == after.inode_count - after.free_inodes);
+  assert(before.free_blocks == after.free_blocks);
+
   test_large_file_write(&fs);
   test_relative_symlink_with_dotdot(&fs);
 

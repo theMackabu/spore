@@ -338,32 +338,15 @@ bool cell_tty_stdin_readable(void) {
   return tty_ready_len != 0 || tty_pending_signal != 0;
 }
 
-static struct thread *tty_signal_target_for_domain(struct domain *domain) {
-  struct thread *fallback = NULL;
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state == THREAD_UNUSED || thread->domain != domain) { continue; }
-    if (fallback == NULL) { fallback = thread; }
-    if (thread->state == THREAD_BLOCKED && thread->wait_reason == WAIT_STDIN) { return thread; }
-  }
-  return fallback;
-}
-
 static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
   int signal = cell_tty_take_pending_signal();
   if (signal == 0) { return; }
   int pgrp = cell_tty_foreground_pgrp();
   if (pgrp <= 0) { return; }
-  struct thread *interrupted = cell_current_thread_internal();
   for (size_t i = 0; i < cell_domain_capacity(); ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used || domain->zombie || domain->pgrp_id != pgrp) { continue; }
-    struct thread *thread = tty_signal_target_for_domain(domain);
-    if (thread == interrupted && frame != NULL) {
-      cell_signal_current(signal, frame);
-    } else {
-      (void)cell_deliver_signal_to_thread(thread, signal);
-    }
+    cell_signal_foreground_domain(domain, signal, frame);
   }
 }
 

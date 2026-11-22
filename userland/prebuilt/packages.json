@@ -224,6 +224,113 @@
       "files": [
         "ant"
       ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/brotli-libs-1.2.1-r0.apk",
+      "sha256": "bec9ee522095e9fd01113d8732119847944e3152f228034246a33e2ab82e4195",
+      "files": [
+        "usr/lib/libbrotlicommon.so.1.2.1",
+        "usr/lib/libbrotlidec.so.1.2.1"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/c-ares-1.34.9-r0.apk",
+      "sha256": "2af302c4a232fff2abeb56ec9f16edabdb06f0e5f8d040d6e466e91f1c473d00",
+      "files": [
+        "usr/lib/libcares.so.2.19.8"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/git-2.52.1-r0.apk",
+      "sha256": "b7f80755f78ab9b52f62e5bd3c9d75986e13fced5917ce5348eb9ecb2cad2ab2",
+      "files": [
+        "usr/bin/git",
+        "usr/bin/git-shell",
+        "usr/libexec/git-core/git-difftool--helper",
+        "usr/libexec/git-core/git-filter-branch",
+        "usr/libexec/git-core/git-gui--askyesno",
+        "usr/libexec/git-core/git-http-fetch",
+        "usr/libexec/git-core/git-http-push",
+        "usr/libexec/git-core/git-merge-octopus",
+        "usr/libexec/git-core/git-merge-one-file",
+        "usr/libexec/git-core/git-merge-resolve",
+        "usr/libexec/git-core/git-mergetool",
+        "usr/libexec/git-core/git-mergetool--lib",
+        "usr/libexec/git-core/git-quiltimport",
+        "usr/libexec/git-core/git-remote-http",
+        "usr/libexec/git-core/git-request-pull",
+        "usr/libexec/git-core/git-sh-i18n",
+        "usr/libexec/git-core/git-sh-i18n--envsubst",
+        "usr/libexec/git-core/git-sh-setup",
+        "usr/libexec/git-core/git-submodule",
+        "usr/libexec/git-core/git-web--browse",
+        "usr/libexec/git-core/mergetools/araxis",
+        "usr/libexec/git-core/mergetools/bc",
+        "usr/libexec/git-core/mergetools/codecompare",
+        "usr/libexec/git-core/mergetools/deltawalker",
+        "usr/libexec/git-core/mergetools/diffmerge",
+        "usr/libexec/git-core/mergetools/diffuse",
+        "usr/libexec/git-core/mergetools/ecmerge",
+        "usr/libexec/git-core/mergetools/emerge",
+        "usr/libexec/git-core/mergetools/examdiff",
+        "usr/libexec/git-core/mergetools/guiffy",
+        "usr/libexec/git-core/mergetools/gvimdiff",
+        "usr/libexec/git-core/mergetools/kdiff3",
+        "usr/libexec/git-core/mergetools/kompare",
+        "usr/libexec/git-core/mergetools/meld",
+        "usr/libexec/git-core/mergetools/nvimdiff",
+        "usr/libexec/git-core/mergetools/opendiff",
+        "usr/libexec/git-core/mergetools/smerge",
+        "usr/libexec/git-core/mergetools/tkdiff",
+        "usr/libexec/git-core/mergetools/tortoisemerge",
+        "usr/libexec/git-core/mergetools/vimdiff",
+        "usr/libexec/git-core/mergetools/vscode",
+        "usr/libexec/git-core/mergetools/winmerge",
+        "usr/libexec/git-core/mergetools/xxdiff"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/git-init-template-2.52.1-r0.apk",
+      "sha256": "e20badd8c09ca0def9c0f9c91cba5c19ea57fc1b096af1983a7ceac6b2e0a6da",
+      "files": [
+        "usr/share/git-core/templates/description",
+        "usr/share/git-core/templates/info/exclude"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libcurl-8.23.0-r0.apk",
+      "sha256": "a7cf7d0813d3a96f2cb65fbf873e8a8661866a843f2b7769b629024d9e5809bc",
+      "files": [
+        "usr/lib/libcurl.so.4.8.0"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libexpat-2.10.0-r0.apk",
+      "sha256": "f6483389ab602a351891337be7e9975106d0749d57aa5339b0725bb4051e4bc3",
+      "files": [
+        "usr/lib/libexpat.so.1.13.1"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libpsl-0.21.5-r3.apk",
+      "sha256": "3078398181f0955da453826965a9e184494e4d9dfd22391e28d72f7561a0ca2b",
+      "files": [
+        "usr/lib/libpsl.so.5.3.5"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/nghttp2-libs-1.69.0-r0.apk",
+      "sha256": "2e17aa1d7d4a37b2d029210d239b8b2e4ac40748d9a8c8912a6b607011034fd1",
+      "files": [
+        "usr/lib/libnghttp2.so.14.29.4"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zstd-libs-1.5.7-r2.apk",
+      "sha256": "50a998e56e4bf31504996e49c1b4a23eed5e0cd4e24b8a1356a54daf1a6eabbe",
+      "files": [
+        "usr/lib/libzstd.so.1.5.7"
+      ]
     }
   ],
   "sdks": {

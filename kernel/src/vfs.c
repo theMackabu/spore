@@ -208,7 +208,7 @@ static void update_time_sources(void) {
 }
 
 static void from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
-  uint16_t perms = node->mode == 0 ? (node->is_dir ? 0777u : 0666u) : (uint16_t)(node->mode & 07777u);
+  uint16_t perms = node->mode & 07777u;
   uint16_t type = (uint16_t)(node->mode & 0170000u);
   uint16_t mode =
     type != 0 ? (uint16_t)(type | perms) : (node->is_dir ? (uint16_t)(0040000u | perms) : (uint16_t)(0100000u | perms));
@@ -228,7 +228,7 @@ static void from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
     .writable = true,
     .device = node->device,
     .mode = mode,
-    .links_count = 1,
+    .links_count = node->links_count,
     .uid = node->uid,
     .gid = node->gid,
     .seals = node->seals,
@@ -928,6 +928,41 @@ bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
   return true;
 }
 
+/* The creator owns one reference until the descriptor takes its own. */
+int vfs_tmpfile(const struct vfs_node *dir, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable,
+                struct vfs_node *out) {
+  update_time_sources();
+  if (dir->backend == VFS_EXT2) {
+    struct ext2_node node;
+    if (!root_ext2->write) { return -30; }
+    if (!ext2_tmpfile(root_ext2, mode, uid, gid, linkable, &node)) { return -28; }
+    from_ext2(&node, out);
+    out->writable = true;
+    vfs_page_cache_invalidate(out);
+    return 0;
+  }
+  if (dir->backend == VFS_RAMFS && (dir->ramfs.mount == RAMFS_MOUNT_TMP || dir->ramfs.mount == RAMFS_MOUNT_RUN ||
+                                    dir->ramfs.mount == RAMFS_MOUNT_RAM0 || dir->ramfs.mount == RAMFS_MOUNT_DEV)) {
+    struct ramfs_node node;
+    if (!ramfs_tmpfile(&dir->ramfs, mode, uid, gid, linkable, &node)) { return -28; }
+    from_ramfs(&node, out);
+    return 0;
+  }
+  return -95;
+}
+
+bool vfs_link_node(const struct vfs_node *node, const char *new_path) {
+  update_time_sources();
+  bool ok = false;
+  if (node->backend == VFS_EXT2 && !ramfs_route(new_path)) {
+    ok = ext2_link_inode(root_ext2, node->ext2.ino, new_path);
+  } else if (node->backend == VFS_RAMFS && node->ramfs.fs != NULL) {
+    ok = ramfs_link_node(node->ramfs.fs, node->ramfs.index, new_path);
+  }
+  if (ok) { lookup_cache_invalidate_all(); }
+  return ok;
+}
+
 bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out) {
   update_time_sources();
   struct ramfs_node node;
@@ -956,8 +991,8 @@ bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
   vfs_page_cache_invalidate(node);
   bool ok = false;
   if (node->backend == VFS_EXT2) {
-    struct ext2_node ext = node->ext2;
-    ok = ext2_truncate(root_ext2, &ext, size);
+    struct ext2_node ext;
+    ok = ext2_inode(root_ext2, node->ext2.ino, &ext) && ext2_truncate(root_ext2, &ext, size);
   } else if (node->backend == VFS_RAMFS) {
     ok = ramfs_truncate(node->ramfs.fs, node->ramfs.index, size);
   }
@@ -1082,13 +1117,15 @@ bool vfs_rename(const char *old_path, const char *new_path) {
 }
 
 void vfs_retain_node(const struct vfs_node *node) {
-  if (node == NULL || node->backend != VFS_RAMFS) { return; }
-  (void)ramfs_retain_node(node->ramfs.fs, node->ramfs.index);
+  if (node == NULL) { return; }
+  if (node->backend == VFS_EXT2) { ext2_tmpfile_retain(root_ext2, node->ext2.ino); }
+  if (node->backend == VFS_RAMFS) { (void)ramfs_retain_node(node->ramfs.fs, node->ramfs.index); }
 }
 
 void vfs_release_node(const struct vfs_node *node) {
-  if (node == NULL || node->backend != VFS_RAMFS) { return; }
-  ramfs_release_node(node->ramfs.fs, node->ramfs.index);
+  if (node == NULL) { return; }
+  if (node->backend == VFS_EXT2 && ext2_tmpfile_release(root_ext2, node->ext2.ino)) { vfs_page_cache_invalidate(node); }
+  if (node->backend == VFS_RAMFS) { ramfs_release_node(node->ramfs.fs, node->ramfs.index); }
 }
 
 bool vfs_set_sealable(const struct vfs_node *node, bool allow_sealing) {
@@ -1149,7 +1186,8 @@ int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, ui
   vfs_page_cache_invalidate(node);
   int64_t written = -28;
   if (node->backend == VFS_EXT2) {
-    struct ext2_node ext = node->ext2;
+    struct ext2_node ext;
+    if (!ext2_inode(root_ext2, node->ext2.ino, &ext)) { return -5; }
     written = ext2_write_file(root_ext2, &ext, off, src, len);
   } else if (node->backend == VFS_RAMFS) {
     written = ramfs_write(node->ramfs.fs, node->ramfs.index, off, src, len);

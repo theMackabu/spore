@@ -691,6 +691,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   uint32_t supported_incompat = EXT2_INCOMPAT_FILETYPE | EXT2_INCOMPAT_SPORE_EXT2PLUS;
   if ((sb.feature_incompat & ~supported_incompat) != 0) { return false; }
 
+  fs->tmpfile_count = 0;
   fs->read = read;
   fs->write = write;
   fs->ctx = ctx;
@@ -1790,7 +1791,50 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, 
   return true;
 }
 
+static struct ext2_tmpfile_ref *tmpfile_ref(struct ext2_fs *fs, uint32_t ino) {
+  for (size_t i = 0; i < fs->tmpfile_count; ++i) {
+    if (fs->tmpfiles[i].ino == ino) { return &fs->tmpfiles[i]; }
+  }
+  return NULL;
+}
+
+bool ext2_tmpfile(struct ext2_fs *fs, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable, struct ext2_node *out) {
+  uint32_t ino;
+  if (fs->write == NULL || uid > UINT16_MAX || gid > UINT16_MAX ||
+      fs->tmpfile_count == sizeof(fs->tmpfiles) / sizeof(fs->tmpfiles[0]) || !alloc_inode(fs, &ino)) {
+    return false;
+  }
+  uint32_t now = now_sec();
+  struct ext2_node node = {
+    .ino = ino, .mode = EXT2_S_IFREG | mode, .uid = uid, .gid = gid, .atime = now, .ctime = now, .mtime = now};
+  if (!write_inode(fs, &node)) {
+    (void)free_inode(fs, ino);
+    return false;
+  }
+  fs->tmpfiles[fs->tmpfile_count++] = (struct ext2_tmpfile_ref){.ino = ino, .refs = 1, .linkable = linkable};
+  *out = node;
+  return true;
+}
+
+void ext2_tmpfile_retain(struct ext2_fs *fs, uint32_t ino) {
+  struct ext2_tmpfile_ref *ref = tmpfile_ref(fs, ino);
+  if (ref != NULL) { ++ref->refs; }
+}
+
+bool ext2_tmpfile_release(struct ext2_fs *fs, uint32_t ino) {
+  struct ext2_tmpfile_ref *ref = tmpfile_ref(fs, ino);
+  if (ref == NULL || --ref->refs != 0) { return false; }
+  *ref = fs->tmpfiles[--fs->tmpfile_count];
+  struct ext2_node node;
+  return read_inode(fs, ino, &node) && node.links_count == 0 && ext2_truncate(fs, &node, 0) && free_inode(fs, ino);
+}
+
 bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path) {
+  struct ext2_node node;
+  return ext2_lookup(fs, old_path, &node) && ext2_link_inode(fs, node.ino, new_path);
+}
+
+bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path) {
   char new_parent_path[256];
   char new_name[EXT2_NAME_MAX + 1];
   if (!split_parent_path(new_path, new_parent_path, sizeof(new_parent_path), new_name, sizeof(new_name))) {
@@ -1799,16 +1843,22 @@ bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path) {
   struct ext2_node node;
   struct ext2_node parent;
   struct ext2_node existing;
-  if (!ext2_lookup(fs, old_path, &node) || ext2_is_dir(&node) || !ext2_lookup(fs, new_parent_path, &parent) ||
+  if (!read_inode(fs, ino, &node) || ext2_is_dir(&node) || !ext2_lookup(fs, new_parent_path, &parent) ||
       !ext2_is_dir(&parent) || lookup_child(fs, &parent, new_name, kstrlen(new_name), &existing)) {
     return false;
   }
-  if (node.links_count == UINT16_MAX || !add_dirent(fs, &parent, new_name, node.ino, dirent_type_for_node(&node))) {
-    return false;
-  }
+  struct ext2_tmpfile_ref *ref = tmpfile_ref(fs, ino);
+  if (node.links_count == UINT16_MAX || (node.links_count == 0 && (ref == NULL || !ref->linkable))) { return false; }
   ++node.links_count;
   node.ctime = now_sec();
-  return write_inode(fs, &node);
+  if (!write_inode(fs, &node)) { return false; }
+  if (!add_dirent(fs, &parent, new_name, ino, dirent_type_for_node(&node))) {
+    --node.links_count;
+    (void)write_inode(fs, &node);
+    return false;
+  }
+  if (ref != NULL) { ref->linkable = false; }
+  return true;
 }
 
 bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path) {
@@ -1862,7 +1912,8 @@ bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, 
 
 bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t mode) {
   if (node == NULL) { return false; }
-  struct ext2_node copy = *node;
+  struct ext2_node copy;
+  if (!read_inode(fs, node->ino, &copy)) { return false; }
   copy.mode = (uint16_t)((copy.mode & 0170000u) | (mode & 07777u));
   copy.ctime = now_sec();
   return write_inode(fs, &copy);
@@ -1875,7 +1926,8 @@ bool ext2_chmod(struct ext2_fs *fs, const char *path, uint32_t mode) {
 
 bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t uid, uint32_t gid) {
   if (node == NULL || uid > UINT16_MAX || gid > UINT16_MAX) { return false; }
-  struct ext2_node copy = *node;
+  struct ext2_node copy;
+  if (!read_inode(fs, node->ino, &copy)) { return false; }
   copy.uid = (uint16_t)uid;
   copy.gid = (uint16_t)gid;
   copy.ctime = now_sec();
@@ -1903,7 +1955,7 @@ bool ext2_unlink(struct ext2_fs *fs, const char *path) {
     }
   }
   if (!remove_dirent(fs, &parent, name, NULL)) { return false; }
-  if (!ext2_is_dir(&node) && node.links_count > 1) {
+  if (!ext2_is_dir(&node) && (node.links_count > 1 || tmpfile_ref(fs, node.ino) != NULL)) {
     --node.links_count;
     node.ctime = now_sec();
     return write_inode(fs, &node);

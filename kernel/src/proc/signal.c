@@ -281,12 +281,35 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
   return true;
 }
 
+void cell_signal_foreground_domain(struct domain *domain, int signal, struct trap_frame *frame) {
+  struct thread *target = NULL;
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+    struct thread *t = cell_thread_slot(i);
+    if (t == NULL || t->domain != domain || t->state == THREAD_UNUSED || t->state == THREAD_ZOMBIE ||
+        signal_is_blocked(t, signal)) {
+      continue;
+    }
+    if (target == NULL || t->state == THREAD_BLOCKED) { target = t; }
+    if (t->state == THREAD_BLOCKED && t->wait_reason == WAIT_STDIN) { break; }
+  }
+  if (target == NULL) {
+    domain->pending_signals |= signal_bit(signal);
+  } else if (target == cell_current_thread_internal() && frame != NULL) {
+    cell_signal_current(signal, frame);
+  } else {
+    cell_deliver_signal_to_thread(target, signal);
+  }
+}
+
 bool cell_deliver_pending_signals(struct thread *thread) {
-  if (thread == NULL || thread->pending_signals == 0) { return false; }
+  if (thread == NULL || thread->domain == NULL || (thread->pending_signals | thread->domain->pending_signals) == 0) {
+    return false;
+  }
   for (int signal = 1; signal < (int)NSIG; ++signal) {
     uint64_t bit = signal_bit(signal);
-    if ((thread->pending_signals & bit) == 0 || signal_is_blocked(thread, signal)) { continue; }
-    thread->pending_signals &= ~bit;
+    uint64_t *pending = (thread->pending_signals & bit) ? &thread->pending_signals : &thread->domain->pending_signals;
+    if ((*pending & bit) == 0 || signal_is_blocked(thread, signal)) { continue; }
+    *pending &= ~bit;
     return cell_deliver_signal_to_thread(thread, signal);
   }
   return false;
@@ -294,7 +317,10 @@ bool cell_deliver_pending_signals(struct thread *thread) {
 
 bool cell_deliver_pending_signals_current(struct trap_frame *frame) {
   struct thread *thread = cell_current_thread_internal();
-  if (thread == NULL || frame == NULL || thread->pending_signals == 0) { return false; }
+  if (thread == NULL || frame == NULL || thread->domain == NULL ||
+      (thread->pending_signals | thread->domain->pending_signals) == 0) {
+    return false;
+  }
   thread->tf = *frame;
   bool delivered = cell_deliver_pending_signals(thread);
   *frame = thread->tf;

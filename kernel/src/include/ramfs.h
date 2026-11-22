@@ -85,9 +85,12 @@ struct ramfs_mem_node {
   uint32_t uid;
   uint32_t gid;
   uint32_t refs;
+  uint16_t links_count;
   uint32_t seals;
   uint32_t shared_write_mappings;
   bool sealable;
+  bool linkable;
+  int link_target;
   int first_page;
   int parent;
   char name[RAMFS_NAME_MAX + 1];
@@ -124,6 +127,7 @@ struct ramfs_node {
   uint16_t mode;
   uint32_t uid;
   uint32_t gid;
+  uint16_t links_count;
   uint32_t seals;
   uint32_t shared_write_mappings;
   bool sealable;
@@ -163,6 +167,9 @@ bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size);
 bool ramfs_shared_writable_mmap_sealed(struct ramfs *fs, int index);
 void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add);
 bool ramfs_unlink(struct ramfs *fs, const char *path);
+bool ramfs_tmpfile(const struct ramfs_node *dir, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable,
+                   struct ramfs_node *out);
+bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path);
 bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path);
 bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path);
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len);
