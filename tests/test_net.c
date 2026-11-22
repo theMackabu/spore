@@ -393,7 +393,8 @@ bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
   return true;
 }
 
-bool cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
+bool cell_net_deliver_udp(uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
+  (void)ttl;
   (void)src_ip;
   (void)src_port;
   (void)dst_port;
@@ -437,7 +438,8 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
   saw_tcp_segment = true;
 }
 
-void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len) {
+void cell_net_deliver_icmp(uint32_t src_ip, uint8_t ttl, const void *payload, size_t len) {
+  (void)ttl;
   (void)src_ip;
   (void)payload;
   (void)len;

@@ -42,6 +42,7 @@ enum {
   SO_SNDTIMEO_NEW = 67,
   IP_TOS = 1,
   IP_TTL = 2,
+  IP_RECVTTL = 12,
   IP_MTU_DISCOVER = 10,
   IP_BIND_ADDRESS_NO_PORT = 24,
   IPPROTO_ICMP = 1,
@@ -605,6 +606,7 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     switch (optname) {
     case IP_TOS:
     case IP_TTL:
+    case IP_RECVTTL:
     case IP_MTU_DISCOVER:
     case IP_BIND_ADDRESS_NO_PORT: {
       int rc = socket_option_int(optval, optlen, &value);

@@ -398,18 +398,19 @@ int main(int argc, char **argv) {
   assert(ext2_lookup(&fs, "/bin", &bin));
   assert(ext2_is_dir(&bin));
   bool saw_sh = false;
-  bool saw_hello = false;
+  bool saw_df = false;
   struct ext2_dirent ent;
   for (size_t i = 0; ext2_dirent(&fs, &bin, i, &ent); ++i) {
     if (strcmp(ent.name, "sh") == 0) { saw_sh = true; }
-    if (strcmp(ent.name, "hello") == 0) { saw_hello = true; }
+    if (strcmp(ent.name, "df") == 0) { saw_df = true; }
   }
-  assert(saw_sh && saw_hello);
+  assert(saw_sh && saw_df);
 
-  struct ext2_node hello;
-  assert(ext2_lookup(&fs, "/bin/hello", &hello));
-  assert(ext2_is_regular(&hello));
-  assert(hello.size < 256 * 1024);
+  struct ext2_node df;
+  assert(ext2_lookup(&fs, "/bin/df", &df));
+  assert(ext2_is_regular(&df));
+  assert(ext2_read_file(&fs, &df, 0, buf, 4, &got));
+  assert(got == 4 && memcmp(buf, "\x7f" "ELF", 4) == 0);
 
   struct ext2_node loader;
   assert(ext2_lookup(&fs, "/lib/ld-musl-aarch64.so.1", &loader));

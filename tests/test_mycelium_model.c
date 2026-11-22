@@ -108,12 +108,12 @@ static void test_unit_parser(void) {
                          "Requires=network.target logger.service\n"
                          "After=logger.service\n"
                          "[Service]\n"
-                         "ExecStart=/bin/hello\n"
+                         "ExecStart=/bin/true\n"
                          "Capability=fs:/tmp\n");
   assert(unit.require_count == 2);
   assert(strcmp(unit.requires[0], "network.target") == 0);
   assert(strcmp(unit.after[0], "logger.service") == 0);
-  assert(strcmp(unit.exec_start, "/bin/hello") == 0);
+  assert(strcmp(unit.exec_start, "/bin/true") == 0);
   assert(strcmp(unit.capability, "fs:/tmp") == 0);
 }
 

@@ -488,17 +488,7 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
   if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN) {
-    *out = (struct vfs_node){
-      .backend = VFS_RAMFS,
-      .ino = 10,
-      .is_dir = false,
-      .device = RAMFS_DEV_CONSOLE,
-      .mode = 0020666u,
-      .links_count = 1,
-      .dev_id = 0x0005,
-      .rdev = (5u << 8) | 1u,
-    };
-    return true;
+    return vfs_lookup("/dev/console", out);
   }
   if (file->type == OPEN_PIPE) {
     *out = (struct vfs_node){

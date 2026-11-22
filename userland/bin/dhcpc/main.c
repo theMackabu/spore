@@ -133,7 +133,16 @@ static bool write_resolv(uint32_t dns) {
   return true;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+  if (argc == 2 && strcmp(argv[1], "--address") == 0) {
+    struct net_config cfg;
+    if (!net_config_get(&cfg) || !cfg.local_ip) { return EXIT_FAILURE; }
+    char ip[32];
+    format_ipv4(cfg.local_ip, ip, sizeof(ip));
+    puts(ip);
+    return EXIT_SUCCESS;
+  }
+  if (argc != 1) { return usage("dhcpc", "[--address]"); }
   int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (fd < 0) {
     perror("socket");

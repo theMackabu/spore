@@ -119,15 +119,43 @@ size_t proc_loadavg_text(char *dst, size_t cap) {
 
 size_t proc_mounts_text(char *dst, size_t cap) {
   size_t len = 0;
-  proc_append_str(dst, cap, &len,
-                  "ext2-root / ext2 rw 0 0\n"
-                  "tmpfs /tmp tmpfs rw 0 0\n"
-                  "runfs /run tmpfs rw 0 0\n"
-                  "bootfs /dev/fs/boot fat16 ro 0 0\n"
-                  "ramfs /dev/fs/ram0 ramfs ro 0 0\n"
-                  "proc /proc proc ro 0 0\n"
-                  "sysfs /sys sysfs ro 0 0\n"
-                  "dev /dev devfs rw 0 0\n");
+  const struct vfs_mount *m;
+  for (size_t i = 0; (m = vfs_mount_at(i)) != NULL; ++i) {
+    proc_append_str(dst, cap, &len, m->source);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, m->target);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, m->fstype);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, m->options);
+    proc_append_str(dst, cap, &len, " 0 0\n");
+  }
+  return len;
+}
+
+size_t proc_mountinfo_text(char *dst, size_t cap) {
+  size_t len = 0;
+  const struct vfs_mount *m;
+  for (size_t i = 0; (m = vfs_mount_at(i)) != NULL; ++i) {
+    proc_append_u64(dst, cap, &len, m->device);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, m->parent);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, m->device >> 8);
+    proc_append_char(dst, cap, &len, ':');
+    proc_append_u64(dst, cap, &len, m->device & 0xff);
+    proc_append_str(dst, cap, &len, " / ");
+    proc_append_str(dst, cap, &len, m->target);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, m->options);
+    proc_append_str(dst, cap, &len, " - ");
+    proc_append_str(dst, cap, &len, m->fstype);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, m->source);
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_str(dst, cap, &len, m->options);
+    proc_append_char(dst, cap, &len, '\n');
+  }
   return len;
 }
 

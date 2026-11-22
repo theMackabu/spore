@@ -6,6 +6,7 @@ size_t proc_meminfo_text(char *dst, size_t cap);
 size_t proc_cpuinfo_text(char *dst, size_t cap);
 size_t proc_uptime_text(char *dst, size_t cap);
 size_t proc_loadavg_text(char *dst, size_t cap);
+size_t proc_mountinfo_text(char *dst, size_t cap);
 size_t proc_mounts_text(char *dst, size_t cap);
 size_t proc_stat_text(char *dst, size_t cap);
 size_t proc_net_dev_text(char *dst, size_t cap);

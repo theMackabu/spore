@@ -92,6 +92,7 @@ struct open_file {
   uint8_t dgram_rx_head;
   uint8_t dgram_rx_count;
   uint8_t dgram_rx_slot[CELL_DGRAM_RX_QUEUE_CAP];
+  uint8_t dgram_rx_ttl[CELL_DGRAM_RX_QUEUE_CAP];
   uint16_t dgram_rx_len[CELL_DGRAM_RX_QUEUE_CAP];
   uint32_t dgram_rx_ip[CELL_DGRAM_RX_QUEUE_CAP];
   uint16_t dgram_rx_port[CELL_DGRAM_RX_QUEUE_CAP];
@@ -124,6 +125,7 @@ struct open_file {
   bool tcp_fin_pending;
   uint32_t tcp_fin_seq;
   uint32_t ip_ttl;
+  bool ip_recvttl;
   uint64_t tcp_tx_pa;
   uint8_t *tcp_rx;
   struct tcp_tx_state *tcp_tx;

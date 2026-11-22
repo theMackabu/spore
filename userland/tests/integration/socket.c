@@ -134,9 +134,16 @@ static int udp_msg_iov_regression(void) {
     .msg_iovlen = 2,
   };
   ssize_t got = recvmsg(fd, &in, 0);
-  close(fd);
   int ok = sent == 13 && got == 13 && strcmp(first, "iov-") == 0 && strcmp(second, "send-recv") == 0 &&
            in.msg_namelen == sizeof(from);
+  char packet[16];
+  ok = ok && connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0 && writev(fd, out_iov, 3) == 13 &&
+       read(fd, packet, sizeof(packet)) == 13 && memcmp(packet, "iov-send-recv", 13) == 0;
+  memset(first, 0, sizeof(first));
+  memset(second, 0, sizeof(second));
+  ok = ok && write(fd, "read-vectors", 12) == 12 && readv(fd, in_iov, 2) == 12 &&
+       strcmp(first, "read") == 0 && strcmp(second, "-vectors") == 0;
+  close(fd);
   printf("[spore] udp msg iov: %s (%s%s)\n", ok ? "PASS" : "FAIL", first, second);
   return ok;
 }

@@ -1,6 +1,81 @@
 {
   "packages": [
     {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/coreutils-9.4_3.aarch64-musl.xbps",
+      "sha256": "926720e2bba0211103d7bb34e4b4834a0966840d203c205a7e802bc820a441a0",
+      "files": [
+        "./usr/bin/base64",
+        "./usr/bin/basename",
+        "./usr/bin/cat",
+        "./usr/bin/chgrp",
+        "./usr/bin/chmod",
+        "./usr/bin/chown",
+        "./usr/bin/chroot",
+        "./usr/bin/cksum",
+        "./usr/bin/cp",
+        "./usr/bin/cut",
+        "./usr/bin/date",
+        "./usr/bin/df",
+        "./usr/bin/dirname",
+        "./usr/bin/du",
+        "./usr/bin/echo",
+        "./usr/bin/env",
+        "./usr/bin/false",
+        "./usr/bin/groups",
+        "./usr/bin/head",
+        "./usr/bin/hostid",
+        "./usr/bin/id",
+        "./usr/bin/ln",
+        "./usr/bin/ls",
+        "./usr/bin/mkdir",
+        "./usr/bin/mkfifo",
+        "./usr/bin/mv",
+        "./usr/bin/printenv",
+        "./usr/bin/printf",
+        "./usr/bin/pwd",
+        "./usr/bin/readlink",
+        "./usr/bin/rm",
+        "./usr/bin/sha1sum",
+        "./usr/bin/sleep",
+        "./usr/bin/sort",
+        "./usr/bin/stat",
+        "./usr/bin/sum",
+        "./usr/bin/tail",
+        "./usr/bin/tee",
+        "./usr/bin/touch",
+        "./usr/bin/tr",
+        "./usr/bin/true",
+        "./usr/bin/tty",
+        "./usr/bin/uname",
+        "./usr/bin/uniq",
+        "./usr/bin/wc",
+        "./usr/bin/who",
+        "./usr/bin/whoami",
+        "./usr/bin/yes"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/acl-2.4.0_1.aarch64-musl.xbps",
+      "sha256": "a2b8d1197fdfde32c789612cef61aa1b4d1eb11b7ee18e185e5b20377b35a583",
+      "files": [
+        "./usr/lib/libacl.so.1.2.2400"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/attr-2.6.0_1.aarch64-musl.xbps",
+      "sha256": "f90da685e47c2461fc00de0219ad004a05aaf52692203833f24a340673a8f767",
+      "files": [
+        "./usr/lib/libattr.so.1.1.2600"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/libcap-2.78_1.aarch64-musl.xbps",
+      "sha256": "ca050bc5399f239ff09031a5e54a7e6e58990f0b67d77c88425295dcf9fad16e",
+      "files": [
+        "./usr/lib/libcap.so.2.78"
+      ]
+    },
+    {
       "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/ncurses-terminfo-base-6.5_p20251123-r0.apk",
       "sha256": "6952a6b39abaf7bbc498cb085f0f59bf23619b53b3f7328b08fe50c0198a2bd4",
       "files": [
@@ -330,6 +405,181 @@
       "sha256": "50a998e56e4bf31504996e49c1b4a23eed5e0cd4e24b8a1356a54daf1a6eabbe",
       "files": [
         "usr/lib/libzstd.so.1.5.7"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/grep-3.12_1.aarch64-musl.xbps",
+      "sha256": "1038748735d932ae78fc9463375e715f2bba506673d0783cb1241ea961650e09",
+      "files": [
+        "./usr/bin/grep"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/sed-4.10_1.aarch64-musl.xbps",
+      "sha256": "29a2bdf9e1c5a2309d98501ba0fdb47334916cd00cd3845552fd44598df75375",
+      "files": [
+        "./usr/bin/sed"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/ed-1.22.4_1.aarch64-musl.xbps",
+      "sha256": "731c86abea8b01105865a0ed79881f4431379945c244ef3802242048b9bd1a2f",
+      "files": [
+        "./usr/bin/ed"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/findutils-4.10.0_1.aarch64-musl.xbps",
+      "sha256": "1d5b2892d62e9dd8575c619a12311d5cd19b549cba545464b9ce000345ffd33d",
+      "files": [
+        "./usr/bin/gfind"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/ncurses-6.6_1.aarch64-musl.xbps",
+      "sha256": "f3e7b777ebde73a856feb7480823e6d7b2efb84d040842420206048617b6d4ab",
+      "files": [
+        "./usr/bin/clear"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/util-linux-2.41.4_1.aarch64-musl.xbps",
+      "sha256": "ec6e9d54a7f9325d892721754a0a5346318d11f36fe1cf9eaf44770254f80680",
+      "files": [
+        "./usr/bin/hexdump",
+        "./usr/bin/more",
+        "./usr/bin/kill"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/procps-ng-4.0.6_1.aarch64-musl.xbps",
+      "sha256": "f75606b1da6c8b9ff441aeaeb116ce9957df0ac5478a977f7e131f5f07de92c6",
+      "files": [
+        "./usr/bin/ps",
+        "./usr/bin/uptime",
+        "./usr/bin/free",
+        "./usr/lib/libproc2.so.1.0.1"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/net-tools-2.10_1.aarch64-musl.xbps",
+      "sha256": "3ceb191700e210b483c968274de4d0740e0094817e6bfc1878438ce9bd72b503",
+      "files": [
+        "./usr/bin/net-tools-hostname"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/xxd-9.2.1031_1.aarch64-musl.xbps",
+      "sha256": "54c5573cf9d6a71c60c632852071cc30e4cc20a2b80fd0b593ca703d0ee6093a",
+      "files": [
+        "./usr/bin/xxd"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/less-710_1.aarch64-musl.xbps",
+      "sha256": "8aac0788af4bccee9eb706171471711f493ad414a421a021f44fd2d596721e6e",
+      "files": [
+        "./usr/bin/less"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/time-1.10_1.aarch64-musl.xbps",
+      "sha256": "4147378b4a8ba4bd971a0e8e48be07dff5638ebf11e947593f6799018aa312ce",
+      "files": [
+        "./usr/bin/time"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/make-4.4.1_1.aarch64-musl.xbps",
+      "sha256": "cfe22d5deab7657df4a25e24c3e344d746ad998957b14393613b0f61298162b0",
+      "files": [
+        "./usr/bin/make"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/file-5.46_2.aarch64-musl.xbps",
+      "sha256": "1b9ea6cf9c95077c6bf21ecda38b5be0a5893019099193b1388cf4a489f9bee3",
+      "files": [
+        "./usr/bin/file"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/libmagic-5.46_2.aarch64-musl.xbps",
+      "sha256": "ef78c0f7382aa19a6b0a700e112345a0543b2a7a78109e9911d792acb26322e0",
+      "files": [
+        "./usr/lib/libmagic.so.1.0.0",
+        "./usr/share/misc/magic.mgc"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/tar-1.35-r4.apk",
+      "sha256": "6598f00b039b7dbf0486129fc31269dbb7fcfc42ada8a39ee8e89004a2e33448",
+      "files": [
+        "bin/tar"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/community/aarch64/sudo-1.9.17_p2-r0.apk",
+      "sha256": "8356993c408aa469c0354443ef99238d7d2b8b5b009498676fe8b656cb01b912",
+      "files": [
+        "usr/bin/sudo",
+        "usr/lib/sudo/sudoers.so",
+        "usr/lib/sudo/libsudo_util.so.0.0.0"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/community/aarch64/shadow-4.18.0-r0.apk",
+      "sha256": "a900e2f181256210b00be31fcb19a90d4e42f58235b5fe8e836d55f8dcd6e7b3",
+      "files": [
+        "usr/bin/passwd",
+        "usr/sbin/useradd",
+        "usr/sbin/userdel"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/community/aarch64/shadow-login-4.18.0-r0.apk",
+      "sha256": "58581bb1ebab9fc156ac5fd838e4c94826df91d7e6b9b729b020bc819866a769",
+      "files": [
+        "bin/su"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/linux-pam-1.7.1-r2.apk",
+      "sha256": "32b4f544194b37fc70687e7b2d800be5b0a67a90a00de08112c244ffebbe60cc",
+      "files": [
+        "usr/lib/libpam.so.0.85.1",
+        "usr/lib/libpam_misc.so.0.82.1",
+        "usr/lib/security/pam_rootok.so",
+        "usr/lib/security/pam_unix.so",
+        "usr/sbin/unix_chkpwd"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libbsd-0.12.2-r0.apk",
+      "sha256": "358715f27bfe492dcb11f3589c8f106c37071780f55adafc52b2c5cfd3771e4d",
+      "files": [
+        "usr/lib/libbsd.so.0.12.2"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libmd-1.1.0-r0.apk",
+      "sha256": "8818536cdc38dd3c252d6c6915f65ddd49390aa209cc7f70b87c446adedf820c",
+      "files": [
+        "usr/lib/libmd.so.0.1.0"
+      ]
+    },
+    {
+      "url": "https://repo-default.voidlinux.org/current/aarch64/toybox-0.8.15_1.aarch64-musl.xbps",
+      "sha256": "d13ca8b5dab87c46d878bc439eeb01b261e5d1ac12c31c6b4d718f3f5383550a",
+      "files": [
+        "./usr/bin/toybox"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/busybox-1.37.0-r30.apk",
+      "sha256": "d3c919f1f142e41ba83c7dbcc392388f23f840dda6867719e660ebb9cc681254",
+      "files": [
+        "bin/busybox"
       ]
     }
   ],

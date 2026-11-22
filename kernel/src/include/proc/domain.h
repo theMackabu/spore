@@ -11,6 +11,8 @@
 struct open_file;
 struct process_mm;
 
+enum { DOMAIN_GROUP_LIMIT = 32 };
+
 struct domain {
   int id;
   int parent_id;
@@ -25,6 +27,10 @@ struct domain {
   uint32_t euid;
   uint32_t gid;
   uint32_t egid;
+  uint32_t saved_uid;
+  uint32_t saved_gid;
+  uint32_t groups[DOMAIN_GROUP_LIMIT];
+  unsigned group_count;
   uint64_t start_ticks;
   uint64_t cpu_ticks;
   uint64_t alarm_deadline;
@@ -66,6 +72,8 @@ uint32_t cell_current_uid(void);
 uint32_t cell_current_euid(void);
 uint32_t cell_current_gid(void);
 uint32_t cell_current_egid(void);
+bool cell_in_group(uint32_t gid);
+int cell_setres_ids(bool group, uint32_t real, uint32_t effective, uint32_t saved);
 int cell_setuid_current(uint32_t uid);
 int cell_setgid_current(uint32_t gid);
 void cell_apply_exec_creds(uint32_t mode, uint32_t uid, uint32_t gid);

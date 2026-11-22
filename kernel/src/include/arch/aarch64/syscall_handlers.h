@@ -23,6 +23,9 @@ bool syscall_path_policy_denied(void);
 bool syscall_node_access_allowed(const struct vfs_node *node, uint64_t mask);
 uint8_t syscall_fs_rights_from_access(uint64_t access);
 
+int64_t sys_getres_ids(bool group, uint64_t real, uint64_t effective, uint64_t saved);
+int64_t sys_getgroups(int count, uint64_t list);
+int64_t sys_setgroups(uint64_t count, uint64_t list);
 int64_t sys_getrandom(uint64_t buf, uint64_t len);
 int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp);
 int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp);

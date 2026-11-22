@@ -51,10 +51,7 @@ enum {
   ENOTDIR = 20,
   ENAMETOOLONG = 36,
   ENOTEMPTY = 39,
-  EXT2_SUPER_MAGIC = 0xef53,
-  TMPFS_MAGIC = 0x01021994,
-  PROC_SUPER_MAGIC = 0x9fa0,
-  DEVFS_SUPER_MAGIC = 0x1373,
+  EIO = 5,
   STATX_BASIC_STATS = 0x000007ff,
 };
 
@@ -312,35 +309,12 @@ static uint32_t dev_minor(uint64_t dev) {
   return (uint32_t)(dev & 0xffu);
 }
 
-static uint64_t statfs_magic_for_path(const char *path) {
-  if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' && path[3] == 'o' && path[4] == 'c' &&
-      (path[5] == '\0' || path[5] == '/')) {
-    return PROC_SUPER_MAGIC;
-  }
-  if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' && (path[4] == '\0' || path[4] == '/')) {
-    return DEVFS_SUPER_MAGIC;
-  }
-  if (path[0] == '/' && path[1] == 's' && path[2] == 'y' && path[3] == 's' && (path[4] == '\0' || path[4] == '/')) {
-    return 0x62656572u;
-  }
-  if (path[0] == '/' && path[1] == 't' && path[2] == 'm' && path[3] == 'p' && (path[4] == '\0' || path[4] == '/')) {
-    return TMPFS_MAGIC;
-  }
-  return EXT2_SUPER_MAGIC;
-}
-
-static void fill_statfs(struct statfs64_aarch64 *st, const char *path) {
+static bool fill_statfs(struct statfs64_aarch64 *st, const struct vfs_node *node) {
   struct vfs_fs_info info;
+  if (!vfs_device_fs_info(node->dev_id, &info)) { return false; }
   kmemset(st, 0, sizeof(*st));
-  if (!vfs_fs_info(&info)) {
-    info.block_size = PAGE_SIZE;
-    info.block_count = 0;
-    info.free_blocks = 0;
-    info.inode_count = 0;
-    info.free_inodes = 0;
-  }
-  st->f_type = statfs_magic_for_path(path);
-  st->f_bsize = info.block_size == 0 ? PAGE_SIZE : info.block_size;
+  st->f_type = info.magic;
+  st->f_bsize = info.block_size;
   st->f_blocks = info.block_count;
   st->f_bfree = info.free_blocks;
   st->f_bavail = info.free_blocks;
@@ -348,6 +322,7 @@ static void fill_statfs(struct statfs64_aarch64 *st, const char *path) {
   st->f_ffree = info.free_inodes;
   st->f_namelen = 255;
   st->f_frsize = st->f_bsize;
+  return true;
 }
 
 static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
@@ -394,7 +369,7 @@ int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr) {
   struct vfs_node node;
   if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
   struct statfs64_aarch64 st;
-  fill_statfs(&st, path);
+  if (!fill_statfs(&st, &node)) { return -(int64_t)EIO; }
   return syscall_user_writable(statfs_addr, sizeof(st)) &&
              vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
            ? 0
@@ -405,7 +380,7 @@ int64_t sys_fstatfs(uint64_t fd, uint64_t statfs_addr) {
   struct vfs_node node;
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
   struct statfs64_aarch64 st;
-  fill_statfs(&st, node.backend == VFS_RAMFS ? "/tmp" : "/");
+  if (!fill_statfs(&st, &node)) { return -(int64_t)EIO; }
   return syscall_user_writable(statfs_addr, sizeof(st)) &&
              vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
            ? 0

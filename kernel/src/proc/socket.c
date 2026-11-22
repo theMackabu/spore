@@ -15,6 +15,7 @@ enum {
   SOCK_STREAM = 1,
   SOCK_DGRAM = 2,
   IPPROTO_IP = 0,
+  MSG_CTRUNC = 0x8,
   MSG_TRUNC = 0x20,
   SO_REUSEADDR = 2,
   SO_DONTROUTE = 5,
@@ -27,6 +28,7 @@ enum {
   SO_SNDLOWAT = 19,
   IP_TOS = 1,
   IP_TTL = 2,
+  IP_RECVTTL = 12,
   IP_MTU_DISCOVER = 10,
   IP_BIND_ADDRESS_NO_PORT = 24,
   TCP_NODELAY = 1,
@@ -210,6 +212,9 @@ int cell_fd_socket_get_int_option(int fd, int level, int optname, int32_t *out) 
     case IP_TOS:
       *out = (int32_t)file->ip_tos;
       return 0;
+    case IP_RECVTTL:
+      *out = file->ip_recvttl;
+      return 0;
     case IP_TTL:
       *out = (int32_t)socket_effective_ttl(file);
       return 0;
@@ -313,6 +318,9 @@ int cell_fd_socket_set_int_option(int fd, int level, int optname, int32_t value)
     case IP_TOS:
       if (value < 0 || value > 255) { return -EINVAL; }
       file->ip_tos = (uint32_t)value;
+      return 0;
+    case IP_RECVTTL:
+      file->ip_recvttl = value != 0;
       return 0;
     case IP_TTL:
       if (value <= 0 || value > 255) { return -EINVAL; }
@@ -528,6 +536,26 @@ static int socket_scatter_iovecs(struct domain *domain, uint64_t iov_addr, int32
   return 0;
 }
 
+static int recv_ip_control(struct domain *domain, uint64_t msg_addr, const struct open_file *file, int32_t *flags) {
+  struct socket_msghdr64 msg;
+  struct user_address_space *as = cell_domain_as(domain);
+  if (!vmm_copy_from_user(as, &msg, msg_addr, sizeof(msg))) { return -EFAULT; }
+  uint64_t used = 0;
+  if (file->ip_recvttl && file->dgram_rx_count != 0) {
+    struct {
+      uint64_t len;
+      int32_t level, type, value, pad;
+    } ttl = {20, IPPROTO_IP, IP_TTL, file->dgram_rx_ttl[file->dgram_rx_head], 0};
+    if (msg.control && msg.controllen >= 16) {
+      used = msg.controllen < sizeof(ttl) ? msg.controllen : sizeof(ttl);
+      if (ttl.len > used) { ttl.len = used; }
+      if (!vmm_copy_to_user(as, msg.control, &ttl, used)) { return -EFAULT; }
+    }
+    if (used < 20) { *flags |= MSG_CTRUNC; }
+  }
+  return vmm_copy_to_user(as, msg_addr + offsetof(struct socket_msghdr64, controllen), &used, sizeof(used)) ? 0 : -EFAULT;
+}
+
 static int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *file, uint64_t msg_addr, uint64_t iov,
                                      int32_t iovlen, uint64_t addr, uint64_t addrlen, uint32_t recv_flags) {
   uint64_t capacity = 0;
@@ -541,7 +569,9 @@ static int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *fi
   if (file->socket_proto == IPPROTO_TCP) {
     if (tcp_recv_waitall_pending(file, want, recv_flags)) { return -EAGAIN; }
     got = cell_socket_tcp_read_to_kernel(file, tmp, want, recv_flags);
-  } else if (file->socket_proto == IPPROTO_UDP && (file->dgram_rx_count != 0 || file->udp_error != 0)) {
+  } else if ((file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) &&
+             (file->dgram_rx_count != 0 || file->udp_error != 0)) {
+    if (msg_addr && !file->udp_error && recv_ip_control(domain, msg_addr, file, &msg_flags) < 0) { return -EFAULT; }
     uint16_t packet_len = 0;
     got = dgram_read_to_kernel(domain, file, tmp, want, addr, addrlen, recv_flags, &packet_len);
     if (got >= 0 && packet_len > capacity) {
@@ -558,6 +588,32 @@ static int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *fi
     return -EFAULT;
   }
   return got;
+}
+
+bool cell_fd_is_datagram(int fd) {
+  int32_t type;
+  return cell_fd_socket_info(fd, &type, NULL) && type == SOCK_DGRAM;
+}
+
+int64_t cell_fd_dgram_writev(int fd, uint64_t iov, int32_t count) {
+  struct domain *domain = cell_current_domain_internal();
+  uint8_t packet[CELL_DGRAM_RX_CAP];
+  uint64_t len;
+  int rc = socket_iovecs_capacity(domain, iov, count, &len);
+  if (rc < 0) { return rc; }
+  if (len > sizeof(packet)) { return -90; }
+  rc = socket_copy_iovecs_at(domain, iov, count, 0, packet, (size_t)len);
+  if (rc < 0) { return rc; }
+  return cell_fd_udp_send_kernel(fd, 0, 0, packet, len);
+}
+
+int64_t cell_fd_dgram_readv(int fd, uint64_t iov, int32_t count, struct trap_frame *frame) {
+  struct domain *domain = cell_current_domain_internal();
+  struct open_file *file = domain->fds[fd];
+  net_poll();
+  int64_t got = socket_recvmsg_to_iov(domain, file, 0, iov, count, 0, 0, 0);
+  if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) || frame == NULL) { return got; }
+  return cell_block_current_on_socket_msg_timeout(fd, 0, iov, count, 0, 0, 0, file->so_rcvtimeo_ticks, frame);
 }
 
 static int64_t socket_sendmsg_tcp_from_domain(struct domain *domain, struct open_file *file, uint64_t msg_addr) {
@@ -706,7 +762,7 @@ void wake_socket_waiters(struct open_file *file) {
           if (rc == -EAGAIN) { continue; }
           trap_set_result(&thread->tf, (uint64_t)rc);
         }
-      } else if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_UDP &&
+      } else if (file->type == OPEN_SOCKET && (file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) &&
                  (file->dgram_rx_count != 0 || file->udp_error != 0) && thread->pipe_buf != 0) {
         int64_t rc = dgram_read_to_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len, thread->socket_addr,
                                           thread->socket_addrlen, thread->socket_flags);

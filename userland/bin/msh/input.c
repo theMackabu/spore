@@ -1,6 +1,7 @@
 #include "msh.h"
 
 #include <dirent.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,9 +67,9 @@ static void format_path_base(char *out, size_t cap, const char *path) {
 }
 
 static void current_user(char *out, size_t cap) {
-  struct user_entry user;
-  if (user_by_uid((unsigned)geteuid(), &user)) {
-    snprintf(out, cap, "%s", user.name);
+  const struct passwd *user = getpwuid(geteuid());
+  if (user != NULL) {
+    snprintf(out, cap, "%s", user->pw_name);
     return;
   }
   snprintf(out, cap, "%u", (unsigned)geteuid());

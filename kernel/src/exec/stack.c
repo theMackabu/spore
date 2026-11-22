@@ -140,7 +140,7 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     {AT_PLATFORM, platform_va},
     {AT_HWCAP, hwcap},
     {AT_CLKTCK, 100},
-    {AT_SECURE, 0},
+    {AT_SECURE, creds->uid != creds->euid || creds->gid != creds->egid},
     {AT_RANDOM, random_va},
     {AT_HWCAP2, 0},
     {AT_EXECFN, argc > 0 ? argv_va[0] : 0},

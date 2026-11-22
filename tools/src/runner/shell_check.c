@@ -55,7 +55,7 @@ static const char *shell_commands[] = {
   "\"$p$q\"; }'\n",
   "confine net:none curl http://example.test:8080/\n",
   "confine net:tcp:10.0.2.2:8080 curl http://example.test:8080/\n",
-  "confine net:dns nslookup example.com\n",
+  "confine net:dns nslookup -type=A example.com || echo __SPORE\"\"_SHELL_CHECK_FAIL_DNS__\n",
   "myc list-timers\n",
   "/bin/dash -c 'echo dash-ok; echo $((1 + 2)); cd /tmp && pwd'\n",
   "/bin/dash\n",
@@ -104,7 +104,7 @@ static const char *shell_commands[] = {
   "tar -cf /tmp/coreutils.tar /tmp/coreutils\n",
   "tar -tf /tmp/coreutils.tar\n",
   "ps\n",
-  "top -b\n",
+  "top -b -n 1\n",
   "sleep 1 &\n",
   "jobs\n",
   "cat /proc/1/status\n",
@@ -117,7 +117,9 @@ static const char *shell_commands[] = {
   "jobs\n",
   "kill -9 %1\n",
   "wait %1\n",
-  "df\n",
+  "/bin/dash -c 'df -h | grep /tmp && "
+  "case $(df -h --output=size / | tail -n 1) in *[KMGT]) true;; *) false;; esac && "
+  "test $(df -m --output=size /proc | tail -n 1) -eq 0 || echo __SPORE\"\"_SHELL_CHECK_FAIL_DF__'\n",
   "free\n",
   "du -sh /tmp\n",
   "dirname /tmp/coreutils\n",
@@ -140,8 +142,8 @@ static const char *shell_commands[] = {
   "du -s /tmp\n",
   "readlink -f /tmp/../tmp/hashin\n",
   "time true\n",
-  "printf 'all:\\\\n\\\\techo mk-ok\\\\n' > /tmp/mkfile\n",
-  "mk -n -f /tmp/mkfile all\n",
+  "printf 'all:\\n\\techo mk-ok\\n' > /tmp/mkfile\n",
+  "make -n -f /tmp/mkfile all | grep mk-ok || echo __SPORE\"\"_SHELL_CHECK_FAIL_MAKE__\n",
   "chroot / /bin/pwd\n",
   "cp /tmp/coreutils /tmp/coreutils.copy\n",
   "mv /tmp/coreutils.copy /tmp/coreutils.moved\n",
@@ -155,16 +157,16 @@ static const char *shell_commands[] = {
   "p=__SPORE; q=_SHELL_CHECK_FAIL_PACKAGES__; /bin/dash -c 'chmod 755 /tmp/check-jq && /tmp/check-jq && "
   "htop --version' || echo \"$p$q\"\n",
   "printf 'one\\ntwo\\n' | more\n",
-  "printf 'one\\ntwo\\n' | less\n",
+  "printf 'one\\ntwo\\n' | less -F\n",
   "hexdump /tmp/coreutils\n",
   "xxd /tmp/coreutils\n",
-  "sudo edit /etc/motd\n",
+  "sudo edit -p 'ed''-ready>' /etc/motd\n",
   "cat /etc/motd\n",
   "echo hi > /tmp/f\n",
   "cat /tmp/f\n",
   "edit /tmp/edit-test\na\nfrom edit\n.\nw\nq\n",
   "cat /tmp/edit-test\n",
-  "edit /tmp/edit-paste\n",
+  "edit -p 'ed''-ready>' /tmp/edit-paste\n",
   "wc /tmp/edit-paste\n",
   "grep edit-paste-064 /tmp/edit-paste\n",
   "pico /tmp/pico-test\n",
@@ -177,17 +179,23 @@ static const char *shell_commands[] = {
   "grep nano-paste-032 /tmp/nano-paste\n",
   "ant\n",
   "mkdir /tmp/d && cd /tmp/d && touch x && ls\n",
-  "/bin/hello\n",
   "/libexec/spore-test/pthread-demo\n",
   "ping -c 1 10.0.2.2\n",
   "/libexec/spore-test/udp-echo 10.0.2.2 5555 hi\n",
   "confine net:none /libexec/spore-test/udp-send 10.0.2.2 5555 hi\n",
   "confine net:udp:10.0.2.2:5555 /libexec/spore-test/udp-send 10.0.2.2 5555 hi\n",
   "confine compute-only /home/spore/demos/spinner\n",
+  "confine fs:/tmp /bin/ls /tmp || echo __SPORE\"\"_SHELL_CHECK_FAIL_CONFINED_LS__\n",
+  "confine fs:/tmp /bin/ls /etc/motd && echo __SPORE\"\"_SHELL_CHECK_FAIL_CONFINED_LS_ESCAPE__\n",
   "confine fs:/tmp /home/spore/demos/peeker /etc/motd\n",
   "confine fs:/tmp /home/spore/demos/writer /tmp/d/out\n",
   "confine mem:1 /home/spore/demos/memhog --expect-deny\n",
   "runc bad-manifest /home/spore/demos/escalate\n",
+  "/bin/dash -c 'set -e; sudo -n mkuser sporecheck; test -d /home/sporecheck; "
+  "test \"$(sudo -n -u sporecheck id -un)\" = sporecheck; "
+  "if sudo -n -u sporecheck sudo -n id; then exit 1; fi; "
+  "sudo -n passwd -S sporecheck; sudo -n deluser sporecheck; ! id sporecheck' "
+  "|| echo __SPORE\"\"_SHELL_CHECK_FAIL_ACCOUNTS__\n",
   "sudo shutdown\n",
 };
 
@@ -239,16 +247,16 @@ static void send_shell_printf_paste(int fd) {
 
 bool shell_check_output(struct shell_check *state, int fd, char *buf, size_t *len) {
   if (strstr(buf, "__SPORE_SHELL_CHECK_FAIL_")) { return false; }
-  if (state->input == SCRIPT_PICO_SIMPLE && strstr(buf, "Spore Pico")) {
-    static const char pico_input[] = "from pico\x0f\x18\x18";
+  if (state->input == SCRIPT_PICO_SIMPLE && strstr(buf, "GNU nano")) {
+    static const char pico_input[] = "from pico\x0f\r\x18";
     write_serial_input(fd, pico_input, sizeof(pico_input) - 1);
     state->input = SCRIPT_NONE;
     state->nudge_pending = true;
     buf[0] = '\0';
     *len = 0;
   }
-  if (state->input == SCRIPT_PICO_PASTE && strstr(buf, "Spore Pico")) {
-    send_numbered_lines(fd, NULL, "pico-paste", 32, "\x0f\x18\x18");
+  if (state->input == SCRIPT_PICO_PASTE && strstr(buf, "GNU nano")) {
+    send_numbered_cr_lines(fd, "pico-paste", 32, "\x0f\r\x18");
     state->input = SCRIPT_NONE;
     state->nudge_pending = true;
     buf[0] = '\0';
@@ -261,14 +269,14 @@ bool shell_check_output(struct shell_check *state, int fd, char *buf, size_t *le
     buf[0] = '\0';
     *len = 0;
   }
-  if (state->input == SCRIPT_EDIT_MOTD && strstr(buf, "edit>")) {
-    static const char edit_input[] = "d 1\na\nshell-check motd\n.\nw\nq\n";
+  if (state->input == SCRIPT_EDIT_MOTD && strstr(buf, "ed-ready>")) {
+    static const char edit_input[] = "1d\na\nshell-check motd\n.\nw\nq\n";
     write_serial_input(fd, edit_input, sizeof(edit_input) - 1);
     state->input = SCRIPT_NONE;
     buf[0] = '\0';
     *len = 0;
   }
-  if (state->input == SCRIPT_EDIT_PASTE && strstr(buf, "edit>")) {
+  if (state->input == SCRIPT_EDIT_PASTE && strstr(buf, "ed-ready>")) {
     send_numbered_lines(fd, "a\n", "edit-paste", 64, ".\nw\nq\n");
     state->input = SCRIPT_NONE;
     buf[0] = '\0';
@@ -286,8 +294,8 @@ bool shell_check_output(struct shell_check *state, int fd, char *buf, size_t *le
       *len = 0;
       return true;
     }
-    if (strcmp(shell_commands[state->sent], "sudo edit /etc/motd\n") == 0) { state->input = SCRIPT_EDIT_MOTD; }
-    if (strcmp(shell_commands[state->sent], "edit /tmp/edit-paste\n") == 0) { state->input = SCRIPT_EDIT_PASTE; }
+    if (strcmp(shell_commands[state->sent], "sudo edit -p 'ed''-ready>' /etc/motd\n") == 0) { state->input = SCRIPT_EDIT_MOTD; }
+    if (strcmp(shell_commands[state->sent], "edit -p 'ed''-ready>' /tmp/edit-paste\n") == 0) { state->input = SCRIPT_EDIT_PASTE; }
     if (strcmp(shell_commands[state->sent], "pico /tmp/pico-test\n") == 0) { state->input = SCRIPT_PICO_SIMPLE; }
     if (strcmp(shell_commands[state->sent], "pico /tmp/pico-paste\n") == 0) { state->input = SCRIPT_PICO_PASTE; }
     if (strcmp(shell_commands[state->sent], "nano /tmp/nano-paste\n") == 0) { state->input = SCRIPT_NANO_PASTE; }

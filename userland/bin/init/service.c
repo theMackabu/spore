@@ -1,5 +1,8 @@
 #include "mycelium.h"
 
+#include <grp.h>
+#include <pwd.h>
+
 void redirect_output(const char *mode, int fd, int fallback_fd) {
   if (mode[0] == '\0' || streq(mode, "journal")) { return; }
   if (streq(mode, "console")) {
@@ -135,6 +138,11 @@ int spawn_service(struct unit *unit) {
     redirect_output(unit->standard_output, STDOUT_FILENO, STDOUT_FILENO);
     redirect_output(unit->standard_error, STDERR_FILENO, STDERR_FILENO);
 
+    struct passwd *user = NULL;
+    if (unit->user[0]) {
+      user = getpwnam(unit->user);
+      if (user == NULL || initgroups(user->pw_name, user->pw_gid) != 0) { _exit(126); }
+    }
     if (unit->capability[0] != '\0') {
       if (syscall(SYS_SPORE_APPLY_POLICY, unit->capability) != 0) { _exit(126); }
     }
@@ -144,17 +152,13 @@ int spawn_service(struct unit *unit) {
       snprintf(mem_cap, sizeof(mem_cap), "mem:%llu", (unsigned long long)unit->memory_pages);
       (void)syscall(SYS_SPORE_APPLY_POLICY, mem_cap);
     }
-    if (unit->user[0] != '\0') {
-      struct user_entry user;
-      if (user_by_name(unit->user, &user)) {
-        (void)setgid(user.gid);
-        (void)setuid(user.uid);
-        (void)chdir(user.home);
-        setenv("HOME", user.home, 1);
-        setenv("USER", user.name, 1);
-        setenv("LOGNAME", user.name, 1);
-        setenv("SHELL", user.shell, 1);
-      }
+    if (user != NULL) {
+      if (setgid(user->pw_gid) != 0 || setuid(user->pw_uid) != 0) { _exit(126); }
+      (void)chdir(user->pw_dir);
+      setenv("HOME", user->pw_dir, 1);
+      setenv("USER", user->pw_name, 1);
+      setenv("LOGNAME", user->pw_name, 1);
+      setenv("SHELL", user->pw_shell, 1);
     }
     close_inherited_manager_fds();
     char copy[256];

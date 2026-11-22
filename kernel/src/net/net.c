@@ -377,7 +377,7 @@ bool net_udp_send_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uin
 
 bool net_udp_send_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
                           const void *payload, size_t len) {
-  if (is_loopback(dst_ip)) { return cell_net_deliver_udp(dst_ip, src_port, dst_port, payload, len); }
+  if (is_loopback(dst_ip)) { return cell_net_deliver_udp(dst_ip, ttl, src_port, dst_port, payload, len); }
   if (!cell_egress_allowed(NET_IP_UDP, dst_ip, dst_port)) {
     kprintf("[spore] net: tx denied proto=udp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
@@ -458,30 +458,29 @@ bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, ui
   return send_ipv4_ttl_tos(NET_IP_TCP, ttl, tos, dst_ip, packet, header_len + len);
 }
 
-bool net_icmp_send_echo(uint32_t dst_ip, const void *payload, size_t len) {
-  if (is_loopback(dst_ip)) {
-    uint8_t reply[ICMP_HEADER_LEN + 1472];
-    if (len + ICMP_HEADER_LEN > sizeof(reply)) { return false; }
-    reply[0] = ICMP_ECHO_REPLY;
-    reply[1] = 0;
-    store_be16(reply + 2, 0);
-    store_be16(reply + 4, 1);
-    store_be16(reply + 6, 1);
-    kmemcpy(reply + ICMP_HEADER_LEN, payload, len);
-    store_be16(reply + 2, checksum(reply, ICMP_HEADER_LEN + len));
-    cell_net_deliver_icmp(dst_ip, reply, ICMP_HEADER_LEN + len);
-    return true;
+bool net_icmp_send_echo(uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, const void *payload, size_t len) {
+  const uint8_t *data = payload;
+  bool has_header = len >= ICMP_HEADER_LEN && data[0] == ICMP_ECHO_REQUEST && data[1] == 0;
+  size_t packet_len = has_header ? len : ICMP_HEADER_LEN + len;
+  uint8_t packet[1472];
+  if (packet_len > sizeof(packet)) { return false; }
+  if (has_header) {
+    kmemcpy(packet, data, len);
+  } else {
+    store_be16(packet + 6, 1);
+    kmemcpy(packet + ICMP_HEADER_LEN, data, len);
   }
-  if (len + ICMP_HEADER_LEN > 1472) { return false; }
-  uint8_t packet[ICMP_HEADER_LEN + 1472];
-  packet[0] = ICMP_ECHO_REQUEST;
+  bool loopback = is_loopback(dst_ip);
+  packet[0] = loopback ? ICMP_ECHO_REPLY : ICMP_ECHO_REQUEST;
   packet[1] = 0;
   store_be16(packet + 2, 0);
-  store_be16(packet + 4, 1);
-  store_be16(packet + 6, 1);
-  kmemcpy(packet + ICMP_HEADER_LEN, payload, len);
-  store_be16(packet + 2, checksum(packet, ICMP_HEADER_LEN + len));
-  return send_ipv4(NET_IP_ICMP, dst_ip, packet, ICMP_HEADER_LEN + len);
+  store_be16(packet + 4, id);
+  store_be16(packet + 2, checksum(packet, packet_len));
+  if (loopback) {
+    cell_net_deliver_icmp(dst_ip, 64, packet, packet_len);
+    return true;
+  }
+  return send_ipv4_ttl_tos(NET_IP_ICMP, ttl, tos, dst_ip, packet, packet_len);
 }
 
 static void handle_arp(const uint8_t *arp, size_t len) {
@@ -500,7 +499,7 @@ static void handle_arp(const uint8_t *arp, size_t len) {
   if (op == ARP_REQUEST && target_ip == local_ip) { send_arp(ARP_REPLY, sender_mac, sender_ip, sender_mac); }
 }
 
-static void handle_icmp(uint32_t src_ip, const uint8_t *icmp, size_t len) {
+static void handle_icmp(uint32_t src_ip, uint8_t ttl, const uint8_t *icmp, size_t len) {
   if (len < ICMP_HEADER_LEN || checksum(icmp, len) != 0) { return; }
   if (icmp[0] == ICMP_ECHO_REQUEST) {
     uint8_t reply[ICMP_HEADER_LEN + 1472];
@@ -511,7 +510,7 @@ static void handle_icmp(uint32_t src_ip, const uint8_t *icmp, size_t len) {
     store_be16(reply + 2, checksum(reply, len));
     (void)send_ipv4(NET_IP_ICMP, src_ip, reply, len);
   } else if (icmp[0] == ICMP_ECHO_REPLY) {
-    cell_net_deliver_icmp(src_ip, icmp, len);
+    cell_net_deliver_icmp(src_ip, ttl, icmp, len);
   } else if (icmp[0] == ICMP_DEST_UNREACH && icmp[1] == ICMP_CODE_PORT_UNREACH) {
     const uint8_t *quoted_ip = icmp + ICMP_HEADER_LEN;
     size_t quoted_len = len - ICMP_HEADER_LEN;
@@ -543,7 +542,7 @@ static void handle_udp(uint32_t src_ip, uint32_t dst_ip, const uint8_t *original
   if (dst_port == 0) { return; }
   uint16_t sum = load_be16(udp + 6);
   if (sum != 0 && udp_checksum(src_ip, dst_ip, udp, udp_len) != 0) { return; }
-  if (!cell_net_deliver_udp(src_ip, src_port, dst_port, udp + UDP_HEADER_LEN, udp_len - UDP_HEADER_LEN) &&
+  if (!cell_net_deliver_udp(src_ip, original_ip[8], src_port, dst_port, udp + UDP_HEADER_LEN, udp_len - UDP_HEADER_LEN) &&
       dst_ip == local_ip) {
     send_icmp_port_unreachable(src_ip, original_ip, original_ihl, udp, udp_len);
   }
@@ -584,7 +583,7 @@ static void handle_ipv4(const uint8_t *ip, size_t len) {
   size_t payload_len = total - ihl;
   if (ip[9] == NET_IP_ICMP) {
     if (dst_ip != local_ip) { return; }
-    handle_icmp(src_ip, payload, payload_len);
+    handle_icmp(src_ip, ip[8], payload, payload_len);
   } else if (ip[9] == NET_IP_TCP) {
     if (dst_ip != local_ip) { return; }
     handle_tcp(src_ip, dst_ip, payload, payload_len);

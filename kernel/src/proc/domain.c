@@ -115,6 +115,10 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   dst->euid = src->euid;
   dst->gid = src->gid;
   dst->egid = src->egid;
+  dst->saved_uid = src->saved_uid;
+  dst->saved_gid = src->saved_gid;
+  dst->group_count = src->group_count;
+  kmemcpy(dst->groups, src->groups, src->group_count * sizeof(src->groups[0]));
   dst->pgrp_id = src->pgrp_id;
   dst->session_id = src->session_id;
   kmemcpy(dst->signal_actions, src->signal_actions, sizeof(dst->signal_actions));
@@ -242,22 +246,50 @@ uint32_t cell_current_egid(void) {
   return domain == NULL ? 0 : domain->egid;
 }
 
-int cell_setuid_current(uint32_t uid) {
+bool cell_in_group(uint32_t gid) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) { return -1; }
-  if (domain->euid != 0 && uid != domain->uid) { return -1; }
-  domain->uid = uid;
-  domain->euid = uid;
+  if (domain == NULL) { return false; }
+  if (gid == domain->egid) { return true; }
+  for (unsigned i = 0; i < domain->group_count; ++i) {
+    if (domain->groups[i] == gid) { return true; }
+  }
+  return false;
+}
+
+static bool held_id(uint32_t id, uint32_t real, uint32_t effective, uint32_t saved) {
+  return id == UINT32_MAX || id == real || id == effective || id == saved;
+}
+
+int cell_setres_ids(bool group, uint32_t real, uint32_t effective, uint32_t saved) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return -ESRCH; }
+  uint32_t *real_id = group ? &domain->gid : &domain->uid;
+  uint32_t *effective_id = group ? &domain->egid : &domain->euid;
+  uint32_t *saved_id = group ? &domain->saved_gid : &domain->saved_uid;
+  if (domain->euid != 0 && (!held_id(real, *real_id, *effective_id, *saved_id) || !held_id(effective, *real_id, *effective_id, *saved_id) ||
+                        !held_id(saved, *real_id, *effective_id, *saved_id))) { return -EPERM; }
+  if (real != UINT32_MAX) { *real_id = real; }
+  if (effective != UINT32_MAX) { *effective_id = effective; }
+  if (saved != UINT32_MAX) { *saved_id = saved; }
   return 0;
 }
 
-int cell_setgid_current(uint32_t gid) {
+int cell_setuid_current(uint32_t uid) {
+  if (uid == UINT32_MAX) { return -EINVAL; }
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) { return -1; }
-  if (domain->euid != 0 && gid != domain->gid) { return -1; }
-  domain->gid = gid;
-  domain->egid = gid;
-  return 0;
+  if (domain == NULL) { return -ESRCH; }
+  if (domain->euid != 0 && uid != domain->uid && uid != domain->saved_uid) { return -EPERM; }
+  if (domain->euid == 0) { return cell_setres_ids(false, uid, uid, uid); }
+  return cell_setres_ids(false, UINT32_MAX, uid, UINT32_MAX);
+}
+
+int cell_setgid_current(uint32_t gid) {
+  if (gid == UINT32_MAX) { return -EINVAL; }
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return -ESRCH; }
+  if (domain->euid != 0 && gid != domain->gid && gid != domain->saved_gid) { return -EPERM; }
+  if (domain->euid == 0) { return cell_setres_ids(true, gid, gid, gid); }
+  return cell_setres_ids(true, UINT32_MAX, gid, UINT32_MAX);
 }
 
 void cell_apply_exec_creds(uint32_t mode, uint32_t uid, uint32_t gid) {
@@ -265,6 +297,8 @@ void cell_apply_exec_creds(uint32_t mode, uint32_t uid, uint32_t gid) {
   if (domain == NULL) { return; }
   if ((mode & 04000u) != 0) { domain->euid = uid; }
   if ((mode & 02000u) != 0) { domain->egid = gid; }
+  domain->saved_uid = domain->euid;
+  domain->saved_gid = domain->egid;
 }
 
 const char *cell_current_cwd(void) {

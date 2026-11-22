@@ -64,7 +64,7 @@ void dgram_clear_rx(struct open_file *file) {
   }
 }
 
-static bool dgram_push_rx(struct open_file *file, uint32_t src_ip, uint16_t src_port, const void *payload, size_t len) {
+static bool dgram_push_rx(struct open_file *file, uint32_t src_ip, uint8_t ttl, uint16_t src_port, const void *payload, size_t len) {
   if (file == NULL || file->dgram_rx_count >= CELL_DGRAM_RX_QUEUE_CAP) { return false; }
   if (len > CELL_DGRAM_RX_CAP) { len = CELL_DGRAM_RX_CAP; }
   uint32_t limit = socket_effective_buffer(file, true);
@@ -76,6 +76,7 @@ static bool dgram_push_rx(struct open_file *file, uint32_t src_ip, uint16_t src_
   file->dgram_rx_slot[index] = (uint8_t)slot;
   file->dgram_rx_len[index] = (uint16_t)len;
   file->dgram_rx_ip[index] = src_ip;
+  file->dgram_rx_ttl[index] = ttl;
   file->dgram_rx_port[index] = src_port;
   kmemcpy(dgram_rx_buffers[slot], payload, len);
   ++file->dgram_rx_count;
@@ -96,8 +97,7 @@ static bool udp_local_port_in_use(uint16_t port, const struct open_file *except)
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
       struct open_file *file = domain->fds[fd];
-      if (file != NULL && file != except && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_UDP &&
-          file->udp_local_port == port) {
+      if (file != NULL && file != except && file->type == OPEN_SOCKET && file->udp_local_port == port) {
         return true;
       }
     }
@@ -169,10 +169,10 @@ static int64_t udp_send_payload(struct open_file *file, uint32_t ip, uint16_t po
   if (file->socket_proto == IPPROTO_UDP && net_is_broadcast_addr(effective_ip) && !file->so_broadcast) {
     return -EACCES;
   }
-  if (file->socket_proto == IPPROTO_UDP && !cell_egress_allowed(IPPROTO_UDP, effective_ip, effective_port)) {
+  if (!cell_egress_allowed(file->socket_proto, effective_ip, effective_port)) {
     return -EPERM;
   }
-  if (file->socket_proto == IPPROTO_UDP && file->udp_local_port == 0) {
+  if (file->udp_local_port == 0) {
     uint16_t local_port = udp_ephemeral_port(file);
     if (local_port == 0) { return -EADDRINUSE; }
     file->udp_local_port = local_port;
@@ -183,7 +183,7 @@ static int64_t udp_send_payload(struct open_file *file, uint32_t ip, uint16_t po
     sent = net_udp_send_ttl_tos(file->udp_local_port, effective_ip, effective_port, socket_effective_ttl(file),
                                 (uint8_t)file->ip_tos, buf, (size_t)len);
   } else if (file->socket_proto == IPPROTO_ICMP) {
-    sent = net_icmp_send_echo(effective_ip, buf, (size_t)len);
+    sent = net_icmp_send_echo(effective_ip, file->udp_local_port, socket_effective_ttl(file), (uint8_t)file->ip_tos, buf, (size_t)len);
   }
   if (!sent) {
     if (file->socket_proto == IPPROTO_UDP && net_is_loopback_addr(effective_ip)) {
@@ -193,7 +193,7 @@ static int64_t udp_send_payload(struct open_file *file, uint32_t ip, uint16_t po
       }
       return (int64_t)len;
     }
-    if (file->socket_proto == IPPROTO_UDP && !cell_egress_allowed(IPPROTO_UDP, effective_ip, effective_port)) {
+    if (!cell_egress_allowed(file->socket_proto, effective_ip, effective_port)) {
       return -EPERM;
     }
     return -EIO;
@@ -284,14 +284,14 @@ static bool socket_matches_udp(struct open_file *file, uint32_t src_ip, uint16_t
          (!file->udp_connected || (file->udp_remote_ip == src_ip && file->udp_remote_port == src_port));
 }
 
-bool cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
+bool cell_net_deliver_udp(uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
   for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
       struct open_file *file = domain->fds[fd];
       if (!socket_matches_udp(file, src_ip, src_port, dst_port)) { continue; }
-      if (dgram_push_rx(file, src_ip, src_port, payload, len)) { cell_socket_wake_file(file); }
+      if (dgram_push_rx(file, src_ip, ttl, src_port, payload, len)) { cell_socket_wake_file(file); }
       return true;
     }
   }
@@ -319,14 +319,18 @@ bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16
   return false;
 }
 
-void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len) {
+void cell_net_deliver_icmp(uint32_t src_ip, uint8_t ttl, const void *payload, size_t len) {
+  if (len < 8) { return; }
+  const uint8_t *icmp = payload;
+  uint16_t id = (uint16_t)((icmp[4] << 8) | icmp[5]);
   for (size_t d = 0; d < cell_domain_capacity(); ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {
       struct open_file *file = domain->fds[fd];
-      if (file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_ICMP) { continue; }
-      if (dgram_push_rx(file, src_ip, 0, payload, len)) { cell_socket_wake_file(file); }
+      if (file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_ICMP ||
+          file->udp_local_port == 0 || file->udp_local_port != id) { continue; }
+      if (dgram_push_rx(file, src_ip, ttl, 0, payload, len)) { cell_socket_wake_file(file); }
       return;
     }
   }

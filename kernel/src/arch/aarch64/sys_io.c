@@ -4,6 +4,7 @@
 #include "proc/fd.h"
 #include "proc/io.h"
 #include "proc/limits.h"
+#include "proc/socket.h"
 #include "proc/thread.h"
 #include "vfs.h"
 
@@ -54,6 +55,7 @@ int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t
     return -(int64_t)EFAULT;
   }
 
+  if (cell_fd_is_datagram((int)fd)) { return cell_fd_dgram_writev((int)fd, iov, (int32_t)iovcnt); }
   int64_t total = 0;
   for (uint64_t i = 0; i < iovcnt; ++i) {
     struct iovec64 v;
@@ -73,6 +75,7 @@ int64_t sys_readv(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t 
   if ((iovcnt != 0 && iov_bytes / sizeof(struct iovec64) != iovcnt) || !syscall_user_readable(iov, iov_bytes)) {
     return -(int64_t)EFAULT;
   }
+  if (cell_fd_is_datagram((int)fd)) { return cell_fd_dgram_readv((int)fd, iov, (int32_t)iovcnt, frame); }
   int64_t total = 0;
   for (uint64_t i = 0; i < iovcnt; ++i) {
     struct iovec64 v;

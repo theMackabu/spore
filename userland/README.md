@@ -1,9 +1,23 @@
 # Spore Userland
 
-Spore builds its own commands against musl. Each command has its own executable
-and can be confined independently by the policy layer.
+The interactive image ships standalone GNU coreutils from Void Linux’s AArch64
+musl package. Each command keeps its own executable path for confinement.
+Use `df -h` for human-readable sizes, `df -m` for MiB, or `df -a` to include
+zero-size filesystems. Spore builds its shell, system services, and remaining
+local commands against musl.
 
 ## Third-party programs
+
+Void Linux also supplies grep, findutils, procps-ng, util-linux, file, GNU make,
+and GNU ed. `edit` starts ed, `pico` starts nano, and `mk` starts GNU make.
+Toybox provides ping and top. Alpine BusyBox provides nslookup. The hostname command uses net-tools and obtains
+the interface address for `-I` from Spore’s network configuration.
+
+Alpine supplies sudo, shadow’s su, passwd, useradd and userdel, and Linux-PAM.
+`mkuser NAME` creates a home and private group through useradd. `deluser NAME`
+invokes userdel and protects the root account. Use `sudo passwd NAME` to set
+an account password. On the serial console, sudo runs commands on the current
+terminal.
 
 The interactive image uses Alpine AArch64 packages for dash, fastfetch, Git, jq, htop, nano,
 Vim, TinyCC, GNU wget, GNU which and the Dropbear SSH client and key tools.

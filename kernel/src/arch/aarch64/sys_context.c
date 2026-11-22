@@ -250,7 +250,7 @@ bool syscall_node_access_allowed(const struct vfs_node *node, uint64_t mask) {
   uint32_t bits = node->mode & 0777u;
   if (cell_current_euid() == node->uid) {
     bits >>= 6;
-  } else if (cell_current_egid() == node->gid) {
+  } else if (cell_in_group(node->gid)) {
     bits >>= 3;
   }
   if ((mask & R_OK) != 0 && (bits & 04u) == 0) { return false; }

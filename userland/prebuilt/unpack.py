@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -30,8 +32,18 @@ def fetch(cache, url, digest):
         data = archive.read_bytes()
         if hashlib.sha256(data).hexdigest() == digest:
             return data
-    with urllib.request.urlopen(url, timeout=60) as response:
-        data = response.read()
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                data = response.read()
+            break
+        except urllib.error.HTTPError as error:
+            if attempt == 4 or error.code not in (429, 502, 503, 504):
+                raise
+            retry_after = error.headers.get('Retry-After', '')
+            delay = int(retry_after) if retry_after.isdigit() else 2 ** attempt
+            error.close()
+            time.sleep(delay)
     if hashlib.sha256(data).hexdigest() != digest:
         raise ValueError(f"SHA-256 mismatch for {url}")
     publish(archive, data, 0o644)

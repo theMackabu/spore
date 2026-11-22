@@ -57,11 +57,22 @@ struct vfs_dirent {
 };
 
 struct vfs_fs_info {
+  uint64_t magic;
   uint64_t block_size;
   uint64_t block_count;
   uint64_t free_blocks;
   uint64_t inode_count;
   uint64_t free_inodes;
+};
+
+struct vfs_mount {
+  uint64_t device;
+  uint64_t parent;
+  uint64_t magic;
+  const char *source;
+  const char *target;
+  const char *fstype;
+  const char *options;
 };
 
 struct vfs_mount_info {
@@ -128,6 +139,8 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out);
 bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);
+bool vfs_device_fs_info(uint64_t dev_id, struct vfs_fs_info *out);
+const struct vfs_mount *vfs_mount_at(size_t index);
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);
 struct vfs_stats vfs_get_stats(void);
 bool vfs_sync(void);

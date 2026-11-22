@@ -35,6 +35,8 @@ static bool proc_kind_for_name(const char *name, enum ramfs_device *device) {
     *device = RAMFS_DEV_PROC_PID_COMM;
   } else if (str_eq(name, "mounts")) {
     *device = RAMFS_DEV_PROC_PID_MOUNTS;
+  } else if (str_eq(name, "mountinfo")) {
+    *device = RAMFS_DEV_PROC_PID_MOUNTINFO;
   } else if (str_eq(name, "cwd")) {
     *device = RAMFS_DEV_PROC_PID_CWD;
   } else if (str_eq(name, "exe")) {
@@ -341,7 +343,7 @@ bool vfs_proc_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent
       utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
       return true;
     }
-    static const char *names[] = {"stat", "status", "cmdline", "statm", "comm", "mounts", "cwd", "exe", "fd", "task"};
+    static const char *names[] = {"stat", "status", "cmdline", "statm", "comm", "mounts", "mountinfo", "cwd", "exe", "fd", "task"};
     if (!dir->is_dir || index >= sizeof(names) / sizeof(names[0])) { return false; }
     bool is_task = str_eq(names[index], "task") || str_eq(names[index], "fd");
     *out = (struct vfs_dirent){.ino = dir->ino + index + 1, .is_dir = is_task, .is_device = false};

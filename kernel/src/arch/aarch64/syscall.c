@@ -72,6 +72,7 @@ enum {
   SYS_NEWFSTATAT = 79,
   SYS_FSTAT = 80,
   SYS_FSYNC = 82,
+  SYS_FDATASYNC = 83,
   SYS_UTIMENSAT = 88,
   SYS_EXIT = 93,
   SYS_EXIT_GROUP = 94,
@@ -99,6 +100,12 @@ enum {
   SYS_GET_PGID = 155,
   SYS_GET_SID = 156,
   SYS_SETSID = 157,
+  SYS_SETRESUID = 147,
+  SYS_GETRESUID = 148,
+  SYS_SETRESGID = 149,
+  SYS_GETRESGID = 150,
+  SYS_GETGROUPS = 158,
+  SYS_SETGROUPS = 159,
   SYS_UNAME = 160,
   SYS_SETHOSTNAME = 161,
   SYS_GETRLIMIT = 163,
@@ -276,6 +283,7 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_NEWFSTATAT] = &&l_newfstatat,
     [SYS_FSTAT] = &&l_fstat,
     [SYS_FSYNC] = &&l_fsync,
+    [SYS_FDATASYNC] = &&l_fsync,
     [SYS_UTIMENSAT] = &&l_utimensat,
     [SYS_EXIT] = &&l_exit,
     [SYS_EXIT_GROUP] = &&l_exit_group,
@@ -303,6 +311,12 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_GET_PGID] = &&l_getpgid,
     [SYS_GET_SID] = &&l_getsid,
     [SYS_SETSID] = &&l_setsid,
+    [SYS_SETRESUID] = &&l_setresuid,
+    [SYS_GETRESUID] = &&l_getresuid,
+    [SYS_SETRESGID] = &&l_setresgid,
+    [SYS_GETRESGID] = &&l_getresgid,
+    [SYS_GETGROUPS] = &&l_getgroups,
+    [SYS_SETGROUPS] = &&l_setgroups,
     [SYS_UNAME] = &&l_uname,
     [SYS_SETHOSTNAME] = &&l_sethostname,
     [SYS_GETRLIMIT] = &&l_getrlimit,
@@ -465,9 +479,9 @@ l_getgid:
 l_getegid:
   return cell_current_egid();
 l_setuid:
-  return cell_setuid_current((uint32_t)a0) == 0 ? 0 : -(int64_t)EPERM;
+  return cell_setuid_current((uint32_t)a0);
 l_setgid:
-  return cell_setgid_current((uint32_t)a0) == 0 ? 0 : -(int64_t)EPERM;
+  return cell_setgid_current((uint32_t)a0);
 l_clone:
   return sys_clone(f, a0, a1, a2, a3, a4);
 l_futex: {
@@ -719,6 +733,18 @@ l_prlimit64:
   return sys_prlimit64(a0, a1, a2, a3);
 l_sysinfo:
   return sys_sysinfo(a0);
+l_setresuid:
+  return cell_setres_ids(false, a0, a1, a2);
+l_getresuid:
+  return sys_getres_ids(false, a0, a1, a2);
+l_setresgid:
+  return cell_setres_ids(true, a0, a1, a2);
+l_getresgid:
+  return sys_getres_ids(true, a0, a1, a2);
+l_getgroups:
+  return sys_getgroups((int)a0, a1);
+l_setgroups:
+  return sys_setgroups(a0, a1);
 l_uname:
   return sys_uname(a0);
 l_sethostname:
@@ -780,6 +806,7 @@ l_fchdir: {
   return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
 }
 l_fsync:
+  if (cell_fd_get_flags((int)a0) < 0) { return -(int64_t)EBADF; }
   return vfs_sync() ? 0 : -(int64_t)EIO;
 l_getrandom:
   return sys_getrandom(a0, a1);

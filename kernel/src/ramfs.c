@@ -328,7 +328,8 @@ static bool device_is_readonly_text(enum ramfs_device device) {
          device == RAMFS_DEV_PARTITIONS || device == RAMFS_DEV_DEVICES || device == RAMFS_DEV_FSSTATS ||
          device == RAMFS_DEV_PROC_PID_STAT || device == RAMFS_DEV_PROC_PID_STATUS ||
          device == RAMFS_DEV_PROC_PID_CMDLINE || device == RAMFS_DEV_PROC_PID_STATM ||
-         device == RAMFS_DEV_PROC_PID_COMM || device == RAMFS_DEV_PROC_PID_MOUNTS || device == RAMFS_DEV_PROC_PID_CWD ||
+         device == RAMFS_DEV_PROC_PID_COMM || device == RAMFS_DEV_PROC_PID_MOUNTS ||
+         device == RAMFS_DEV_PROC_PID_MOUNTINFO || device == RAMFS_DEV_PROC_PID_CWD ||
          device == RAMFS_DEV_PROC_PID_EXE || device == RAMFS_DEV_SYS_CPU_POSSIBLE ||
          device == RAMFS_DEV_SYS_CPU_PRESENT || device == RAMFS_DEV_SYS_CPU_ONLINE ||
          device == RAMFS_DEV_SYS_CPU_CORE_ONLINE;

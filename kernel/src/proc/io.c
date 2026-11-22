@@ -83,6 +83,7 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_PROC_PID_CMDLINE:
   case RAMFS_DEV_PROC_PID_STATM:
   case RAMFS_DEV_PROC_PID_COMM:
+  case RAMFS_DEV_PROC_PID_MOUNTINFO:
   case RAMFS_DEV_PROC_PID_MOUNTS:
   case RAMFS_DEV_PROC_PID_CWD:
   case RAMFS_DEV_PROC_PID_EXE:
@@ -172,6 +173,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_PROC_PID_CMDLINE:
   case RAMFS_DEV_PROC_PID_STATM:
   case RAMFS_DEV_PROC_PID_COMM:
+  case RAMFS_DEV_PROC_PID_MOUNTINFO:
   case RAMFS_DEV_PROC_PID_MOUNTS:
   case RAMFS_DEV_PROC_PID_CWD:
   case RAMFS_DEV_PROC_PID_EXE:
@@ -209,6 +211,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_SOCKET && file->socket_proto != IPPROTO_TCP) { return cell_fd_udp_send(fd, 0, 0, buf, len); }
   if (len == 0) { return 0; }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
     int64_t wrote = cell_socket_tcp_write_from_domain(domain, file, buf, len);
@@ -303,11 +306,9 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     return cell_block_current_on_pipe(fd, buf, len, false, frame);
   }
-  if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
-    net_poll();
-    int64_t got = cell_socket_tcp_read_to_domain(domain, file, buf, len);
-    if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
-    return cell_block_current_on_socket_timeout(fd, buf, len, 0, 0, file->so_rcvtimeo_ticks, frame);
+  if (file->type == OPEN_SOCKET) {
+    if (len == 0) { return 0; }
+    return cell_fd_socket_recv(fd, buf, len, 0, false, frame, 0, 0);
   }
   if (file->type == OPEN_STDIN) {
     if (len == 0) { return 0; }

@@ -115,7 +115,7 @@ static void cap_allow_common(struct capability_set *caps) {
 }
 
 static void cap_allow_files(struct capability_set *caps) {
-  static const uint16_t files[] = {34, 35, 38, 46, 49, 50, 52, 53, 54, 55, 56, 61, 62, 78, 79, 82, 276};
+  static const uint16_t files[] = {34, 35, 38, 46, 49, 50, 52, 53, 54, 55, 56, 61, 62, 78, 79, 82, 276, 291};
   for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
     cap_allow(caps, files[i]);
   }
@@ -230,6 +230,7 @@ int cell_apply_policy(const char *manifest) {
   } else if (starts_with(manifest, "fs:/tmp")) {
     cap_allow_files(&caps);
     if (!cap_add_fs_rule(&caps, "/tmp", CELL_FS_READ | CELL_FS_WRITE | CELL_FS_EXEC) ||
+        !cap_add_fs_rule(&caps, "/etc/ld-musl-aarch64.path", CELL_FS_READ) ||
         !cap_add_fs_rule(&caps, "/lib", CELL_FS_READ | CELL_FS_EXEC) ||
         !cap_add_fs_rule(&caps, "/usr/local/lib", CELL_FS_READ | CELL_FS_EXEC)) {
       return -2;

@@ -15,6 +15,7 @@ enum {
   VFS_DEV_TMPFS = 0x0011,
   VFS_DEV_RUNFS = 0x0012,
   VFS_DEV_SYSFS = 0x0013,
+  VFS_DEV_BOOT = 0x0014,
 };
 
 bool vfs_lookup_cache_get(const char *path, bool lstat, struct vfs_node *out);

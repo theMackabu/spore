@@ -37,8 +37,10 @@ static uint64_t make_rdev(uint64_t major, uint64_t minor) {
   return (major << 8) | minor;
 }
 
-static uint64_t ramfs_mount_dev_id(enum ramfs_mount mount) {
-  switch (mount) {
+static uint64_t ramfs_mount_dev_id(const struct ramfs_node *node) {
+  if (node->device == RAMFS_DEV_FS_BOOT) { return VFS_DEV_BOOT; }
+  if (node->device == RAMFS_DEV_FS_RAM0) { return VFS_DEV_RAM0; }
+  switch (node->mount) {
   case RAMFS_MOUNT_DEV:
     return VFS_DEV_DEVFS;
   case RAMFS_MOUNT_PROC:
@@ -117,7 +119,7 @@ void vfs_from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
     .seals = node->seals,
     .shared_write_mappings = node->shared_write_mappings,
     .sealable = node->sealable,
-    .dev_id = ramfs_mount_dev_id(node->mount),
+    .dev_id = ramfs_mount_dev_id(node),
     .rdev = ramfs_device_rdev(node->device),
     .atime = node->atime,
     .ctime = node->ctime,
@@ -271,38 +273,62 @@ bool vfs_fs_info(struct vfs_fs_info *out) {
   return true;
 }
 
-static void set_mount_info(struct vfs_mount_info *out, const char *source, const char *target, const char *fstype,
-                           uint64_t block_size, uint64_t block_count, uint64_t free_blocks) {
-  copy_cstr(out->source, sizeof(out->source), source);
-  copy_cstr(out->target, sizeof(out->target), target);
-  copy_cstr(out->fstype, sizeof(out->fstype), fstype);
-  out->block_size = block_size;
-  out->block_count = block_count;
-  out->free_blocks = free_blocks;
+static const struct vfs_mount mounts[] = {
+  {VFS_DEV_EXT2_ROOT, VFS_DEV_EXT2_ROOT, 0xef53, "ext2-root", "/", "ext2", "rw"},
+  {VFS_DEV_TMPFS, VFS_DEV_EXT2_ROOT, 0x01021994, "tmpfs", "/tmp", "tmpfs", "rw"},
+  {VFS_DEV_RUNFS, VFS_DEV_EXT2_ROOT, 0x01021994, "runfs", "/run", "tmpfs", "rw"},
+  {VFS_DEV_BOOT, VFS_DEV_DEVFS, 0x4d44, "bootfs", "/dev/fs/boot", "fat16", "ro"},
+  {VFS_DEV_RAM0, VFS_DEV_DEVFS, 0x858458f6, "ramfs", "/dev/fs/ram0", "ramfs", "ro"},
+  {VFS_DEV_PROC, VFS_DEV_EXT2_ROOT, 0x9fa0, "proc", "/proc", "proc", "ro"},
+  {VFS_DEV_SYSFS, VFS_DEV_EXT2_ROOT, 0x62656572, "sysfs", "/sys", "sysfs", "ro"},
+  {VFS_DEV_DEVFS, VFS_DEV_EXT2_ROOT, 0x1373, "devfs", "/dev", "devfs", "rw"},
+};
+
+const struct vfs_mount *vfs_mount_at(size_t index) {
+  return index < sizeof(mounts) / sizeof(mounts[0]) ? &mounts[index] : NULL;
+}
+
+static bool mount_stats(size_t index, struct vfs_fs_info *out) {
+  *out = (struct vfs_fs_info){.block_size = 1024};
+  switch (mounts[index].device) {
+  case VFS_DEV_EXT2_ROOT:
+    if (!vfs_fs_info(out)) { return false; }
+    break;
+  case VFS_DEV_TMPFS:
+  case VFS_DEV_RUNFS:
+    out->block_size = RAMFS_PAGE_SIZE;
+    out->block_count = pmm_total_pages();
+    out->free_blocks = pmm_free_pages();
+    break;
+  case VFS_DEV_BOOT:
+    out->block_count = BOOT_IMAGE_BYTES / out->block_size;
+    break;
+  }
+  out->magic = mounts[index].magic;
+  return true;
+}
+
+bool vfs_device_fs_info(uint64_t dev_id, struct vfs_fs_info *out) {
+  for (size_t i = 0; i < sizeof(mounts) / sizeof(mounts[0]); ++i) {
+    if (mounts[i].device == dev_id) { return mount_stats(i, out); }
+  }
+  return false;
 }
 
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap) {
-  enum { MOUNT_COUNT = 8 };
-  if (out == NULL || cap == 0) { return MOUNT_COUNT; }
-
-  size_t n = 0;
-  struct vfs_fs_info root = {0};
-  if (vfs_fs_info(&root) && n < cap) {
-    const char *fstype = vfs_root_ext2 != NULL && vfs_root_ext2->ext2plus ? "ext2+" : "ext2";
-    set_mount_info(&out[n++], "ext2-root", "/", fstype, root.block_size, root.block_count, root.free_blocks);
+  const size_t count = sizeof(mounts) / sizeof(mounts[0]);
+  if (out == NULL) { return count; }
+  for (size_t i = 0; i < cap && i < count; ++i) {
+    struct vfs_fs_info stats;
+    mount_stats(i, &stats);
+    const char *fstype = mounts[i].fstype;
+    if (mounts[i].device == VFS_DEV_EXT2_ROOT && vfs_root_ext2 != NULL && vfs_root_ext2->ext2plus) { fstype = "ext2+"; }
+    copy_cstr(out[i].source, sizeof(out[i].source), mounts[i].source);
+    copy_cstr(out[i].target, sizeof(out[i].target), mounts[i].target);
+    copy_cstr(out[i].fstype, sizeof(out[i].fstype), fstype);
+    out[i].block_size = stats.block_size;
+    out[i].block_count = stats.block_count;
+    out[i].free_blocks = stats.free_blocks;
   }
-
-  uint64_t tmp_blocks = pmm_total_pages();
-  uint64_t tmp_free = pmm_free_pages();
-  if (n < cap) { set_mount_info(&out[n++], "tmpfs", "/tmp", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free); }
-  if (n < cap) { set_mount_info(&out[n++], "runfs", "/run", "tmpfs", RAMFS_PAGE_SIZE, tmp_blocks, tmp_free); }
-  if (n < cap) {
-    uint64_t boot_blocks = BOOT_IMAGE_BYTES / 1024;
-    set_mount_info(&out[n++], "bootfs", "/dev/fs/boot", "fat16", 1024, boot_blocks, 0);
-  }
-  if (n < cap) { set_mount_info(&out[n++], "ramfs", "/dev/fs/ram0", "ramfs", 1024, 0, 0); }
-  if (n < cap) { set_mount_info(&out[n++], "proc", "/proc", "proc", 1024, 0, 0); }
-  if (n < cap) { set_mount_info(&out[n++], "sysfs", "/sys", "sysfs", 1024, 0, 0); }
-  if (n < cap) { set_mount_info(&out[n++], "devfs", "/dev", "devfs", 1024, 0, 0); }
-  return MOUNT_COUNT;
+  return count;
 }

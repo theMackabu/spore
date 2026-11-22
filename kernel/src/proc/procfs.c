@@ -170,7 +170,7 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   proc_append_char(dst, cap, &len, '\t');
   proc_append_u64(dst, cap, &len, domain->euid);
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->uid);
+  proc_append_u64(dst, cap, &len, domain->saved_uid);
   proc_append_char(dst, cap, &len, '\t');
   proc_append_u64(dst, cap, &len, domain->euid);
   proc_append_str(dst, cap, &len, "\nGid:\t");
@@ -178,9 +178,14 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   proc_append_char(dst, cap, &len, '\t');
   proc_append_u64(dst, cap, &len, domain->egid);
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->gid);
+  proc_append_u64(dst, cap, &len, domain->saved_gid);
   proc_append_char(dst, cap, &len, '\t');
   proc_append_u64(dst, cap, &len, domain->egid);
+  proc_append_str(dst, cap, &len, "\nGroups:");
+  for (unsigned i = 0; i < domain->group_count; ++i) {
+    proc_append_char(dst, cap, &len, ' ');
+    proc_append_u64(dst, cap, &len, domain->groups[i]);
+  }
   proc_append_str(dst, cap, &len, "\nVmSize:\t");
   proc_append_u64(dst, cap, &len, mem.virtual_pages * 4);
   proc_append_str(dst, cap, &len, " kB\nVmRSS:\t");
@@ -488,6 +493,8 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
     return read_generated_pid_device(file, domain, buf, len, proc_pid_statm_text);
   case RAMFS_DEV_PROC_PID_COMM:
     return read_generated_pid_device(file, domain, buf, len, proc_pid_comm_text);
+  case RAMFS_DEV_PROC_PID_MOUNTINFO:
+    return read_generated_device(file, domain, buf, len, proc_mountinfo_text);
   case RAMFS_DEV_PROC_PID_MOUNTS:
     return read_generated_device(file, domain, buf, len, proc_mounts_text);
   case RAMFS_DEV_PROC_PID_CWD:

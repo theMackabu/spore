@@ -99,6 +99,7 @@ int main(void) {
   bool saw_hwcap = false;
   bool saw_execfn = false;
   bool saw_uid = false;
+  bool saw_secure = false;
   bool saw_euid = false;
   bool saw_gid = false;
   bool saw_egid = false;
@@ -113,6 +114,7 @@ int main(void) {
     if (key == 15 && strcmp((const char *)&stack_mem[stack_offset(value)], "aarch64") == 0) { saw_platform = true; }
     if (key == 16 && (value & 0x3) == 0x3) { saw_hwcap = true; }
     if (key == 31 && value == argv0) { saw_execfn = true; }
+    if (key == 23 && value == 1) { saw_secure = true; }
     if (key == 11 && value == creds.uid) { saw_uid = true; }
     if (key == 12 && value == creds.euid) { saw_euid = true; }
     if (key == 13 && value == creds.gid) { saw_gid = true; }
@@ -127,6 +129,7 @@ int main(void) {
   assert(saw_execfn);
   assert(saw_uid);
   assert(saw_euid);
+  assert(saw_secure);
   assert(saw_gid);
   assert(saw_egid);
   assert(saw_minsigstksz);

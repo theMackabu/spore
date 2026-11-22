@@ -21,95 +21,125 @@ symlink /lib/mycelium/init /sbin/init
 userland/bin/myc /lib/mycelium/myc
 symlink /lib/mycelium/myc /sbin/myc
 userland/libexec/trustd /libexec/trustd
+userland/prebuilt/sudoers.so /usr/lib/sudo/sudoers.so
+userland/prebuilt/libsudo_util.so.0.0.0 /usr/lib/sudo/libsudo_util.so.0.0.0
+userland/prebuilt/useradd /usr/sbin/useradd
+userland/prebuilt/userdel /usr/sbin/userdel
+userland/prebuilt/libpam.so.0.85.1 /usr/lib/libpam.so.0.85.1
+userland/prebuilt/libpam_misc.so.0.82.1 /usr/lib/libpam_misc.so.0.82.1
+userland/prebuilt/pam_rootok.so /usr/lib/security/pam_rootok.so
+userland/prebuilt/pam_unix.so /usr/lib/security/pam_unix.so
+userland/prebuilt/unix_chkpwd /usr/sbin/unix_chkpwd
+userland/prebuilt/libbsd.so.0.12.2 /usr/lib/libbsd.so.0.12.2
+userland/prebuilt/libmd.so.0.1.0 /usr/lib/libmd.so.0.1.0
+symlink libsudo_util.so.0.0.0 /usr/lib/sudo/libsudo_util.so.0
+symlink libpam.so.0.85.1 /usr/lib/libpam.so.0
+symlink libpam_misc.so.0.82.1 /usr/lib/libpam_misc.so.0
+symlink libbsd.so.0.12.2 /usr/lib/libbsd.so.0
+symlink libmd.so.0.1.0 /usr/lib/libmd.so.0
+userland/etc/login.defs /etc/login.defs
+userland/etc/default/useradd /etc/default/useradd
+userland/etc/pam.d/su /etc/pam.d/su
+userland/etc/pam.d/passwd /etc/pam.d/passwd
+symlink su /etc/pam.d/su-l
+symlink /usr/lib/sudo/libsudo_util.so.0.0.0 /lib/libsudo_util.so.0
+userland/prebuilt/ed /bin/ed
+userland/prebuilt/sed /bin/sed
+userland/prebuilt/make /bin/make
+userland/prebuilt/net-tools-hostname /libexec/hostname
+userland/prebuilt/magic.mgc /usr/share/misc/magic.mgc
+userland/prebuilt/libproc2.so.1.0.1 /lib/libproc2.so.1.0.1
+symlink libproc2.so.1.0.1 /lib/libproc2.so.1
+userland/prebuilt/libmagic.so.1.0.0 /lib/libmagic.so.1.0.0
+symlink libmagic.so.1.0.0 /lib/libmagic.so.1
 userland/bin/msh /bin/msh
 userland/prebuilt/dash /bin/dash
 symlink dash /bin/sh
 
 userland/bin/shutdown /bin/shutdown
 userland/bin/reboot /bin/reboot
-userland/bin/ls /bin/ls
-userland/bin/cat /bin/cat
-userland/bin/echo /bin/echo
-userland/bin/clear /bin/clear
-userland/bin/file /bin/file
-userland/bin/stat /bin/stat
-userland/bin/uname /bin/uname
-userland/bin/edit /bin/edit
-userland/bin/pico /bin/pico
-userland/bin/head /bin/head
-userland/bin/tail /bin/tail
-userland/bin/more /bin/more
-userland/bin/less /bin/less
-userland/bin/wc /bin/wc
-userland/bin/grep /bin/grep
-userland/bin/find /bin/find
-userland/bin/sort /bin/sort
-userland/bin/uniq /bin/uniq
-userland/bin/cut /bin/cut
-userland/bin/tr /bin/tr
-userland/bin/sed-lite /bin/sed-lite
-userland/bin/tar /bin/tar
-userland/bin/ps /bin/ps
-userland/bin/top /bin/top
-userland/bin/df /bin/df
-userland/bin/free /bin/free
-userland/bin/dirname /bin/dirname
-userland/bin/basename /bin/basename
-userland/bin/sleep /bin/sleep
-userland/bin/date /bin/date
-userland/bin/uptime /bin/uptime
-userland/bin/whoami /bin/whoami
-userland/bin/hostname /bin/hostname
+userland/prebuilt/ls /bin/ls
+userland/prebuilt/cat /bin/cat
+userland/prebuilt/echo /bin/echo
+userland/prebuilt/clear /bin/clear
+userland/prebuilt/file /bin/file
+userland/prebuilt/stat /bin/stat
+userland/prebuilt/uname /bin/uname
+symlink ed /bin/edit
+symlink /usr/local/bin/nano /bin/pico
+userland/prebuilt/head /bin/head
+userland/prebuilt/tail /bin/tail
+userland/prebuilt/more /bin/more
+userland/prebuilt/less /bin/less
+userland/prebuilt/wc /bin/wc
+userland/prebuilt/grep /bin/grep
+userland/prebuilt/gfind /bin/find
+userland/prebuilt/sort /bin/sort
+userland/prebuilt/uniq /bin/uniq
+userland/prebuilt/cut /bin/cut
+userland/prebuilt/tr /bin/tr
+symlink sed /bin/sed-lite
+userland/prebuilt/tar /bin/tar
+userland/prebuilt/ps /bin/ps
+userland/prebuilt/toybox /bin/top
+userland/prebuilt/df /bin/df
+userland/prebuilt/free /bin/free
+userland/prebuilt/dirname /bin/dirname
+userland/prebuilt/basename /bin/basename
+userland/prebuilt/sleep /bin/sleep
+userland/prebuilt/date /bin/date
+userland/prebuilt/uptime /bin/uptime
+userland/prebuilt/whoami /bin/whoami
+userland/bin/hostname.sh /bin/hostname
 userland/bin/dhcpc /bin/dhcpc
-userland/bin/nslookup /bin/nslookup
+userland/prebuilt/busybox /bin/nslookup
 symlink dbclient /bin/ssh
 userland/prebuilt/dbclient /bin/dbclient
 userland/prebuilt/dropbearkey /bin/dropbearkey
 userland/prebuilt/dropbearconvert /bin/dropbearconvert
 symlink dropbearkey /bin/ssh-keygen
-userland/bin/hostid /bin/hostid
-userland/bin/id /bin/id
-userland/bin/who /bin/who
-userland/bin/tee /bin/tee
+userland/prebuilt/hostid /bin/hostid
+userland/prebuilt/id /bin/id
+userland/prebuilt/who /bin/who
+userland/prebuilt/tee /bin/tee
 userland/bin/logger /bin/logger
-userland/usr/bin/env /usr/bin/env
-userland/bin/printenv /bin/printenv
-userland/bin/printf /bin/printf
-userland/bin/tty /bin/tty
-userland/bin/yes /bin/yes
-userland/bin/cp /bin/cp
-userland/bin/mv /bin/mv
-userland/bin/ln /bin/ln
-userland/bin/chmod /bin/chmod
-userland/bin/chgrp /bin/chgrp
-userland/bin/chown /bin/chown
-userland/bin/chroot /bin/chroot
-userland/bin/mkuser /bin/mkuser
-userland/bin/deluser /bin/deluser
-userland/bin/passwd /bin/passwd
-userland/bin/su /bin/su
-userland/bin/sudo /bin/sudo
-userland/bin/groups /bin/groups
-userland/bin/kill /bin/kill
-userland/bin/du /bin/du
-userland/bin/hexdump /bin/hexdump
-userland/bin/xxd /bin/xxd
-userland/bin/base64 /bin/base64
-userland/bin/cksum /bin/cksum
-userland/bin/sum /bin/sum
-userland/bin/sha1sum /bin/sha1sum
-userland/bin/readlink /bin/readlink
-userland/bin/time /bin/time
-userland/bin/mk /bin/mk
-userland/bin/mkfifo /bin/mkfifo
-userland/bin/mkdir /bin/mkdir
-userland/bin/rm /bin/rm
-userland/bin/touch /bin/touch
-userland/bin/pwd /bin/pwd
-userland/bin/hello /bin/hello
-userland/bin/true /bin/true
-userland/bin/false /bin/false
-userland/bin/ping /bin/ping
+userland/prebuilt/env /usr/bin/env
+userland/prebuilt/printenv /bin/printenv
+userland/prebuilt/printf /bin/printf
+userland/prebuilt/tty /bin/tty
+userland/prebuilt/yes /bin/yes
+userland/prebuilt/cp /bin/cp
+userland/prebuilt/mv /bin/mv
+userland/prebuilt/ln /bin/ln
+userland/prebuilt/chmod /bin/chmod
+userland/prebuilt/chgrp /bin/chgrp
+userland/prebuilt/chown /bin/chown
+userland/prebuilt/chroot /bin/chroot
+symlink /usr/sbin/useradd /bin/mkuser
+userland/bin/deluser.sh /bin/deluser
+userland/prebuilt/passwd /bin/passwd
+userland/prebuilt/su /bin/su
+userland/prebuilt/sudo /bin/sudo
+userland/prebuilt/groups /bin/groups
+userland/prebuilt/kill /bin/kill
+userland/prebuilt/du /bin/du
+userland/prebuilt/hexdump /bin/hexdump
+userland/prebuilt/xxd /bin/xxd
+userland/prebuilt/base64 /bin/base64
+userland/prebuilt/cksum /bin/cksum
+userland/prebuilt/sum /bin/sum
+userland/prebuilt/sha1sum /bin/sha1sum
+userland/prebuilt/readlink /bin/readlink
+userland/prebuilt/time /bin/time
+symlink make /bin/mk
+userland/prebuilt/mkfifo /bin/mkfifo
+userland/prebuilt/mkdir /bin/mkdir
+userland/prebuilt/rm /bin/rm
+userland/prebuilt/touch /bin/touch
+userland/prebuilt/pwd /bin/pwd
+userland/prebuilt/true /bin/true
+userland/prebuilt/false /bin/false
+userland/prebuilt/toybox /bin/ping
 
 userland/libexec/spore-test/pthread-demo /libexec/spore-test/pthread-demo
 userland/libexec/spore-test/udp-echo /libexec/spore-test/udp-echo
@@ -207,6 +237,12 @@ userland/prebuilt/htop /usr/local/bin/htop
 userland/prebuilt/nano /usr/local/bin/nano
 userland/prebuilt/ant /usr/local/bin/ant
 
+userland/prebuilt/libacl.so.1.2.2400 /lib/libacl.so.1.2.2400
+symlink libacl.so.1.2.2400 /lib/libacl.so.1
+userland/prebuilt/libattr.so.1.1.2600 /lib/libattr.so.1.1.2600
+symlink libattr.so.1.1.2600 /lib/libattr.so.1
+userland/prebuilt/libcap.so.2.78 /lib/libcap.so.2.78
+symlink libcap.so.2.78 /lib/libcap.so.2
 userland/prebuilt/libutmps.so.0.1.3.1 /usr/lib/libutmps.so.0.1.3.1
 symlink libutmps.so.0.1.3.1 /usr/lib/libutmps.so.0.1
 userland/prebuilt/libskarnet.so.2.14.4.0 /usr/lib/libskarnet.so.2.14.4.0

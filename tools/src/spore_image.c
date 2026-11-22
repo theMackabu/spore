@@ -296,7 +296,7 @@ static void write_chown_tree_commands(FILE *script, const char *host_path, const
     path_join(child_host, sizeof(child_host), host_path, entry->d_name);
 
     char child_image[MAX_PATH];
-    int n = snprintf(child_image, sizeof(child_image), "%s/%s", image_path, entry->d_name);
+    int n = snprintf(child_image, sizeof(child_image), "%s/%s", strcmp(image_path, "/") == 0 ? "" : image_path, entry->d_name);
     if (n < 0 || (size_t)n >= sizeof(child_image)) { die_msg("path too long"); }
     write_chown_tree_commands(script, child_host, child_image, uid, gid);
   }
@@ -475,7 +475,7 @@ static void copy_into_rootfs(const char *src, const char *rootfs, const char *ds
   }
   copy_file(src, out);
   bool executable = strncmp(dst, "/bin/", 5) == 0 || strncmp(dst, "/sbin/", 6) == 0 ||
-                    strncmp(dst, "/usr/bin/", 9) == 0 || strncmp(dst, "/usr/local/bin/", 15) == 0 ||
+                    strncmp(dst, "/usr/bin/", 9) == 0 || strncmp(dst, "/usr/sbin/", 10) == 0 || strncmp(dst, "/usr/local/bin/", 15) == 0 ||
                     strncmp(dst, "/usr/libexec/", 13) == 0 || strncmp(dst, "/libexec/", 9) == 0 ||
                     strncmp(dst, "/lib/mycelium/", 14) == 0 || strncmp(dst, "/home/spore/demos/", 18) == 0 ||
                     strncmp(dst, "/etc/update-motd.d/", 19) == 0;
@@ -543,6 +543,7 @@ static void install_default_accounts(const char *rootfs) {
                     "spore::0:0:99999:7:::\n",
                     0600);
   write_rootfs_text(rootfs, "/etc/sudoers",
+                    "Defaults !use_pty\n"
                     "root ALL=(ALL) ALL\n"
                     "spore ALL=(ALL) NOPASSWD: ALL\n",
                     0440);
@@ -685,6 +686,7 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
   unlink(output_root);
   run_argv(mkfs_argv, false);
 
+  chown_tree_ext2(output_root, rootfs_dir, "/", 0, 0);
   chown_tree_ext2(output_root, rootfs_dir, "/home/spore", 1000, 1000);
   char sudo_path[MAX_PATH];
   path_join(sudo_path, sizeof(sudo_path), rootfs_dir, "bin/sudo");

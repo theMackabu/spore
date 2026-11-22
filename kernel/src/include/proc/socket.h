@@ -45,6 +45,9 @@ bool cell_fd_unix_next_right_range(int fd, uint64_t *start, uint64_t *end);
 void cell_unix_release_rights_for_pipe(uint8_t pipe_id);
 int cell_fd_socket_inet(uint8_t proto);
 int cell_fd_socket_unix(void);
+bool cell_fd_is_datagram(int fd);
+int64_t cell_fd_dgram_writev(int fd, uint64_t iov, int32_t count);
+int64_t cell_fd_dgram_readv(int fd, uint64_t iov, int32_t count, struct trap_frame *frame);
 bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto);
 int cell_fd_socket_error(int fd, bool clear);
 bool cell_fd_socket_local_addr(int fd, uint32_t *ip, uint16_t *port);
@@ -77,10 +80,10 @@ int cell_fd_unix_listen(int fd, int backlog);
 int cell_fd_unix_accept(int fd, int flags, struct trap_frame *frame);
 int cell_fd_unix_connect(int fd, const char *path);
 bool cell_fd_unix_peer_cred(int fd, struct cell_peer_cred *out);
-bool cell_net_deliver_udp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
+bool cell_net_deliver_udp(uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
 bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
 bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
 void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
                           uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
                           size_t len);
-void cell_net_deliver_icmp(uint32_t src_ip, const void *payload, size_t len);
+void cell_net_deliver_icmp(uint32_t src_ip, uint8_t ttl, const void *payload, size_t len);
