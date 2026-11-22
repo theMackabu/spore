@@ -2,11 +2,12 @@ BUILD_DIR ?= build
 MESON ?= meson
 CLANG_FORMAT ?= clang-format
 QEMU_RUNNER ?= $(BUILD_DIR)/tools/spore-run
-QEMU ?= qemu-system-aarch64
+QEMU ?= $(or $(wildcard /opt/homebrew/bin/qemu-system-aarch64),qemu-system-aarch64)
+RUN_QEMU = $(QEMU_RUNNER) --qemu "$(QEMU)"
 EDK2_VARS ?= $(BUILD_DIR)/edk2-vars.fd
 RUN_ROOT ?= $(BUILD_DIR)/run-root.ext2
 TEST_RUN_ROOT ?= $(BUILD_DIR)/test-run-root.ext2
-RUN_CMD = cd "$(CURDIR)" && $(QEMU_RUNNER) --mode plain --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$(RUN_ROOT)" --qemu "$(QEMU)"
+RUN_CMD = cd "$(CURDIR)" && $(RUN_QEMU) --mode plain --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$(RUN_ROOT)"
 
 .DEFAULT_GOAL := all
 
@@ -65,19 +66,19 @@ run-tests: runner test-run-root
 	@root="$$(mktemp "$(BUILD_DIR)/run-tests-root.XXXXXX.ext2")"; \
 	cp -f "$(BUILD_DIR)/test_root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
-	$(QEMU_RUNNER) --mode filter --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img" --root "$$root"
+	$(RUN_QEMU) --mode filter --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img" --root "$$root"
 
 run-shell-check: runner run-root
 	@root="$$(mktemp "$(BUILD_DIR)/run-shell-root.XXXXXX.ext2")"; \
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
-	$(QEMU_RUNNER) --mode shell --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
+	$(RUN_QEMU) --mode shell --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
 
 benchmark: runner image
 	@root="$$(mktemp "$(BUILD_DIR)/bench-root.XXXXXX.ext2")"; \
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
-	$(QEMU_RUNNER) --mode bench --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
+	$(RUN_QEMU) --mode bench --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
 
 bench-inodes: setup
 	$(MESON) compile -C "$(BUILD_DIR)" bench_ext2_inodes
@@ -91,8 +92,8 @@ rng-smoke: runner image
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root1"; \
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root2"; \
 	trap 'rm -f "$$root1" "$$root2" "$$out1" "$$out2"' EXIT INT TERM; \
-	$(QEMU_RUNNER) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root1" > "$$out1"; \
-	$(QEMU_RUNNER) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root2" > "$$out2"; \
+	$(RUN_QEMU) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root1" > "$$out1"; \
+	$(RUN_QEMU) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root2" > "$$out2"; \
 	cat "$$out1"; \
 	cat "$$out2"; \
 	if ! grep -q '^\[rng\] 00000000:' "$$out1" || ! grep -q '^\[rng\] 00000000:' "$$out2"; then \
