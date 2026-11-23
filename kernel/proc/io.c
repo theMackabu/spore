@@ -29,7 +29,6 @@ enum {
   CELL_O_APPEND = 02000,
   IPPROTO_TCP = 6,
   EAGAIN = 11,
-  EFAULT = 14,
   EINVAL = 22,
   EINTR = 4,
   ENOTCONN = 107,

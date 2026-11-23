@@ -9,7 +9,6 @@
 #include "proc/thread.h"
 
 enum {
-  EINVAL = 22,
   EFAULT = 14,
   SIGSEGV = 11,
   SA_SIGINFO = 4,

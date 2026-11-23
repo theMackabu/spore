@@ -20,7 +20,6 @@ enum {
   X_OK = 1,
   W_OK = 2,
   R_OK = 4,
-  ENOENT = 2,
   EPERM = 1,
   EBADF = 9,
   EFAULT = 14,

@@ -11,7 +11,6 @@ enum {
   PT_LOAD = 1,
   PF_X = 1,
   PF_W = 2,
-  PF_R = 4,
   PAGE_SIZE = 4096,
 };
 

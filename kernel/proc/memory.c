@@ -9,7 +9,6 @@
 
 enum {
   MAP_SHARED = 0x01,
-  MAP_PRIVATE = 0x02,
   MAP_GROWSDOWN = 0x0100,
 };
 

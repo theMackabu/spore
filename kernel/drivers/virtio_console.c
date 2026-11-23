@@ -36,7 +36,6 @@ enum {
   VIRTIO_F_VERSION_1_BIT = 0,
   TX_QUEUE = 1,
   QUEUE_SIZE = 8,
-  TX_BUFFER_SIZE = 256,
 };
 
 struct virtq_desc {
