@@ -213,6 +213,13 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
     assert(got[i] == (uint8_t)(late_block & 0xffu));
   }
 
+  uint64_t offset = (800ull << 20) + block_size - 2;
+  assert(ext2_write_file(&fs, &node, offset, "edge", 4) == 4);
+  assert(ext2_drop_cache(&fs));
+  assert(ext2_lookup(&fs, "/group-cross.bin", &fresh));
+  assert(ext2_read_file(&fs, &fresh, offset - 1, got, 5, &read));
+  assert(read == 5 && memcmp(got, "\0edge", 5) == 0);
+
   assert(ext2_drop_cache(&fs));
   assert(fclose(f) == 0);
   assert(remove(path) == 0);
