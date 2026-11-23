@@ -38,6 +38,13 @@ enum tcp_socket_state {
   TCP_FIN_WAIT,
 };
 
+int tcp_poll_events(const struct open_file *file, int events);
+int dgram_poll_events(const struct open_file *file, int events);
+int unix_poll_events(const struct open_file *file, int events);
+bool cell_tcp_socket_writable(const struct open_file *file);
+int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listener, int flags);
+uint32_t socket_effective_rcvlowat(const struct open_file *file);
+
 void dgram_clear_rx(struct open_file *file);
 int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, uint64_t addr,
                              uint64_t addrlen, uint32_t flags);

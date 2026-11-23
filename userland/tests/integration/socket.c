@@ -51,6 +51,28 @@ int integration_udp_demo(void) {
   return ok;
 }
 
+static int unix_peer_close_poll_regression(void) {
+  int pair[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, pair) < 0) {
+    printf("[spore] unix peer close poll: FAIL socketpair\n");
+    return 0;
+  }
+  struct pollfd pfd = {.fd = pair[0], .events = POLLIN | POLLOUT};
+  int ok = poll(&pfd, 1, 0) == 1 && pfd.revents == POLLOUT && write(pair[1], "x", 1) == 1;
+  close(pair[1]);
+
+  pfd.events = 0;
+  ok = ok && poll(&pfd, 1, 0) == 1 && pfd.revents == POLLHUP;
+  pfd.events = POLLIN | POLLOUT;
+  char byte;
+  ok = ok && poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) &&
+       read(pair[0], &byte, 1) == 1 && byte == 'x' &&
+       poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) && read(pair[0], &byte, 1) == 0;
+  close(pair[0]);
+  printf("[spore] unix peer close poll: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int udp_bind_conflict_regression(void) {
   int a = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   int b = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -86,10 +108,17 @@ static int udp_receive_queue_regression(void) {
   ssize_t sent_second = sendto(fd, second, sizeof(second) - 1, 0, (struct sockaddr *)&sa, sizeof(sa));
   char got_first[16] = {0};
   char got_second[16] = {0};
-  ssize_t read_first = recvfrom(fd, got_first, sizeof(got_first) - 1, 0, NULL, NULL);
-  ssize_t read_second = recvfrom(fd, got_second, sizeof(got_second) - 1, 0, NULL, NULL);
+  struct pollfd pfd = {.fd = fd, .events = POLLIN};
+  ssize_t read_first = -1, read_second = -1;
+  if (poll(&pfd, 1, 1000) == 1 && (pfd.revents & POLLIN)) {
+    read_first = recvfrom(fd, got_first, sizeof(got_first) - 1, MSG_DONTWAIT, NULL, NULL);
+  }
+  if (poll(&pfd, 1, 1000) == 1 && (pfd.revents & POLLIN)) {
+    read_second = recvfrom(fd, got_second, sizeof(got_second) - 1, MSG_DONTWAIT, NULL, NULL);
+  }
+  int drained = poll(&pfd, 1, 0) == 0;
   close(fd);
-  int ok = sent_first == (ssize_t)(sizeof(first) - 1) && sent_second == (ssize_t)(sizeof(second) - 1) &&
+  int ok = drained && sent_first == (ssize_t)(sizeof(first) - 1) && sent_second == (ssize_t)(sizeof(second) - 1) &&
            read_first == (ssize_t)(sizeof(first) - 1) && read_second == (ssize_t)(sizeof(second) - 1) &&
            strcmp(got_first, first) == 0 && strcmp(got_second, second) == 0;
   printf("[spore] udp receive queue: %s (%s,%s)\n", ok ? "PASS" : "FAIL", got_first, got_second);
@@ -1229,7 +1258,8 @@ int integration_udp_connect_send(uint32_t connect_ip, uint16_t connect_port, uin
 }
 
 int integration_socket_suite(void) {
-  return udp_bind_conflict_regression() && udp_receive_queue_regression() && udp_msg_iov_regression() &&
+  return unix_peer_close_poll_regression() && udp_bind_conflict_regression() && udp_receive_queue_regression() &&
+         udp_msg_iov_regression() &&
          udp_recvmsg_trunc_regression() && socket_msg_peek_regression() && socket_msg_waitall_regression() &&
          getsockname_regression() && socket_options_regression() && tcp_rcvlowat_poll_regression() &&
          tcp_abortive_linger_regression() && udp_broadcast_option_regression() && udp_loopback_refused_regression() &&

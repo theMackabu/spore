@@ -2,7 +2,6 @@
 
 #include "arch/aarch64/regs.h"
 #include "proc/accounting.h"
-#include "net/net.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
@@ -15,24 +14,12 @@
 
 enum {
   CELL_O_CLOEXEC = 02000000,
-  IPPROTO_TCP = 6,
-  IPPROTO_UDP = 17,
-  EAGAIN = 11,
   EFAULT = 14,
   EINVAL = 22,
   EINTR = 4,
   EPOLL_CTL_ADD = 1,
   EPOLL_CTL_DEL = 2,
   EPOLL_CTL_MOD = 3,
-};
-
-enum tcp_socket_state {
-  TCP_CLOSED,
-  TCP_LISTEN,
-  TCP_SYN_SENT,
-  TCP_SYN_RECEIVED,
-  TCP_ESTABLISHED,
-  TCP_FIN_WAIT,
 };
 
 struct epoll_event64 {
@@ -53,40 +40,21 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return CELL_POLLNVAL; }
 
   struct open_file *file = domain->fds[fd];
-  int revents = 0;
-  if (file->type == OPEN_SOCKET && ((file->socket_proto == IPPROTO_TCP && file->tcp_error != 0) ||
-                                    (file->socket_proto == IPPROTO_UDP && file->udp_error != 0))) {
-    revents |= CELL_POLLERR;
+  if (file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
+    return cell_socket_poll_events(file, events);
   }
+
+  int revents = 0;
   if (file->type == OPEN_PIPE && cell_pipe_file_hup(file)) { revents |= CELL_POLLHUP; }
   if (file->type == OPEN_PTY && cell_pty_file_hup(file)) { revents |= CELL_POLLHUP; }
-  if (file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_id_hup(file->unix_rx_pipe)) {
-    revents |= CELL_POLLHUP;
-  }
   if ((events & CELL_POLLIN) != 0) {
     if (file->type == OPEN_STDIN ||
         (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE))) {
       if (cell_tty_stdin_readable()) { revents |= CELL_POLLIN; }
-    } else if (file->type == OPEN_SOCKET) {
-      net_poll();
-      if (file->socket_proto == IPPROTO_TCP) {
-        if (file->tcp_state == TCP_LISTEN) {
-          if (cell_tcp_listener_readable(file)) { revents |= CELL_POLLIN; }
-        } else if (file->tcp_rx_len >= (file->so_rcvlowat == 0 ? 1u : file->so_rcvlowat) || file->tcp_fin ||
-                   file->tcp_error != 0) {
-          revents |= CELL_POLLIN;
-        }
-      } else if (file->dgram_rx_count != 0) {
-        revents |= CELL_POLLIN;
-      }
     } else if (file->type == OPEN_PIPE) {
       if (cell_pipe_file_readable(file)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_PTY) {
       if (cell_pty_file_readable(file)) { revents |= CELL_POLLIN; }
-    } else if (file->type == OPEN_UNIX_LISTENER) {
-      if (cell_unix_listener_readable(file)) { revents |= CELL_POLLIN; }
-    } else if (file->type == OPEN_UNIX_STREAM) {
-      if (file->unix_connected && cell_pipe_id_readable(file->unix_rx_pipe)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_RAMFS) {
       revents |= CELL_POLLIN;
     } else if (file->type == OPEN_EPOLL) {
@@ -107,16 +75,10 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
     if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_RAMFS || file->type == OPEN_EPOLL ||
         file->type == OPEN_EVENTFD) {
       revents |= CELL_POLLOUT;
-    } else if (file->type == OPEN_SOCKET) {
-      if (file->socket_proto != IPPROTO_TCP || cell_tcp_socket_writable(file) || file->tcp_error != 0) {
-        revents |= CELL_POLLOUT;
-      }
     } else if (file->type == OPEN_PIPE) {
       if (cell_pipe_file_writable(file)) { revents |= CELL_POLLOUT; }
     } else if (file->type == OPEN_PTY) {
       if (cell_pty_file_writable(file)) { revents |= CELL_POLLOUT; }
-    } else if (file->type == OPEN_UNIX_STREAM) {
-      if (file->unix_connected && cell_pipe_id_writable(file->unix_tx_pipe)) { revents |= CELL_POLLOUT; }
     }
   }
   return revents;
@@ -231,26 +193,6 @@ static void wake_poll_waiters(void) {
 }
 
 void cell_wake_poll_waiters_internal(void) {
-  wake_poll_waiters();
-}
-
-void cell_socket_wake_unix_accept_waiters(struct open_file *listener) {
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
-        thread->domain == NULL) {
-      continue;
-    }
-    int fd = thread->wait_target;
-    if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] != listener) { continue; }
-    int accepted = cell_socket_take_pending_unix(thread->domain, listener, thread->socket_accept_flags);
-    if (accepted == -EAGAIN) { continue; }
-    trap_set_result(&thread->tf, (uint64_t)accepted);
-    thread->state = THREAD_RUNNABLE;
-    thread->wait_reason = WAIT_NONE;
-    thread->wait_target = -1;
-    thread->socket_accept_flags = 0;
-  }
   wake_poll_waiters();
 }
 

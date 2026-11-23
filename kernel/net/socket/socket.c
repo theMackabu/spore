@@ -66,12 +66,24 @@ uint32_t socket_effective_buffer(const struct open_file *file, bool receive) {
   return configured > cap ? cap : configured;
 }
 
-static uint32_t socket_effective_rcvlowat(const struct open_file *file) {
+uint32_t socket_effective_rcvlowat(const struct open_file *file) {
   return file == NULL || file->so_rcvlowat == 0 ? 1 : file->so_rcvlowat;
 }
 
 uint8_t socket_effective_ttl(const struct open_file *file) {
   return file == NULL || file->ip_ttl == 0 ? 64 : (uint8_t)file->ip_ttl;
+}
+
+int cell_socket_poll_events(const struct open_file *file, int events) {
+  switch (file->type) {
+  case OPEN_SOCKET:
+    return file->socket_proto == IPPROTO_TCP ? tcp_poll_events(file, events) : dgram_poll_events(file, events);
+  case OPEN_UNIX_LISTENER:
+  case OPEN_UNIX_STREAM:
+    return unix_poll_events(file, events);
+  default:
+    return CELL_POLLNVAL;
+  }
 }
 
 int cell_fd_socket_inet(uint8_t proto) {

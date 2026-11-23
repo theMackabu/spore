@@ -3,7 +3,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-struct open_file;
 struct trap_frame;
 
 constexpr int CELL_MAX_POLL_FDS = 64;
@@ -26,4 +25,3 @@ int cell_fd_epoll_wait(int epfd, uint64_t events_addr, int maxevents);
 int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, struct trap_frame *frame);
 void cell_wake_poll_waiters_internal(void);
 void cell_wake_epoll_waiters_internal(void);
-void cell_socket_wake_unix_accept_waiters(struct open_file *listener);

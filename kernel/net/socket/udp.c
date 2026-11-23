@@ -4,6 +4,7 @@
 #include "net/net.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
+#include "proc/poll.h"
 #include "lib/random.h"
 
 enum {
@@ -17,6 +18,15 @@ static uint8_t dgram_rx_buffers[DGRAM_RX_BUFFER_SLOTS][CELL_DGRAM_RX_CAP];
 static bool dgram_rx_used[DGRAM_RX_BUFFER_SLOTS];
 
 static uint16_t next_udp_port = 49152;
+
+int dgram_poll_events(const struct open_file *file, int events) {
+  int ready = file->socket_proto == IPPROTO_UDP && file->udp_error ? CELL_POLLERR : 0;
+  if (events & CELL_POLLIN) {
+    net_poll();
+    if (file->dgram_rx_count) { ready |= CELL_POLLIN; }
+  }
+  return ready | (events & CELL_POLLOUT);
+}
 
 static int dgram_alloc_rx_slot(void) {
   for (size_t i = 0; i < DGRAM_RX_BUFFER_SLOTS; ++i) {

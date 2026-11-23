@@ -136,11 +136,22 @@ static struct open_file *unix_listener_for_path(const char *path) {
   return NULL;
 }
 
-bool cell_unix_listener_readable(const struct open_file *listener) {
+static bool unix_listener_readable(const struct open_file *listener) {
   for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
     if (unix_pending[i].used && unix_pending[i].listener == listener) { return true; }
   }
   return false;
+}
+
+int unix_poll_events(const struct open_file *file, int events) {
+  if (file->type == OPEN_UNIX_LISTENER) {
+    return (events & CELL_POLLIN) && unix_listener_readable(file) ? CELL_POLLIN : 0;
+  }
+  if (!file->unix_connected) { return 0; }
+  int ready = cell_pipe_id_hup(file->unix_rx_pipe) ? CELL_POLLHUP : 0;
+  if ((events & CELL_POLLIN) && cell_pipe_id_readable(file->unix_rx_pipe)) { ready |= CELL_POLLIN; }
+  if ((events & CELL_POLLOUT) && cell_pipe_id_writable(file->unix_tx_pipe)) { ready |= CELL_POLLOUT; }
+  return ready;
 }
 
 void cell_socket_release_listener(struct open_file *file) {
@@ -171,7 +182,7 @@ int cell_fd_unix_listen(int fd, int backlog) {
   return 0;
 }
 
-int cell_socket_take_pending_unix(struct domain *domain, struct open_file *listener, int flags) {
+static int take_pending_unix(struct domain *domain, struct open_file *listener, int flags) {
   int fd = cell_find_free_fd(domain, 0);
   if (fd < 0) { return -24; }
   for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
@@ -185,11 +196,31 @@ int cell_socket_take_pending_unix(struct domain *domain, struct open_file *liste
   return -EAGAIN;
 }
 
+static void wake_unix_accept_waiters(struct open_file *listener) {
+  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+    struct thread *thread = cell_thread_slot(i);
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
+        thread->domain == NULL) {
+      continue;
+    }
+    int fd = thread->wait_target;
+    if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] != listener) { continue; }
+    int accepted = take_pending_unix(thread->domain, listener, thread->socket_accept_flags);
+    if (accepted == -EAGAIN) { continue; }
+    trap_set_result(&thread->tf, (uint64_t)accepted);
+    thread->state = THREAD_RUNNABLE;
+    thread->wait_reason = WAIT_NONE;
+    thread->wait_target = -1;
+    thread->socket_accept_flags = 0;
+  }
+  cell_wake_poll_waiters_internal();
+}
+
 int cell_fd_unix_accept(int fd, int flags, struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
   struct open_file *listener = unix_file_for_fd(domain, fd);
   if (listener == NULL || listener->type != OPEN_UNIX_LISTENER) { return -9; }
-  int accepted = cell_socket_take_pending_unix(domain, listener, flags);
+  int accepted = take_pending_unix(domain, listener, flags);
   if (accepted != -EAGAIN) { return accepted; }
   if ((listener->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EAGAIN; }
   struct thread *thread = cell_current_thread_internal();
@@ -242,7 +273,7 @@ int cell_fd_unix_connect(int fd, const char *path) {
   for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
     if (!unix_pending[i].used) {
       unix_pending[i] = (struct unix_pending_conn){.used = true, .listener = listener, .server_end = server};
-      cell_socket_wake_unix_accept_waiters(listener);
+      wake_unix_accept_waiters(listener);
       return 0;
     }
   }

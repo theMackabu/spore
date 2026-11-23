@@ -6,6 +6,7 @@
 #include "net/net.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
+#include "proc/poll.h"
 #include "proc/thread.h"
 #include "lib/random.h"
 
@@ -742,7 +743,7 @@ bool tcp_init_socket(struct open_file *file) {
   return tcp_alloc_rx(file);
 }
 
-bool cell_tcp_listener_readable(const struct open_file *listener) {
+static bool tcp_listener_readable(const struct open_file *listener) {
   for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
     if (tcp_pending[i].used && tcp_pending[i].listener == listener &&
         tcp_pending[i].server_end->tcp_state == TCP_ESTABLISHED) {
@@ -750,6 +751,20 @@ bool cell_tcp_listener_readable(const struct open_file *listener) {
     }
   }
   return false;
+}
+
+int tcp_poll_events(const struct open_file *file, int events) {
+  int ready = file->tcp_error ? CELL_POLLERR : 0;
+  if (events & CELL_POLLIN) {
+    net_poll();
+    if (file->tcp_state == TCP_LISTEN) {
+      if (tcp_listener_readable(file)) { ready |= CELL_POLLIN; }
+    } else if (file->tcp_rx_len >= socket_effective_rcvlowat(file) || file->tcp_fin || file->tcp_error) {
+      ready |= CELL_POLLIN;
+    }
+  }
+  if ((events & CELL_POLLOUT) && (cell_tcp_socket_writable(file) || file->tcp_error)) { ready |= CELL_POLLOUT; }
+  return ready;
 }
 
 void tcp_release_file(struct open_file *file) {
