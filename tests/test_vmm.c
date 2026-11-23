@@ -22,7 +22,7 @@ static size_t page_index(uint64_t pa) {
 }
 
 uint64_t pmm_alloc_zero_page(void) {
-  assert(next_pa + TEST_PAGE_SIZE <= sizeof(phys));
+  if (next_pa + TEST_PAGE_SIZE > sizeof(phys)) { return 0; }
   uint64_t pa = next_pa;
   memset(&phys[pa], 0, TEST_PAGE_SIZE);
   refs[page_index(pa)] = 1;
@@ -112,5 +112,9 @@ int main(void) {
   assert(vmm_user_range_accessible(&as, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(vmm_copy_to_user(&as, 0x500000, "last", 5));
   assert(strcmp((char *)&phys[cow_pa], "last") == 0);
+  next_pa = sizeof(phys) - TEST_PAGE_SIZE;
+  assert(!vmm_alloc_page(&as, 1ull << 39, VMM_USER_READ));
+  assert(!vmm_is_mapped(&as, 1ull << 39));
+  assert(refs[TEST_PAGE_COUNT - 1] == 0);
   return 0;
 }

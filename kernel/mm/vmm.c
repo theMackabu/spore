@@ -59,7 +59,8 @@ static bool ensure_table(struct user_address_space *as, uint64_t *table, size_t 
   return true;
 }
 
-bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags) {
+static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags,
+                          uint64_t permissions) {
   uint64_t *l0 = pt_virt(as, as->root_pa);
   uint64_t *l1;
   uint64_t *l2;
@@ -70,35 +71,27 @@ bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint3
     return false;
   }
 
-  uint64_t ap = (flags & VMM_USER_WRITE) != 0 ? PTE_AP_USER_RW : PTE_AP_USER_RO;
   uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
   l3[pt_index(va, 12)] =
-    (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER | ap | PTE_PXN | xn;
+    (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER | permissions | PTE_PXN | xn;
   aarch64_tlb_flush_va(va);
   return true;
 }
 
+bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags) {
+  return map_user_page(as, va, pa, flags, (flags & VMM_USER_WRITE) ? PTE_AP_USER_RW : PTE_AP_USER_RO);
+}
+
 bool vmm_map_page_cow(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags) {
-  uint64_t *l0 = pt_virt(as, as->root_pa);
-  uint64_t *l1;
-  uint64_t *l2;
-  uint64_t *l3;
-
-  if (!ensure_table(as, l0, pt_index(va, 39), &l1) || !ensure_table(as, l1, pt_index(va, 30), &l2) ||
-      !ensure_table(as, l2, pt_index(va, 21), &l3)) {
-    return false;
-  }
-
-  uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
-  l3[pt_index(va, 12)] = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER |
-                         PTE_AP_USER_RO | PTE_PXN | xn | PTE_COW;
-  aarch64_tlb_flush_va(va);
-  return true;
+  return map_user_page(as, va, pa, flags, PTE_AP_USER_RO | PTE_COW);
 }
 
 bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags) {
   uint64_t pa = pmm_alloc_zero_page();
-  return pa != 0 && vmm_map_page(as, va, pa, flags);
+  if (pa == 0) { return false; }
+  if (vmm_map_page(as, va, pa, flags)) { return true; }
+  pmm_free_page(pa);
+  return false;
 }
 
 static bool is_leaf_at_level(uint64_t entry, unsigned level) {
