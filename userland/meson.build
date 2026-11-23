@@ -20,13 +20,8 @@ userland_static_cc = [
 ]
 userland_image_targets = []
 userland_test_targets = []
-userland_image_data = []
 
 subdir('etc')
-userland_image_data += files('usr/local/htoprc')
-userland_image_data += files('demos/something', 'demos/something-else.msh')
-
-userland_image_data += files('bin/deluser.sh', 'bin/hostname.sh')
 
 subdir('lib/spore')
 

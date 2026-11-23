@@ -4,27 +4,3 @@ userland_os_release = configure_file(
   input: 'os-release.in',
   output: 'os-release',
   configuration: os_release_conf)
-
-userland_image_data += files(
-  'motd',
-  'update-motd.d/90-last-login',
-  'environment',
-  'default/useradd',
-  'login.defs',
-  'pam.d/passwd',
-  'pam.d/su',
-  'profile',
-  'dashrc',
-  'mycelium/boot.target',
-  'mycelium/multi-user.target',
-  'mycelium/shutdown.target',
-  'mycelium/console.service',
-  'mycelium/hostname.service',
-  'mycelium/network.service',
-  'mycelium/network.target',
-  'hostname',
-  'hosts',
-  'resolv.conf',
-  'fastfetch/config.jsonc',
-  'fastfetch/spore.logo',
-) + userland_os_release

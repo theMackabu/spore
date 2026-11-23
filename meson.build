@@ -19,12 +19,20 @@ subdir('userland')
 subdir('tools')
 subdir('boot')
 subdir('kernel')
+fs = import('fs')
 foreach variant : [
   ['image', 'root', 'userland/image.manifest', userland_image_targets],
   ['test_image', 'test_root', 'userland/tests/integration/image.manifest', userland_test_targets],
 ]
+  manifest_data = [userland_os_release]
+  foreach line : fs.read(variant[2]).split('\n')
+    fields = line.strip().split()
+    if fields.length() == 2 and not fields[0].startswith('#') and fs.is_file(fields[0])
+      manifest_data += files(fields[0])
+    endif
+  endforeach
   root_disk = custom_target(variant[1] + '.ext2',
-    input: [files(variant[2]), userland_image_data],
+    input: [files(variant[2]), manifest_data],
     output: variant[1] + '.ext2',
     command: [spore_image, 'rootfs', meson.project_source_root(),
       meson.project_build_root() / (variant[0] + '_root'), '@INPUT0@',
