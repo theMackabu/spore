@@ -163,9 +163,19 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
 
     uint64_t start = align_up(entry->base, PAGE_SIZE);
     uint64_t end = align_down(entry->base + entry->length, PAGE_SIZE);
-    for (uint64_t pa = start; pa < end; pa += PAGE_SIZE) {
-      ++total_page_count;
-      set_free(pa / PAGE_SIZE);
+    if (end <= start) { continue; }
+    uint64_t page = start / PAGE_SIZE;
+    uint64_t limit = end / PAGE_SIZE;
+    total_page_count += limit - page;
+    while (page < limit) {
+      uint64_t bit = page % BITS_PER_WORD;
+      uint64_t span = BITS_PER_WORD - bit;
+      if (span > limit - page) { span = limit - page; }
+      uint64_t mask = (UINT64_MAX >> (BITS_PER_WORD - span)) << bit;
+      uint64_t *word = &bitmap[page / BITS_PER_WORD];
+      free_page_count += (uint64_t)__builtin_popcountll(*word & mask);
+      *word &= ~mask;
+      page += span;
     }
   }
 
