@@ -67,10 +67,9 @@ struct tcp_pending_conn {
 };
 
 struct tcp_rx_state {
-  bool used;
-  bool timer_active;
   struct open_file *owner;
   uint32_t head;
+  bool timer_active;
   uint64_t pages[CELL_TCP_RX_CAP / PAGE_SIZE];
 };
 
@@ -82,29 +81,23 @@ static struct tcp_ooo_state tcp_ooo_buffers[TCP_OOO_BUFFER_SLOTS];
 
 static bool tcp_ooo_used[TCP_OOO_BUFFER_SLOTS];
 
+static struct tcp_rx_state *tcp_rx_state_for(const struct open_file *file) {
+  if (file == NULL || file->tcp_rx_slot == 0) { return NULL; }
+  size_t slot = (size_t)file->tcp_rx_slot - 1;
+  return slot < TCP_RX_BUFFER_SLOTS && tcp_rx_buffers[slot].owner == file ? &tcp_rx_buffers[slot] : NULL;
+}
+
 static bool tcp_alloc_rx(struct open_file *file) {
   if (file == NULL) { return false; }
-  if (file->tcp_rx_slot != 0) {
-    size_t slot = (size_t)file->tcp_rx_slot - 1;
-    return slot < TCP_RX_BUFFER_SLOTS && tcp_rx_buffers[slot].used && tcp_rx_buffers[slot].owner == file;
-  }
+  if (file->tcp_rx_slot != 0) { return tcp_rx_state_for(file) != NULL; }
   for (size_t i = 0; i < TCP_RX_BUFFER_SLOTS; ++i) {
-    if (tcp_rx_buffers[i].used) { continue; }
-    tcp_rx_buffers[i].used = true;
+    if (tcp_rx_buffers[i].owner != NULL) { continue; }
     tcp_rx_buffers[i].timer_active = true;
     tcp_rx_buffers[i].owner = file;
     file->tcp_rx_slot = (uint8_t)(i + 1);
     return true;
   }
   return false;
-}
-
-static struct tcp_rx_state *tcp_rx_state_for(const struct open_file *file) {
-  if (file == NULL || file->tcp_rx_slot == 0) { return NULL; }
-  size_t slot = (size_t)file->tcp_rx_slot - 1;
-  return slot < TCP_RX_BUFFER_SLOTS && tcp_rx_buffers[slot].used && tcp_rx_buffers[slot].owner == file
-             ? &tcp_rx_buffers[slot]
-             : NULL;
 }
 
 static void tcp_reset_rx(struct open_file *file) {
@@ -124,7 +117,6 @@ static void tcp_free_rx(struct open_file *file) {
   tcp_reset_rx(file);
   state->timer_active = false;
   state->owner = NULL;
-  state->used = false;
   file->tcp_rx_slot = 0;
 }
 
@@ -1435,7 +1427,7 @@ void tcp_timer_tick(uint64_t now_ticks) {
   for (size_t i = 0; i < TCP_RX_BUFFER_SLOTS; ++i) {
     struct tcp_rx_state *state = &tcp_rx_buffers[i];
     struct open_file *file = state->owner;
-    if (!state->used || !state->timer_active || file == NULL || file->tcp_rx_slot != i + 1) { continue; }
+    if (!state->timer_active || file == NULL || file->tcp_rx_slot != i + 1) { continue; }
     tcp_timer_file(file, now_ticks);
   }
 }
