@@ -64,6 +64,8 @@ static uint8_t gateway_mac[6];
 static bool gateway_mac_valid;
 static uint64_t arp_cache_clock;
 static uint64_t arp_pending_clock;
+static uint16_t arp_pending_count;
+static uint64_t arp_next_retry_tick;
 static uint16_t next_ip_id = 1;
 
 uint32_t net_ipv4(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
@@ -269,16 +271,27 @@ static struct arp_pending_packet *arp_pending_slot(void) {
   return oldest;
 }
 
+static void arp_refresh_retry_deadline(void) {
+  uint64_t deadline = 0;
+  for (size_t i = 0; i < ARP_PENDING_ENTRIES; ++i) {
+    if (!arp_pending[i].used) { continue; }
+    if (deadline == 0 || arp_pending[i].next_retry_tick < deadline) { deadline = arp_pending[i].next_retry_tick; }
+  }
+  arp_next_retry_tick = deadline;
+}
+
 static bool queue_ipv4_for_arp(uint32_t next_hop, const uint8_t *frame, uint32_t len) {
   if (next_hop == 0 || frame == NULL || len > MAX_FRAME) { return false; }
   bool request_needed = !arp_pending_has_next_hop(next_hop);
   struct arp_pending_packet *slot = arp_pending_slot();
+  if (!slot->used) { ++arp_pending_count; }
   slot->used = true;
   slot->next_hop = next_hop;
   slot->len = len;
   slot->age = ++arp_pending_clock;
   slot->next_retry_tick = cell_uptime_ticks() + ARP_RETRY_TICKS;
   kmemcpy(slot->frame, frame, len);
+  arp_refresh_retry_deadline();
   if (request_needed) { arp_request_now(next_hop); }
   return true;
 }
@@ -290,11 +303,14 @@ static void arp_flush_pending(uint32_t next_hop, const uint8_t mac[6]) {
     kmemcpy(arp_pending[i].frame, mac, 6);
     (void)virtio_net_send_frame(arp_pending[i].frame, arp_pending[i].len);
     arp_pending[i] = (struct arp_pending_packet){0};
+    if (arp_pending_count != 0) { --arp_pending_count; }
   }
+  arp_refresh_retry_deadline();
 }
 
 static void arp_retry_pending(void) {
   uint64_t now = cell_uptime_ticks();
+  if (arp_pending_count == 0 || now < arp_next_retry_tick) { return; }
   for (size_t i = 0; i < ARP_PENDING_ENTRIES; ++i) {
     if (!arp_pending[i].used || now < arp_pending[i].next_retry_tick) { continue; }
     uint8_t mac[6];
@@ -305,6 +321,7 @@ static void arp_retry_pending(void) {
     arp_request_now(arp_pending[i].next_hop);
     arp_pending[i].next_retry_tick = now + ARP_RETRY_TICKS;
   }
+  arp_refresh_retry_deadline();
 }
 
 static uint32_t build_ipv4_frame(uint8_t *frame, const uint8_t dst_mac[6], uint8_t proto, uint8_t ttl, uint8_t tos,
@@ -623,6 +640,8 @@ void net_init(void) {
   gateway_mac_valid = false;
   arp_cache_clock = 0;
   arp_pending_clock = 0;
+  arp_pending_count = 0;
+  arp_next_retry_tick = 0;
   for (size_t i = 0; i < ARP_CACHE_ENTRIES; ++i) {
     arp_cache[i].valid = false;
   }
@@ -650,6 +669,8 @@ void net_set_config(const struct net_config *cfg) {
   net_configured = cfg->configured != 0;
   gateway_mac_valid = false;
   arp_pending_clock = 0;
+  arp_pending_count = 0;
+  arp_next_retry_tick = 0;
   for (size_t i = 0; i < ARP_CACHE_ENTRIES; ++i) {
     arp_cache[i].valid = false;
   }
