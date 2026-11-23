@@ -76,7 +76,7 @@ static bool proc_pid_file_node(int pid, enum ramfs_device device, struct vfs_nod
     .atime = now,
     .ctime = now,
     .mtime = now,
-    .proc_pid = pid,
+    .proc.pid = pid,
     .size = size,
   };
   return true;
@@ -98,8 +98,7 @@ static bool proc_fd_dir_node(int pid, struct vfs_node *out) {
     .atime = now,
     .ctime = now,
     .mtime = now,
-    .proc_pid = pid,
-    .proc_fd = -1,
+    .proc = {.pid = pid, .fd = -1},
   };
   return true;
 }
@@ -123,8 +122,7 @@ static bool proc_fd_link_node(int pid, int fd, struct vfs_node *out) {
     .atime = now,
     .ctime = now,
     .mtime = now,
-    .proc_pid = pid,
-    .proc_fd = fd,
+    .proc = {.pid = pid, .fd = fd},
   };
   return true;
 }
@@ -187,7 +185,7 @@ static bool fd_link_target(int fd, char *out, size_t cap, size_t *len_out) {
 
 static bool proc_pid_link_target(const struct vfs_node *node, char *out, size_t cap, size_t *len_out) {
   struct proc_info info;
-  if (!cell_proc_info_for_pid(node->proc_pid, &info)) { return false; }
+  if (!cell_proc_info_for_pid(node->proc.pid, &info)) { return false; }
   const char *target = NULL;
   if (node->device == RAMFS_DEV_PROC_PID_CWD) {
     target = info.cwd;
@@ -234,7 +232,7 @@ bool vfs_proc_lookup(const char *path, struct vfs_node *out) {
       .atime = now,
       .ctime = now,
       .mtime = now,
-      .proc_pid = pid,
+      .proc.pid = pid,
     };
     return true;
   }
@@ -263,7 +261,7 @@ bool vfs_proc_lookup(const char *path, struct vfs_node *out) {
       .atime = now,
       .ctime = now,
       .mtime = now,
-      .proc_pid = -pid,
+      .proc.pid = -pid,
     };
     return true;
   }
@@ -287,7 +285,7 @@ bool vfs_proc_lookup(const char *path, struct vfs_node *out) {
         .atime = now,
         .ctime = now,
         .mtime = now,
-        .proc_pid = pid,
+        .proc.pid = pid,
       };
       return true;
     }
@@ -302,10 +300,10 @@ bool vfs_proc_lookup(const char *path, struct vfs_node *out) {
 bool vfs_proc_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
   struct vfs_node node;
   if (vfs_proc_lookup(path, &node)) {
-    if (node.device == RAMFS_DEV_PROC_PID_FD && node.proc_fd >= 0) {
+    if (node.device == RAMFS_DEV_PROC_PID_FD && node.proc.fd >= 0) {
       char target[VFS_PROC_FD_PATH_MAX];
       size_t target_len = 0;
-      if (!fd_link_target(node.proc_fd, target, sizeof(target), &target_len)) { return false; }
+      if (!fd_link_target(node.proc.fd, target, sizeof(target), &target_len)) { return false; }
       if (len_out != NULL) { *len_out = target_len; }
       size_t copy_len = target_len;
       if (copy_len > cap) { copy_len = cap; }
@@ -321,14 +319,14 @@ bool vfs_proc_readlink(const char *path, char *out, size_t cap, size_t *len_out)
 
 bool vfs_proc_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out) {
   if (dir->backend == VFS_PROC) {
-    if (dir->device == RAMFS_DEV_PROC_PID_FD && dir->proc_fd < 0) {
-      if (dir->proc_pid != cell_current_pid()) { return false; }
+    if (dir->device == RAMFS_DEV_PROC_PID_FD && dir->proc.fd < 0) {
+      if (dir->proc.pid != cell_current_pid()) { return false; }
       struct vfs_node fd_node;
       size_t seen = 0;
       for (int fd = 0; fd < (int)VFS_PROC_FD_MAX; ++fd) {
         if (!cell_fd_stat(fd, &fd_node)) { continue; }
         if (seen++ != index) { continue; }
-        *out = (struct vfs_dirent){.ino = 150000u + (uint64_t)dir->proc_pid * 64u + (uint64_t)fd,
+        *out = (struct vfs_dirent){.ino = 150000u + (uint64_t)dir->proc.pid * 64u + (uint64_t)fd,
                                    .is_dir = false,
                                    .is_device = false,
                                    .type = 10};
@@ -337,9 +335,9 @@ bool vfs_proc_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent
       }
       return false;
     }
-    if (dir->proc_pid < 0) {
+    if (dir->proc.pid < 0) {
       if (index != 0) { return false; }
-      int pid = -dir->proc_pid;
+      int pid = -dir->proc.pid;
       *out = (struct vfs_dirent){.ino = 130000u + (uint64_t)pid, .is_dir = true, .is_device = false};
       utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
       return true;

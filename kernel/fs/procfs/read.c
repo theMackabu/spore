@@ -391,7 +391,7 @@ static size_t sys_cpu_core_online_text(char *dst, size_t cap, const char *path) 
 static int64_t read_generated_pid_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                                          size_t (*fill)(char *, size_t, int)) {
   char text[4096] = {0};
-  size_t text_len = fill(text, sizeof(text), file->node.proc_pid);
+  size_t text_len = fill(text, sizeof(text), file->node.proc.pid);
   if (file->offset >= text_len) { return 0; }
   size_t chunk = text_len - (size_t)file->offset;
   if (chunk > len) { chunk = (size_t)len; }

@@ -52,11 +52,15 @@ struct vfs_node {
   uint64_t atime;
   uint64_t ctime;
   uint64_t mtime;
-  int proc_pid;
-  int proc_fd;
   uint64_t size;
-  struct ramfs_node ramfs;
-  struct ext2_node ext2;
+  union {
+    struct ramfs_node ramfs;
+    struct ext2_node ext2;
+    struct {
+      int pid;
+      int fd;
+    } proc;
+  };
 };
 
 struct vfs_dirent {
