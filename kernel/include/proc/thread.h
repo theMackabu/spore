@@ -98,7 +98,6 @@ int cell_block_current(struct trap_frame *frame, struct thread_wait wait);
 void cell_release_thread(struct thread *thread);
 size_t cell_runnable_or_blocked_threads_in_domain(const struct domain *domain);
 void cell_wake_vfork_parent_of(int child_id);
-void cell_wake_sleep_waiters(uint64_t scheduler_ticks);
 int cell_block_current_on_sleep(uint64_t deadline_tick, struct trap_frame *frame);
 int cell_block_current_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame);
 int cell_block_current_on_socket_accept(int fd, uint64_t addr, uint64_t addrlen, int flags, struct trap_frame *frame);

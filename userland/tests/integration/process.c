@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 constexpr int SYS_SPORE_SNAPSHOT = 0x4000;
@@ -261,11 +262,12 @@ int integration_thread_demo(void) {
 static volatile int futex_word;
 static volatile int futex_started[2];
 static volatile int futex_finished[2];
+static const struct timespec futex_wake_timeout = {.tv_sec = 1, .tv_nsec = 0};
 
 static void phase_b_futex_entry(void *arg) {
   long slot = (long)arg;
   if (slot >= 0 && slot < 2) { futex_started[slot] = 1; }
-  long rc = integration_raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAIT_PRIVATE, 0, 0);
+  long rc = integration_raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAIT_PRIVATE, 0, (long)&futex_wake_timeout);
   if ((rc == 0 || rc == -11) && slot >= 0 && slot < 2) { futex_finished[slot] = 1; }
   printf("[spore] v3b futex thread %ld resumed rc=%ld\n", slot, rc);
   integration_raw_syscall3(SYS_EXIT, 0, 0, 0);
@@ -294,6 +296,23 @@ int integration_futex_demo(void) {
     sched_yield();
   }
   int ok = futex_finished[0] != 0 && futex_finished[1] != 0 && woke >= 0;
+  struct timespec invalid_timeout = {.tv_sec = 0, .tv_nsec = 1000000000};
+  struct timespec zero_timeout = {0};
+  struct timespec timeout = {.tv_sec = 0, .tv_nsec = 20000000};
+  futex_word = 1;
+  long eagain = integration_raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAIT_PRIVATE, 0, (long)&timeout);
+  futex_word = 0;
+  long einval = integration_raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAIT_PRIVATE, 0, (long)&invalid_timeout);
+  long efault = integration_raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAIT_PRIVATE, 0, 1);
+  long immediate = integration_raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAIT_PRIVATE, 0, (long)&zero_timeout);
+  uint64_t start = integration_usec_now();
+  long timedout = integration_raw_syscall4(SYS_FUTEX, (long)&futex_word, FUTEX_WAIT_PRIVATE, 0, (long)&timeout);
+  uint64_t elapsed = integration_usec_now() - start;
+  int timeout_ok = eagain == -EAGAIN && einval == -EINVAL && efault == -EFAULT && immediate == -ETIMEDOUT &&
+                   timedout == -ETIMEDOUT && elapsed >= 20000;
+  ok = ok && timeout_ok;
+  printf("[spore] v3b futex timed wait: %s (rc=%ld elapsed=%luus)\n", timeout_ok ? "PASS" : "FAIL", timedout,
+         (unsigned long)elapsed);
   printf("[spore] v3b futex wait/wake: %s (woke=%ld)\n", ok ? "PASS" : "FAIL", woke);
   return ok;
 }

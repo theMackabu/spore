@@ -81,9 +81,11 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
   cell_wake_parent_of(domain);
 }
 
-static bool wait_reason_is_restartable(enum wait_reason reason) {
+static bool wait_is_restartable(const struct thread_wait *wait) {
+  enum wait_reason reason = wait->reason;
+  if (reason == WAIT_FUTEX) { return !wait->has_deadline; }
   return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
-         reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FUTEX;
+         reason == WAIT_INOTIFY || reason == WAIT_PTY;
 }
 
 static bool thread_requires_deferred_signal_frame(const struct thread *thread) {
@@ -124,7 +126,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
   }
 
   if (thread->state == THREAD_BLOCKED) {
-    if ((action->flags & SA_RESTART) && wait_reason_is_restartable(thread->wait.reason) &&
+    if ((action->flags & SA_RESTART) && wait_is_restartable(&thread->wait) &&
         aarch64_restart_syscall(&thread->tf)) {
       cell_resume_wait(thread);
     } else {

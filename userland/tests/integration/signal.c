@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -185,19 +186,19 @@ static int signal_restart_read_regression(void) {
 }
 
 static volatile int futex_restart_word;
-static pid_t futex_restart_parent;
+static pid_t futex_waiter_tid;
 
 static void *futex_restart_thread(void *arg) {
   (void)arg;
   integration_sleep_ms(20);
-  kill(futex_restart_parent, SIGINT);
+  syscall(SYS_tgkill, getpid(), futex_waiter_tid, SIGINT);
   integration_sleep_ms(20);
   futex_restart_word = 1;
   integration_raw_syscall4(SYS_FUTEX, (long)&futex_restart_word, FUTEX_WAKE_PRIVATE, 1, 0);
   return NULL;
 }
 
-static int signal_restart_futex_regression(void) {
+static int signal_restart_futex_regression(const struct timespec *timeout) {
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
   sa.sa_handler = signal_interrupt_handler;
@@ -205,14 +206,15 @@ static int signal_restart_futex_regression(void) {
   sigemptyset(&sa.sa_mask);
   interrupted_signals = 0;
   futex_restart_word = 0;
-  futex_restart_parent = getpid();
+  futex_waiter_tid = (pid_t)syscall(SYS_gettid);
 
   pthread_t thread;
   int ok = sigaction(SIGINT, &sa, NULL) == 0 && pthread_create(&thread, NULL, futex_restart_thread, NULL) == 0;
-  long rc = ok ? integration_raw_syscall4(SYS_FUTEX, (long)&futex_restart_word, FUTEX_WAIT_PRIVATE, 0, 0) : -1;
+  long rc = ok ? integration_raw_syscall4(SYS_FUTEX, (long)&futex_restart_word, FUTEX_WAIT_PRIVATE, 0, (long)timeout) : -1;
   if (ok) { ok = pthread_join(thread, NULL) == 0; }
-  ok = ok && rc == 0 && futex_restart_word == 1 && interrupted_signals == SIGINT;
-  printf("[spore] signal restarted futex wait: %s rc=%ld seen=%d\n", ok ? "PASS" : "FAIL", rc,
+  ok = ok && rc == (timeout ? -EINTR : 0) && futex_restart_word == 1 && interrupted_signals == SIGINT;
+  printf("[spore] signal %s futex wait: %s rc=%ld seen=%d\n",
+         timeout ? "interrupted timed" : "restarted", ok ? "PASS" : "FAIL", rc,
          (int)interrupted_signals);
   return ok;
 }
@@ -251,7 +253,8 @@ static int absolute_sleep_regression(void) {
 }
 
 int integration_signal_suite(void) {
+  struct timespec timeout = {.tv_sec = 1};
   return absolute_sleep_regression() && interval_timer_regression() && signal_mask_regression() &&
          signal_altstack_regression() && signal_interrupted_read_regression() && signal_restart_read_regression() &&
-         signal_restart_futex_regression() && signal_nested_regression();
+         signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) && signal_nested_regression();
 }

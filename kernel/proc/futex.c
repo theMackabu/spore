@@ -1,6 +1,7 @@
 #include "proc/futex.h"
 
 #include "arch/aarch64/regs.h"
+#include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/thread.h"
@@ -9,6 +10,7 @@ enum {
   EAGAIN = 11,
   EFAULT = 14,
   EINVAL = 22,
+  ETIMEDOUT = 110,
   ROBUST_LIST_LIMIT = 16,
   FUTEX_OWNER_DIED = 0x40000000,
 };
@@ -70,7 +72,8 @@ int cell_set_robust_list_current(uint64_t robust_list) {
   return 0;
 }
 
-int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, struct trap_frame *frame) {
+int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, bool has_deadline, uint64_t deadline_tick,
+                            struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
   struct thread *thread = cell_current_thread_internal();
   if (domain == NULL || thread == NULL || (uaddr & 3u) != 0) { return -EINVAL; }
@@ -78,7 +81,14 @@ int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, struct trap_frame
   uint32_t actual = 0;
   if (!vmm_copy_from_user(cell_domain_as(domain), &actual, uaddr, sizeof(actual))) { return -EFAULT; }
   if (actual != expected) { return -EAGAIN; }
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FUTEX, .target = -1, .futex_addr = uaddr});
+  if (has_deadline && deadline_tick <= cell_uptime_ticks()) { return -ETIMEDOUT; }
+  return cell_block_current(frame, (struct thread_wait){
+                                       .reason = WAIT_FUTEX,
+                                       .target = -1,
+                                       .has_deadline = has_deadline,
+                                       .deadline_tick = deadline_tick,
+                                       .futex_addr = uaddr,
+                                     });
 }
 
 int cell_futex_wake_current(uint64_t uaddr, uint32_t count) {

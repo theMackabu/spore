@@ -2,13 +2,17 @@
 #include "handlers.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
+#include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/futex.h"
 #include "proc/process.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
 enum {
+  EFAULT = 14,
+  EINVAL = 22,
   ENOSYS = 38,
   CLONE_VM = 0x00000100,
   CLONE_FS = 0x00000200,
@@ -27,6 +31,22 @@ enum {
   FUTEX_PRIVATE_FLAG = 128,
   FUTEX_CMD_MASK = 127,
 };
+
+struct timespec64 {
+  int64_t tv_sec;
+  int64_t tv_nsec;
+};
+
+static bool futex_timeout_ticks(const struct timespec64 *timeout, uint64_t *out) {
+  if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 || timeout->tv_nsec >= 1000000000) { return false; }
+  uint64_t fractional = ((uint64_t)timeout->tv_nsec * 100 + 999999999ull) / 1000000000ull;
+  if ((uint64_t)timeout->tv_sec > (UINT64_MAX - fractional) / 100) {
+    *out = UINT64_MAX;
+    return true;
+  }
+  *out = (uint64_t)timeout->tv_sec * 100 + fractional;
+  return true;
+}
 
 int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
                   uint64_t child_tid) {
@@ -56,12 +76,26 @@ int64_t sys_futex(struct trap_frame *f, uint64_t uaddr, uint64_t op, uint64_t va
     return -(int64_t)ENOSYS;
   }
   switch (cmd) {
-  case FUTEX_WAIT:
-    if (timeout != 0) {
-      kprintf("[kernel] futex wait timeout ENOSYS\n");
-      return -(int64_t)ENOSYS;
+  case FUTEX_WAIT: {
+    bool has_deadline = timeout != 0;
+    uint64_t deadline = 0;
+    if (has_deadline) {
+      struct timespec64 relative;
+      if (!syscall_user_readable(timeout, sizeof(relative)) ||
+          !vmm_copy_from_user(syscall_active_as(), &relative, timeout, sizeof(relative))) {
+        return -(int64_t)EFAULT;
+      }
+      uint64_t ticks = 0;
+      if (!futex_timeout_ticks(&relative, &ticks)) { return -(int64_t)EINVAL; }
+      uint64_t now = cell_uptime_ticks();
+      if (ticks == 0) {
+        deadline = now;
+      } else {
+        deadline = ticks >= UINT64_MAX - now ? UINT64_MAX : now + ticks + 1;
+      }
     }
-    return cell_futex_wait_current(uaddr, (uint32_t)val, f);
+    return cell_futex_wait_current(uaddr, (uint32_t)val, has_deadline, deadline, f);
+  }
   case FUTEX_WAKE:
     return cell_futex_wake_current(uaddr, (uint32_t)val);
   default:

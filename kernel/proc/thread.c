@@ -19,6 +19,7 @@
 #include "net/socket.h"
 
 constexpr int EINVAL = 22;
+constexpr int ETIMEDOUT = 110;
 
 static struct thread *threads;
 static size_t thread_capacity;
@@ -138,12 +139,17 @@ int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame) {
   return cell_block_current_on_sleep(cell_uptime_ticks() + timeout_ticks, frame);
 }
 
-void cell_wake_sleep_waiters(uint64_t scheduler_ticks) {
+static void wake_timer_waiters(uint64_t scheduler_ticks) {
   for (size_t i = 0; i < thread_capacity; ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SLEEP) { continue; }
-    if (scheduler_ticks < thread->wait.deadline_tick) { continue; }
-    cell_finish_wait(thread, 0);
+    if (thread->state != THREAD_BLOCKED || !thread->wait.has_deadline || scheduler_ticks < thread->wait.deadline_tick) {
+      continue;
+    }
+    switch (thread->wait.reason) {
+    case WAIT_SLEEP: cell_finish_wait(thread, 0); break;
+    case WAIT_FUTEX: cell_finish_wait(thread, -ETIMEDOUT); break;
+    default: break;
+    }
   }
 }
 
@@ -254,7 +260,8 @@ int cell_block_current_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, s
 }
 
 int cell_block_current_on_sleep(uint64_t deadline_tick, struct trap_frame *frame) {
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_SLEEP, .target = -1, .deadline_tick = deadline_tick});
+  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_SLEEP, .target = -1,
+                                                        .has_deadline = true, .deadline_tick = deadline_tick});
 }
 
 int cell_block_current_on_socket_accept(int fd, uint64_t addr, uint64_t addrlen, int flags, struct trap_frame *frame) {
@@ -301,7 +308,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   uint64_t ticks = cell_account_tick(cpu, from_lower_el, cell_scheduler_waiting_for_interrupt());
   if (cpu == 0) {
     cell_expire_real_timers(ticks);
-    cell_wake_sleep_waiters(ticks);
+    wake_timer_waiters(ticks);
     net_poll();
     cell_socket_timer_tick(ticks);
     cell_wake_poll_waiters_internal();
