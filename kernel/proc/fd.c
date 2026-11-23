@@ -332,21 +332,23 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
     if (id < 0) { return id; }
     return cell_pty_open_slave(id, flags, path);
   }
+  int fd = cell_find_free_fd(domain, 0);
+  if (fd < 0) { return -24; }
+  struct open_file *file = cell_alloc_open_file();
+  if (file == NULL) { return -12; }
   if ((node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
-    int pipe_id = cell_fifo_pipe_for_ino(node->ino, true);
-    if (pipe_id < 0) { return -23; }
     bool write_end = (flags & CELL_O_ACCMODE) == CELL_O_WRONLY;
-    if ((flags & CELL_O_NONBLOCK) != 0 && write_end && !cell_pipe_has_readers((uint8_t)pipe_id)) { return -ENXIO; }
-
-    int fd = cell_find_free_fd(domain, 0);
-    if (fd < 0) { return -24; }
-    struct open_file *file = cell_alloc_open_file();
-    if (file == NULL) { return -12; }
+    bool needs_reader = write_end && (flags & CELL_O_NONBLOCK) != 0;
+    int pipe_id = cell_fifo_pipe_for_ino(node->ino, !needs_reader);
+    if (needs_reader && (pipe_id < 0 || !cell_pipe_has_readers((uint8_t)pipe_id))) {
+      cell_release_open_file(file);
+      return -ENXIO;
+    }
+    if (pipe_id < 0) {
+      cell_release_open_file(file);
+      return -23;
+    }
     file->type = OPEN_PIPE;
-    file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
-    file->node = *node;
-    vfs_retain_node(&file->node);
-    cell_copy_open_path(file, path);
     file->pipe_id = (uint8_t)pipe_id;
     file->pipe_write_end = write_end;
     if (write_end) {
@@ -354,29 +356,17 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
     } else {
       cell_pipe_add_reader((uint8_t)pipe_id);
     }
-    domain->fds[fd] = file;
-    domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
-    cell_pipe_notify();
-    return fd;
+  } else {
+    file->type = OPEN_RAMFS;
   }
-  int fd = -1;
-  for (int i = 0; i < MAX_FDS; ++i) {
-    if (domain->fds[i] == NULL) {
-      fd = i;
-      break;
-    }
-  }
-  if (fd < 0) { return -24; }
-  struct open_file *file = cell_alloc_open_file();
-  if (file == NULL) { return -12; }
-  file->type = OPEN_RAMFS;
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   file->node = *node;
   vfs_retain_node(&file->node);
   cell_copy_open_path(file, path);
-  if ((flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
+  if (file->type == OPEN_RAMFS && (flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
   domain->fds[fd] = file;
   domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
+  if (file->type == OPEN_PIPE) { cell_pipe_notify(); }
   return fd;
 }
 
@@ -396,6 +386,7 @@ int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
   if (read_file == NULL || write_file == NULL) {
     cell_release_open_file(read_file);
     cell_release_open_file(write_file);
+    cell_pipe_free((uint8_t)pipe_id);
     return -12;
   }
 

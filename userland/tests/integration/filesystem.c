@@ -57,6 +57,32 @@ static int epoll_watch_lifetime(void) {
   return ok;
 }
 
+static int fifo_without_reader(void) {
+  for (int i = 0; i < 32; ++i) {
+    char path[32];
+    snprintf(path, sizeof(path), "fifo-%d", i);
+    if (mkfifo(path, 0600) != 0) { return 0; }
+    int writer = open(path, O_WRONLY | O_NONBLOCK);
+    if (writer >= 0) {
+      close(writer);
+      return 0;
+    }
+    if (errno != ENXIO) { return 0; }
+  }
+  int reader = open("fifo-0", O_RDONLY | O_NONBLOCK);
+  int writer = open("fifo-0", O_WRONLY | O_NONBLOCK);
+  char byte;
+  int ok = reader >= 0 && writer >= 0 && write(writer, "x", 1) == 1 && read(reader, &byte, 1) == 1 && byte == 'x';
+  if (writer >= 0) { close(writer); }
+  if (reader >= 0) { close(reader); }
+  for (int i = 0; i < 32; ++i) {
+    char path[32];
+    snprintf(path, sizeof(path), "fifo-%d", i);
+    unlink(path);
+  }
+  return ok;
+}
+
 int integration_fs_demo(void) {
   int ok = 1;
   errno = 0;
@@ -96,7 +122,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!inotify_shared_watch() || !epoll_watch_lifetime()) { ok = 0; }
+  if (!inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader()) { ok = 0; }
   if (unlink("b") != 0) { ok = 0; }
   if (chdir("/") != 0) { ok = 0; }
   (void)syscall(35, AT_FDCWD, "/tmp/spore-demo-d", 0x200);
