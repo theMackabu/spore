@@ -190,6 +190,10 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
 uint64_t pmm_alloc_page(void) {
   const uint64_t first = 0x100000 / PAGE_SIZE;
   ++stats.alloc_attempts;
+  if (free_page_count == 0) {
+    ++stats.alloc_failures;
+    return 0;
+  }
   if (next_free_page < first || next_free_page >= tracked_page_count) { next_free_page = first; }
   uint64_t pa = alloc_page_in_range(next_free_page, tracked_page_count);
   if (pa == 0) { pa = alloc_page_in_range(first, next_free_page); }
@@ -211,6 +215,10 @@ uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
   const uint64_t first = 0x100000 / PAGE_SIZE;
   if (count == 0 || count > tracked_page_count) { return 0; }
   ++stats.alloc_attempts;
+  if (count > free_page_count) {
+    ++stats.alloc_failures;
+    return 0;
+  }
 
   uint64_t run_len = 0;
   for (uint64_t page = first; page < tracked_page_count;) {
