@@ -1,23 +1,16 @@
 userland_musl_cc = find_program('aarch64-unknown-linux-musl-gcc')
 userland_include_arg = '-I' + meson.current_source_dir() / 'lib/spore'
 
-userland_cc = [
-  userland_musl_cc,
-  '-std=c23',
-  '-D_GNU_SOURCE',
-  '-s',
+userland_compiler = [userland_musl_cc, '-std=c23', '-D_GNU_SOURCE', '-s', userland_include_arg]
+optimization = get_option('optimization')
+if optimization != 'plain'
+  userland_compiler += '-O' + optimization
+endif
+userland_cc = userland_compiler + [
   '-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1',
   '-Wl,-rpath,/lib',
-  userland_include_arg,
 ]
-userland_static_cc = [
-  userland_musl_cc,
-  '-static',
-  '-std=c23',
-  '-D_GNU_SOURCE',
-  '-s',
-  userland_include_arg,
-]
+userland_static_cc = userland_compiler + ['-static']
 userland_image_targets = []
 userland_test_targets = []
 
