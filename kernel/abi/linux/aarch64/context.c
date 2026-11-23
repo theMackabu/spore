@@ -120,7 +120,8 @@ bool syscall_copy_string_from_user(uint64_t user, char *dst, size_t cap) {
 }
 
 static bool normalize_path(const char *base, const char *path, char *out, size_t cap) {
-  char input[256];
+  if (cap < 2) { return false; }
+  char input[CELL_PATH_MAX];
   size_t pos = 0;
   if (path[0] != '/') {
     for (size_t i = 0; base[i] != '\0'; ++i) {
@@ -138,7 +139,10 @@ static bool normalize_path(const char *base, const char *path, char *out, size_t
   }
   input[pos] = '\0';
 
-  char components[16][256];
+  struct {
+    const char *start;
+    size_t len;
+  } components[16];
   size_t count = 0;
   const char *p = input;
   while (*p != '\0') {
@@ -146,30 +150,25 @@ static bool normalize_path(const char *base, const char *path, char *out, size_t
       ++p;
     }
     if (*p == '\0') { break; }
-    char comp[256];
-    size_t len = 0;
-    while (p[len] != '\0' && p[len] != '/') {
-      if (len + 1 >= sizeof(comp)) { return false; }
-      comp[len] = p[len];
-      ++len;
-    }
-    comp[len] = '\0';
-    if (streq(comp, ".")) {
-    } else if (streq(comp, "..")) {
+    const char *start = p;
+    while (*p != '\0' && *p != '/') { ++p; }
+    size_t len = (size_t)(p - start);
+    if (len == 1 && start[0] == '.') { continue; }
+    if (len == 2 && start[0] == '.' && start[1] == '.') {
       if (count > 0) { --count; }
-    } else {
-      if (count >= 16) { return false; }
-      kmemcpy(components[count++], comp, len + 1);
+      continue;
     }
-    p += len;
+    if (count == sizeof(components) / sizeof(components[0])) { return false; }
+    components[count].start = start;
+    components[count++].len = len;
   }
 
   size_t out_pos = 0;
   out[out_pos++] = '/';
   for (size_t i = 0; i < count; ++i) {
-    size_t len = kstrlen(components[i]);
+    size_t len = components[i].len;
     if (out_pos + len + (i + 1 < count ? 1 : 0) >= cap) { return false; }
-    kmemcpy(out + out_pos, components[i], len);
+    kmemcpy(out + out_pos, components[i].start, len);
     out_pos += len;
     if (i + 1 < count) { out[out_pos++] = '/'; }
   }
@@ -226,15 +225,18 @@ static int64_t copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *o
   path_policy_denied = false;
   char raw[CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
-  if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
-    return copy_resolved_path(path_addr, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
-  }
-
-  if (!cell_fd_is_dir((int)dirfd)) { return cell_fd_path((int)dirfd, out, cap) ? -(int64_t)ENOTDIR : -(int64_t)EBADF; }
-  char base[CELL_PATH_MAX];
+  char dir_path[CELL_PATH_MAX];
   char virtual_path[CELL_PATH_MAX];
-  if (!cell_fd_path((int)dirfd, base, sizeof(base))) { return -(int64_t)EBADF; }
-  if (!normalize_path(base, raw, virtual_path, sizeof(virtual_path))) { return -(int64_t)ENAMETOOLONG; }
+  const char *base = cell_current_cwd();
+  bool relative_to_fd = raw[0] != '/' && (int64_t)dirfd != AT_FDCWD;
+  if (relative_to_fd) {
+    if (!cell_fd_path((int)dirfd, dir_path, sizeof(dir_path))) { return -(int64_t)EBADF; }
+    if (!cell_fd_is_dir((int)dirfd)) { return -(int64_t)ENOTDIR; }
+    base = dir_path;
+  }
+  if (!normalize_path(base, raw, virtual_path, sizeof(virtual_path))) {
+    return relative_to_fd ? -(int64_t)ENAMETOOLONG : -(int64_t)EFAULT;
+  }
   return resolve_virtual_path(virtual_path, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
 }
 
