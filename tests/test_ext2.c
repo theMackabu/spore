@@ -1,11 +1,17 @@
 #include "fs/ext2.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#if defined(__APPLE__)
+#include <sys/clonefile.h>
+#endif
 
 enum {
   EXT2_SUPER_OFFSET = 1024,
@@ -46,21 +52,44 @@ static bool file_write(void *ctx, uint64_t offset, const void *src, uint32_t len
 }
 
 static void copy_file(const char *src_path, const char *dst_path) {
-  FILE *src = fopen(src_path, "rb");
-  assert(src != NULL);
-  FILE *dst = fopen(dst_path, "wb");
-  assert(dst != NULL);
-  char buf[16384];
-  for (;;) {
-    size_t n = fread(buf, 1, sizeof(buf), src);
-    if (n > 0) { assert(fwrite(buf, 1, n, dst) == n); }
-    if (n < sizeof(buf)) {
-      assert(feof(src));
-      break;
+#if defined(__APPLE__)
+  if (clonefile(src_path, dst_path, 0) == 0) { return; }
+#endif
+  int src = open(src_path, O_RDONLY);
+  assert(src >= 0);
+  struct stat st;
+  assert(fstat(src, &st) == 0);
+  int dst = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  assert(dst >= 0);
+  unsigned char buf[65536];
+  off_t copied = 0;
+  while (copied < st.st_size) {
+    size_t want = (size_t)(st.st_size - copied);
+    if (want > sizeof(buf)) { want = sizeof(buf); }
+    ssize_t n = read(src, buf, want);
+    assert(n > 0);
+    bool zero = true;
+    for (ssize_t i = 0; i < n; ++i) {
+      if (buf[i] != 0) {
+        zero = false;
+        break;
+      }
     }
+    if (zero) {
+      assert(lseek(dst, n, SEEK_CUR) >= 0);
+    } else {
+      ssize_t written = 0;
+      while (written < n) {
+        ssize_t chunk = write(dst, buf + written, (size_t)(n - written));
+        assert(chunk > 0);
+        written += chunk;
+      }
+    }
+    copied += n;
   }
-  assert(fclose(src) == 0);
-  assert(fclose(dst) == 0);
+  assert(ftruncate(dst, st.st_size) == 0);
+  assert(close(src) == 0);
+  assert(close(dst) == 0);
 }
 
 static void assert_readlink(struct ext2_fs *fs, const char *path, const char *want) {
@@ -365,6 +394,16 @@ static void test_mutations(const char *image_path) {
 
   assert(ext2_drop_cache(&fs));
   assert(fclose(f) == 0);
+
+  FILE *original = fopen(image_path, "rb");
+  assert(original != NULL);
+  struct ext2_fs original_fs;
+  struct ext2_node original_node;
+  assert(ext2_mount(&original_fs, file_read, original));
+  assert(!ext2_lookup(&original_fs, "/apkdir", &original_node));
+  assert(ext2_drop_cache(&original_fs));
+  assert(fclose(original) == 0);
+
   assert(remove(tmp_path) == 0);
 }
 
