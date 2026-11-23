@@ -228,20 +228,11 @@ private_copy:
   uint64_t copy_start = page > vma->file_start ? page : vma->file_start;
   uint64_t copy_end = page_end < file_end ? page_end : file_end;
   if (copy_start < copy_end) {
-    uint8_t cached_page[PAGE_SIZE];
-    uint64_t copied = 0;
-    while (copied < copy_end - copy_start) {
-      uint64_t read_off = vma->file_offset + (copy_start - vma->file_start) + copied;
-      uint64_t file_page = read_off & ~(uint64_t)(PAGE_SIZE - 1);
-      uint64_t page_off = read_off - file_page;
-      uint64_t chunk = PAGE_SIZE - page_off;
-      if (chunk > copy_end - copy_start - copied) { chunk = copy_end - copy_start - copied; }
-      if (!vfs_read_page_cached(&vma->file_node, file_page, cached_page)) {
-        pmm_free_page(pa);
-        return false;
-      }
-      kmemcpy(dst + (copy_start - page) + copied, cached_page + page_off, chunk);
-      copied += chunk;
+    uint64_t read_off = vma->file_offset + (copy_start - vma->file_start);
+    uint64_t len = copy_end - copy_start;
+    if (vfs_read(&vma->file_node, read_off, dst + (copy_start - page), len) != len) {
+      pmm_free_page(pa);
+      return false;
     }
   }
   if (!vmm_map_page(as, page, pa, vma->prot)) {

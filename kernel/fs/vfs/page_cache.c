@@ -22,7 +22,6 @@ struct vfs_page_cache_entry {
   uint64_t ino;
   uint64_t dev_id;
   uint64_t off;
-  uint64_t age;
   uint64_t pa;
   uint32_t hash_next;
 };
@@ -31,7 +30,6 @@ static struct vfs_page_cache_entry *page_cache;
 static uint32_t *page_cache_buckets;
 static size_t page_cache_capacity;
 static size_t page_cache_bucket_count;
-static uint64_t page_cache_clock;
 static uint32_t page_cache_evict_hand;
 
 static void *alloc_kernel_table(size_t count, size_t elem_size) {
@@ -117,7 +115,6 @@ static struct vfs_page_cache_entry *page_cache_find(const struct vfs_node *node,
   uint32_t bucket = page_cache_hash(node->backend, node->ino, node->dev_id, off);
   for (uint32_t index = page_cache_buckets[bucket]; index != VFS_PAGE_CACHE_NONE; index = page_cache[index].hash_next) {
     if (cache_key_eq(&page_cache[index], node, off)) {
-      page_cache[index].age = ++page_cache_clock;
       return &page_cache[index];
     }
   }
@@ -141,7 +138,7 @@ static void page_cache_unlink(size_t index) {
 
 static void page_cache_clear(size_t index) {
   page_cache_unlink(index);
-  if (page_cache[index].valid && page_cache[index].pa != 0) { pmm_free_page(page_cache[index].pa); }
+  if (page_cache[index].pa != 0) { pmm_free_page(page_cache[index].pa); }
   kmemset(&page_cache[index], 0, sizeof(page_cache[index]));
   page_cache[index].hash_next = VFS_PAGE_CACHE_NONE;
 }
@@ -184,28 +181,32 @@ static void page_cache_link(size_t index) {
   page_cache_buckets[bucket] = (uint32_t)index;
 }
 
-static bool page_cache_load(const struct vfs_node *node, uint64_t off) {
-  if (!vfs_node_cacheable(node)) { return false; }
+static struct vfs_page_cache_entry *page_cache_load(const struct vfs_node *node, uint64_t off, bool *hit) {
+  if (!vfs_node_cacheable(node)) { return NULL; }
   off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  if (page_cache_find(node, off) != NULL) { return true; }
+  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
+  if (entry != NULL) {
+    if (hit != NULL) { *hit = true; }
+    return entry;
+  }
+  if (hit != NULL) { *hit = false; }
   ++vfs_stat_counters.page_cache_loads;
-  struct vfs_page_cache_entry *entry = page_cache_victim();
-  if (entry == NULL) { return false; }
+  entry = page_cache_victim();
+  if (entry == NULL) { return NULL; }
   size_t index = (size_t)(entry - page_cache);
   entry->valid = false;
   entry->backend = node->backend;
   entry->ino = node->ino;
   entry->dev_id = node->dev_id;
   entry->off = off;
-  entry->age = ++page_cache_clock;
   entry->pa = page_cache_alloc_page();
   if (entry->pa == 0) {
     page_cache_clear(index);
-    return false;
+    return NULL;
   }
   if (vfs_hhdm_offset == 0) {
     page_cache_clear(index);
-    return false;
+    return NULL;
   }
   uint8_t *data = (uint8_t *)(uintptr_t)(entry->pa + vfs_hhdm_offset);
   uint64_t readable = 0;
@@ -215,51 +216,74 @@ static bool page_cache_load(const struct vfs_node *node, uint64_t off) {
   }
   if (readable != 0 && vfs_read_uncached(node, off, data, readable) != readable) {
     page_cache_clear(index);
-    return false;
+    return NULL;
   }
   entry->valid = true;
   page_cache_link(index);
-  return true;
+  return entry;
+}
+
+static void page_cache_readahead(const struct vfs_node *node, uint64_t off) {
+  for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
+    uint64_t ahead = off + i * VFS_PAGE_SIZE;
+    if (ahead >= node->size) { break; }
+    (void)page_cache_load(node, ahead, NULL);
+  }
 }
 
 bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst) {
   if (dst == NULL || !vfs_node_cacheable(node)) { return false; }
   off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  if (page_cache_find(node, off) != NULL) {
+  bool hit;
+  struct vfs_page_cache_entry *entry = page_cache_load(node, off, &hit);
+  if (hit) {
     ++vfs_stat_counters.page_cache_hits;
   } else {
     ++vfs_stat_counters.page_cache_misses;
   }
-  if (!page_cache_load(node, off)) { return false; }
-  for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
-    uint64_t ahead = off + i * VFS_PAGE_SIZE;
-    if (ahead >= node->size) { break; }
-    (void)page_cache_load(node, ahead);
-  }
-  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
   if (entry == NULL) { return false; }
   kmemcpy(dst, (const void *)(uintptr_t)(vfs_hhdm_offset + entry->pa), VFS_PAGE_SIZE);
+  page_cache_readahead(node, off);
   return true;
 }
 
 bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out) {
   if (pa_out == NULL || !vfs_node_cacheable(node)) { return false; }
   off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  if (page_cache_find(node, off) != NULL) {
+  bool hit;
+  struct vfs_page_cache_entry *entry = page_cache_load(node, off, &hit);
+  if (hit) {
     ++vfs_stat_counters.page_cache_hits;
   } else {
     ++vfs_stat_counters.page_cache_misses;
   }
-  if (!page_cache_load(node, off)) { return false; }
-  for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
-    uint64_t ahead = off + i * VFS_PAGE_SIZE;
-    if (ahead >= node->size) { break; }
-    (void)page_cache_load(node, ahead);
-  }
-  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
   if (entry == NULL || entry->pa == 0 || !pmm_share_page(entry->pa)) { return false; }
   *pa_out = entry->pa;
+  page_cache_readahead(node, off);
   return true;
+}
+
+uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
+  uint8_t *out = dst;
+  uint64_t done = 0;
+  while (done < len) {
+    uint64_t page_off = (off + done) & ~(uint64_t)(VFS_PAGE_SIZE - 1);
+    uint64_t in_page = (off + done) - page_off;
+    bool hit;
+    struct vfs_page_cache_entry *entry = page_cache_load(node, page_off, &hit);
+    if (hit) {
+      ++vfs_stat_counters.page_cache_hits;
+    } else {
+      ++vfs_stat_counters.page_cache_misses;
+    }
+    if (entry == NULL) { break; }
+    uint64_t chunk = VFS_PAGE_SIZE - in_page;
+    if (chunk > len - done) { chunk = len - done; }
+    kmemcpy(out + done, (const void *)(uintptr_t)(vfs_hhdm_offset + entry->pa + in_page), chunk);
+    done += chunk;
+    page_cache_readahead(node, page_off);
+  }
+  return done;
 }
 
 void vfs_page_cache_invalidate(const struct vfs_node *node) {

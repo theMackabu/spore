@@ -289,19 +289,7 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
   if (!vfs_node_cacheable(node) || len == 0 || off >= node->size) { return vfs_read_uncached(node, off, dst, len); }
   uint64_t available = node->size - off;
   if (len > available) { len = available; }
-  uint8_t *out = dst;
-  uint64_t done = 0;
-  while (done < len) {
-    uint64_t page_off = (off + done) & ~(uint64_t)(4096 - 1);
-    uint64_t in_page = (off + done) - page_off;
-    uint8_t page[4096];
-    if (!vfs_read_page_cached(node, page_off, page)) { break; }
-    uint64_t chunk = 4096 - in_page;
-    if (chunk > len - done) { chunk = len - done; }
-    kmemcpy(out + done, page + in_page, chunk);
-    done += chunk;
-  }
-  return done;
+  return vfs_read_cached(node, off, dst, len);
 }
 
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {

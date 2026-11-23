@@ -13,6 +13,7 @@ void vfs_lookup_cache_clear(void);
 
 void vfs_page_cache_configure(void);
 bool vfs_node_cacheable(const struct vfs_node *node);
+uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 void vfs_page_cache_invalidate_range(const struct vfs_node *node, uint64_t off, uint64_t len);
 void vfs_page_cache_stats(struct vfs_stats *stats);
 uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
