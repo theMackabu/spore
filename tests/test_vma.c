@@ -90,6 +90,17 @@ int main(void) {
   vma_list_destroy(&many_clone);
   vma_list_destroy(&many);
 
+  struct vma_list adjacent;
+  vma_list_init(&adjacent);
+  for (size_t i = 0; i < target; ++i) {
+    uint64_t start = 0x2000000 + i * 0x1000;
+    assert(vma_insert(&adjacent, start, start + 0x1000, i & 1 ? 3 : 1, 0x22, VMA_ANON));
+  }
+  assert(vma_protect(&adjacent, 0x2000000, 0x2000000 + target * 0x1000, 1));
+  assert(vma_count(&adjacent) == 1);
+  assert(vma_lookup(&adjacent, 0x2000000)->end == 0x2000000 + target * 0x1000);
+  vma_list_destroy(&adjacent);
+
   vfs_ref_stub_reset();
   struct vma_list files;
   vma_list_init(&files);

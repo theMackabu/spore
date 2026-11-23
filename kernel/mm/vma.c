@@ -136,13 +136,13 @@ static bool shared_writable_file(const struct vma *vma) {
   return vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE);
 }
 
-static void replace_mapping(struct vma *dst, const struct vma *src) {
-  bool old_shared_writable = shared_writable_file(dst);
-  bool new_shared_writable = shared_writable_file(src);
+static void set_mapping_protection(struct vma *vma, uint32_t prot) {
+  bool old_shared_writable = shared_writable_file(vma);
+  bool new_shared_writable = vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && (prot & VMM_USER_WRITE);
   if (old_shared_writable != new_shared_writable) {
-    vfs_note_shared_writable_mapping(&dst->file_node, new_shared_writable);
+    vfs_note_shared_writable_mapping(&vma->file_node, new_shared_writable);
   }
-  *dst = *src;
+  vma->prot = prot;
 }
 
 static void erase_slots(struct vma_list *list, size_t first, size_t end) {
@@ -267,17 +267,27 @@ bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end) {
 static void merge_mappings(struct vma_list *list, size_t first, size_t end) {
   if (first != 0) { --first; }
   if (end < list->count) { ++end; }
-  while (first + 1 < end) {
-    struct vma *left = slot_at(list, first);
-    struct vma *right = slot_at(list, first + 1);
-    if (left->end != right->start || !compatible(left, right)) {
-      ++first;
-      continue;
+  size_t old_count = list->count;
+  size_t out = first;
+  for (size_t in = first; in < end; ++in) {
+    struct vma *current = slot_at(list, in);
+    if (out != first) {
+      struct vma *previous = slot_at(list, out - 1);
+      if (previous->end == current->start && compatible(previous, current)) {
+        previous->end = current->end;
+        release_mapping(current);
+        continue;
+      }
     }
-    left->end = right->end;
-    erase_slots(list, first + 1, first + 2);
-    --end;
+    if (out != in) { *slot_at(list, out) = *current; }
+    ++out;
   }
+  size_t removed = end - out;
+  for (size_t in = end; in < old_count; ++in) {
+    *slot_at(list, out++) = *slot_at(list, in);
+  }
+  list->count = old_count - removed;
+  trim_chunks(list);
 }
 
 bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot) {
@@ -312,28 +322,25 @@ bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t p
     }
     uint64_t mid_start = start > old.start ? start : old.start;
     uint64_t mid_end = end < old.end ? end : old.end;
-    struct vma parts[3];
-    size_t count = 0;
+    size_t middle = i;
     if (old.start < mid_start) {
-      parts[count] = old;
-      parts[count].end = mid_start;
-      ++count;
+      slot_at(list, i)->end = mid_start;
+      struct vma part = old;
+      part.start = mid_start;
+      part.end = mid_end;
+      part.prot = prot;
+      middle = i + 1;
+      insert_slot(list, middle, &part);
+    } else {
+      slot_at(list, i)->end = mid_end;
+      set_mapping_protection(slot_at(list, i), prot);
     }
-    parts[count] = old;
-    parts[count].start = mid_start;
-    parts[count].end = mid_end;
-    parts[count].prot = prot;
-    ++count;
     if (mid_end < old.end) {
-      parts[count] = old;
-      parts[count].start = mid_end;
-      ++count;
+      struct vma part = old;
+      part.start = mid_end;
+      insert_slot(list, middle + 1, &part);
     }
-    replace_mapping(slot_at(list, i), &parts[0]);
-    for (size_t part = 1; part < count; ++part) {
-      insert_slot(list, i + part, &parts[part]);
-    }
-    i += count;
+    i = middle + 1 + (mid_end < old.end);
   }
   merge_mappings(list, first, i);
   return true;
