@@ -374,10 +374,6 @@ bool virtio_net_init(uint64_t hhdm_offset) {
   return true;
 }
 
-bool virtio_net_smoke_tx(void) {
-  return true;
-}
-
 struct virtio_net_stats virtio_net_stats(void) {
   return (struct virtio_net_stats){0};
 }

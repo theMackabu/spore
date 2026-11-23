@@ -29,7 +29,6 @@
 static uint8_t kernel_stack[64 * 1024] __attribute__((aligned(16)));
 static struct ramfs boot_ramfs;
 static struct ext2_fs root_ext2;
-static bool root_ext2_ready;
 
 static bool ext2_blk_read(void *ctx, uint64_t offset, void *dst, uint32_t len) {
   (void)ctx;
@@ -39,29 +38,6 @@ static bool ext2_blk_read(void *ctx, uint64_t offset, void *dst, uint32_t len) {
 static bool ext2_blk_write(void *ctx, uint64_t offset, const void *src, uint32_t len) {
   (void)ctx;
   return virtio_blk_write(offset, src, len);
-}
-
-static void probe_ext2_root(void) {
-  if (!ext2_mount_rw(&root_ext2, ext2_blk_read, ext2_blk_write, NULL)) {
-    kprintf("[spore] ext2: mount failed\n");
-    return;
-  }
-  root_ext2_ready = true;
-
-  struct ext2_node motd;
-  if (ext2_lookup(&root_ext2, "/etc/motd", &motd)) {
-    kprintf("[spore] ext2: /etc/motd size=%u\n", (unsigned)motd.size);
-  }
-
-  struct ext2_node bin;
-  if (ext2_lookup(&root_ext2, "/bin", &bin)) {
-    struct ext2_dirent ent;
-    unsigned count = 0;
-    while (ext2_dirent(&root_ext2, &bin, count, &ent)) {
-      ++count;
-    }
-    kprintf("[spore] ext2: /bin entries=%u\n", count);
-  }
 }
 
 void finish_enter_el0(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t user_sp) {
@@ -135,14 +111,18 @@ void kernel_main(void) {
   exceptions_init();
   smp_boot_parked_secondaries();
   timer_init(boot->hhdm_offset);
-  if (virtio_blk_init(boot->hhdm_offset)) { probe_ext2_root(); }
-  if (virtio_net_init(boot->hhdm_offset)) {
-    net_init();
-    (void)virtio_net_smoke_tx();
+  struct ext2_fs *root = NULL;
+  if (virtio_blk_init(boot->hhdm_offset)) {
+    if (ext2_mount_rw(&root_ext2, ext2_blk_read, ext2_blk_write, NULL)) {
+      root = &root_ext2;
+    } else {
+      kprintf("[spore] ext2: mount failed\n");
+    }
   }
+  if (virtio_net_init(boot->hhdm_offset)) { net_init(); }
   cell_system_init(boot->hhdm_offset);
 
   ramfs_init(&boot_ramfs, boot->modules, boot->module_count, boot->hhdm_offset);
-  vfs_init(&boot_ramfs, root_ext2_ready ? &root_ext2 : NULL, boot->hhdm_offset);
+  vfs_init(&boot_ramfs, root, boot->hhdm_offset);
   start_init(boot->hhdm_offset);
 }

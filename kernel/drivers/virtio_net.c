@@ -322,22 +322,6 @@ bool virtio_net_send_frame(const void *frame, uint32_t len) {
   return true;
 }
 
-bool virtio_net_smoke_tx(void) {
-  uint8_t frame[14 + 15];
-  for (size_t i = 0; i < 6; ++i) {
-    frame[i] = 0xff;
-  }
-  static const uint8_t src[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
-  kmemcpy(frame + 6, src, sizeof(src));
-  frame[12] = 0x88;
-  frame[13] = 0xb5;
-  kmemcpy(frame + 14, "spore-net-smoke", 15);
-  bool ok = virtio_net_send_frame(frame, sizeof(frame));
-  kprintf("[spore] virtio-net: tx smoke %s len=%u\n", ok ? "PASS" : "TIMEOUT",
-          (unsigned)(sizeof(frame) + NET_HDR_SIZE));
-  return ok;
-}
-
 struct virtio_net_stats virtio_net_stats(void) {
   return (struct virtio_net_stats){
     .rx_bytes = rx_bytes,
