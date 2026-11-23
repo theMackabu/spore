@@ -24,7 +24,10 @@ int main(void) {
   struct ramfs_node node;
   assert(!ramfs_lookup_node(&fs, "/missing", &node));
   assert(ramfs_lookup_node(&fs, "/sbin/init", &node));
-  assert(!node.is_dir && node.data == init_data && node.size == sizeof(init_data));
+  assert(!node.is_dir && node.size == sizeof(init_data));
+  char boot_data[sizeof(init_data)];
+  assert(ramfs_read(&fs, node.index, 0, boot_data, sizeof(boot_data)) == sizeof(boot_data));
+  assert(memcmp(boot_data, init_data, sizeof(boot_data)) == 0);
 
   struct ramfs_node root;
   assert(ramfs_lookup_node(&fs, "/", &root) && root.is_dir);

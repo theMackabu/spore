@@ -59,7 +59,6 @@ bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
     struct ext2_node node;
     if (!ext2_create(vfs_root_ext2, path, false, mode, &node)) { return false; }
     vfs_from_ext2(&node, out);
-    out->writable = true;
     vfs_lookup_cache_clear();
     return true;
   }
@@ -78,7 +77,6 @@ int vfs_tmpfile(const struct vfs_node *dir, uint16_t mode, uint32_t uid, uint32_
     if (!vfs_root_ext2->write) { return -30; }
     if (!ext2_tmpfile(vfs_root_ext2, mode, uid, gid, linkable, &node)) { return -28; }
     vfs_from_ext2(&node, out);
-    out->writable = true;
     vfs_page_cache_invalidate(out);
     return 0;
   }
@@ -320,7 +318,6 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
     if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &fresh)) { return false; }
     *out = *node;
     vfs_from_ext2(&fresh, out);
-    out->writable = true;
     return true;
   }
   if (node->backend == VFS_PROC) {

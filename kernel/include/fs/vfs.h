@@ -38,15 +38,11 @@ struct vfs_node {
   enum vfs_backend backend;
   uint64_t ino;
   bool is_dir;
-  bool writable;
   enum ramfs_device device;
   uint16_t mode;
   uint16_t links_count;
   uint32_t uid;
   uint32_t gid;
-  uint32_t seals;
-  uint32_t shared_write_mappings;
-  bool sealable;
   uint64_t dev_id;
   uint64_t rdev;
   uint64_t atime;

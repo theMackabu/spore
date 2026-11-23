@@ -113,7 +113,6 @@ struct ramfs_node {
   struct ramfs *fs;
   int index;
   const char *name;
-  const void *data;
   uint64_t size;
   uint64_t ino;
   bool is_dir;
@@ -123,9 +122,6 @@ struct ramfs_node {
   uint32_t uid;
   uint32_t gid;
   uint16_t links_count;
-  uint32_t seals;
-  uint32_t shared_write_mappings;
-  bool sealable;
   uint64_t atime;
   uint64_t ctime;
   uint64_t mtime;
