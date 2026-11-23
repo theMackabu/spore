@@ -264,8 +264,7 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len) {
   const uint8_t *in = src;
   uint64_t done = 0;
-  uint8_t block[4096];
-  if (fs->write == NULL || fs->block_size > sizeof(block)) { return -EXT2_EIO; }
+  if (fs->write == NULL || fs->block_size > 4096) { return -EXT2_EIO; }
   if (off > UINT32_MAX || len > UINT32_MAX || off + len > UINT32_MAX || off + len < off) { return -EXT2_EFBIG; }
   while (done < len) {
     uint32_t file_block_index = (uint32_t)(off / fs->block_size);
@@ -296,11 +295,8 @@ int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off
     uint32_t disk_block = 0;
     int rc = ext2_file_block_for_write(fs, node, file_block_index, &disk_block, true);
     if (rc != 0) { return rc; }
-    if (within != 0 || chunk != fs->block_size) {
-      if (!ext2_read_block(fs, disk_block, block)) { return -EXT2_EIO; }
-    }
-    kmemcpy(block + within, in + done, chunk);
-    if (!ext2_write_block(fs, disk_block, block)) { return -EXT2_EIO; }
+    uint64_t disk_offset = (uint64_t)disk_block * fs->block_size + within;
+    if (!ext2_write_bytes(fs, disk_offset, in + done, chunk)) { return -EXT2_EIO; }
     done += chunk;
     off += chunk;
   }

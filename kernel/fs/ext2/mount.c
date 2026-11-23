@@ -115,7 +115,7 @@ bool ext2_cache_range_has_dirty(struct ext2_fs *fs, uint32_t first_block, uint32
   return false;
 }
 
-const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block) {
+static struct block_cache_entry *cache_read(struct ext2_fs *fs, uint32_t block) {
   if (block >= fs->block_count || fs->block_size > sizeof(block_cache[0].data)) { return NULL; }
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
@@ -131,7 +131,12 @@ const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block) {
     ++ext2_stat_counters.block_cache_hits;
   }
   entry->age = ++block_cache_clock;
-  return entry->data;
+  return entry;
+}
+
+const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block) {
+  struct block_cache_entry *entry = cache_read(fs, block);
+  return entry != NULL ? entry->data : NULL;
 }
 
 bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
@@ -189,19 +194,21 @@ bool ext2_read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t le
 
 bool ext2_write_bytes(struct ext2_fs *fs, uint64_t offset, const void *src, uint32_t len) {
   const uint8_t *in = src;
-  uint8_t block[4096];
+  if (len != 0 && fs->write == NULL) { return false; }
   while (len > 0) {
     uint32_t block_index = (uint32_t)(offset / fs->block_size);
     uint32_t within = (uint32_t)(offset % fs->block_size);
     uint32_t chunk = fs->block_size - within;
     if (chunk > len) { chunk = len; }
-    if (within != 0 || chunk != fs->block_size) {
-      if (!ext2_read_block(fs, block_index, block)) { return false; }
+    if (chunk == fs->block_size) {
+      if (!ext2_write_block(fs, block_index, in)) { return false; }
     } else {
-      kmemset(block, 0, fs->block_size);
+      struct block_cache_entry *entry = cache_read(fs, block_index);
+      if (entry == NULL) { return false; }
+      kmemcpy(entry->data + within, in, chunk);
+      entry->dirty = true;
+      ++ext2_stat_counters.block_cache_writes;
     }
-    kmemcpy(block + within, in, chunk);
-    if (!ext2_write_block(fs, block_index, block)) { return false; }
     in += chunk;
     offset += chunk;
     len -= chunk;
