@@ -28,21 +28,10 @@ static bool vma_is_shared(const struct vma *vma) {
   return vma != NULL && vma->used && (vma->flags & MAP_SHARED) != 0;
 }
 
-static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
-  if (count == 0 || elem_size == 0) { return NULL; }
-  uint64_t bytes = (uint64_t)count * elem_size;
-  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (pa == 0) { return NULL; }
-  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
-  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
-  return ptr;
-}
-
-bool cell_mm_reset(size_t capacity, uint64_t hhdm_offset) {
+bool cell_mm_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_DOMAINS + MAX_SNAPSHOTS) { return false; }
   if (process_mms == NULL || process_mm_capacity != capacity) {
-    process_mms = alloc_table(capacity, sizeof(*process_mms), hhdm_offset);
+    process_mms = pmm_alloc_table(capacity, sizeof(*process_mms));
     if (process_mms == NULL) { return false; }
     process_mm_capacity = capacity;
   } else {

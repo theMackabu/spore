@@ -57,7 +57,7 @@ struct domain {
   uint64_t pending_signals;
 };
 
-bool cell_domain_reset(size_t capacity, uint64_t hhdm_offset);
+bool cell_domain_reset(size_t capacity);
 size_t cell_domain_capacity(void);
 size_t cell_domain_index(const struct domain *domain);
 uint32_t cell_domain_last_id(void);

@@ -21,21 +21,10 @@ static struct domain *domains;
 static size_t domain_capacity;
 static int next_domain_id = 1;
 
-static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
-  if (count == 0 || elem_size == 0) { return NULL; }
-  uint64_t bytes = (uint64_t)count * elem_size;
-  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (pa == 0) { return NULL; }
-  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
-  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
-  return ptr;
-}
-
-bool cell_domain_reset(size_t capacity, uint64_t hhdm_offset) {
+bool cell_domain_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_DOMAINS) { return false; }
   if (domains == NULL || domain_capacity != capacity) {
-    domains = alloc_table(capacity, sizeof(*domains), hhdm_offset);
+    domains = pmm_alloc_table(capacity, sizeof(*domains));
     if (domains == NULL) { return false; }
     domain_capacity = capacity;
   } else {

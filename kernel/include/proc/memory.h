@@ -28,7 +28,7 @@ struct user_address_space *cell_domain_as(struct domain *domain);
 const struct user_address_space *cell_domain_as_const(const struct domain *domain);
 struct vma_list *cell_domain_vmas(struct domain *domain);
 const struct vma_list *cell_domain_vmas_const(const struct domain *domain);
-bool cell_mm_reset(size_t capacity, uint64_t hhdm_offset);
+bool cell_mm_reset(size_t capacity);
 size_t cell_mm_capacity(void);
 struct process_mm *cell_mm_from_owned(struct user_address_space *as, struct vma_list *vmas);
 struct process_mm *cell_mm_clone_cow(struct process_mm *src);

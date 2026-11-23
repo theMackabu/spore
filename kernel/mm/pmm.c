@@ -248,6 +248,16 @@ void *pmm_phys_to_virt(uint64_t pa) {
   return (void *)((uintptr_t)hhdm_base + pa);
 }
 
+void *pmm_alloc_table(size_t count, size_t element_size) {
+  if (hhdm_base == NULL || count == 0 || element_size == 0 || count > SIZE_MAX / element_size) { return NULL; }
+  size_t bytes = count * element_size;
+  size_t pages = 1 + (bytes - 1) / PAGE_SIZE;
+  uint64_t pa = pmm_alloc_contiguous_pages(pages);
+  if (pa == 0) { return NULL; }
+  void *table = pmm_phys_to_virt(pa);
+  return kmemset(table, 0, bytes);
+}
+
 void pmm_free_page(uint64_t pa) {
   if ((pa % PAGE_SIZE) != 0) { return; }
 

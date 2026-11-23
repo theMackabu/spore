@@ -139,7 +139,7 @@ struct open_file {
   };
 };
 
-bool cell_fd_table_reset(size_t capacity, uint64_t hhdm_offset);
+bool cell_fd_table_reset(size_t capacity);
 size_t cell_open_file_capacity(void);
 int cell_find_free_fd(struct domain *domain, int start);
 void cell_retain_open_file(struct open_file *file);

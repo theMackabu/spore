@@ -24,21 +24,10 @@ static struct thread *threads;
 static size_t thread_capacity;
 static int next_thread_id = 1;
 
-static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
-  if (count == 0 || elem_size == 0) { return NULL; }
-  uint64_t bytes = (uint64_t)count * elem_size;
-  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (pa == 0) { return NULL; }
-  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
-  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
-  return ptr;
-}
-
-bool cell_thread_reset(size_t capacity, uint64_t hhdm_offset) {
+bool cell_thread_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_THREADS) { return false; }
   if (threads == NULL || thread_capacity != capacity) {
-    threads = alloc_table(capacity, sizeof(*threads), hhdm_offset);
+    threads = pmm_alloc_table(capacity, sizeof(*threads));
     if (threads == NULL) { return false; }
     thread_capacity = capacity;
   } else {

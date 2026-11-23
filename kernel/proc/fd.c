@@ -52,21 +52,10 @@ static void free_inotify_pages(uint64_t pa) {
 static struct open_file *open_files;
 static size_t open_file_capacity;
 
-static void *alloc_table(size_t count, size_t elem_size, uint64_t hhdm_offset) {
-  if (count == 0 || elem_size == 0) { return NULL; }
-  uint64_t bytes = (uint64_t)count * elem_size;
-  uint64_t pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (pa == 0) { return NULL; }
-  void *ptr = (void *)(uintptr_t)(hhdm_offset + pa);
-  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
-  return ptr;
-}
-
-bool cell_fd_table_reset(size_t capacity, uint64_t hhdm_offset) {
+bool cell_fd_table_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_OPEN_FILES) { return false; }
   if (open_files == NULL || open_file_capacity != capacity) {
-    open_files = alloc_table(capacity, sizeof(*open_files), hhdm_offset);
+    open_files = pmm_alloc_table(capacity, sizeof(*open_files));
     if (open_files == NULL) { return false; }
     open_file_capacity = capacity;
   } else {

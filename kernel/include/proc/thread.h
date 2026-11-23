@@ -81,7 +81,7 @@ struct thread {
   uint64_t futex_addr;
 };
 
-bool cell_thread_reset(size_t capacity, uint64_t hhdm_offset);
+bool cell_thread_reset(size_t capacity);
 size_t cell_thread_capacity(void);
 void cell_set_current_thread(struct thread *thread);
 bool cell_scheduler_waiting_for_interrupt(void);
