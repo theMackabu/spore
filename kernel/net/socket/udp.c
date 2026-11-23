@@ -241,13 +241,6 @@ static bool dgram_copy_source_to_domain(struct domain *domain, uint32_t src_ip, 
   return vmm_copy_to_user(cell_domain_as(domain), addr, &sa, sizeof(sa));
 }
 
-bool cell_socket_copy_udp_source_to_domain(struct domain *domain, const struct open_file *file, uint64_t addr,
-                                           uint64_t addrlen) {
-  if (file == NULL || file->dgram_rx_count == 0) { return dgram_copy_source_to_domain(domain, 0, 0, addr, addrlen); }
-  uint8_t index = file->dgram_rx_head;
-  return dgram_copy_source_to_domain(domain, file->dgram_rx_ip[index], file->dgram_rx_port[index], addr, addrlen);
-}
-
 int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, uint64_t addr,
                              uint64_t addrlen, uint32_t flags) {
   if (file != NULL && file->udp_error != 0) {

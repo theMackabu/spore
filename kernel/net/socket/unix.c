@@ -307,12 +307,6 @@ int cell_fd_unix_queue_right_range(int fd, int passed_fd, uint64_t start, uint64
   return -EAGAIN;
 }
 
-int cell_fd_unix_queue_right(int fd, int passed_fd) {
-  uint64_t offset = 0;
-  if (!cell_fd_unix_tx_offset(fd, &offset)) { return -EBADF; }
-  return cell_fd_unix_queue_right_range(fd, passed_fd, offset, offset);
-}
-
 int cell_fd_unix_recv_right_for_range(int fd, uint64_t start, uint64_t end, int fd_flags) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -EBADF; }
@@ -329,12 +323,6 @@ int cell_fd_unix_recv_right_for_range(int fd, uint64_t start, uint64_t end, int 
     return newfd;
   }
   return -EAGAIN;
-}
-
-int cell_fd_unix_recv_right(int fd, int fd_flags) {
-  uint64_t offset = 0;
-  if (!cell_fd_unix_rx_offset(fd, &offset)) { return -EBADF; }
-  return cell_fd_unix_recv_right_for_range(fd, offset, UINT64_MAX, fd_flags);
 }
 
 bool cell_fd_unix_tx_offset(int fd, uint64_t *out) {

@@ -423,12 +423,6 @@ bool net_tcp_send_segment(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
   return net_tcp_send_segment_options(src_port, dst_ip, dst_port, seq, ack, window, flags, payload, len, NULL, 0);
 }
 
-bool net_tcp_send_segment_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, uint32_t seq,
-                              uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len) {
-  return net_tcp_send_segment_options_tos(src_port, dst_ip, dst_port, tos, seq, ack, window, flags, payload, len, NULL,
-                                          0);
-}
-
 bool net_tcp_send_segment_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
                                   uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags, const void *payload,
                                   size_t len) {

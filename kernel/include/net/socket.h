@@ -23,16 +23,11 @@ struct cell_peer_cred {
 
 int cell_socket_poll_events(const struct open_file *file, int events);
 int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
-int64_t cell_socket_tcp_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
-bool cell_socket_copy_udp_source_to_domain(struct domain *domain, const struct open_file *file, uint64_t addr,
-                                           uint64_t addrlen);
 void cell_socket_release_listener(struct open_file *file);
 void cell_socket_release_file(struct open_file *file);
 void cell_socket_wake_file(struct open_file *file);
 void cell_socket_timer_tick(uint64_t now_ticks);
 int cell_fd_socketpair_unix(uint64_t sv_addr, int flags);
-int cell_fd_unix_queue_right(int fd, int passed_fd);
-int cell_fd_unix_recv_right(int fd, int fd_flags);
 int cell_fd_unix_queue_right_range(int fd, int passed_fd, uint64_t start, uint64_t end);
 int cell_fd_unix_recv_right_for_range(int fd, uint64_t start, uint64_t end, int fd_flags);
 bool cell_fd_unix_tx_offset(int fd, uint64_t *out);
@@ -65,7 +60,6 @@ int cell_fd_tcp_listen(int fd, int backlog);
 int cell_fd_tcp_accept(int fd, uint64_t addr, uint64_t addrlen, int flags, struct trap_frame *frame);
 int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *frame);
 int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len, bool dontwait, struct trap_frame *frame);
-int64_t cell_fd_tcp_send_kernel(int fd, const void *buf, uint64_t len);
 int cell_fd_socket_shutdown(int fd, int how);
 int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, bool dontwait, struct trap_frame *frame,
                             uint64_t addr, uint64_t addrlen);

@@ -753,19 +753,6 @@ int64_t tcp_write_one_from_kernel(struct open_file *file, const void *buf, uint6
   return (int64_t)chunk;
 }
 
-static int64_t cell_socket_tcp_write_from_kernel(struct open_file *file, const void *buf, uint64_t len) {
-  if (len == 0) { return tcp_write_one_from_kernel(file, buf, 0); }
-  uint64_t sent = 0;
-  while (sent < len) {
-    int64_t n = tcp_write_one_from_kernel(file, (const uint8_t *)buf + sent, len - sent);
-    if (n < 0) { return sent != 0 ? (int64_t)sent : n; }
-    if (n == 0) { break; }
-    sent += (uint64_t)n;
-    if (!cell_tcp_socket_writable(file)) { break; }
-  }
-  return (int64_t)sent;
-}
-
 int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
   if (domain == NULL || file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
   if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
@@ -804,10 +791,6 @@ int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_
   tcp_rx_consume(file, (uint32_t)n);
   tcp_ack_current_state(file);
   return (int64_t)n;
-}
-
-int64_t cell_socket_tcp_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  return cell_socket_tcp_read_to_domain_flags(domain, file, buf, len, 0);
 }
 
 int64_t cell_socket_tcp_read_to_kernel(struct open_file *file, void *buf, uint64_t len, uint32_t flags) {
@@ -1075,11 +1058,6 @@ int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len, bool dontwait, stru
   }
   if (!tcp_send_would_block(file)) { return wrote; }
   return cell_block_current_on_socket_write_timeout(fd, buf, len, file->so_sndtimeo_ticks, frame);
-}
-
-int64_t cell_fd_tcp_send_kernel(int fd, const void *buf, uint64_t len) {
-  struct domain *domain = cell_current_domain_internal();
-  return cell_socket_tcp_write_from_kernel(tcp_socket_for_fd(domain, fd), buf, len);
 }
 
 int cell_fd_socket_shutdown(int fd, int how) {
