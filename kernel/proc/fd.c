@@ -51,6 +51,8 @@ static void free_inotify_pages(uint64_t pa) {
 
 static struct open_file *open_files;
 static size_t open_file_capacity;
+static size_t next_unused;
+static struct open_file *free_files;
 
 bool cell_fd_table_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_OPEN_FILES) { return false; }
@@ -61,6 +63,8 @@ bool cell_fd_table_reset(size_t capacity) {
   } else {
     kmemset(open_files, 0, open_file_capacity * sizeof(*open_files));
   }
+  next_unused = 0;
+  free_files = NULL;
   return true;
 }
 
@@ -77,15 +81,15 @@ int cell_find_free_fd(struct domain *domain, int start) {
 }
 
 struct open_file *cell_alloc_open_file(void) {
-  for (size_t i = 0; i < open_file_capacity; ++i) {
-    if (!open_files[i].used) {
-      kmemset(&open_files[i], 0, sizeof(open_files[i]));
-      open_files[i].used = true;
-      open_files[i].refcount = 1;
-      return &open_files[i];
-    }
+  struct open_file *file = free_files;
+  if (file != NULL) {
+    free_files = file->next_free;
+  } else {
+    if (next_unused >= open_file_capacity) { return NULL; }
+    file = &open_files[next_unused++];
   }
-  return NULL;
+  *file = (struct open_file){.refcount = 1};
+  return file;
 }
 
 void cell_retain_open_file(struct open_file *file) {
@@ -116,7 +120,8 @@ void cell_release_open_file(struct open_file *file) {
       cell_pty_release_file(file);
     }
     if (file->type == OPEN_RAMFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
-    file->used = false;
+    file->next_free = free_files;
+    free_files = file;
   }
 }
 
