@@ -1,5 +1,4 @@
 #include "proc/domain.h"
-
 #include "proc/accounting.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
@@ -334,15 +333,4 @@ void cell_note_unsupported_ioctl(uint64_t request) {
   if (domain == NULL) { return; }
   ++domain->unsupported_ioctls;
   domain->last_unsupported_ioctl = request;
-}
-
-int cell_proc_pid_at(size_t index) {
-  size_t seen = 0;
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
-    struct domain *domain = cell_domain_slot(i);
-    if (domain == NULL || !domain->used) { continue; }
-    if (seen == index) { return domain->id; }
-    ++seen;
-  }
-  return 0;
 }

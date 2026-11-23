@@ -130,15 +130,13 @@ struct ramfs_node {
 struct ramfs_dirent {
   const char *name;
   uint64_t ino;
-  bool is_dir;
-  bool is_device;
   uint8_t type;
 };
 
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);
 void ramfs_set_now(uint64_t epoch_sec);
 bool ramfs_lookup_node(const struct ramfs *fs, const char *path, struct ramfs_node *out);
-bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ramfs_dirent *out);
+bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct ramfs_dirent *out);
 bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode);
 bool ramfs_create(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);
 bool ramfs_mkfifo(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);

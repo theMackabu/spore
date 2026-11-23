@@ -311,51 +311,54 @@ bool vfs_proc_readlink(const char *path, char *out, size_t cap, size_t *len_out)
   return false;
 }
 
-bool vfs_proc_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out) {
+bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
+  if (cursor == NULL) { return false; }
   if (dir->backend == VFS_PROC) {
     if (dir->device == RAMFS_DEV_PROC_PID_FD && dir->proc.fd < 0) {
       if (dir->proc.pid != cell_current_pid()) { return false; }
-      struct vfs_node fd_node;
-      size_t seen = 0;
-      for (int fd = 0; fd < (int)VFS_PROC_FD_MAX; ++fd) {
-        if (!cell_fd_stat(fd, &fd_node)) { continue; }
-        if (seen++ != index) { continue; }
+      if (*cursor >= VFS_PROC_FD_MAX) { return false; }
+      for (int fd = (int)*cursor; fd < (int)VFS_PROC_FD_MAX; ++fd) {
+        if (cell_fd_get_fd_flags(fd) < 0) { continue; }
         *out = (struct vfs_dirent){.ino = 150000u + (uint64_t)dir->proc.pid * 64u + (uint64_t)fd,
-                                   .is_dir = false,
-                                   .is_device = false,
-                                   .type = 10};
+                                   .type = VFS_DT_LNK};
         utoa_dec((uint64_t)fd, out->name, sizeof(out->name));
+        *cursor = (uint64_t)fd + 1;
         return true;
       }
       return false;
     }
     if (dir->proc.pid < 0) {
-      if (index != 0) { return false; }
+      if (*cursor != 0) { return false; }
       int pid = -dir->proc.pid;
-      *out = (struct vfs_dirent){.ino = 130000u + (uint64_t)pid, .is_dir = true, .is_device = false};
+      *out = (struct vfs_dirent){.ino = 130000u + (uint64_t)pid, .type = VFS_DT_DIR};
       utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
+      *cursor = 1;
       return true;
     }
-    static const char *names[] = {"stat", "status", "cmdline", "statm", "comm", "mounts", "mountinfo", "cwd", "exe", "fd", "task"};
-    if (!dir->is_dir || index >= sizeof(names) / sizeof(names[0])) { return false; }
-    bool is_task = str_eq(names[index], "task") || str_eq(names[index], "fd");
-    *out = (struct vfs_dirent){.ino = dir->ino + index + 1, .is_dir = is_task, .is_device = false};
-    kmemcpy(out->name, names[index], kstrlen(names[index]) + 1);
+    static const struct {
+      const char *name;
+      uint8_t type;
+    } entries[] = {{"stat", VFS_DT_REG},     {"status", VFS_DT_REG}, {"cmdline", VFS_DT_REG},
+                   {"statm", VFS_DT_REG},    {"comm", VFS_DT_REG},   {"mounts", VFS_DT_REG},
+                   {"mountinfo", VFS_DT_REG}, {"cwd", VFS_DT_LNK},    {"exe", VFS_DT_LNK},
+                   {"fd", VFS_DT_DIR},       {"task", VFS_DT_DIR}};
+    if (!dir->is_dir || *cursor >= sizeof(entries) / sizeof(entries[0])) { return false; }
+    const size_t index = (size_t)*cursor;
+    *out = (struct vfs_dirent){.ino = dir->ino + index + 1,
+                               .type = entries[index].type};
+    kmemcpy(out->name, entries[index].name, kstrlen(entries[index].name) + 1);
+    ++*cursor;
     return true;
   }
-  struct ramfs_dirent ent;
   if (dir->backend == VFS_RAMFS && dir->ramfs.mount == RAMFS_MOUNT_PROC && str_eq(dir->ramfs.name, "proc")) {
-    size_t static_count = 0;
-    while (ramfs_dirent(dir->ramfs.fs, dir->ramfs.index, static_count, &ent)) {
-      ++static_count;
-    }
-    if (index >= static_count) {
-      int pid = cell_proc_pid_at(index - static_count);
-      if (pid != 0) {
-        *out = (struct vfs_dirent){.ino = 100000u + (uint64_t)pid, .is_dir = true, .is_device = false};
-        utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
-        return true;
-      }
+    if (*cursor < RAMFS_MAX_NODES) { return false; }
+    for (size_t slot = (size_t)(*cursor - RAMFS_MAX_NODES); slot < cell_domain_capacity(); ++slot) {
+      struct domain *domain = cell_domain_slot(slot);
+      if (domain == NULL || !domain->used) { continue; }
+      *out = (struct vfs_dirent){.ino = 100000u + (uint64_t)domain->id, .type = VFS_DT_DIR};
+      utoa_dec((uint64_t)domain->id, out->name, sizeof(out->name));
+      *cursor = RAMFS_MAX_NODES + slot + 1;
+      return true;
     }
   }
   return false;

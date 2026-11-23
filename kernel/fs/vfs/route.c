@@ -31,8 +31,17 @@ bool vfs_paths_share_ramfs(const char *a, const char *b) {
          (path_is_mount(a, "/run") && path_is_mount(b, "/run"));
 }
 
-static bool ramfs_device_is_block(enum ramfs_device device) {
-  return device == RAMFS_DEV_BLK_ROOT || device == RAMFS_DEV_BLK_BOOT;
+static uint8_t ext2_dirent_type(uint8_t type) {
+  switch (type) {
+    case 1: return VFS_DT_REG;
+    case 2: return VFS_DT_DIR;
+    case 3: return VFS_DT_CHR;
+    case 4: return VFS_DT_BLK;
+    case 5: return VFS_DT_FIFO;
+    case 6: return VFS_DT_SOCK;
+    case 7: return VFS_DT_LNK;
+    default: return VFS_DT_UNKNOWN;
+  }
 }
 
 static uint64_t make_rdev(uint64_t major, uint64_t minor) {
@@ -95,25 +104,12 @@ void vfs_update_time_sources(void) {
 }
 
 void vfs_from_ramfs(const struct ramfs_node *node, struct vfs_node *out) {
-  uint16_t perms = node->mode & 07777u;
-  uint16_t type = (uint16_t)(node->mode & 0170000u);
-  uint16_t mode =
-    type != 0 ? (uint16_t)(type | perms) : (node->is_dir ? (uint16_t)(0040000u | perms) : (uint16_t)(0100000u | perms));
-  if (node->device != RAMFS_DEV_NONE) {
-    if (ramfs_device_is_block(node->device)) {
-      mode = (uint16_t)(0060000u | perms);
-    } else if (node->mount == RAMFS_MOUNT_PROC) {
-      mode = (uint16_t)(0100000u | perms);
-    } else {
-      mode = (uint16_t)(0020000u | perms);
-    }
-  }
   *out = (struct vfs_node){
     .backend = VFS_RAMFS,
     .ino = node->ino,
     .is_dir = node->is_dir,
     .device = node->device,
-    .mode = mode,
+    .mode = node->mode,
     .links_count = node->links_count,
     .uid = node->uid,
     .gid = node->gid,
@@ -208,42 +204,27 @@ bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
   return false;
 }
 
-bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out) {
-  ++vfs_stat_counters.dirent_count;
-  if (dir->backend == VFS_PROC) { return vfs_proc_dirent(dir, index, out); }
-  if (dir->backend == VFS_RAMFS) {
-    struct ramfs_dirent ent;
-    if (ramfs_dirent(dir->ramfs.fs, dir->ramfs.index, index, &ent)) {
-      *out = (struct vfs_dirent){.ino = ent.ino, .is_dir = ent.is_dir, .is_device = ent.is_device, .type = ent.type};
-      kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
-      return true;
-    }
-    return vfs_proc_dirent(dir, index, out);
-  }
-  if (dir->backend == VFS_EXT2) {
-    struct ext2_dirent ent;
-    if (!ext2_dirent(vfs_root_ext2, &dir->ext2, index, &ent)) { return false; }
-    *out = (struct vfs_dirent){.ino = ent.ino, .is_dir = ent.type == 2, .is_device = false};
-    kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
-    return true;
-  }
-  return false;
-}
-
 bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
   ++vfs_stat_counters.next_dirent_count;
   if (cursor == NULL) { return false; }
   if (dir->backend == VFS_EXT2) {
     struct ext2_dirent ent;
     if (!ext2_next_dirent(vfs_root_ext2, &dir->ext2, cursor, &ent)) { return false; }
-    *out = (struct vfs_dirent){.ino = ent.ino, .is_dir = ent.type == 2, .is_device = false};
+    *out = (struct vfs_dirent){.ino = ent.ino, .type = ext2_dirent_type(ent.type)};
     kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
     return true;
   }
-  size_t index = (size_t)*cursor;
-  if (!vfs_dirent(dir, index, out)) { return false; }
-  *cursor = index + 1;
-  return true;
+  if (dir->backend == VFS_RAMFS) {
+    struct ramfs_dirent ent;
+    if (ramfs_next_dirent(dir->ramfs.fs, dir->ramfs.index, cursor, &ent)) {
+      *out = (struct vfs_dirent){.ino = ent.ino, .type = ent.type};
+      kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
+      return true;
+    }
+    return vfs_proc_next_dirent(dir, cursor, out);
+  }
+  if (dir->backend == VFS_PROC) { return vfs_proc_next_dirent(dir, cursor, out); }
+  return false;
 }
 
 bool vfs_fs_info(struct vfs_fs_info *out) {

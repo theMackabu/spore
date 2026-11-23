@@ -34,11 +34,15 @@ int main(void) {
   struct ramfs_dirent ent;
   const char *dirs[] = {"dev", "proc", "sys", "tmp", "run", "sbin"};
   for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); ++d) {
-    size_t i = 0;
-    do {
-      assert(ramfs_dirent(&fs, root.index, i++, &ent));
-    } while (strcmp(ent.name, dirs[d]) != 0);
-    assert(ent.is_dir);
+    uint64_t cursor = 0;
+    bool found = false;
+    while (ramfs_next_dirent(&fs, root.index, &cursor, &ent)) {
+      if (strcmp(ent.name, dirs[d]) != 0) { continue; }
+      assert(ent.type == 4);
+      found = true;
+      break;
+    }
+    assert(found);
   }
   assert(ramfs_lookup_node(&fs, "/dev/null", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_NULL);
@@ -67,6 +71,7 @@ int main(void) {
 
   assert(ramfs_mkdir(&fs, "/tmp/d", 0700));
   assert(ramfs_lookup_node(&fs, "/tmp/d", &node));
+  int dir_index = node.index;
   assert((node.mode & 0170000u) == 0040000u);
   assert((node.mode & 07777u) == 0700);
   assert(ramfs_mkfifo(&fs, "/run/f", 0666, &node));
@@ -77,7 +82,7 @@ int main(void) {
   assert(ramfs_write(&fs, node.index, 0, "hello", 5) == 5);
   assert(ramfs_chmod_node(&fs, node.index, 0600));
   assert(ramfs_refresh_node(&fs, node.index, &node));
-  assert(node.mode == 0600);
+  assert((node.mode & 07777u) == 0600);
   char buf[8] = {0};
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 5);
   assert(strcmp(buf, "hello") == 0);
@@ -103,6 +108,13 @@ int main(void) {
   memset(buf, 0, sizeof(buf));
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 4);
   assert(strcmp(buf, "keep") == 0);
+  struct ramfs_dirent next_ent;
+  uint64_t dir_cursor = 0;
+  size_t dir_count = 0;
+  while (ramfs_next_dirent(&fs, dir_index, &dir_cursor, &next_ent)) {
+    ++dir_count;
+  }
+  assert(dir_count == 4);
   assert(ramfs_unlink(&fs, pack));
   assert(ramfs_unlink(&fs, idx));
   assert(ramfs_unlink(&fs, keep));

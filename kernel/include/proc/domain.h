@@ -84,7 +84,6 @@ int cell_setpgid(int pid, int pgid);
 int cell_getsid(int pid);
 int cell_setsid_current(void);
 bool cell_proc_exists(int pid);
-int cell_proc_pid_at(size_t index);
 uint32_t cell_proc_uid(int pid);
 uint32_t cell_proc_gid(int pid);
 void cell_note_unsupported_syscall(uint64_t nr);

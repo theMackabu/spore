@@ -35,9 +35,6 @@ enum {
   MFD_ALLOW_SEALING = 2,
   S_IFMT = 0170000,
   S_IFIFO = 0010000,
-  DT_REG = 8,
-  DT_DIR = 4,
-  DT_CHR = 2,
   EXDEV = 18,
   ENOENT = 2,
   EPERM = 1,
@@ -469,29 +466,33 @@ static uint16_t dirent_reclen(size_t name_len) {
 }
 
 int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
+  struct vfs_node dir;
+  int dir_rc = cell_fd_get_dir_node((int)fd, &dir);
+  if (dir_rc != 0) { return dir_rc; }
   uint64_t written = 0;
+  uint64_t cursor = cell_fd_dir_offset((int)fd);
   for (;;) {
     struct vfs_dirent ent;
-    uint64_t old_dir_offset = cell_fd_dir_offset((int)fd);
-    if (!cell_fd_next_dirent((int)fd, &ent)) { break; }
+    if (!vfs_next_dirent(&dir, &cursor, &ent)) { break; }
     size_t name_len = kstrlen(ent.name);
     uint16_t reclen = dirent_reclen(name_len);
     if (written + reclen > len) {
-      cell_fd_set_dir_offset((int)fd, old_dir_offset);
+      if (written == 0) { return -(int64_t)EINVAL; }
       break;
     }
-    if (!syscall_user_writable(buf + written, reclen)) { return -(int64_t)EFAULT; }
+    if (!syscall_user_writable(buf + written, reclen)) { return written == 0 ? -(int64_t)EFAULT : (int64_t)written; }
     struct linux_dirent64_header hdr = {
       .d_ino = ent.ino,
-      .d_off = (int64_t)cell_fd_dir_offset((int)fd),
+      .d_off = (int64_t)cursor,
       .d_reclen = reclen,
-      .d_type = ent.type != 0 ? ent.type : (ent.is_dir ? DT_DIR : (ent.is_device ? DT_CHR : DT_REG)),
+      .d_type = ent.type,
     };
     if (!vmm_copy_to_user(syscall_active_as(), buf + written, &hdr, sizeof(hdr)) ||
         !vmm_copy_to_user(syscall_active_as(), buf + written + sizeof(hdr), ent.name, name_len + 1)) {
-      return -(int64_t)EFAULT;
+      return written == 0 ? -(int64_t)EFAULT : (int64_t)written;
     }
     written += reclen;
+    cell_fd_set_dir_offset((int)fd, cursor);
   }
   return (int64_t)written;
 }

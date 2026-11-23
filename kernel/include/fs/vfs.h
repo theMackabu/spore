@@ -59,10 +59,19 @@ struct vfs_node {
   };
 };
 
+enum vfs_dirent_type {
+  VFS_DT_UNKNOWN,
+  VFS_DT_FIFO,
+  VFS_DT_CHR,
+  VFS_DT_DIR = 4,
+  VFS_DT_BLK = 6,
+  VFS_DT_REG = 8,
+  VFS_DT_LNK = 10,
+  VFS_DT_SOCK = 12,
+};
+
 struct vfs_dirent {
   uint64_t ino;
-  bool is_dir;
-  bool is_device;
   uint8_t type;
   char name[256];
 };
@@ -146,7 +155,6 @@ int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, ui
 bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out);
 void vfs_page_cache_invalidate(const struct vfs_node *node);
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
-bool vfs_dirent(const struct vfs_node *dir, size_t index, struct vfs_dirent *out);
 bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);
 bool vfs_device_fs_info(uint64_t dev_id, struct vfs_fs_info *out);

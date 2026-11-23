@@ -35,6 +35,52 @@ static int inotify_shared_watch(void) {
   return ok;
 }
 
+static int getdents_proc_batches(void) {
+  int fd = open("/proc/self", O_RDONLY | O_DIRECTORY);
+  if (fd < 0) { return 0; }
+  unsigned seen = 0;
+  char dents[32];
+  for (;;) {
+    long bytes = syscall(SYS_getdents64, fd, dents, sizeof(dents));
+    if (bytes < 0) {
+      close(fd);
+      return 0;
+    }
+    if (bytes == 0) { break; }
+    for (long off = 0; off < bytes;) {
+      struct linux_dirent64 *ent = (struct linux_dirent64 *)(dents + off);
+      if (ent->d_reclen == 0 || off + ent->d_reclen > bytes) {
+        close(fd);
+        return 0;
+      }
+      unsigned bit = 0;
+      if (strcmp(ent->d_name, "stat") == 0) {
+        bit = 1;
+      } else if (strcmp(ent->d_name, "cwd") == 0) {
+        if (ent->d_type != DT_LNK) {
+          close(fd);
+          return 0;
+        }
+        bit = 2;
+      } else if (strcmp(ent->d_name, "exe") == 0) {
+        if (ent->d_type != DT_LNK) {
+          close(fd);
+          return 0;
+        }
+        bit = 4;
+      }
+      if (bit != 0 && (seen & bit) != 0) {
+        close(fd);
+        return 0;
+      }
+      seen |= bit;
+      off += ent->d_reclen;
+    }
+  }
+  close(fd);
+  return seen == 7;
+}
+
 static int epoll_watch_lifetime(void) {
   int counter = eventfd(1, EFD_NONBLOCK);
   if (counter < 0) { return 0; }
@@ -132,16 +178,21 @@ int integration_fs_demo(void) {
   if (rename("a", "b") != 0) { ok = 0; }
   int dfd = open(".", O_RDONLY);
   char dents[256];
+  errno = 0;
+  if (syscall(SYS_getdents64, dfd, dents, 1) != -1 || errno != EINVAL) { ok = 0; }
   long dent_bytes = syscall(SYS_getdents64, dfd, dents, sizeof(dents));
   int saw_b = 0;
   for (long off = 0; off < dent_bytes;) {
     struct linux_dirent64 *d = (struct linux_dirent64 *)(dents + off);
-    if (strcmp(d->d_name, "b") == 0) { saw_b = 1; }
+    if (strcmp(d->d_name, "b") == 0 && d->d_type == DT_REG) { saw_b = 1; }
     off += d->d_reclen;
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary()) { ok = 0; }
+  if (!inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+      !getdents_proc_batches()) {
+    ok = 0;
+  }
   if (unlink("b") != 0) { ok = 0; }
   if (chdir("/") != 0) { ok = 0; }
   (void)syscall(35, AT_FDCWD, "/tmp/spore-demo-d", 0x200);

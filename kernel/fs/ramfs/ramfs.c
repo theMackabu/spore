@@ -338,7 +338,7 @@ static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir,
   fs->nodes[index].is_dir = is_dir;
   fs->nodes[index].writable = writable;
   fs->nodes[index].mount = fs->nodes[parent].mount;
-  fs->nodes[index].mode = is_dir ? 0777u : 0666u;
+  fs->nodes[index].mode = is_dir ? 0040777u : 0100666u;
   fs->nodes[index].uid = 0;
   fs->nodes[index].gid = 0;
   fs->nodes[parent].mtime = ramfs_now_sec;
@@ -403,7 +403,7 @@ static bool add_ro_file(struct ramfs *fs, const char *path, const void *data, ui
   if (index < 0) { return false; }
   fs->nodes[index].ro_data = data;
   fs->nodes[index].size = size;
-  fs->nodes[index].mode = 0444u;
+  fs->nodes[index].mode = 0100444u;
   return true;
 }
 
@@ -414,7 +414,10 @@ static bool add_device(struct ramfs *fs, const char *path, enum ramfs_device dev
   int index = add_node(fs, parent, name, false, false);
   if (index < 0) { return false; }
   fs->nodes[index].device = device;
-  fs->nodes[index].mode = device_is_block(device) ? 0660u : (device_is_readonly_text(device) ? 0444u : 0666u);
+  uint16_t perms = device_is_readonly_text(device) ? 0444u : (device_is_block(device) ? 0660u : 0666u);
+  fs->nodes[index].mode = (uint16_t)((device_is_block(device) ? 0060000u :
+                                      (device_is_readonly_text(device) ? 0100000u : 0020000u)) |
+                                     perms);
   return true;
 }
 
@@ -487,7 +490,7 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
 
   int root = alloc_node(fs);
   fs->nodes[root].is_dir = true;
-  fs->nodes[root].mode = 0777u;
+  fs->nodes[root].mode = 0040777u;
   fs->nodes[root].parent = root;
   fs->nodes[root].mount = RAMFS_MOUNT_RAM0;
   (void)copy_name(fs->nodes[root].name, "");
@@ -659,25 +662,23 @@ bool ramfs_lookup_node(const struct ramfs *fs_const, const char *path, struct ra
   return ramfs_refresh_node(fs, index, out);
 }
 
-bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ramfs_dirent *out) {
-  if (dir_index < 0 || dir_index >= RAMFS_MAX_NODES || !fs->nodes[dir_index].used || !fs->nodes[dir_index].is_dir) {
+bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct ramfs_dirent *out) {
+  if (cursor == NULL || dir_index < 0 || dir_index >= RAMFS_MAX_NODES || !fs->nodes[dir_index].used ||
+      !fs->nodes[dir_index].is_dir) {
     return false;
   }
-  size_t seen = 0;
-  for (int i = 0; i < RAMFS_MAX_NODES; ++i) {
-    if (fs->nodes[i].used && fs->nodes[i].parent == dir_index && i != dir_index) {
-      if (seen == index) {
-        out->name = fs->nodes[i].name;
-        const struct ramfs_mem_node *node = &fs->nodes[inode_index(fs, i)];
-        out->ino = node->ino;
-        out->is_dir = node->is_dir;
-        out->is_device = node->device != RAMFS_DEV_NONE && node->mount == RAMFS_MOUNT_DEV;
-        out->type = (uint8_t)((node->mode & 0170000u) >> 12);
-        return true;
-      }
-      ++seen;
-    }
+  if (*cursor >= RAMFS_MAX_NODES) { return false; }
+  size_t first = (size_t)*cursor;
+  for (size_t i = first; i < RAMFS_MAX_NODES; ++i) {
+    if (!fs->nodes[i].used || fs->nodes[i].parent != dir_index || (int)i == dir_index) { continue; }
+    const struct ramfs_mem_node *node = &fs->nodes[inode_index(fs, (int)i)];
+    out->name = fs->nodes[i].name;
+    out->ino = node->ino;
+    out->type = (uint8_t)((node->mode & 0170000u) >> 12);
+    *cursor = i + 1;
+    return true;
   }
+  *cursor = RAMFS_MAX_NODES;
   return false;
 }
 
@@ -756,7 +757,7 @@ bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
 
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  fs->nodes[index].mode = mode & 07777u;
+  fs->nodes[index].mode = (fs->nodes[index].mode & 0170000u) | (mode & 07777u);
   fs->nodes[index].ctime = ramfs_now_sec;
   return true;
 }
