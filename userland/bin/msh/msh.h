@@ -15,6 +15,7 @@ enum {
   TOKEN_CAP = 256,
   ARG_CAP = 128,
   HISTORY_CAP = 16,
+  ALIAS_CAP = 64,
 };
 
 enum token_type {
@@ -31,8 +32,22 @@ enum token_type {
   TOK_IO_NUMBER,
 };
 
+struct alias {
+  char *name;
+  char *value;
+};
+
+extern struct alias sh_aliases[ALIAS_CAP];
+int sh_alias_index(const char *name);
+void sh_print_alias(int index);
+int sh_alias(int argc, char **argv);
+int sh_unalias(int argc, char **argv);
+
 struct token {
   enum token_type type;
+  bool literal;
+  bool after_alias_blank;
+  uint64_t expanded_aliases;
   char text[WORD_CAP];
 };
 
@@ -68,6 +83,7 @@ struct command {
 
 struct parser {
   struct token *tokens;
+  int last_status;
   size_t pos;
   size_t count;
 };
@@ -79,7 +95,7 @@ void sh_history_add(const char *line);
 size_t sh_history_count(void);
 const char *sh_history_get(size_t index);
 void sh_reap_jobs(bool verbose);
-int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status);
+int sh_tokenize(const char *line, struct token *tokens, size_t capacity, size_t *count, int last_status);
 enum token_type sh_parser_peek(struct parser *p);
 struct token *sh_parser_take(struct parser *p);
 int sh_parse_command(struct parser *p, struct command *cmd);

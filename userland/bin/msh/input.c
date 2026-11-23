@@ -21,8 +21,8 @@ struct completion {
 };
 
 static const char *builtins[] = {
-  ".",    "cd",  "command", "confine", "exit", "export", "fg",   "help",  "jobs",
-  "kill", "pwd", "runc",    "select",  "set",  "source", "test", "unset", "wait",
+  ".",    "alias", "unalias", "cd",   "command", "confine", "exit",   "export", "fg",    "help",
+  "jobs", "kill",  "pwd",     "runc", "select",  "set",     "source", "test",   "unset", "wait",
 };
 
 static bool path_has_prefix_dir(const char *path, const char *prefix) {
@@ -297,6 +297,11 @@ static void collect_path_matches(const char *word, struct completion *items, siz
 static void collect_command_matches(const char *word, struct completion *items, size_t *count) {
   for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); ++i) {
     if (starts_with(builtins[i], word)) { add_completion(items, count, builtins[i], false); }
+  }
+
+  for (size_t i = 0; i < ALIAS_CAP; ++i) {
+    const char *name = sh_aliases[i].name;
+    if (name && starts_with(name, word)) { add_completion(items, count, name, false); }
   }
 
   const char *path = getenv("PATH");

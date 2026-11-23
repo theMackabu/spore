@@ -9,7 +9,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static struct token parse_tokens[TOKEN_CAP];
 static bool xtrace;
 
 enum { JOB_CAP = 16 };
@@ -418,6 +417,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
     ++created;
   }
 
+  fflush(stdout);
   for (size_t i = 0; i < count; ++i) {
     pid_t pid = fork();
     if (pid < 0) {
@@ -449,7 +449,10 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
       apply_env_assignments(&stages[i]);
       bool handled = false;
       int builtin_status = run_builtin(&stages[i], last_status, &handled);
-      if (handled) { _exit(builtin_status); }
+      if (handled) {
+        fflush(stdout);
+        _exit(builtin_status);
+      }
       struct resolved_exec exec;
       if (resolve_exec_path(stages[i].argv[0], &exec)) { exec_resolved(&exec, stages[i].argv); }
       report_unresolved_command(stages[i].argv[0]);
@@ -550,8 +553,8 @@ static bool all_assignments(struct command *cmd) {
 
 static bool is_builtin_name(const char *name) {
   static const char *builtins[] = {
-    ".",    ":",    "[",   "cd",   "command", "confine", "exit",   "export", "fg",    "help",
-    "jobs", "kill", "pwd", "runc", "select",  "set",     "source", "test",   "unset", "wait",
+    ".",    ":",    "[",    "alias", "unalias", "cd",     "command", "confine", "exit", "export", "fg",
+    "help", "jobs", "kill", "pwd",   "runc",    "select", "set",     "source",  "test", "unset",  "wait",
   };
   for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); ++i) {
     if (streq(name, builtins[i])) { return true; }
@@ -670,6 +673,8 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
     return 0;
   }
 
+  if (streq(cmd->argv[0], "alias")) { return sh_alias(cmd->argc, cmd->argv); }
+  if (streq(cmd->argv[0], "unalias")) { return sh_unalias(cmd->argc, cmd->argv); }
   if (streq(cmd->argv[0], "cd")) {
     const char *path = cmd->argc > 1 ? cmd->argv[1] : getenv("HOME");
     if (path == NULL) { path = "/"; }
@@ -690,6 +695,11 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
   if (streq(cmd->argv[0], ":")) { return 0; }
   if (streq(cmd->argv[0], "command")) {
     if (cmd->argc == 3 && streq(cmd->argv[1], "-v")) {
+      int index = sh_alias_index(cmd->argv[2]);
+      if (index >= 0) {
+        sh_print_alias(index);
+        return 0;
+      }
       if (is_builtin_name(cmd->argv[2])) {
         puts(cmd->argv[2]);
         return 0;
@@ -699,10 +709,15 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
       puts(exec.path);
       return 0;
     }
-    return usage("command", "-v NAME");
+    if (cmd->argc == 1) { return 0; }
+    if (cmd->argv[1][0] == '-') { return usage("command", "[-v] NAME [ARG...]"); }
+    --cmd->argc;
+    memmove(cmd->argv, cmd->argv + 1, (cmd->argc + 1) * sizeof(cmd->argv[0]));
+    return run_builtin(cmd, last_status, handled);
   }
   if (streq(cmd->argv[0], "help")) {
-    puts("builtins: . source cd pwd exit command help export unset set select jobs wait fg kill test [ confine runc");
+    puts("builtins: alias unalias . source cd pwd exit command help export unset set select jobs wait fg kill test [ "
+         "confine runc");
     puts("syntax: NAME=value words quotes $VAR $? ; && || & < > >> if/then/else/fi while/do/done");
     puts("prompts: PS1 primary, PS2 continuation, PS3 select, PS4 trace");
     return 0;
@@ -1110,35 +1125,29 @@ int sh_source_file(const char *path, int last_status, bool complain) {
   return execute_script_range(lines, 0, count, last_status);
 }
 
-int sh_execute_line(char *line, int last_status) {
-  size_t count = 0;
-  if (sh_tokenize(line, parse_tokens, &count, last_status) != 0) {
-    eprintf("sh: parse buffer exhausted\n");
-    return 2;
-  }
-
-  struct parser parser = {.tokens = parse_tokens, .pos = 0, .count = count};
+static int execute_tokens(struct parser *parser, int last_status) {
   enum token_type previous = TOK_SEMI;
   int status = last_status;
-  while (sh_parser_peek(&parser) != TOK_END) {
+  while (sh_parser_peek(parser) != TOK_END) {
+    parser->last_status = status;
     struct command stages[8];
     size_t stage_count = 0;
-    if (sh_parse_command(&parser, &stages[stage_count]) != 0) { return 2; }
+    if (sh_parse_command(parser, &stages[stage_count]) != 0) { return 2; }
     ++stage_count;
-    while (sh_parser_peek(&parser) == TOK_PIPE) {
-      (void)sh_parser_take(&parser);
+    while (sh_parser_peek(parser) == TOK_PIPE) {
+      (void)sh_parser_take(parser);
       if (stage_count >= sizeof(stages) / sizeof(stages[0])) {
         eprintf("sh: pipeline too long\n");
         return 2;
       }
-      if (sh_parse_command(&parser, &stages[stage_count]) != 0) { return 2; }
+      if (sh_parse_command(parser, &stages[stage_count]) != 0) { return 2; }
       if (stages[stage_count].argc == 0) {
         eprintf("sh: syntax error near '|'\n");
         return 2;
       }
       ++stage_count;
     }
-    bool background = sh_parser_peek(&parser) == TOK_BG;
+    bool background = sh_parser_peek(parser) == TOK_BG;
     if (background) {
       for (size_t i = 0; i < stage_count; ++i) {
         stages[i].background = true;
@@ -1158,13 +1167,29 @@ int sh_execute_line(char *line, int last_status) {
       }
     }
 
-    enum token_type next = sh_parser_peek(&parser);
+    enum token_type next = sh_parser_peek(parser);
     if (next == TOK_AND || next == TOK_OR || next == TOK_SEMI || next == TOK_BG) {
-      previous = sh_parser_take(&parser)->type;
+      previous = sh_parser_take(parser)->type;
     } else {
       previous = TOK_SEMI;
     }
     if (previous == TOK_BG) { previous = TOK_SEMI; }
   }
+  return status;
+}
+
+int sh_execute_line(char *line, int last_status) {
+  struct parser parser = {.tokens = malloc(TOKEN_CAP * sizeof(struct token))};
+  if (parser.tokens == NULL) {
+    perror("msh");
+    return 1;
+  }
+  int status = 2;
+  if (sh_tokenize(line, parser.tokens, TOKEN_CAP, &parser.count, last_status) == 0) {
+    status = execute_tokens(&parser, last_status);
+  } else {
+    eprintf("sh: parse buffer exhausted\n");
+  }
+  free(parser.tokens);
   return status;
 }

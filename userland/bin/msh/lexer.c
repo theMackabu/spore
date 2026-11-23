@@ -51,9 +51,12 @@ static const char *read_variable(const char *p, char *name, size_t cap) {
   return p;
 }
 
-static bool token_add(struct token *tokens, size_t *count, enum token_type type, const char *text) {
-  if (*count >= TOKEN_CAP) { return false; }
+static bool token_add(struct token *tokens, size_t capacity, size_t *count, enum token_type type, const char *text) {
+  if (*count >= capacity) { return false; }
   tokens[*count].type = type;
+  tokens[*count].literal = false;
+  tokens[*count].after_alias_blank = false;
+  tokens[*count].expanded_aliases = 0;
   snprintf(tokens[*count].text, sizeof(tokens[*count].text), "%s", text == NULL ? "" : text);
   ++*count;
   return true;
@@ -71,7 +74,7 @@ static bool expand_tilde(char *word, size_t cap) {
   return true;
 }
 
-int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status) {
+int sh_tokenize(const char *line, struct token *tokens, size_t capacity, size_t *count, int last_status) {
   const char *p = line;
   *count = 0;
   while (*p != '\0') {
@@ -80,27 +83,27 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
     }
     if (*p == '\0' || *p == '#') { break; }
     if (*p == '&' && p[1] == '&') {
-      if (!token_add(tokens, count, TOK_AND, NULL)) { return -1; }
+      if (!token_add(tokens, capacity, count, TOK_AND, NULL)) { return -1; }
       p += 2;
       continue;
     }
     if (*p == '&') {
-      if (!token_add(tokens, count, TOK_BG, NULL)) { return -1; }
+      if (!token_add(tokens, capacity, count, TOK_BG, NULL)) { return -1; }
       ++p;
       continue;
     }
     if (*p == '|' && p[1] == '|') {
-      if (!token_add(tokens, count, TOK_OR, NULL)) { return -1; }
+      if (!token_add(tokens, capacity, count, TOK_OR, NULL)) { return -1; }
       p += 2;
       continue;
     }
     if (*p == '|') {
-      if (!token_add(tokens, count, TOK_PIPE, NULL)) { return -1; }
+      if (!token_add(tokens, capacity, count, TOK_PIPE, NULL)) { return -1; }
       ++p;
       continue;
     }
     if (*p == ';') {
-      if (!token_add(tokens, count, TOK_SEMI, NULL)) { return -1; }
+      if (!token_add(tokens, capacity, count, TOK_SEMI, NULL)) { return -1; }
       ++p;
       continue;
     }
@@ -115,35 +118,38 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
         if (n >= sizeof(io)) { return -1; }
         memcpy(io, p, n);
         io[n] = '\0';
-        if (!token_add(tokens, count, TOK_IO_NUMBER, io)) { return -1; }
+        if (!token_add(tokens, capacity, count, TOK_IO_NUMBER, io)) { return -1; }
         p = q;
         continue;
       }
     }
     if (*p == '>') {
       enum token_type type = p[1] == '>' ? TOK_GTGT : TOK_GT;
-      if (!token_add(tokens, count, type, NULL)) { return -1; }
+      if (!token_add(tokens, capacity, count, type, NULL)) { return -1; }
       p += type == TOK_GTGT ? 2 : 1;
       continue;
     }
     if (*p == '<') {
-      if (!token_add(tokens, count, TOK_LT, NULL)) { return -1; }
+      if (!token_add(tokens, capacity, count, TOK_LT, NULL)) { return -1; }
       ++p;
       continue;
     }
 
+    bool literal = true;
     char word[WORD_CAP] = {0};
     size_t len = 0;
     bool tilde_eligible = false;
     while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r' && *p != ';' && *p != '&' && *p != '|' &&
            *p != '<' && *p != '>' && !(*p == '&' && p[1] == '&')) {
       if (*p == '\'') {
+        literal = false;
         ++p;
         while (*p != '\0' && *p != '\'') {
           if (!append_char(word, &len, *p++)) { return -1; }
         }
         if (*p == '\'') { ++p; }
       } else if (*p == '"') {
+        literal = false;
         ++p;
         while (*p != '\0' && *p != '"') {
           if (*p == '\\' && p[1] != '\0') {
@@ -159,9 +165,11 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
         }
         if (*p == '"') { ++p; }
       } else if (*p == '\\' && p[1] != '\0') {
+        literal = false;
         ++p;
         if (!append_char(word, &len, *p++)) { return -1; }
       } else if (*p == '$') {
+        literal = false;
         char name[64];
         const char *next = read_variable(p + 1, name, sizeof(name));
         if (next == p + 1) {
@@ -176,9 +184,10 @@ int sh_tokenize(char *line, struct token *tokens, size_t *count, int last_status
       }
     }
     if (tilde_eligible && !expand_tilde(word, sizeof(word))) { return -1; }
-    if (!token_add(tokens, count, TOK_WORD, word)) { return -1; }
+    if (!token_add(tokens, capacity, count, TOK_WORD, word)) { return -1; }
+    tokens[*count - 1].literal = literal && !tilde_eligible;
   }
-  return token_add(tokens, count, TOK_END, NULL) ? 0 : -1;
+  return 0;
 }
 
 enum token_type sh_parser_peek(struct parser *p) {
@@ -218,11 +227,43 @@ static int add_redir(struct command *cmd, enum redir_op op, int fd, const char *
   return 0;
 }
 
+// Keep already parsed argv and redirection pointers stable while replacing the command word.
+static int expand_alias(struct parser *p, int index) {
+  const char *value = sh_aliases[index].value;
+  uint64_t expanded = p->tokens[p->pos].expanded_aliases | (UINT64_C(1) << index);
+  bool after_blank = p->tokens[p->pos].after_alias_blank;
+  size_t tail = p->count - p->pos - 1;
+  struct token *saved = &p->tokens[TOKEN_CAP - tail];
+  memmove(saved, &p->tokens[p->pos + 1], tail * sizeof(*saved));
+  size_t added;
+  if (sh_tokenize(value, &p->tokens[p->pos], TOKEN_CAP - tail - p->pos, &added, p->last_status) != 0) {
+    eprintf("msh: alias expansion exceeds token limit\n");
+    return -1;
+  }
+  for (size_t i = 0; i < added; ++i) {
+    p->tokens[p->pos + i].expanded_aliases = expanded;
+  }
+  if (added && after_blank) { p->tokens[p->pos].after_alias_blank = true; }
+  size_t len = strlen(value);
+  if (tail && len && (value[len - 1] == ' ' || value[len - 1] == '\t')) { saved->after_alias_blank = true; }
+  memmove(&p->tokens[p->pos + added], saved, tail * sizeof(*saved));
+  p->count = p->pos + added + tail;
+  return 0;
+}
+
 int sh_parse_command(struct parser *p, struct command *cmd) {
   memset(cmd, 0, sizeof(*cmd));
   while (sh_parser_peek(p) != TOK_END && sh_parser_peek(p) != TOK_AND && sh_parser_peek(p) != TOK_OR &&
          sh_parser_peek(p) != TOK_PIPE && sh_parser_peek(p) != TOK_SEMI && sh_parser_peek(p) != TOK_BG) {
-    struct token *tok = sh_parser_take(p);
+    struct token *tok = &p->tokens[p->pos];
+    if (tok->literal && (cmd->argc == 0 || tok->after_alias_blank)) {
+      int index = sh_alias_index(tok->text);
+      if (index >= 0 && !(tok->expanded_aliases & (UINT64_C(1) << index))) {
+        if (expand_alias(p, index) != 0) { return -1; }
+        continue;
+      }
+    }
+    sh_parser_take(p);
     if (tok->type == TOK_WORD) {
       if (cmd->argc == 0 && assignment_syntax(tok->text)) {
         if (cmd->envc + 1 >= ARG_CAP) {
