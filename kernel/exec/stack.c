@@ -77,8 +77,8 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
                               uint64_t argc, const char *const envp[], uint64_t envc,
                               const struct exec_stack_credentials *creds, uint64_t *stack_pointer) {
   uint64_t cursor = USER_STACK_TOP;
-  uint64_t *argv_va = NULL;
-  uint64_t *envp_va = NULL;
+  uint64_t local_ptrs[32];
+  uint64_t *argv_va = local_ptrs;
   uint64_t ptr_pa = 0;
   uint64_t ptr_pages = 0;
   bool ok = false;
@@ -88,15 +88,15 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
 
   uint64_t total_ptrs = argc + envc;
   if (total_ptrs < argc) return false;
-  if (total_ptrs != 0) {
+  if (total_ptrs > sizeof(local_ptrs) / sizeof(local_ptrs[0])) {
     uint64_t ptr_bytes = total_ptrs * sizeof(uint64_t);
     if (ptr_bytes / sizeof(uint64_t) != total_ptrs || ptr_bytes > USER_STACK_SIZE) return false;
     ptr_pages = (ptr_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
     ptr_pa = pmm_alloc_contiguous_pages(ptr_pages);
     if (ptr_pa == 0) return false;
     argv_va = (uint64_t *)(uintptr_t)(as->hhdm_offset + ptr_pa);
-    envp_va = argv_va + argc;
   }
+  uint64_t *envp_va = argv_va + argc;
 
   for (uint64_t i = 0; i < argc; ++i) {
     size_t len = kstrlen(argv[i]) + 1;
@@ -153,24 +153,16 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   uint64_t p = sp;
 
   if (!stack_write_u64(as, p, argc)) { goto out; }
-  p += 8;
-  for (uint64_t i = 0; i < argc; ++i) {
-    if (!stack_write_u64(as, p, argv_va[i])) { goto out; }
-    p += 8;
-  }
+  p += sizeof(uint64_t);
+  if (argc != 0 && !stack_copy_to_user(as, p, argv_va, argc * sizeof(*argv_va))) { goto out; }
+  p += argc * sizeof(*argv_va);
   if (!stack_write_u64(as, p, 0)) { goto out; }
-  p += 8;
-  for (uint64_t i = 0; i < envc; ++i) {
-    if (!stack_write_u64(as, p, envp_va[i])) { goto out; }
-    p += 8;
-  }
+  p += sizeof(uint64_t);
+  if (envc != 0 && !stack_copy_to_user(as, p, envp_va, envc * sizeof(*envp_va))) { goto out; }
+  p += envc * sizeof(*envp_va);
   if (!stack_write_u64(as, p, 0)) { goto out; }
-  p += 8;
-
-  for (size_t i = 0; i < sizeof(aux) / sizeof(aux[0]); ++i) {
-    if (!stack_write_u64(as, p, aux[i][0]) || !stack_write_u64(as, p + 8, aux[i][1])) { goto out; }
-    p += 16;
-  }
+  p += sizeof(uint64_t);
+  if (!stack_copy_to_user(as, p, aux, sizeof(aux))) { goto out; }
 
   *stack_pointer = sp;
   ok = true;
