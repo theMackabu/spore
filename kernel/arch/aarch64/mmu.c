@@ -40,7 +40,10 @@ void vmm_install_user(const struct user_address_space *as) {
   (void)as;
   return;
 #else
-  uint64_t tag = ((uint64_t)smp_current_cpu() + 1) << 48;
+  static uint64_t installed_context[SPORE_BOOT_CPU_MAX];
+  uint32_t cpu = smp_current_cpu();
+  if (installed_context[cpu] == as->context_id && as->context_id != 0) { return; }
+  uint64_t tag = ((uint64_t)cpu + 1) << 48;
   uint64_t ttbr = as->root_pa | tag;
   __asm__ volatile("dsb ishst\n"
                    "msr ttbr0_el1, %0\n"
@@ -51,6 +54,7 @@ void vmm_install_user(const struct user_address_space *as) {
                    :
                    : "r"(ttbr), "r"(tag)
                    : "memory");
+  installed_context[cpu] = as->context_id;
 #endif
 }
 

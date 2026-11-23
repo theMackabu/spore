@@ -84,8 +84,10 @@ static bool next_leaf_range(const struct user_address_space *as, struct leaf_ran
 }
 
 bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
+  static uint64_t last_context_id;
   uint64_t root = pmm_alloc_zero_page();
   if (root == 0) { return false; }
+  as->context_id = __atomic_add_fetch(&last_context_id, 1, __ATOMIC_RELAXED);
   as->root_pa = root;
   as->hhdm_offset = hhdm_offset;
   as->brk_base = 0;
@@ -184,15 +186,12 @@ static bool clone_table_cow(struct user_address_space *dst, struct user_address_
 }
 
 bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src) {
-  uint64_t root = pmm_alloc_zero_page();
-  if (root == 0) { return false; }
-  dst->root_pa = root;
-  dst->hhdm_offset = src->hhdm_offset;
+  if (!vmm_user_init(dst, src->hhdm_offset)) { return false; }
   dst->brk_base = src->brk_base;
   dst->brk_current = src->brk_current;
   dst->mmap_base = src->mmap_base;
 
-  bool ok = clone_table_cow(dst, src, root, src->root_pa, 0);
+  bool ok = clone_table_cow(dst, src, dst->root_pa, src->root_pa, 0);
   aarch64_tlb_flush_all();
   return ok;
 }
