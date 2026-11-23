@@ -80,7 +80,7 @@ static const char *domain_wait_text(const struct domain *domain) {
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain && thread->state == THREAD_BLOCKED) {
-      return wait_reason_text(thread->wait_reason);
+      return wait_reason_text(thread->wait.reason);
     }
   }
   return "-";

@@ -85,11 +85,11 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
 }
 
 static int64_t ppoll_check(struct thread *thread, bool commit) {
-  if (thread == NULL || thread->domain == NULL || thread->poll_nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
+  if (thread == NULL || thread->domain == NULL || thread->wait.poll_nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
   int64_t ready = 0;
-  for (uint64_t i = 0; i < thread->poll_nfds; ++i) {
+  for (uint64_t i = 0; i < thread->wait.poll_nfds; ++i) {
     struct pollfd64 pfd;
-    uint64_t addr = thread->poll_fds + i * sizeof(pfd);
+    uint64_t addr = thread->wait.poll_fds + i * sizeof(pfd);
     if (!vmm_copy_from_user(cell_domain_as(thread->domain), &pfd, addr, sizeof(pfd))) { return -EFAULT; }
 
     int revents = 0;
@@ -104,23 +104,23 @@ static int64_t ppoll_check(struct thread *thread, bool commit) {
 }
 
 static int64_t pselect_check(struct thread *thread, bool commit) {
-  if (thread == NULL || thread->domain == NULL || thread->poll_nfds > 64) { return -EINVAL; }
+  if (thread == NULL || thread->domain == NULL || thread->wait.poll_nfds > 64) { return -EINVAL; }
   uint64_t read_in = 0;
   uint64_t write_in = 0;
   uint64_t read_out = 0;
   uint64_t write_out = 0;
   uint64_t except_out = 0;
-  if (thread->poll_readfds != 0 &&
-      !vmm_copy_from_user(cell_domain_as(thread->domain), &read_in, thread->poll_readfds, sizeof(read_in))) {
+  if (thread->wait.poll_readfds != 0 &&
+      !vmm_copy_from_user(cell_domain_as(thread->domain), &read_in, thread->wait.poll_readfds, sizeof(read_in))) {
     return -EFAULT;
   }
-  if (thread->poll_writefds != 0 &&
-      !vmm_copy_from_user(cell_domain_as(thread->domain), &write_in, thread->poll_writefds, sizeof(write_in))) {
+  if (thread->wait.poll_writefds != 0 &&
+      !vmm_copy_from_user(cell_domain_as(thread->domain), &write_in, thread->wait.poll_writefds, sizeof(write_in))) {
     return -EFAULT;
   }
 
   int64_t ready = 0;
-  for (uint64_t fd = 0; fd < thread->poll_nfds; ++fd) {
+  for (uint64_t fd = 0; fd < thread->wait.poll_nfds; ++fd) {
     uint64_t bit = 1ull << fd;
     int events = 0;
     if ((read_in & bit) != 0) { events |= CELL_POLLIN; }
@@ -133,32 +133,21 @@ static int64_t pselect_check(struct thread *thread, bool commit) {
   }
 
   if (commit) {
-    if ((thread->poll_readfds != 0 &&
-         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->poll_readfds, &read_out, sizeof(read_out))) ||
-        (thread->poll_writefds != 0 &&
-         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->poll_writefds, &write_out, sizeof(write_out))) ||
-        (thread->poll_exceptfds != 0 &&
-         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->poll_exceptfds, &except_out, sizeof(except_out)))) {
+    if ((thread->wait.poll_readfds != 0 &&
+         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->wait.poll_readfds, &read_out, sizeof(read_out))) ||
+        (thread->wait.poll_writefds != 0 &&
+         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->wait.poll_writefds, &write_out, sizeof(write_out))) ||
+        (thread->wait.poll_exceptfds != 0 &&
+         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->wait.poll_exceptfds, &except_out, sizeof(except_out)))) {
       return -EFAULT;
     }
   }
   return ready;
 }
 
-static void clear_poll_wait(struct thread *thread) {
-  thread->poll_kind = 0;
-  thread->poll_has_deadline = false;
-  thread->poll_deadline_tick = 0;
-  thread->poll_fds = 0;
-  thread->poll_nfds = 0;
-  thread->poll_readfds = 0;
-  thread->poll_writefds = 0;
-  thread->poll_exceptfds = 0;
-}
-
 static int64_t poll_wait_check(struct thread *thread, bool commit) {
-  if (thread->poll_kind == 1) { return ppoll_check(thread, commit); }
-  if (thread->poll_kind == 2) { return pselect_check(thread, commit); }
+  if (thread->wait.poll_kind == 1) { return ppoll_check(thread, commit); }
+  if (thread->wait.poll_kind == 2) { return pselect_check(thread, commit); }
   return -EINVAL;
 }
 
@@ -169,19 +158,16 @@ static void wake_poll_waiters(void) {
   poll_waking = true;
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_POLL ||
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_POLL ||
         thread->domain == NULL) {
       continue;
     }
     int64_t ready = poll_wait_check(thread, false);
-    bool expired = thread->poll_has_deadline && cell_uptime_ticks() >= thread->poll_deadline_tick;
-    if (ready < 0 || ready != 0 || expired) {
+    bool expired = thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick;
+    if (ready != 0 || expired) {
       if (ready >= 0) { ready = poll_wait_check(thread, true); }
       if (ready < 0) { ready = -EFAULT; }
-      trap_set_result(&thread->tf, (uint64_t)ready);
-      thread->state = THREAD_RUNNABLE;
-      thread->wait_reason = WAIT_NONE;
-      clear_poll_wait(thread);
+      cell_finish_wait(thread, ready);
     }
   }
   poll_waking = false;
@@ -190,14 +176,6 @@ static void wake_poll_waiters(void) {
 
 void cell_wake_poll_waiters_internal(void) {
   wake_poll_waiters();
-}
-
-static void clear_epoll_wait(struct thread *thread) {
-  thread->epoll_fd = -1;
-  thread->epoll_events = 0;
-  thread->epoll_maxevents = 0;
-  thread->poll_has_deadline = false;
-  thread->poll_deadline_tick = 0;
 }
 
 static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t events_addr, int maxevents, bool commit) {
@@ -227,23 +205,20 @@ static void wake_epoll_waiters(void) {
   epoll_waking = true;
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_EPOLL ||
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_EPOLL ||
         thread->domain == NULL) {
       continue;
     }
     int ready =
-      epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, false);
-    bool expired = thread->poll_has_deadline && cell_uptime_ticks() >= thread->poll_deadline_tick;
+      epoll_wait_for_domain(thread->domain, thread->wait.target, thread->wait.epoll_events, thread->wait.epoll_maxevents, false);
+    bool expired = thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick;
     if (ready == 0 && !expired) { continue; }
     if (ready > 0) {
       ready =
-        epoll_wait_for_domain(thread->domain, thread->epoll_fd, thread->epoll_events, thread->epoll_maxevents, true);
+        epoll_wait_for_domain(thread->domain, thread->wait.target, thread->wait.epoll_events, thread->wait.epoll_maxevents, true);
     }
     if (ready < 0) { ready = -EINTR; }
-    trap_set_result(&thread->tf, (uint64_t)ready);
-    thread->state = THREAD_RUNNABLE;
-    thread->wait_reason = WAIT_NONE;
-    clear_epoll_wait(thread);
+    cell_finish_wait(thread, ready);
   }
   epoll_waking = false;
 }
@@ -257,19 +232,19 @@ int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t t
   struct thread *thread = cell_current_thread_internal();
   if (thread == NULL || cell_current_domain_internal() == NULL || nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
   cell_save_current(frame);
-  thread->poll_kind = 1;
-  thread->poll_fds = fds;
-  thread->poll_nfds = nfds;
+  thread->wait.poll_kind = 1;
+  thread->wait.poll_fds = fds;
+  thread->wait.poll_nfds = nfds;
   int64_t ready = ppoll_check(thread, true);
-  if (ready != 0 || (has_timeout && timeout_ticks == 0) || ready < 0) {
-    clear_poll_wait(thread);
+  if (ready != 0 || (has_timeout && timeout_ticks == 0)) {
+    cell_clear_wait(thread);
     return (int)ready;
   }
   thread->state = THREAD_BLOCKED;
   thread->running_cpu = -1;
-  thread->wait_reason = WAIT_POLL;
-  thread->poll_has_deadline = has_timeout;
-  thread->poll_deadline_tick = cell_uptime_ticks() + timeout_ticks;
+  thread->wait.reason = WAIT_POLL;
+  thread->wait.has_deadline = has_timeout;
+  thread->wait.deadline_tick = cell_uptime_ticks() + timeout_ticks;
   cell_schedule(frame);
   return CELL_SWITCHED;
 }
@@ -279,23 +254,23 @@ int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, ui
   struct thread *thread = cell_current_thread_internal();
   if (thread == NULL || cell_current_domain_internal() == NULL || nfds > 64) { return -EINVAL; }
   cell_save_current(frame);
-  thread->poll_kind = 2;
-  thread->poll_nfds = nfds;
-  thread->poll_readfds = readfds;
-  thread->poll_writefds = writefds;
-  thread->poll_exceptfds = exceptfds;
+  thread->wait.poll_kind = 2;
+  thread->wait.poll_nfds = nfds;
+  thread->wait.poll_readfds = readfds;
+  thread->wait.poll_writefds = writefds;
+  thread->wait.poll_exceptfds = exceptfds;
   int64_t ready = pselect_check(thread, false);
   if (ready > 0) { ready = pselect_check(thread, true); }
-  if (ready != 0 || (has_timeout && timeout_ticks == 0) || ready < 0) {
+  if (ready != 0 || (has_timeout && timeout_ticks == 0)) {
     if (ready == 0) { ready = pselect_check(thread, true); }
-    clear_poll_wait(thread);
+    cell_clear_wait(thread);
     return (int)ready;
   }
   thread->state = THREAD_BLOCKED;
   thread->running_cpu = -1;
-  thread->wait_reason = WAIT_POLL;
-  thread->poll_has_deadline = has_timeout;
-  thread->poll_deadline_tick = cell_uptime_ticks() + timeout_ticks;
+  thread->wait.reason = WAIT_POLL;
+  thread->wait.has_deadline = has_timeout;
+  thread->wait.deadline_tick = cell_uptime_ticks() + timeout_ticks;
   cell_schedule(frame);
   return CELL_SWITCHED;
 }
@@ -354,16 +329,8 @@ int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int t
   int ready = epoll_wait_for_domain(domain, epfd, events_addr, maxevents, true);
   if (ready != 0 || timeout_ms == 0 || frame == NULL) { return ready; }
 
-  struct thread *thread = cell_current_thread_internal();
-  cell_save_current(frame);
-  thread->state = THREAD_BLOCKED;
-  thread->running_cpu = -1;
-  thread->wait_reason = WAIT_EPOLL;
-  thread->epoll_fd = epfd;
-  thread->epoll_events = events_addr;
-  thread->epoll_maxevents = maxevents;
-  thread->poll_has_deadline = timeout_ms > 0;
-  thread->poll_deadline_tick = timeout_ms > 0 ? cell_uptime_ticks() + ((uint64_t)timeout_ms + 9) / 10 : 0;
-  cell_schedule(frame);
-  return CELL_SWITCHED;
+  struct thread_wait wait = {.reason = WAIT_EPOLL, .target = epfd, .epoll_events = events_addr,
+                             .epoll_maxevents = maxevents, .has_deadline = timeout_ms > 0};
+  if (wait.has_deadline) { wait.deadline_tick = cell_uptime_ticks() + ((uint64_t)timeout_ms + 9) / 10; }
+  return cell_block_current(frame, wait);
 }

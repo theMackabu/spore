@@ -354,36 +354,26 @@ int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file
   return (int64_t)wrote;
 }
 
-static void clear_pty_wait(struct thread *thread) {
-  thread->wait_target = -1;
-  thread->pipe_buf = 0;
-  thread->pipe_len = 0;
-  thread->pipe_write = false;
-}
-
 static void wake_pty_waiters(void) {
   if (pty_waking) { return; }
   pty_waking = true;
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_PTY ||
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_PTY ||
         thread->domain == NULL) {
       continue;
     }
-    int fd = thread->wait_target;
+    int fd = thread->wait.target;
     if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] == NULL) {
-      trap_set_result(&thread->tf, (uint64_t)-9);
+      cell_finish_wait(thread, -9);
     } else {
       struct open_file *file = thread->domain->fds[fd];
-      int64_t rc = thread->pipe_write
-                     ? cell_pty_write_from_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len)
-                     : cell_pty_read_to_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len);
+      int64_t rc = thread->wait.write
+                     ? cell_pty_write_from_domain(thread->domain, file, thread->wait.buf, thread->wait.len)
+                     : cell_pty_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len);
       if (rc == -EAGAIN) { continue; }
-      trap_set_result(&thread->tf, (uint64_t)rc);
+      cell_finish_wait(thread, rc);
     }
-    thread->state = THREAD_RUNNABLE;
-    thread->wait_reason = WAIT_NONE;
-    clear_pty_wait(thread);
   }
   pty_waking = false;
   cell_wake_poll_waiters_internal();
@@ -391,17 +381,8 @@ static void wake_pty_waiters(void) {
 }
 
 int cell_block_current_on_pty(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame) {
-  struct thread *thread = cell_current_thread_internal();
-  cell_save_current(frame);
-  thread->running_cpu = -1;
-  thread->state = THREAD_BLOCKED;
-  thread->wait_reason = WAIT_PTY;
-  thread->wait_target = fd;
-  thread->pipe_buf = buf;
-  thread->pipe_len = len;
-  thread->pipe_write = write;
-  cell_schedule(frame);
-  return CELL_SWITCHED;
+  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_PTY, .target = fd, .buf = buf, .len = len,
+                                                        .write = write});
 }
 
 static void pty_notify(void) {

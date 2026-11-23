@@ -8,11 +8,11 @@
 static int wake_modeled_futex(struct thread *threads, const struct domain *domain, uint64_t uaddr, int count) {
   int woke = 0;
   for (size_t i = 0; i < MAX_THREADS && woke < count; ++i) {
-    if (threads[i].domain == domain && threads[i].state == THREAD_BLOCKED && threads[i].wait_reason == WAIT_FUTEX &&
-        threads[i].futex_addr == uaddr) {
+    if (threads[i].domain == domain && threads[i].state == THREAD_BLOCKED && threads[i].wait.reason == WAIT_FUTEX &&
+        threads[i].wait.futex_addr == uaddr) {
       threads[i].state = THREAD_RUNNABLE;
-      threads[i].wait_reason = WAIT_NONE;
-      threads[i].futex_addr = 0;
+      threads[i].wait.reason = WAIT_NONE;
+      threads[i].wait.futex_addr = 0;
       ++woke;
     }
   }
@@ -29,29 +29,29 @@ int main(void) {
     .tid = 10,
     .domain = &a,
     .state = THREAD_BLOCKED,
-    .wait_reason = WAIT_FUTEX,
-    .futex_addr = 0x4000,
+    .wait.reason = WAIT_FUTEX,
+    .wait.futex_addr = 0x4000,
   };
   threads[1] = (struct thread){
     .tid = 11,
     .domain = &a,
     .state = THREAD_BLOCKED,
-    .wait_reason = WAIT_FUTEX,
-    .futex_addr = 0x4000,
+    .wait.reason = WAIT_FUTEX,
+    .wait.futex_addr = 0x4000,
   };
   threads[2] = (struct thread){
     .tid = 12,
     .domain = &b,
     .state = THREAD_BLOCKED,
-    .wait_reason = WAIT_FUTEX,
-    .futex_addr = 0x4000,
+    .wait.reason = WAIT_FUTEX,
+    .wait.futex_addr = 0x4000,
   };
   threads[3] = (struct thread){
     .tid = 13,
     .domain = &a,
     .state = THREAD_BLOCKED,
-    .wait_reason = WAIT_FUTEX,
-    .futex_addr = 0x8000,
+    .wait.reason = WAIT_FUTEX,
+    .wait.futex_addr = 0x8000,
   };
 
   assert(wake_modeled_futex(threads, &a, 0x4000, 1) == 1);

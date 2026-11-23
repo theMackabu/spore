@@ -40,8 +40,8 @@ void cell_wake_parent_of(struct domain *child) {
   cell_wake_vfork_parent_of(child->id);
   struct domain *parent_domain = cell_find_domain(child->parent_id);
   struct thread *parent = parent_domain == NULL ? NULL : cell_thread_for_domain(parent_domain);
-  if (parent != NULL && parent->state == THREAD_BLOCKED && parent->wait_reason == WAIT_CHILD &&
-      (parent->wait_target < 0 || parent->wait_target == child->id)) {
+  if (parent != NULL && parent->state == THREAD_BLOCKED && parent->wait.reason == WAIT_CHILD &&
+      (parent->wait.target < 0 || parent->wait.target == child->id)) {
     bool child_is_current = child == current_domain();
     bool child_is_running = domain_has_running_thread(child);
     int status = child->exit_status << 8;
@@ -51,7 +51,7 @@ void cell_wake_parent_of(struct domain *child) {
     if (status_addr != 0 && parent_as != NULL) {
       (void)vmm_copy_to_user(parent_as, status_addr, &status, sizeof(status));
     }
-    trap_set_result(&parent->tf, (uint64_t)child->id);
+    int child_id = child->id;
     struct thread *child_thread = cell_thread_for_domain(child);
     if (child_thread != NULL) {
       child_thread->state = (child_is_current || child_is_running) ? THREAD_ZOMBIE : THREAD_UNUSED;
@@ -61,9 +61,7 @@ void cell_wake_parent_of(struct domain *child) {
     } else {
       cell_destroy_domain(child);
     }
-    parent->state = THREAD_RUNNABLE;
-    parent->wait_reason = WAIT_NONE;
-    parent->wait_target = -1;
+    cell_finish_wait(parent, child_id);
     smp_notify();
   }
 }
@@ -221,8 +219,8 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   copy_cstr(child->name, sizeof(child->name), parent->name);
   cell_current_thread_internal()->state = THREAD_BLOCKED;
   cell_current_thread_internal()->running_cpu = -1;
-  cell_current_thread_internal()->wait_reason = WAIT_VFORK;
-  cell_current_thread_internal()->wait_target = child->id;
+  cell_current_thread_internal()->wait.reason = WAIT_VFORK;
+  cell_current_thread_internal()->wait.target = child->id;
   smp_notify();
   cell_schedule(frame);
   return CELL_SWITCHED;
@@ -297,8 +295,8 @@ int cell_wait4_options(int pid, uint64_t status_addr, int options, struct trap_f
     cell_save_current(frame);
     cell_current_thread_internal()->state = THREAD_BLOCKED;
     cell_current_thread_internal()->running_cpu = -1;
-    cell_current_thread_internal()->wait_reason = WAIT_CHILD;
-    cell_current_thread_internal()->wait_target = pid;
+    cell_current_thread_internal()->wait.reason = WAIT_CHILD;
+    cell_current_thread_internal()->wait.target = pid;
     cell_schedule(frame);
     return CELL_SWITCHED;
   }
@@ -316,8 +314,6 @@ int cell_wait4_options(int pid, uint64_t status_addr, int options, struct trap_f
     if (child_thread != NULL) { child_thread->state = THREAD_UNUSED; }
     cell_destroy_domain(child);
   }
-  cell_current_thread_internal()->wait_target = -1;
-  cell_current_thread_internal()->wait_reason = WAIT_NONE;
   return child_id;
 }
 

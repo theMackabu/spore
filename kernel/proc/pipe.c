@@ -203,53 +203,32 @@ bool cell_pipe_release_file(struct open_file *file) {
   return true;
 }
 
-static void clear_pipe_wait(struct thread *thread) {
-  thread->wait_target = -1;
-  thread->pipe_buf = 0;
-  thread->pipe_len = 0;
-  thread->socket_addr = 0;
-  thread->socket_addrlen = 0;
-  thread->socket_accept_flags = 0;
-  thread->socket_write = false;
-  thread->socket_msg = false;
-  thread->socket_msg_addr = 0;
-  thread->socket_iov = 0;
-  thread->socket_iovlen = 0;
-  thread->socket_flags = 0;
-  thread->socket_has_deadline = false;
-  thread->socket_deadline_tick = 0;
-  thread->pipe_write = false;
-}
-
 static void wake_pipe_waiters(void) {
   if (pipe_waking) { return; }
   pipe_waking = true;
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_PIPE ||
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_PIPE ||
         thread->domain == NULL) {
       continue;
     }
-    int fd = thread->wait_target;
+    int fd = thread->wait.target;
     if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] == NULL) {
-      trap_set_result(&thread->tf, (uint64_t)-9);
+      cell_finish_wait(thread, -9);
     } else {
       struct open_file *file = thread->domain->fds[fd];
       int64_t rc;
       if (file->type == OPEN_UNIX_STREAM) {
-        rc = thread->pipe_write
-               ? cell_pipe_write_id_from_domain(thread->domain, file->unix_tx_pipe, thread->pipe_buf, thread->pipe_len)
-               : cell_pipe_read_id_to_domain(thread->domain, file->unix_rx_pipe, thread->pipe_buf, thread->pipe_len);
+        rc = thread->wait.write
+               ? cell_pipe_write_id_from_domain(thread->domain, file->unix_tx_pipe, thread->wait.buf, thread->wait.len)
+               : cell_pipe_read_id_to_domain(thread->domain, file->unix_rx_pipe, thread->wait.buf, thread->wait.len);
       } else {
-        rc = thread->pipe_write ? cell_pipe_write_from_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len)
-                                : cell_pipe_read_to_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len);
+        rc = thread->wait.write ? cell_pipe_write_from_domain(thread->domain, file, thread->wait.buf, thread->wait.len)
+                                : cell_pipe_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len);
       }
       if (rc == -EAGAIN) { continue; }
-      trap_set_result(&thread->tf, (uint64_t)rc);
+      cell_finish_wait(thread, rc);
     }
-    thread->state = THREAD_RUNNABLE;
-    thread->wait_reason = WAIT_NONE;
-    clear_pipe_wait(thread);
   }
   pipe_waking = false;
 }

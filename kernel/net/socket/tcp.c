@@ -989,9 +989,7 @@ int cell_fd_tcp_accept(int fd, uint64_t addr, uint64_t addrlen, int flags, struc
     return accepted;
   }
   if ((listener->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EAGAIN; }
-  struct thread *thread = cell_current_thread_internal();
-  if (thread != NULL) { thread->socket_accept_flags = flags; }
-  return cell_block_current_on_socket(fd, 0, 0, addr, addrlen, frame);
+  return cell_block_current_on_socket_accept(fd, addr, addrlen, flags, frame);
 }
 
 int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *frame) {
@@ -1038,7 +1036,7 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
   if (file->tcp_error != 0) { return -(int)file->tcp_error; }
   if (file->tcp_state == TCP_ESTABLISHED) { return 0; }
   if ((file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EINPROGRESS; }
-  return cell_block_current_on_socket(fd, 0, 0, 0, 0, frame);
+  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_SOCKET, .target = fd});
 }
 
 int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len, bool dontwait, struct trap_frame *frame) {

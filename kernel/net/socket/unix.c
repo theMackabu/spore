@@ -199,19 +199,15 @@ static int take_pending_unix(struct domain *domain, struct open_file *listener, 
 static void wake_unix_accept_waiters(struct open_file *listener) {
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
         thread->domain == NULL) {
       continue;
     }
-    int fd = thread->wait_target;
+    int fd = thread->wait.target;
     if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] != listener) { continue; }
-    int accepted = take_pending_unix(thread->domain, listener, thread->socket_accept_flags);
+    int accepted = take_pending_unix(thread->domain, listener, thread->wait.socket_accept_flags);
     if (accepted == -EAGAIN) { continue; }
-    trap_set_result(&thread->tf, (uint64_t)accepted);
-    thread->state = THREAD_RUNNABLE;
-    thread->wait_reason = WAIT_NONE;
-    thread->wait_target = -1;
-    thread->socket_accept_flags = 0;
+    cell_finish_wait(thread, accepted);
   }
   cell_wake_poll_waiters_internal();
 }
@@ -223,9 +219,7 @@ int cell_fd_unix_accept(int fd, int flags, struct trap_frame *frame) {
   int accepted = take_pending_unix(domain, listener, flags);
   if (accepted != -EAGAIN) { return accepted; }
   if ((listener->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EAGAIN; }
-  struct thread *thread = cell_current_thread_internal();
-  if (thread != NULL) { thread->socket_accept_flags = flags; }
-  return cell_block_current_on_socket(fd, 0, 0, 0, 0, frame);
+  return cell_block_current_on_socket_accept(fd, 0, 0, flags, frame);
 }
 
 int cell_fd_unix_connect(int fd, const char *path) {

@@ -370,19 +370,15 @@ void cell_wake_stdin(struct trap_frame *frame) {
   cell_wake_epoll_waiters_internal();
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_STDIN) { continue; }
-    int64_t n = cell_tty_read_to_user(thread->domain, thread->stdin_buf, thread->stdin_len);
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_STDIN) { continue; }
+    int64_t n = cell_tty_read_to_user(thread->domain, thread->wait.buf, thread->wait.len);
     if (n == -EINTR && cell_tty_pending_signal() != 0) {
       int signal = cell_tty_take_pending_signal();
       (void)cell_deliver_signal_to_thread(thread, signal);
       continue;
     }
     if (n <= 0) { continue; }
-    trap_set_result(&thread->tf, (uint64_t)n);
-    thread->state = THREAD_RUNNABLE;
-    thread->wait_reason = WAIT_NONE;
-    thread->stdin_buf = 0;
-    thread->stdin_len = 0;
+    cell_finish_wait(thread, n);
   }
   cell_wake_poll_waiters_internal();
 }

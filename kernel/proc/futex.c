@@ -24,11 +24,8 @@ int cell_futex_wake_domain(struct domain *domain, uint64_t uaddr, uint32_t count
   for (size_t i = 0; i < cell_thread_capacity() && (uint32_t)woke < count; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain && thread->state == THREAD_BLOCKED &&
-        thread->wait_reason == WAIT_FUTEX && thread->futex_addr == uaddr) {
-      thread->state = THREAD_RUNNABLE;
-      thread->wait_reason = WAIT_NONE;
-      thread->futex_addr = 0;
-      trap_set_result(&thread->tf, 0);
+        thread->wait.reason == WAIT_FUTEX && thread->wait.futex_addr == uaddr) {
+      cell_finish_wait(thread, 0);
       ++woke;
     }
   }
@@ -81,13 +78,7 @@ int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, struct trap_frame
   uint32_t actual = 0;
   if (!vmm_copy_from_user(cell_domain_as(domain), &actual, uaddr, sizeof(actual))) { return -EFAULT; }
   if (actual != expected) { return -EAGAIN; }
-  cell_save_current(frame);
-  thread->state = THREAD_BLOCKED;
-  thread->running_cpu = -1;
-  thread->wait_reason = WAIT_FUTEX;
-  thread->futex_addr = uaddr;
-  cell_schedule(frame);
-  return CELL_SWITCHED;
+  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FUTEX, .target = -1, .futex_addr = uaddr});
 }
 
 int cell_futex_wake_current(uint64_t uaddr, uint32_t count) {

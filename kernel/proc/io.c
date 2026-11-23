@@ -142,14 +142,7 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     if (n != 0) { return n; }
     if ((file->flags & CELL_O_NONBLOCK) != 0) { return -EAGAIN; }
     if (frame == NULL) { return 0; }
-    cell_save_current(frame);
-    cell_current_thread_internal()->state = THREAD_BLOCKED;
-    cell_current_thread_internal()->running_cpu = -1;
-    cell_current_thread_internal()->wait_reason = WAIT_STDIN;
-    cell_current_thread_internal()->stdin_buf = buf;
-    cell_current_thread_internal()->stdin_len = len;
-    cell_schedule(frame);
-    return CELL_SWITCHED;
+    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_STDIN, .target = -1, .buf = buf, .len = len});
   }
   case RAMFS_DEV_PTMX:
   case RAMFS_DEV_PTS:
@@ -281,13 +274,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   }
   if (file->type == OPEN_INOTIFY) {
     if ((file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EAGAIN; }
-    cell_save_current(frame);
-    cell_current_thread_internal()->state = THREAD_BLOCKED;
-    cell_current_thread_internal()->running_cpu = -1;
-    cell_current_thread_internal()->wait_reason = WAIT_INOTIFY;
-    cell_current_thread_internal()->wait_target = fd;
-    cell_schedule(frame);
-    return CELL_SWITCHED;
+    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_INOTIFY, .target = fd});
   }
   if (file->type == OPEN_PIPE) {
     int64_t got = cell_pipe_read_to_domain(domain, file, buf, len);
@@ -316,14 +303,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     if (n != 0) { return n; }
     if ((file->flags & CELL_O_NONBLOCK) != 0) { return -EAGAIN; }
     if (frame == NULL) { return 0; }
-    cell_save_current(frame);
-    cell_current_thread_internal()->state = THREAD_BLOCKED;
-    cell_current_thread_internal()->running_cpu = -1;
-    cell_current_thread_internal()->wait_reason = WAIT_STDIN;
-    cell_current_thread_internal()->stdin_buf = buf;
-    cell_current_thread_internal()->stdin_len = len;
-    cell_schedule(frame);
-    return CELL_SWITCHED;
+    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_STDIN, .target = -1, .buf = buf, .len = len});
   }
   if (file->type != OPEN_RAMFS || file->node.is_dir) { return -22; }
   if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, buf, len, frame); }

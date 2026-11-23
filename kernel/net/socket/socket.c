@@ -580,103 +580,77 @@ int64_t cell_fd_socket_recvmsg(int fd, uint64_t msg_addr, uint32_t flags, bool d
                                                   flags, file->so_rcvtimeo_ticks, frame);
 }
 
-static void clear_socket_wait(struct thread *thread) {
-  thread->wait_reason = WAIT_NONE;
-  thread->wait_target = -1;
-  thread->pipe_buf = 0;
-  thread->pipe_len = 0;
-  thread->socket_addr = 0;
-  thread->socket_addrlen = 0;
-  thread->socket_accept_flags = 0;
-  thread->socket_write = false;
-  thread->socket_msg = false;
-  thread->socket_msg_addr = 0;
-  thread->socket_iov = 0;
-  thread->socket_iovlen = 0;
-  thread->socket_flags = 0;
-  thread->socket_has_deadline = false;
-  thread->socket_deadline_tick = 0;
-}
-
 static void wake_socket_timeout_waiters(uint64_t now_ticks) {
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
-        !thread->socket_has_deadline || now_ticks < thread->socket_deadline_tick) {
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
+        !thread->wait.has_deadline || now_ticks < thread->wait.deadline_tick) {
       continue;
     }
-    trap_set_result(&thread->tf, (uint64_t)(-(int64_t)EAGAIN));
-    thread->state = THREAD_RUNNABLE;
-    clear_socket_wait(thread);
+    cell_finish_wait(thread, -EAGAIN);
   }
 }
 
 void wake_socket_waiters(struct open_file *file) {
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait_reason != WAIT_SOCKET ||
+    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
         thread->domain == NULL) {
       continue;
     }
-    int fd = thread->wait_target;
+    int fd = thread->wait.target;
     if (fd >= 0 && fd < MAX_FDS && thread->domain->fds[fd] == file) {
-      if (thread->socket_write && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
-        int64_t rc = thread->socket_msg
-                       ? socket_sendmsg_tcp_from_domain(thread->domain, file, thread->socket_msg_addr)
-                       : cell_socket_tcp_write_from_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len);
+      if (thread->wait.write && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
+        int64_t rc = thread->wait.socket_msg
+                       ? socket_sendmsg_tcp_from_domain(thread->domain, file, thread->wait.socket_msg_addr)
+                       : cell_socket_tcp_write_from_domain(thread->domain, file, thread->wait.buf, thread->wait.len);
         if (rc == -EAGAIN && tcp_send_would_block(file)) { continue; }
-        trap_set_result(&thread->tf, (uint64_t)rc);
-      } else if (thread->socket_msg && file->type == OPEN_SOCKET) {
-        int64_t rc = socket_recvmsg_to_iov(thread->domain, file, thread->socket_msg_addr, thread->socket_iov,
-                                           (int32_t)thread->socket_iovlen, thread->socket_addr, thread->socket_addrlen,
-                                           thread->socket_flags);
+        cell_finish_wait(thread, rc);
+      } else if (thread->wait.socket_msg && file->type == OPEN_SOCKET) {
+        int64_t rc = socket_recvmsg_to_iov(thread->domain, file, thread->wait.socket_msg_addr, thread->wait.socket_iov,
+                                           (int32_t)thread->wait.socket_iovlen, thread->wait.socket_addr, thread->wait.socket_addrlen,
+                                           thread->wait.socket_flags);
         if (rc == -EAGAIN) { continue; }
-        trap_set_result(&thread->tf, (uint64_t)rc);
+        cell_finish_wait(thread, rc);
       } else if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
-        if (thread->pipe_buf == 0 && thread->pipe_len == 0) {
+        if (thread->wait.buf == 0 && thread->wait.len == 0) {
           if (file->tcp_state == TCP_LISTEN) {
-            int accepted = cell_socket_take_pending_tcp(thread->domain, file, thread->socket_accept_flags);
+            int accepted = cell_socket_take_pending_tcp(thread->domain, file, thread->wait.socket_accept_flags);
             if (accepted == -EAGAIN) { continue; }
             if (accepted < 0) {
-              trap_set_result(&thread->tf, (uint64_t)(int64_t)accepted);
-              thread->state = THREAD_RUNNABLE;
-              clear_socket_wait(thread);
+              cell_finish_wait(thread, accepted);
               continue;
             }
             int addr_rc =
-              tcp_copy_peer_addr_to_domain(thread->domain, accepted, thread->socket_addr, thread->socket_addrlen);
+              tcp_copy_peer_addr_to_domain(thread->domain, accepted, thread->wait.socket_addr, thread->wait.socket_addrlen);
             if (addr_rc < 0) {
               socket_close_domain_fd(thread->domain, accepted);
-              trap_set_result(&thread->tf, (uint64_t)(int64_t)addr_rc);
-              thread->state = THREAD_RUNNABLE;
-              clear_socket_wait(thread);
+              cell_finish_wait(thread, addr_rc);
               continue;
             }
-            socket_apply_accept_flags(thread->domain, accepted, thread->socket_accept_flags);
-            trap_set_result(&thread->tf, (uint64_t)(int64_t)accepted);
+            socket_apply_accept_flags(thread->domain, accepted, thread->wait.socket_accept_flags);
+            cell_finish_wait(thread, accepted);
           } else if (file->tcp_error != 0) {
-            trap_set_result(&thread->tf, (uint64_t)(-(int64_t)file->tcp_error));
+            cell_finish_wait(thread, -(int64_t)file->tcp_error);
           } else if (file->tcp_state != TCP_ESTABLISHED) {
             continue;
           } else {
-            trap_set_result(&thread->tf, 0);
+            cell_finish_wait(thread, 0);
           }
         } else {
-          if (tcp_recv_waitall_pending(file, thread->pipe_len, thread->socket_flags)) { continue; }
-          int64_t rc = cell_socket_tcp_read_to_domain_flags(thread->domain, file, thread->pipe_buf, thread->pipe_len,
-                                                            thread->socket_flags);
+          if (tcp_recv_waitall_pending(file, thread->wait.len, thread->wait.socket_flags)) { continue; }
+          int64_t rc = cell_socket_tcp_read_to_domain_flags(thread->domain, file, thread->wait.buf, thread->wait.len,
+                                                            thread->wait.socket_flags);
           if (rc == -EAGAIN) { continue; }
-          trap_set_result(&thread->tf, (uint64_t)rc);
+          cell_finish_wait(thread, rc);
         }
       } else if (file->type == OPEN_SOCKET && (file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) &&
-                 (file->dgram_rx_count != 0 || file->udp_error != 0) && thread->pipe_buf != 0) {
-        int64_t rc = dgram_read_to_domain(thread->domain, file, thread->pipe_buf, thread->pipe_len, thread->socket_addr,
-                                          thread->socket_addrlen, thread->socket_flags);
+                 (file->dgram_rx_count != 0 || file->udp_error != 0) && thread->wait.buf != 0) {
+        int64_t rc = dgram_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len, thread->wait.socket_addr,
+                                          thread->wait.socket_addrlen, thread->wait.socket_flags);
         if (rc == -EAGAIN) { continue; }
-        trap_set_result(&thread->tf, (uint64_t)rc);
+        cell_finish_wait(thread, rc);
       }
-      thread->state = THREAD_RUNNABLE;
-      clear_socket_wait(thread);
     }
   }
   cell_wake_poll_waiters_internal();

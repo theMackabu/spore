@@ -124,28 +124,12 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
   }
 
   if (thread->state == THREAD_BLOCKED) {
-    if (!(action->flags & SA_RESTART) || !wait_reason_is_restartable(thread->wait_reason) ||
-        !aarch64_restart_syscall(&thread->tf)) {
-      trap_set_result(&thread->tf, (uint64_t)(-(int64_t)EINTR));
+    if ((action->flags & SA_RESTART) && wait_reason_is_restartable(thread->wait.reason) &&
+        aarch64_restart_syscall(&thread->tf)) {
+      cell_resume_wait(thread);
+    } else {
+      cell_finish_wait(thread, -EINTR);
     }
-    thread->state = THREAD_RUNNABLE;
-    thread->wait_reason = WAIT_NONE;
-    thread->wait_target = -1;
-    thread->stdin_buf = 0;
-    thread->stdin_len = 0;
-    thread->pipe_buf = 0;
-    thread->pipe_len = 0;
-    thread->socket_addr = 0;
-    thread->socket_addrlen = 0;
-    thread->socket_accept_flags = 0;
-    thread->socket_write = false;
-    thread->socket_msg = false;
-    thread->socket_msg_addr = 0;
-    thread->socket_iov = 0;
-    thread->socket_iovlen = 0;
-    thread->socket_flags = 0;
-    thread->socket_has_deadline = false;
-    thread->socket_deadline_tick = 0;
   }
 
   if (!aarch64_push_signal_frame(thread, action, signal, fault_addr, sig_code)) {
@@ -166,7 +150,7 @@ void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *fr
       continue;
     }
     if (target == NULL || t->state == THREAD_BLOCKED) { target = t; }
-    if (t->state == THREAD_BLOCKED && t->wait_reason == WAIT_STDIN) { break; }
+    if (t->state == THREAD_BLOCKED && t->wait.reason == WAIT_STDIN) { break; }
   }
   if (target == NULL) {
     domain->pending_signals |= signal_bit(signal);
