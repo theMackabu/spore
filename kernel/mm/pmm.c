@@ -16,6 +16,7 @@ static uint64_t bitmap_word_count;
 static uint64_t total_page_count;
 static uint64_t free_page_count;
 static uint64_t next_free_page;
+static uint64_t first_candidate_word;
 static uint64_t metadata_start_page;
 static uint64_t metadata_page_count;
 static struct pmm_stats stats;
@@ -121,6 +122,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   total_page_count = 0;
   free_page_count = 0;
   next_free_page = 0x100000 / PAGE_SIZE;
+  first_candidate_word = next_free_page / BITS_PER_WORD;
   metadata_start_page = 0;
   metadata_page_count = 0;
   stats = (struct pmm_stats){0};
@@ -212,7 +214,6 @@ uint64_t pmm_alloc_zero_page(void) {
 }
 
 uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
-  const uint64_t first = 0x100000 / PAGE_SIZE;
   if (count == 0 || count > tracked_page_count) { return 0; }
   ++stats.alloc_attempts;
   if (count > free_page_count) {
@@ -221,11 +222,16 @@ uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
   }
 
   uint64_t run_len = 0;
-  for (uint64_t page = first; page < tracked_page_count;) {
+  for (uint64_t page = first_candidate_word * BITS_PER_WORD; page < tracked_page_count;) {
     uint64_t used = bitmap[page / BITS_PER_WORD] >> (page % BITS_PER_WORD);
     uint64_t width = BITS_PER_WORD - page % BITS_PER_WORD;
     if (width > tracked_page_count - page) { width = tracked_page_count - page; }
     ++stats.bitmap_words_scanned;
+    if (used == UINT64_MAX && page / BITS_PER_WORD == first_candidate_word) {
+      ++first_candidate_word;
+      page += width;
+      continue;
+    }
     uint64_t end = page + width;
     while (page < end) {
       bool occupied = (used & 1) != 0;
@@ -275,6 +281,9 @@ void pmm_free_page(uint64_t pa) {
   --refcounts[page];
   if (refcounts[page] == 0) {
     set_free(page);
+    if (page / BITS_PER_WORD < first_candidate_word && page >= 0x100000 / PAGE_SIZE) {
+      first_candidate_word = page / BITS_PER_WORD;
+    }
     if (page < next_free_page) { next_free_page = page; }
   }
 }
