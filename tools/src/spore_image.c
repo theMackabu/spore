@@ -377,8 +377,7 @@ static void install_default_accounts(const char *rootfs) {
   write_rootfs_text(rootfs, "/home/spore/.mshrc", "# interactive spore msh startup\n", 0644);
 }
 
-static void install_musl_runtime(const char *source_root, const char *rootfs) {
-  (void)source_root;
+static void install_musl_runtime(const char *rootfs) {
   char lib_dir[MAX_PATH];
   path_join(lib_dir, sizeof(lib_dir), rootfs, "lib");
   ensure_dir(lib_dir);
@@ -390,13 +389,21 @@ static void install_musl_runtime(const char *source_root, const char *rootfs) {
 
   char ld_dst[MAX_PATH];
   path_join(ld_dst, sizeof(ld_dst), lib_dir, "ld-musl-aarch64.so.1");
-  copy_file(ld_src, ld_dst);
-  chmod(ld_dst, 0755);
 
   char libc_dst[MAX_PATH];
   path_join(libc_dst, sizeof(libc_dst), lib_dir, "libc.so");
   copy_file(libc_src, libc_dst);
   chmod(libc_dst, 0755);
+
+  struct stat ld_stat, libc_stat;
+  if (stat(ld_src, &ld_stat) != 0) { die(ld_src); }
+  if (stat(libc_src, &libc_stat) != 0) { die(libc_src); }
+  if (ld_stat.st_dev == libc_stat.st_dev && ld_stat.st_ino == libc_stat.st_ino) {
+    symlink_into_rootfs("libc.so", rootfs, "/lib/ld-musl-aarch64.so.1");
+  } else {
+    copy_file(ld_src, ld_dst);
+    chmod(ld_dst, 0755);
+  }
 }
 
 static void install_musl_devel(const char *rootfs) {
@@ -579,7 +586,7 @@ static void build_root_image(const char *source_root, const char *stage, const c
     copy_into_rootfs(src, rootfs_dir, target);
   }
   fclose(mf);
-  install_musl_runtime(source_root, rootfs_dir);
+  install_musl_runtime(rootfs_dir);
   install_musl_devel(rootfs_dir);
   install_default_accounts(rootfs_dir);
 
