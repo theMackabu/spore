@@ -132,6 +132,19 @@ static void release_mapping(const struct vma *vma) {
   vfs_release_node(&vma->file_node);
 }
 
+static bool shared_writable_file(const struct vma *vma) {
+  return vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE);
+}
+
+static void replace_mapping(struct vma *dst, const struct vma *src) {
+  bool old_shared_writable = shared_writable_file(dst);
+  bool new_shared_writable = shared_writable_file(src);
+  if (old_shared_writable != new_shared_writable) {
+    vfs_note_shared_writable_mapping(&dst->file_node, new_shared_writable);
+  }
+  *dst = *src;
+}
+
 static void erase_slots(struct vma_list *list, size_t first, size_t end) {
   if (first == end) { return; }
   for (size_t i = first; i < end; ++i) {
@@ -251,38 +264,79 @@ bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end) {
   return true;
 }
 
-static bool append_part(struct vma_list *list, const struct vma *src, uint64_t start, uint64_t end, uint32_t prot) {
-  if (start >= end) { return true; }
-  struct vma part = *src;
-  part.start = start;
-  part.end = end;
-  part.prot = prot;
-  return insert_mapping(list, &part);
+static void merge_mappings(struct vma_list *list, size_t first, size_t end) {
+  if (first != 0) { --first; }
+  if (end < list->count) { ++end; }
+  while (first + 1 < end) {
+    struct vma *left = slot_at(list, first);
+    struct vma *right = slot_at(list, first + 1);
+    if (left->end != right->start || !compatible(left, right)) {
+      ++first;
+      continue;
+    }
+    left->end = right->end;
+    erase_slots(list, first + 1, first + 2);
+    --end;
+  }
 }
 
 bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot) {
   if (start >= end) { return false; }
-  struct vma_list next = {0};
-  for (size_t i = 0; i < list->count; ++i) {
-    const struct vma *vma = slot_at(list, i);
-    if (end <= vma->start || start >= vma->end || prot == vma->prot) {
-      if (!insert_mapping(&next, vma)) { goto fail; }
+  size_t first = vma_first_ending_after(list, start);
+  size_t last = first;
+  size_t additional = 0;
+  bool changed = false;
+  while (last < list->count) {
+    const struct vma *vma = slot_at(list, last);
+    if (vma->start >= end) { break; }
+    if (vma->prot == prot) {
+      ++last;
       continue;
     }
+    changed = true;
     uint64_t mid_start = start > vma->start ? start : vma->start;
     uint64_t mid_end = end < vma->end ? end : vma->end;
-    if (!append_part(&next, vma, vma->start, mid_start, vma->prot) ||
-        !append_part(&next, vma, mid_start, mid_end, prot) || !append_part(&next, vma, mid_end, vma->end, vma->prot)) {
-      goto fail;
-    }
+    additional += (vma->start < mid_start) + (mid_end < vma->end);
+    ++last;
   }
-  vma_list_destroy(list);
-  *list = next;
-  return true;
+  if (!changed) { return true; }
+  if (!reserve_slots(list, list->count + additional)) { return false; }
 
-fail:
-  vma_list_destroy(&next);
-  return false;
+  size_t i = first;
+  while (i < list->count) {
+    struct vma old = *slot_at(list, i);
+    if (old.start >= end) { break; }
+    if (old.end <= start || old.prot == prot) {
+      ++i;
+      continue;
+    }
+    uint64_t mid_start = start > old.start ? start : old.start;
+    uint64_t mid_end = end < old.end ? end : old.end;
+    struct vma parts[3];
+    size_t count = 0;
+    if (old.start < mid_start) {
+      parts[count] = old;
+      parts[count].end = mid_start;
+      ++count;
+    }
+    parts[count] = old;
+    parts[count].start = mid_start;
+    parts[count].end = mid_end;
+    parts[count].prot = prot;
+    ++count;
+    if (mid_end < old.end) {
+      parts[count] = old;
+      parts[count].start = mid_end;
+      ++count;
+    }
+    replace_mapping(slot_at(list, i), &parts[0]);
+    for (size_t part = 1; part < count; ++part) {
+      insert_slot(list, i + part, &parts[part]);
+    }
+    i += count;
+  }
+  merge_mappings(list, first, i);
+  return true;
 }
 
 bool vma_grow_down(struct vma_list *list, uint64_t page, uint32_t required_flags, struct vma *out) {

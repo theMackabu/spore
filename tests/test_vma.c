@@ -73,10 +73,15 @@ int main(void) {
   }
   assert(vma_count(&many) == target);
   assert(vma_at(&many, target) == NULL);
+  uint64_t last = 0x100000 + (target - 1) * 0x2000;
+  assert(vma_protect(&many, 0x100000, last + 0x1000, 1));
+  assert(vma_count(&many) == target);
+  assert(vma_lookup(&many, 0x100000)->prot == 1);
+  assert(vma_lookup(&many, last)->prot == 1);
+  assert(vma_protect(&many, 0x100000, last + 0x1000, 1));
   struct vma_list many_clone;
   assert(vma_clone(&many_clone, &many));
   assert(vma_count(&many_clone) == target);
-  uint64_t last = 0x100000 + (target - 1) * 0x2000;
   assert(vma_lookup(&many_clone, last)->end == last + 0x1000);
   assert(vma_remove(&many, 0x101000, last));
   assert(vma_count(&many) == 2);
@@ -106,6 +111,20 @@ int main(void) {
   assert(vma_remove(&files, 0x900000, 0x901000));
   assert(vfs_ref_stub_shared_write_count() == 0);
   vma_list_destroy(&files);
+  assert(vfs_ref_stub_retain_count() == vfs_ref_stub_release_count());
+
+  vfs_ref_stub_reset();
+  vma_list_init(&files);
+  assert(vma_insert_file(&files, 0xa00000, 0xa02000, 3, MAP_SHARED_TEST, &node, 0xa00000, 0, 0x2000));
+  assert(vfs_ref_stub_shared_write_count() == 1);
+  assert(vma_protect(&files, 0xa00000, 0xa02000, 1));
+  assert(vma_count(&files) == 1);
+  assert(vfs_ref_stub_shared_write_count() == 0);
+  assert(vma_protect(&files, 0xa00000, 0xa02000, 3));
+  assert(vma_count(&files) == 1);
+  assert(vfs_ref_stub_shared_write_count() == 1);
+  vma_list_destroy(&files);
+  assert(vfs_ref_stub_shared_write_count() == 0);
   assert(vfs_ref_stub_retain_count() == vfs_ref_stub_release_count());
 
   vfs_ref_stub_reset();
