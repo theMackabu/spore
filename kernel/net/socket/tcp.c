@@ -16,6 +16,7 @@ enum {
   ECONNRESET = 104,
   ETIMEDOUT = 110,
   TCP_OOO_BUFFER_SLOTS = 32,
+  TCP_RX_BUFFER_SLOTS = 16,
   TCP_OOO_ENTRIES = 8,
   TCP_OOO_PAYLOAD_CAP = 1460,
   TCP_RCV_WINDOW_SCALE = 2,
@@ -65,34 +66,67 @@ struct tcp_pending_conn {
   struct open_file *server_end;
 };
 
+struct tcp_rx_state {
+  bool used;
+  uint32_t head;
+  uint64_t pages[CELL_TCP_RX_CAP / PAGE_SIZE];
+};
+
 static struct tcp_pending_conn tcp_pending[16];
+
+static struct tcp_rx_state tcp_rx_buffers[TCP_RX_BUFFER_SLOTS];
 
 static struct tcp_ooo_state tcp_ooo_buffers[TCP_OOO_BUFFER_SLOTS];
 
 static bool tcp_ooo_used[TCP_OOO_BUFFER_SLOTS];
 
 static bool tcp_alloc_rx(struct open_file *file) {
-  return file != NULL;
+  if (file == NULL) { return false; }
+  if (file->tcp_rx_slot != 0) { return true; }
+  for (size_t i = 0; i < TCP_RX_BUFFER_SLOTS; ++i) {
+    if (tcp_rx_buffers[i].used) { continue; }
+    tcp_rx_buffers[i].used = true;
+    file->tcp_rx_slot = (uint8_t)(i + 1);
+    return true;
+  }
+  return false;
 }
 
-static void tcp_free_rx(struct open_file *file) {
-  if (file == NULL) { return; }
-  for (size_t i = 0; i < sizeof(file->tcp_rx_pages) / sizeof(file->tcp_rx_pages[0]); ++i) {
-    if (file->tcp_rx_pages[i] != 0) { pmm_free_page(file->tcp_rx_pages[i]); }
+static struct tcp_rx_state *tcp_rx_state_for(const struct open_file *file) {
+  if (file == NULL || file->tcp_rx_slot == 0) { return NULL; }
+  size_t slot = (size_t)file->tcp_rx_slot - 1;
+  return slot < TCP_RX_BUFFER_SLOTS && tcp_rx_buffers[slot].used ? &tcp_rx_buffers[slot] : NULL;
+}
+
+static void tcp_reset_rx(struct open_file *file) {
+  struct tcp_rx_state *state = tcp_rx_state_for(file);
+  if (state == NULL) { return; }
+  for (size_t i = 0; i < sizeof(state->pages) / sizeof(state->pages[0]); ++i) {
+    if (state->pages[i] != 0) { pmm_free_page(state->pages[i]); }
   }
-  kmemset(file->tcp_rx_pages, 0, sizeof(file->tcp_rx_pages));
-  file->tcp_rx_head = 0;
+  kmemset(state->pages, 0, sizeof(state->pages));
+  state->head = 0;
   file->tcp_rx_len = 0;
 }
 
+static void tcp_free_rx(struct open_file *file) {
+  struct tcp_rx_state *state = tcp_rx_state_for(file);
+  if (state == NULL) { return; }
+  tcp_reset_rx(file);
+  state->used = false;
+  file->tcp_rx_slot = 0;
+}
+
 static uint8_t *tcp_rx_page(struct open_file *file, uint32_t offset, bool create) {
+  struct tcp_rx_state *state = tcp_rx_state_for(file);
+  if (state == NULL) { return NULL; }
   size_t index = offset / PAGE_SIZE;
-  if (index >= sizeof(file->tcp_rx_pages) / sizeof(file->tcp_rx_pages[0])) { return NULL; }
-  uint64_t pa = file->tcp_rx_pages[index];
+  if (index >= sizeof(state->pages) / sizeof(state->pages[0])) { return NULL; }
+  uint64_t pa = state->pages[index];
   if (pa == 0 && create) {
     pa = pmm_alloc_zero_page();
     if (pa == 0) { return NULL; }
-    file->tcp_rx_pages[index] = pa;
+    state->pages[index] = pa;
   }
   return pa == 0 ? NULL : pmm_phys_to_virt(pa);
 }
@@ -113,7 +147,9 @@ static bool tcp_rx_write(struct open_file *file, uint32_t offset, const uint8_t 
 }
 
 static bool tcp_rx_copy_to_user(struct domain *domain, const struct open_file *file, uint64_t dst, uint32_t len) {
-  uint32_t offset = file->tcp_rx_head;
+  struct tcp_rx_state *state = tcp_rx_state_for(file);
+  if (state == NULL) { return false; }
+  uint32_t offset = state->head;
   while (len != 0) {
     uint32_t page_offset = offset % PAGE_SIZE;
     uint32_t chunk = PAGE_SIZE - page_offset;
@@ -129,7 +165,9 @@ static bool tcp_rx_copy_to_user(struct domain *domain, const struct open_file *f
 
 static bool tcp_rx_copy_to_kernel(const struct open_file *file, void *dst, uint32_t len) {
   uint8_t *out = dst;
-  uint32_t offset = file->tcp_rx_head;
+  struct tcp_rx_state *state = tcp_rx_state_for(file);
+  if (state == NULL) { return false; }
+  uint32_t offset = state->head;
   while (len != 0) {
     uint32_t page_offset = offset % PAGE_SIZE;
     uint32_t chunk = PAGE_SIZE - page_offset;
@@ -145,9 +183,11 @@ static bool tcp_rx_copy_to_kernel(const struct open_file *file, void *dst, uint3
 }
 
 static void tcp_rx_consume(struct open_file *file, uint32_t len) {
-  file->tcp_rx_head = (uint16_t)((file->tcp_rx_head + len) % CELL_TCP_RX_CAP);
+  struct tcp_rx_state *state = tcp_rx_state_for(file);
+  if (state == NULL) { return; }
+  state->head = (state->head + len) % CELL_TCP_RX_CAP;
   file->tcp_rx_len -= len;
-  if (file->tcp_rx_len == 0) { tcp_free_rx(file); }
+  if (file->tcp_rx_len == 0) { tcp_reset_rx(file); }
 }
 
 static bool tcp_alloc_ooo(struct open_file *file) {
@@ -307,7 +347,9 @@ static uint32_t tcp_append_rx(struct open_file *file, const uint8_t *data, uint3
   uint32_t room = file->tcp_rx_len >= limit ? 0 : limit - file->tcp_rx_len;
   uint32_t n = len < room ? len : room;
   if (n == 0) { return 0; }
-  uint32_t tail = (file->tcp_rx_head + file->tcp_rx_len) % CELL_TCP_RX_CAP;
+  struct tcp_rx_state *state = tcp_rx_state_for(file);
+  if (state == NULL) { return 0; }
+  uint32_t tail = (state->head + file->tcp_rx_len) % CELL_TCP_RX_CAP;
   if (!tcp_rx_write(file, tail, data, n)) { return 0; }
   file->tcp_rx_len += n;
   file->tcp_ack += n;
@@ -777,7 +819,7 @@ bool tcp_init_socket(struct open_file *file) {
   file->tcp_remote_mss = TCP_DEFAULT_MSS;
   tcp_init_rto(file);
   tcp_init_keepalive(file, cell_uptime_ticks());
-  return true;
+  return tcp_alloc_rx(file);
 }
 
 static bool tcp_listener_readable(const struct open_file *listener) {
@@ -1034,7 +1076,7 @@ int cell_fd_socket_shutdown(int fd, int how) {
   if (how == 0 || how == 2) {
     file->tcp_fin = true;
     file->tcp_fin_pending = false;
-    file->tcp_rx_len = 0;
+    tcp_reset_rx(file);
     cell_socket_wake_file(file);
   }
   if (how == 1 || how == 2) { return tcp_send_fin_once(file); }
@@ -1133,6 +1175,10 @@ static void tcp_deliver_syn_to_listener(uint32_t src_ip, uint16_t src_port, uint
   server->ip_ttl = listener->ip_ttl;
   server->ip_mtu_discover = listener->ip_mtu_discover;
   server->ip_bind_address_no_port = listener->ip_bind_address_no_port;
+  if (!tcp_alloc_rx(server)) {
+    cell_release_open_file(server);
+    return;
+  }
   server->tcp_local_port = dst_port;
   server->tcp_remote_ip = src_ip;
   server->tcp_remote_port = src_port;

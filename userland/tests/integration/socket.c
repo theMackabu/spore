@@ -998,6 +998,80 @@ static int tcp_bulk_send_regression(void) {
   return ok;
 }
 
+static unsigned char tcp_rx_pattern(size_t index) {
+  return (unsigned char)(index ^ (index >> 8) ^ (index >> 16) ^ 0x5au);
+}
+
+static int tcp_send_all(int fd, const unsigned char *buf, size_t len) {
+  size_t sent = 0;
+  while (sent < len) {
+    ssize_t n = send(fd, buf + sent, len - sent, 0);
+    if (n <= 0) { return 0; }
+    sent += (size_t)n;
+  }
+  return 1;
+}
+
+static int tcp_rx_ring_regression(void) {
+  enum {
+    FIRST_LEN = 150000,
+    SECOND_LEN = 120000,
+    PEEK_LEN = 70000,
+    FIRST_READ = 100000,
+    SHORT_READ = 3001,
+  };
+  int client = -1;
+  int accepted = -1;
+  if (!open_tcp_loopback_pair(45696, &client, &accepted)) {
+    printf("[spore] tcp rx ring: FAIL pair\n");
+    return 0;
+  }
+  unsigned char *first = malloc(FIRST_LEN);
+  unsigned char *second = malloc(SECOND_LEN);
+  unsigned char *peek = malloc(PEEK_LEN);
+  unsigned char *chunk = malloc(SHORT_READ);
+  int ok = first != NULL && second != NULL && peek != NULL && chunk != NULL;
+  for (size_t i = 0; ok && i < FIRST_LEN; ++i) { first[i] = tcp_rx_pattern(i); }
+  for (size_t i = 0; ok && i < SECOND_LEN; ++i) { second[i] = tcp_rx_pattern(FIRST_LEN + i); }
+  if (ok) { ok = tcp_send_all(accepted, first, FIRST_LEN); }
+  if (ok) {
+    ok = recv(client, peek, PEEK_LEN, MSG_PEEK) == PEEK_LEN && memcmp(peek, first, PEEK_LEN) == 0;
+  }
+  size_t consumed = 0;
+  while (ok && consumed < FIRST_READ) {
+    size_t want = FIRST_READ - consumed;
+    if (want > SHORT_READ) { want = SHORT_READ; }
+    ssize_t got = recv(client, chunk, want, 0);
+    ok = got > 0 && (size_t)got <= want && memcmp(chunk, first + consumed, (size_t)got) == 0;
+    consumed += got > 0 ? (size_t)got : 0;
+  }
+  if (ok) { ok = tcp_send_all(accepted, second, SECOND_LEN); }
+  size_t offset = FIRST_READ;
+  size_t total = FIRST_LEN + SECOND_LEN;
+  while (ok && offset < total) {
+    size_t want = total - offset;
+    if (want > SHORT_READ) { want = SHORT_READ; }
+    if (offset < FIRST_LEN && want > FIRST_LEN - offset) { want = FIRST_LEN - offset; }
+    ssize_t got = recv(client, chunk, want, 0);
+    const unsigned char *expected = offset < FIRST_LEN ? first + offset : second + offset - FIRST_LEN;
+    ok = got > 0 && (size_t)got <= want && memcmp(chunk, expected, (size_t)got) == 0;
+    offset += got > 0 ? (size_t)got : 0;
+  }
+  if (ok) {
+    int flags = fcntl(client, F_GETFL);
+    ok = flags >= 0 && fcntl(client, F_SETFL, flags | O_NONBLOCK) == 0 && recv(client, chunk, 1, 0) == -1 &&
+         errno == EAGAIN && send(accepted, "z", 1, 0) == 1 && recv(client, chunk, 1, 0) == 1 && chunk[0] == 'z';
+  }
+  free(chunk);
+  free(peek);
+  free(second);
+  free(first);
+  close(accepted);
+  close(client);
+  printf("[spore] tcp rx ring: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int tcp_fin_eof_regression(void) {
   int client = -1;
   int accepted = -1;
@@ -1265,7 +1339,8 @@ int integration_socket_suite(void) {
          tcp_abortive_linger_regression() && udp_broadcast_option_regression() && udp_loopback_refused_regression() &&
          udp_disconnect_regression() && udp_external_refused_regression() && socket_timeout_regression() &&
          socket_msg_dontwait_regression() && socket_shutdown_regression() && tcp_sigpipe_regression() &&
-         tcp_loopback_accept_regression() && tcp_bulk_send_regression() && tcp_fin_eof_regression() &&
+         tcp_loopback_accept_regression() && tcp_bulk_send_regression() && tcp_rx_ring_regression() &&
+         tcp_fin_eof_regression() &&
          tcp_refused_poll_error_regression() && tcp_send_timeout_regression() && tcp_sendmsg_timeout_regression() &&
          getpeername_regression();
 }

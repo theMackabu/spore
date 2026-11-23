@@ -111,7 +111,6 @@ struct open_file {
       uint16_t tcp_local_port;
       uint16_t tcp_remote_port;
       uint16_t tcp_listen_backlog;
-      uint16_t tcp_rx_head;
       uint32_t tcp_rx_len;
       uint8_t tcp_state;
       uint8_t tcp_error;
@@ -126,7 +125,7 @@ struct open_file {
       uint32_t ip_ttl;
       bool ip_recvttl;
       uint64_t tcp_tx_pa;
-      uint64_t tcp_rx_pages[CELL_TCP_RX_PAGES];
+      uint8_t tcp_rx_slot;
       struct tcp_tx_state *tcp_tx;
       struct tcp_ooo_state *tcp_ooo;
     };
