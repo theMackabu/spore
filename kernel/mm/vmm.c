@@ -248,7 +248,7 @@ bool vmm_handle_cow_fault(struct user_address_space *as, uint64_t va) {
     return true;
   }
 
-  uint64_t new_pa = pmm_alloc_zero_page();
+  uint64_t new_pa = pmm_alloc_page();
   if (new_pa == 0) { return false; }
   kmemcpy((void *)(uintptr_t)(as->hhdm_offset + new_pa), (const void *)(uintptr_t)(as->hhdm_offset + old_pa),
           PAGE_SIZE);

@@ -21,12 +21,17 @@ static size_t page_index(uint64_t pa) {
   return idx;
 }
 
-uint64_t pmm_alloc_zero_page(void) {
+uint64_t pmm_alloc_page(void) {
   if (next_pa + TEST_PAGE_SIZE > sizeof(phys)) { return 0; }
   uint64_t pa = next_pa;
-  memset(&phys[pa], 0, TEST_PAGE_SIZE);
   refs[page_index(pa)] = 1;
   next_pa += TEST_PAGE_SIZE;
+  return pa;
+}
+
+uint64_t pmm_alloc_zero_page(void) {
+  uint64_t pa = pmm_alloc_page();
+  if (pa != 0) { memset(&phys[pa], 0, TEST_PAGE_SIZE); }
   return pa;
 }
 

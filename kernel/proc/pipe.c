@@ -64,7 +64,7 @@ static void pipe_destroy(struct pipe_obj *pipe) {
 
 static bool pipe_alloc_storage(struct pipe_obj *pipe) {
   for (size_t i = 0; i < PIPE_PAGES; ++i) {
-    pipe->pages[i] = pmm_alloc_zero_page();
+    pipe->pages[i] = pmm_alloc_page();
     if (pipe->pages[i] == 0) {
       pipe_free_storage(pipe);
       return false;
