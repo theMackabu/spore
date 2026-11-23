@@ -130,6 +130,32 @@ int main(void) {
   assert(ramfs_lookup_node(&fs, "/tmp/d/b", &node));
   assert(ramfs_unlink(&fs, "/tmp/d/b"));
 
+  uint64_t backing_before = ramfs_backing_used_pages();
+  assert(ramfs_create(&fs, "/tmp/d/indexed", 0644, &node));
+  assert(ramfs_link(&fs, "/tmp/d/indexed", "/tmp/d/indexed-link"));
+  for (uint32_t i = 0; i < 1024; ++i) {
+    char value = (char)i;
+    assert(ramfs_write(&fs, node.index, (uint64_t)i * 17 * RAMFS_PAGE_SIZE, &value, 1) == 1);
+  }
+  assert(ramfs_backing_used_pages() == backing_before + 1024);
+  struct ramfs_node linked;
+  assert(ramfs_lookup_node(&fs, "/tmp/d/indexed-link", &linked));
+  for (uint32_t i = 0; i < 1024; ++i) {
+    char value = 0;
+    assert(ramfs_read(&fs, linked.index, (uint64_t)i * 17 * RAMFS_PAGE_SIZE, &value, 1) == 1);
+    assert(value == (char)i);
+  }
+  assert(ramfs_truncate(&fs, node.index, 512ull * 17 * RAMFS_PAGE_SIZE));
+  assert(ramfs_backing_used_pages() == backing_before + 512);
+  assert(ramfs_write(&fs, linked.index, 900ull * 17 * RAMFS_PAGE_SIZE, "r", 1) == 1);
+  assert(ramfs_backing_used_pages() == backing_before + 513);
+  char value = 1;
+  assert(ramfs_read(&fs, node.index, 899ull * 17 * RAMFS_PAGE_SIZE, &value, 1) == 1 && value == 0);
+  assert(ramfs_read(&fs, node.index, 900ull * 17 * RAMFS_PAGE_SIZE, &value, 1) == 1 && value == 'r');
+  assert(ramfs_unlink(&fs, "/tmp/d/indexed-link"));
+  assert(ramfs_unlink(&fs, "/tmp/d/indexed"));
+  assert(ramfs_backing_used_pages() == backing_before);
+
   assert(ramfs_create(&fs, "/tmp/d/no-seal", 0644, &node));
   assert(ramfs_set_sealable(&fs, node.index, false));
   assert(ramfs_get_seals(&fs, node.index) == RAMFS_F_SEAL_SEAL);
