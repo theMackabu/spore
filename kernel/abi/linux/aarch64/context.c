@@ -67,24 +67,19 @@ void syscall_realtime_base(uint64_t *epoch_sec, uint64_t *counter, uint64_t *fre
   *freq = realtime_freq;
 }
 
-static bool user_readable(uint64_t buf, uint64_t len) {
+static bool user_accessible(uint64_t addr, size_t len, enum vmm_access access) {
   if (len == 0) { return true; }
-  return cell_ensure_user_range(buf, (size_t)len, VMM_ACCESS_READ) &&
-         vmm_user_range_accessible(active_as(), buf, (size_t)len, VMM_ACCESS_READ);
-}
-
-static bool user_writable(uint64_t buf, uint64_t len) {
-  if (len == 0) { return true; }
-  return cell_ensure_user_range(buf, (size_t)len, VMM_ACCESS_WRITE) &&
-         vmm_user_range_accessible(active_as(), buf, (size_t)len, VMM_ACCESS_WRITE);
+  struct domain *domain = cell_current_domain_internal();
+  if (domain != NULL) { return cell_domain_ensure_user_range(domain, addr, len, access); }
+  return vmm_user_range_accessible(current_as, addr, len, access);
 }
 
 bool syscall_user_readable(uint64_t buf, uint64_t len) {
-  return user_readable(buf, len);
+  return user_accessible(buf, len, VMM_ACCESS_READ);
 }
 
 bool syscall_user_writable(uint64_t buf, uint64_t len) {
-  return user_writable(buf, len);
+  return user_accessible(buf, len, VMM_ACCESS_WRITE);
 }
 
 int64_t syscall_read_user_string(uint64_t user, char *dst, size_t limit) {

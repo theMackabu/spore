@@ -73,6 +73,12 @@ int main(void) {
   assert(strcmp((char *)&phys[rw_pa], "ok") == 0);
   assert(!vmm_user_range_accessible(&as, 0x401ff0, 0x40, VMM_ACCESS_READ));
 
+  char unchanged[4] = "abc";
+  assert(!vmm_copy_from_user(&as, unchanged, 0x401ffe, sizeof(unchanged)));
+  assert(strcmp(unchanged, "abc") == 0);
+  assert(!vmm_copy_to_user(&as, 0x401ffe, "xyz", 4));
+  assert(phys[rw_pa + TEST_PAGE_SIZE - 2] == 0);
+
   uint64_t cross_a = pmm_alloc_zero_page();
   uint64_t cross_b = pmm_alloc_zero_page();
   assert(vmm_map_page(&as, 0x600000, cross_a, VMM_USER_READ | VMM_USER_WRITE));

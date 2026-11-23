@@ -245,6 +245,7 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
   struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
   if (as == NULL || vmas == NULL) { return false; }
+  if (vmm_user_range_accessible(as, va, len, access)) { return true; }
   uint64_t end = va + len - 1;
   if (end < va) { return false; }
   uint64_t page = va & ~(uint64_t)(PAGE_SIZE - 1);

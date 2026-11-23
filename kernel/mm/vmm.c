@@ -362,13 +362,20 @@ bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va,
   uint64_t end;
   if (!checked_add(va, len - 1, &end)) { return false; }
 
-  uint64_t page = va & ~(uint64_t)(PAGE_SIZE - 1);
-  uint64_t last = end & ~(uint64_t)(PAGE_SIZE - 1);
-  for (;;) {
-    if (user_to_phys_checked(as, page, access) == 0) { return false; }
-    if (page == last) { return true; }
-    page += PAGE_SIZE;
+  uint64_t page = va / PAGE_SIZE;
+  uint64_t limit = end / PAGE_SIZE + 1;
+  while (page < limit) {
+    const uint64_t *ptes = leaf_for_va(as, page * PAGE_SIZE);
+    if (ptes == NULL) { return false; }
+    size_t count = 512 - page % 512;
+    if (count > limit - page) { count = limit - page; }
+    for (size_t i = 0; i < count; ++i) {
+      uint64_t entry = ptes[i];
+      if (!(entry & PTE_VALID) || !(entry & PTE_ADDR_MASK) || !user_entry_allows(entry, access)) { return false; }
+    }
+    page += count;
   }
+  return true;
 }
 
 bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len) {
@@ -376,14 +383,15 @@ bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const v
   uint64_t end;
   if (!checked_add(dst, len - 1, &end)) { return false; }
   struct user_address_space *mutable_as = (struct user_address_space *)as;
-  uint64_t page = dst & ~(uint64_t)(PAGE_SIZE - 1);
-  uint64_t last = end & ~(uint64_t)(PAGE_SIZE - 1);
-  while (len != 0) {
-    if (user_to_phys_checked(as, page, VMM_ACCESS_WRITE) == 0 && !vmm_handle_cow_fault(mutable_as, page)) {
-      return false;
+  if (dst / PAGE_SIZE != end / PAGE_SIZE) {
+    uint64_t first = dst / PAGE_SIZE;
+    uint64_t last = end / PAGE_SIZE;
+    for (uint64_t page = first; page <= last; ++page) {
+      uint64_t va = page * PAGE_SIZE;
+      if (user_to_phys_checked(as, va, VMM_ACCESS_WRITE) == 0 && !vmm_handle_cow_fault(mutable_as, va)) {
+        return false;
+      }
     }
-    if (page == last) { break; }
-    page += PAGE_SIZE;
   }
 
   const uint8_t *s = src;
@@ -410,7 +418,9 @@ bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t
   if (len == 0) { return true; }
   uint64_t end;
   if (!checked_add(src, len - 1, &end)) { return false; }
-  if (!vmm_user_range_accessible(as, src, len, VMM_ACCESS_READ)) { return false; }
+  if (src / PAGE_SIZE != end / PAGE_SIZE && !vmm_user_range_accessible(as, src, len, VMM_ACCESS_READ)) {
+    return false;
+  }
 
   uint8_t *d = dst;
   size_t done = 0;
