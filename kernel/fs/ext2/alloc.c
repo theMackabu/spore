@@ -1,9 +1,5 @@
 #include "internal.h"
 
-static void account_allocated_block(struct ext2_fs *fs, struct ext2_node *node) {
-  node->sectors_count += fs->block_size / 512;
-}
-
 static int alloc_block_maybe_zero(struct ext2_fs *fs, uint32_t *out, bool zero_block) {
   uint8_t bitmap[4096];
   if (fs->block_size > sizeof(bitmap)) { return -EXT2_EIO; }
@@ -237,7 +233,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
     if (node->blocks[file_block_index] == 0) {
       int rc = alloc_block_maybe_zero(fs, &node->blocks[file_block_index], zero_data_block);
       if (rc != 0) { return rc; }
-      account_allocated_block(fs, node);
     }
     *block_out = node->blocks[file_block_index];
     return 0;
@@ -248,7 +243,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
     if (node->blocks[12] == 0) {
       int rc = ext2_alloc_block(fs, &node->blocks[12]);
       if (rc != 0) { return rc; }
-      account_allocated_block(fs, node);
     }
     if (!ext2_read_block(fs, node->blocks[12], block)) { return -EXT2_EIO; }
     uint32_t *entries = (uint32_t *)block;
@@ -256,7 +250,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
       int rc = alloc_block_maybe_zero(fs, &entries[file_block_index], zero_data_block);
       if (rc != 0) { return rc; }
       if (!ext2_write_block(fs, node->blocks[12], block)) { return -EXT2_EIO; }
-      account_allocated_block(fs, node);
     }
     *block_out = entries[file_block_index];
     return 0;
@@ -268,7 +261,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
     if (node->blocks[13] == 0) {
       int rc = ext2_alloc_block(fs, &node->blocks[13]);
       if (rc != 0) { return rc; }
-      account_allocated_block(fs, node);
     }
     if (!ext2_read_block(fs, node->blocks[13], block)) { return -EXT2_EIO; }
     uint32_t *outer = (uint32_t *)block;
@@ -278,7 +270,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
       int rc = ext2_alloc_block(fs, &outer[outer_index]);
       if (rc != 0) { return rc; }
       if (!ext2_write_block(fs, node->blocks[13], block)) { return -EXT2_EIO; }
-      account_allocated_block(fs, node);
     }
     uint32_t inner_block = outer[outer_index];
     if (!ext2_read_block(fs, inner_block, block)) { return -EXT2_EIO; }
@@ -287,7 +278,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
       int rc = alloc_block_maybe_zero(fs, &inner[inner_index], zero_data_block);
       if (rc != 0) { return rc; }
       if (!ext2_write_block(fs, inner_block, block)) { return -EXT2_EIO; }
-      account_allocated_block(fs, node);
     }
     *block_out = inner[inner_index];
     return 0;
@@ -299,7 +289,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
   if (node->blocks[14] == 0) {
     int rc = ext2_alloc_block(fs, &node->blocks[14]);
     if (rc != 0) { return rc; }
-    account_allocated_block(fs, node);
   }
   if (!ext2_read_block(fs, node->blocks[14], block)) { return -EXT2_EIO; }
   uint32_t *outer = (uint32_t *)block;
@@ -309,7 +298,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
     int rc = ext2_alloc_block(fs, &outer[outer_index]);
     if (rc != 0) { return rc; }
     if (!ext2_write_block(fs, node->blocks[14], block)) { return -EXT2_EIO; }
-    account_allocated_block(fs, node);
   }
   uint32_t middle_block = outer[outer_index];
   if (!ext2_read_block(fs, middle_block, block2)) { return -EXT2_EIO; }
@@ -320,7 +308,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
     int rc = ext2_alloc_block(fs, &middle[middle_index]);
     if (rc != 0) { return rc; }
     if (!ext2_write_block(fs, middle_block, block2)) { return -EXT2_EIO; }
-    account_allocated_block(fs, node);
   }
   uint32_t inner_block = middle[middle_index];
   if (!ext2_read_block(fs, inner_block, block)) { return -EXT2_EIO; }
@@ -329,7 +316,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
     int rc = alloc_block_maybe_zero(fs, &inner[inner_index], zero_data_block);
     if (rc != 0) { return rc; }
     if (!ext2_write_block(fs, inner_block, block)) { return -EXT2_EIO; }
-    account_allocated_block(fs, node);
   }
   *block_out = inner[inner_index];
   return 0;

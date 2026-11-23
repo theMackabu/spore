@@ -560,7 +560,6 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, 
     }
     node.blocks[0] = block;
     node.size = fs->block_size;
-    node.sectors_count = fs->block_size / 512;
     kmemset(buf, 0, fs->block_size);
     write_dir_record(buf, ino, rec_len_for(1), 1, EXT2_FT_DIR, ".");
     write_dir_record(buf + rec_len_for(1), parent.ino, (uint16_t)(fs->block_size - rec_len_for(1)), 2, EXT2_FT_DIR,
