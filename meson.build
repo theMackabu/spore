@@ -39,7 +39,7 @@ foreach variant : [
       meson.project_build_root(), '@OUTPUT@'],
     depends: variant[3])
   custom_target(variant[0] + '.img',
-    input: [kernel_elf, boot_efi, limine_data],
+    input: [kernel_boot_elf, boot_efi, limine_data],
     output: variant[0] + '.img',
     command: [spore_image, 'esp', '@INPUT@', '@OUTPUT@'],
     depends: root_disk,

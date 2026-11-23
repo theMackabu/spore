@@ -67,3 +67,8 @@ kernel_elf = executable('kernel.elf',
   link_args: kernel_link_args,
   link_depends: files('arch/aarch64/linker.ld'),
   install: false)
+
+kernel_boot_elf = custom_target('boot-kernel',
+  input: kernel_elf,
+  output: 'kernel-boot.elf',
+  command: [find_program('llvm-objcopy', 'llvm-objcopy-21'), '--strip-debug', '@INPUT@', '@OUTPUT@'])
