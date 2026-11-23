@@ -217,7 +217,7 @@ bool ext2_write_bytes(struct ext2_fs *fs, uint64_t offset, const void *src, uint
 }
 
 bool ext2_read_super(struct ext2_fs *fs, struct ext2_super *out) {
-  return fs->read(fs->ctx, EXT2_SUPER_OFFSET, out, sizeof(*out));
+  return ext2_read_bytes(fs, EXT2_SUPER_OFFSET, out, sizeof(*out));
 }
 
 bool ext2_write_super(struct ext2_fs *fs, const struct ext2_super *sb) {
@@ -316,6 +316,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   uint32_t supported_incompat = EXT2_INCOMPAT_FILETYPE | EXT2_INCOMPAT_SPORE_EXT2PLUS;
   if ((sb.feature_incompat & ~supported_incompat) != 0) { return false; }
 
+  cache_reset(fs);
   fs->tmpfile_count = 0;
   fs->read = read;
   fs->write = write;
@@ -339,7 +340,6 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   fs->ext2plus_free_count = 0;
   fs->ext2plus_chunk_size = 0;
   fs->ext2plus_static_inodes_used = 0;
-  cache_reset(fs);
   if (fs->inodes_per_group == 0 || fs->blocks_per_group == 0 || fs->group_count == 0) { return false; }
   if ((sb.feature_incompat & EXT2_INCOMPAT_SPORE_EXT2PLUS) != 0 && !ext2plus_mount_init(fs)) { return false; }
   return true;

@@ -308,6 +308,43 @@ static void test_ext2plus_dynamic_inodes(void) {
   assert(remove(path) == 0);
 }
 
+static void test_superblock_counter_coherence(bool ext2plus) {
+  char path[256];
+  if (ext2plus) {
+    make_ext2plus_image(path, sizeof(path));
+  } else {
+    make_ext2_image(path, sizeof(path), 4096, 1024, 0);
+  }
+  FILE *f = fopen(path, "r+b");
+  assert(f != NULL);
+  struct ext2_fs fs;
+  assert(ext2_mount_rw(&fs, file_read, file_write, f));
+  assert(fs.ext2plus == ext2plus);
+
+  struct ext2_info before;
+  assert(ext2_info(&fs, &before));
+  struct ext2_node node;
+  assert(ext2_create(&fs, "/counter.bin", false, 0644, &node));
+  struct ext2_info after_create;
+  assert(ext2_info(&fs, &after_create));
+  assert(after_create.free_inodes + 1 == before.free_inodes);
+
+  assert(ext2_write_file(&fs, &node, 0, "x", 1) == 1);
+  struct ext2_info after_write;
+  assert(ext2_info(&fs, &after_write));
+  assert(after_write.free_blocks + 1 == after_create.free_blocks);
+  assert(ext2_flush(&fs));
+
+  assert(ext2_mount_rw(&fs, file_read, file_write, f));
+  struct ext2_info remounted;
+  assert(ext2_info(&fs, &remounted));
+  assert(remounted.free_blocks == after_write.free_blocks);
+  assert(remounted.free_inodes == after_write.free_inodes);
+  assert(ext2_drop_cache(&fs));
+  assert(fclose(f) == 0);
+  assert(remove(path) == 0);
+}
+
 static void test_large_file_write(struct ext2_fs *fs) {
   struct ext2_node node;
   assert(ext2_create(fs, "/large-write.bin", false, 0755, &node));
@@ -419,6 +456,8 @@ int main(int argc, char **argv) {
   test_block_group_boundary(1024, 20000, 0, 8500);
   test_block_group_boundary(4096, 8192, 2048, 3000);
   test_ext2plus_dynamic_inodes();
+  test_superblock_counter_coherence(false);
+  test_superblock_counter_coherence(true);
 
   FILE *f = fopen(argv[1], "rb");
   assert(f != NULL);
