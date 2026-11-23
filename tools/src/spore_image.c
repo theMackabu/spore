@@ -97,14 +97,6 @@ static void ensure_dir(const char *path) {
   if (mkdir(tmp, 0755) != 0 && errno != EEXIST) { die("mkdir"); }
 }
 
-static void remove_tree(const char *path) {
-  if (!exists(path)) { return; }
-  char cmd[MAX_PATH + 32];
-  int n = snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
-  if (n < 0 || (size_t)n >= sizeof(cmd)) { die_msg("command too long"); }
-  if (system(cmd) != 0) { die_msg("rm -rf failed"); }
-}
-
 static void copy_file(const char *src, const char *dst) {
   FILE *in = fopen(src, "rb");
   if (in == NULL) { die(src); }
@@ -119,8 +111,8 @@ static void copy_file(const char *src, const char *dst) {
       break;
     }
   }
-  fclose(in);
-  fclose(out);
+  if (fclose(in) != 0) { die(src); }
+  if (fclose(out) != 0) { die(dst); }
 }
 
 static void copy_tree(const char *src, const char *dst) {
@@ -550,7 +542,8 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root) {
 
 static void build_root_image(const char *source_root, const char *stage, const char *manifest,
                              const char *prebuilt_root, const char *output_root) {
-  remove_tree(stage);
+  char *const cleanup[] = {"rm", "-rf", "--", (char *)stage, NULL};
+  run_argv(cleanup, false);
   char rootfs_dir[MAX_PATH];
   path_join(rootfs_dir, sizeof(rootfs_dir), stage, "rootfs");
   ensure_dir(rootfs_dir);
