@@ -19,6 +19,7 @@ void *kmemcpy(void *dst, const void *src, size_t len) {
   return dst;
 }
 
+#if !__STDC_HOSTED__
 void *memcpy(void *dst, const void *src, size_t len) {
   return kmemcpy(dst, src, len);
 }
@@ -26,6 +27,7 @@ void *memcpy(void *dst, const void *src, size_t len) {
 void *memset(void *dst, int value, size_t len) {
   return kmemset(dst, value, len);
 }
+#endif
 
 int kmemcmp(const void *a, const void *b, size_t len) {
   const uint8_t *aa = a;
