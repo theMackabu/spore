@@ -6,6 +6,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -30,6 +32,28 @@ static int inotify_shared_watch(void) {
   ok = ok && inotify_rm_watch(alias, wd) == -1 && errno == EINVAL &&
        inotify_add_watch(alias, "/tmp", IN_MODIFY) > 0;
   close(alias);
+  return ok;
+}
+
+static int epoll_watch_lifetime(void) {
+  int counter = eventfd(1, EFD_NONBLOCK);
+  if (counter < 0) { return 0; }
+  struct epoll_event watch = {.events = EPOLLIN, .data.fd = counter};
+  struct epoll_event event;
+  int ep = epoll_create1(0);
+  int ok = ep >= 0 && epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == 0 &&
+           epoll_wait(ep, &event, 1, 0) == 1 && (event.events & EPOLLIN) && event.data.fd == counter;
+  if (ep >= 0) { close(ep); }
+
+  eventfd_t value;
+  int next = eventfd(2, EFD_NONBLOCK);
+  ok = ok && next >= 0 && eventfd_read(next, &value) == 0 && value == 2;
+  if (next >= 0) { close(next); }
+  ep = epoll_create1(0);
+  ok = ok && ep >= 0 && epoll_wait(ep, &event, 1, 0) == 0;
+  if (ep >= 0) { close(ep); }
+  ok = ok && eventfd_read(counter, &value) == 0 && value == 1;
+  close(counter);
   return ok;
 }
 
@@ -72,7 +96,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!inotify_shared_watch()) { ok = 0; }
+  if (!inotify_shared_watch() || !epoll_watch_lifetime()) { ok = 0; }
   if (unlink("b") != 0) { ok = 0; }
   if (chdir("/") != 0) { ok = 0; }
   (void)syscall(35, AT_FDCWD, "/tmp/spore-demo-d", 0x200);
