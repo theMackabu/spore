@@ -13,6 +13,7 @@ struct vfs_node;
 bool syscall_user_readable(uint64_t buf, uint64_t len);
 bool syscall_user_writable(uint64_t buf, uint64_t len);
 void syscall_realtime_base(uint64_t *epoch_sec, uint64_t *counter, uint64_t *freq);
+int64_t syscall_read_user_string(uint64_t user, char *dst, size_t limit);
 bool syscall_copy_string_from_user(uint64_t user, char *dst, size_t cap);
 bool syscall_normalize_path(const char *base, const char *path, char *out, size_t cap);
 bool syscall_copy_resolved_path(uint64_t path_addr, char *out, size_t cap);

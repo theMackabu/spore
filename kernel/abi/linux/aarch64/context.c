@@ -2,6 +2,7 @@
 #include "abi/linux/aarch64/syscall.h"
 #include "handlers.h"
 #include "lib/mem.h"
+#include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
@@ -23,6 +24,7 @@ enum {
   EPERM = 1,
   EBADF = 9,
   EFAULT = 14,
+  E2BIG = 7,
   ENOTDIR = 20,
   ENAMETOOLONG = 36,
 };
@@ -85,18 +87,36 @@ bool syscall_user_writable(uint64_t buf, uint64_t len) {
   return user_writable(buf, len);
 }
 
-static bool copy_string_from_user(uint64_t user, char *dst, size_t cap) {
-  if (cap == 0) { return false; }
-  for (size_t i = 0; i + 1 < cap; ++i) {
-    if (!user_readable(user + i, 1) || !vmm_copy_from_user(active_as(), &dst[i], user + i, 1)) { return false; }
-    if (dst[i] == '\0') { return true; }
+int64_t syscall_read_user_string(uint64_t user, char *dst, size_t limit) {
+  struct user_address_space *as = active_as();
+  size_t done = 0;
+  while (done < limit) {
+    uint64_t addr = user + done;
+    if (addr < user) { return -EFAULT; }
+    uint64_t pa = vmm_user_to_phys(as, addr);
+    if (pa == 0) {
+      if (!cell_ensure_user_range(addr, 1, VMM_ACCESS_READ)) { return -EFAULT; }
+      pa = vmm_user_to_phys(as, addr);
+      if (pa == 0) { return -EFAULT; }
+    }
+    size_t chunk = PAGE_SIZE - addr % PAGE_SIZE;
+    if (chunk > limit - done) { chunk = limit - done; }
+    const char *src = (const char *)(uintptr_t)(as->hhdm_offset + pa);
+    for (size_t i = 0; i < chunk; ++i) {
+      char c = src[i];
+      if (dst != NULL) { dst[done + i] = c; }
+      if (c == '\0') { return (int64_t)(done + i + 1); }
+    }
+    done += chunk;
   }
-  dst[cap - 1] = '\0';
-  return false;
+  return -E2BIG;
 }
 
 bool syscall_copy_string_from_user(uint64_t user, char *dst, size_t cap) {
-  return copy_string_from_user(user, dst, cap);
+  if (cap == 0) { return false; }
+  int64_t length = syscall_read_user_string(user, dst, cap - 1);
+  if (length == -E2BIG) { dst[cap - 1] = '\0'; }
+  return length > 0;
 }
 
 static bool normalize_path(const char *base, const char *path, char *out, size_t cap) {
@@ -187,7 +207,7 @@ static bool copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
   path_policy_denied = false;
   char raw[CELL_PATH_MAX];
   char virtual_path[CELL_PATH_MAX];
-  if (!copy_string_from_user(path_addr, raw, sizeof(raw)) ||
+  if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw)) ||
       !normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
     return false;
   }
@@ -205,7 +225,7 @@ bool syscall_path_policy_denied(void) {
 static int64_t copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
   path_policy_denied = false;
   char raw[CELL_PATH_MAX];
-  if (!copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
+  if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
   if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
     return copy_resolved_path(path_addr, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
   }
@@ -224,7 +244,7 @@ int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *
 
 static bool copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
   char raw[CELL_PATH_MAX];
-  return copy_string_from_user(path_addr, raw, sizeof(raw)) && normalize_path(cell_current_cwd(), raw, out, cap);
+  return syscall_copy_string_from_user(path_addr, raw, sizeof(raw)) && normalize_path(cell_current_cwd(), raw, out, cap);
 }
 
 bool syscall_copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
@@ -233,7 +253,7 @@ bool syscall_copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
 
 static int64_t copy_virtual_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
   char raw[CELL_PATH_MAX];
-  if (!copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
+  if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
   if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
     return normalize_path(cell_current_cwd(), raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
   }

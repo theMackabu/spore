@@ -83,6 +83,25 @@ static int fifo_without_reader(void) {
   return ok;
 }
 
+static int pathname_page_boundary(void) {
+  size_t page = (size_t)sysconf(_SC_PAGESIZE);
+  char *buf = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (buf == MAP_FAILED) { return 0; }
+  const char name[] = "/etc/motd";
+  struct stat st;
+  char *split = buf + page - 3;
+  memcpy(split, name, sizeof(name));
+  int ok = stat(split, &st) == 0;
+  if (munmap(buf + page, page) != 0) { ok = 0; }
+  char *last = buf + page - sizeof(name);
+  memcpy(last, name, sizeof(name));
+  ok = ok && stat(last, &st) == 0;
+  buf[page - 1] = 'x';
+  ok = ok && stat(last, &st) == -1 && errno == EFAULT;
+  munmap(buf, page);
+  return ok;
+}
+
 int integration_fs_demo(void) {
   int ok = 1;
   errno = 0;
@@ -122,7 +141,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader()) { ok = 0; }
+  if (!inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary()) { ok = 0; }
   if (unlink("b") != 0) { ok = 0; }
   if (chdir("/") != 0) { ok = 0; }
   (void)syscall(35, AT_FDCWD, "/tmp/spore-demo-d", 0x200);

@@ -95,20 +95,6 @@ static bool read_user_u64(uint64_t addr, uint64_t *out) {
   return syscall_user_readable(addr, sizeof(*out)) && vmm_copy_from_user(syscall_active_as(), out, addr, sizeof(*out));
 }
 
-static int measure_user_string(uint64_t ptr, uint64_t *budget_used, uint64_t *out_len) {
-  uint64_t len = 0;
-  for (;;) {
-    if (!add_arg_budget(budget_used, 1)) { return -E2BIG; }
-    char ch = 0;
-    if (!vmm_copy_from_user(syscall_active_as(), &ch, ptr + len, 1)) { return -EFAULT; }
-    ++len;
-    if (ch == '\0') {
-      *out_len = len;
-      return 0;
-    }
-  }
-}
-
 static int measure_user_string_array(uint64_t user, uint64_t *out_count, uint64_t *out_string_bytes,
                                      uint64_t *budget_used) {
   *out_count = 0;
@@ -125,10 +111,10 @@ static int measure_user_string_array(uint64_t user, uint64_t *out_count, uint64_
       return 0;
     }
     if (!add_arg_budget(budget_used, sizeof(uint64_t))) { return -E2BIG; }
-    uint64_t len = 0;
-    int rc = measure_user_string(ptr, budget_used, &len);
-    if (rc < 0) { return rc; }
-    *out_string_bytes += len;
+    int64_t len = syscall_read_user_string(ptr, NULL, EXEC_ARG_MAX_BYTES - *budget_used);
+    if (len < 0) { return (int)len; }
+    *budget_used += (uint64_t)len;
+    *out_string_bytes += (uint64_t)len;
     ++*out_count;
   }
 }
@@ -186,17 +172,13 @@ static int scratch_add_kernel_string(struct exec_scratch *scratch, const char *s
 }
 
 static int scratch_add_user_string(struct exec_scratch *scratch, uint64_t ptr, const char **out) {
-  uint64_t start = scratch->data_len;
-  for (;;) {
-    if (scratch->data_len >= scratch->data_cap) { return -E2BIG; }
-    char ch = 0;
-    if (!vmm_copy_from_user(syscall_active_as(), &ch, ptr + scratch->data_len - start, 1)) { return -EFAULT; }
-    scratch->data[scratch->data_len++] = ch;
-    if (ch == '\0') {
-      *out = scratch->data + start;
-      return 0;
-    }
-  }
+  if (scratch->data_len >= scratch->data_cap) { return -E2BIG; }
+  char *dst = scratch->data + scratch->data_len;
+  int64_t len = syscall_read_user_string(ptr, dst, scratch->data_cap - scratch->data_len);
+  if (len < 0) { return (int)len; }
+  scratch->data_len += (uint64_t)len;
+  *out = dst;
+  return 0;
 }
 
 static int copy_user_string_array(struct exec_scratch *scratch, uint64_t user, const char **out, uint64_t count) {
