@@ -65,10 +65,6 @@ bool ext2_drop_cache(struct ext2_fs *fs) {
   return ok;
 }
 
-static bool cache_reset(struct ext2_fs *fs) {
-  return ext2_drop_cache(fs);
-}
-
 uint64_t ext2_cache_used_pages(void) {
   uint64_t pages = 0;
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
@@ -319,7 +315,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   uint32_t supported_incompat = EXT2_INCOMPAT_FILETYPE | EXT2_INCOMPAT_SPORE_EXT2PLUS;
   if ((sb.feature_incompat & ~supported_incompat) != 0) { return false; }
 
-  if (!cache_reset(fs)) { return false; }
+  if (!ext2_drop_cache(fs)) { return false; }
   fs->tmpfile_count = 0;
   fs->read = read;
   fs->write = write;

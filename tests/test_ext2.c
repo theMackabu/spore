@@ -343,10 +343,11 @@ static void test_superblock_counter_coherence(bool ext2plus) {
   struct ext2_info before;
   assert(ext2_info(&fs, &before));
   struct ext2_node node;
+  assert(ext2_create(&fs, "/first.bin", false, 0644, NULL));
   assert(ext2_create(&fs, "/counter.bin", false, 0644, &node));
   struct ext2_info after_create;
   assert(ext2_info(&fs, &after_create));
-  assert(after_create.free_inodes + 1 == before.free_inodes);
+  assert(after_create.free_inodes + 2 == before.free_inodes);
 
   assert(ext2_write_file(&fs, &node, 0, "x", 1) == 1);
   struct ext2_info after_write;
