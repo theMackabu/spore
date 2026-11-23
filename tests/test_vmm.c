@@ -117,9 +117,20 @@ int main(void) {
   assert(vmm_user_range_accessible(&as, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(vmm_copy_to_user(&as, 0x500000, "last", 5));
   assert(strcmp((char *)&phys[cow_pa], "last") == 0);
+  uint64_t distant = (1ull << 39) + TEST_PAGE_SIZE;
+  uint64_t boundary = distant + TEST_PAGE_SIZE;
+  assert(vmm_alloc_page(&as, distant, VMM_USER_READ | VMM_USER_WRITE));
+  assert(vmm_alloc_page(&as, boundary, VMM_USER_READ | VMM_USER_WRITE));
+  assert(vmm_mapped_pages_in_range(&as, 0x601000, boundary) == 2);
+  vmm_protect_range(&as, 0x601000, boundary, VMM_USER_READ);
+  assert(!vmm_user_range_accessible(&as, distant, 1, VMM_ACCESS_WRITE));
+  assert(vmm_user_range_accessible(&as, boundary, 1, VMM_ACCESS_WRITE));
+  vmm_unmap_range(&as, 0x601000, boundary);
+  assert(vmm_mapped_pages_in_range(&as, 0x600000, boundary + TEST_PAGE_SIZE) == 2);
+  assert(vmm_is_mapped(&as, boundary) && !vmm_is_mapped(&as, distant));
   next_pa = sizeof(phys) - TEST_PAGE_SIZE;
-  assert(!vmm_alloc_page(&as, 1ull << 39, VMM_USER_READ));
-  assert(!vmm_is_mapped(&as, 1ull << 39));
+  assert(!vmm_alloc_page(&as, 2ull << 39, VMM_USER_READ));
+  assert(!vmm_is_mapped(&as, 2ull << 39));
   assert(refs[TEST_PAGE_COUNT - 1] == 0);
   return 0;
 }

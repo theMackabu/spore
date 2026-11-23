@@ -33,7 +33,55 @@ static bool checked_add(uint64_t a, uint64_t b, uint64_t *out) {
   return *out >= a;
 }
 
-static uint64_t *leaf_for_va(const struct user_address_space *as, uint64_t va);
+static uint64_t *walk_to_leaf(const struct user_address_space *as, uint64_t va, unsigned *span_shift) {
+  uint64_t *table = pt_virt(as, as->root_pa);
+  for (unsigned shift = 39; shift > 12; shift -= 9) {
+    uint64_t entry = table[pt_index(va, shift)];
+    if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) {
+      *span_shift = shift;
+      return NULL;
+    }
+    table = pt_virt(as, entry & PTE_ADDR_MASK);
+  }
+  *span_shift = 21;
+  return &table[pt_index(va, 12)];
+}
+
+static uint64_t *leaf_for_va(const struct user_address_space *as, uint64_t va) {
+  unsigned shift;
+  return walk_to_leaf(as, va, &shift);
+}
+
+struct leaf_range {
+  uint64_t next_page;
+  uint64_t limit;
+  uint64_t va;
+  uint64_t *ptes;
+  size_t count;
+};
+
+static struct leaf_range leaf_range(uint64_t start, uint64_t end) {
+  uint64_t first = start / PAGE_SIZE;
+  uint64_t pages = end > start ? 1 + (end - 1 - start) / PAGE_SIZE : 0;
+  return (struct leaf_range){.next_page = first, .limit = first + pages};
+}
+
+static bool next_leaf_range(const struct user_address_space *as, struct leaf_range *range) {
+  while (range->next_page < range->limit) {
+    uint64_t page = range->next_page;
+    range->va = page * PAGE_SIZE;
+    unsigned shift;
+    range->ptes = walk_to_leaf(as, range->va, &shift);
+    uint64_t span = 1ull << (shift - 12);
+    uint64_t next = (page & ~(span - 1)) + span;
+    range->next_page = next < range->limit ? next : range->limit;
+    if (range->ptes != NULL) {
+      range->count = range->next_page - page;
+      return true;
+    }
+  }
+  return false;
+}
 
 bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   uint64_t root = pmm_alloc_zero_page();
@@ -206,34 +254,12 @@ static bool user_entry_allows(uint64_t entry, enum vmm_access access) {
 }
 
 static uint64_t user_to_phys_checked(const struct user_address_space *as, uint64_t va, enum vmm_access access) {
-  const uint64_t *l0 = pt_virt(as, as->root_pa);
-  uint64_t entry = l0[pt_index(va, 39)];
-  if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) { return 0; }
-  const uint64_t *l1 = pt_virt(as, entry & PTE_ADDR_MASK);
-  entry = l1[pt_index(va, 30)];
-  if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) { return 0; }
-  const uint64_t *l2 = pt_virt(as, entry & PTE_ADDR_MASK);
-  entry = l2[pt_index(va, 21)];
-  if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) { return 0; }
-  const uint64_t *l3 = pt_virt(as, entry & PTE_ADDR_MASK);
-  entry = l3[pt_index(va, 12)];
+  const uint64_t *pte = leaf_for_va(as, va);
+  if (pte == NULL) { return 0; }
+  uint64_t entry = *pte;
   if ((entry & PTE_VALID) == 0) { return 0; }
   if (!user_entry_allows(entry, access)) { return 0; }
   return (entry & PTE_ADDR_MASK) | (va & 0xfff);
-}
-
-static uint64_t *leaf_for_va(const struct user_address_space *as, uint64_t va) {
-  uint64_t *l0 = pt_virt(as, as->root_pa);
-  uint64_t entry = l0[pt_index(va, 39)];
-  if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) { return NULL; }
-  uint64_t *l1 = pt_virt(as, entry & PTE_ADDR_MASK);
-  entry = l1[pt_index(va, 30)];
-  if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) { return NULL; }
-  uint64_t *l2 = pt_virt(as, entry & PTE_ADDR_MASK);
-  entry = l2[pt_index(va, 21)];
-  if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) { return NULL; }
-  uint64_t *l3 = pt_virt(as, entry & PTE_ADDR_MASK);
-  return &l3[pt_index(va, 12)];
 }
 
 bool vmm_handle_cow_fault(struct user_address_space *as, uint64_t va) {
@@ -294,37 +320,39 @@ bool vmm_move_page(struct user_address_space *as, uint64_t old_va, uint64_t new_
 }
 
 void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end) {
-  for (uint64_t va = start; va < end; va += PAGE_SIZE) {
-    uint64_t *pte = leaf_for_va(as, va);
-    if (pte == NULL || (*pte & PTE_VALID) == 0) { continue; }
-    uint64_t pa = *pte & PTE_ADDR_MASK;
-    *pte = 0;
-    pmm_free_page(pa);
-    aarch64_tlb_flush_va(va);
+  struct leaf_range range = leaf_range(start, end);
+  while (next_leaf_range(as, &range)) {
+    for (size_t i = 0; i < range.count; ++i) {
+      uint64_t entry = range.ptes[i];
+      if ((entry & PTE_VALID) == 0) { continue; }
+      range.ptes[i] = 0;
+      aarch64_tlb_flush_va(range.va + i * PAGE_SIZE);
+      pmm_free_page(entry & PTE_ADDR_MASK);
+    }
   }
 }
 
 void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t end, uint32_t flags) {
-  for (uint64_t va = start; va < end; va += PAGE_SIZE) {
-    uint64_t *pte = leaf_for_va(as, va);
-    if (pte == NULL || (*pte & PTE_VALID) == 0) { continue; }
-    uint64_t entry = *pte;
-    uint64_t ap = (flags & VMM_USER_WRITE) != 0 ? PTE_AP_USER_RW : PTE_AP_USER_RO;
-    entry = leaf_with_ap(entry, ap);
-    if ((flags & VMM_USER_EXEC) != 0) {
-      entry &= ~PTE_UXN;
-    } else {
-      entry |= PTE_UXN;
+  uint64_t ap = (flags & VMM_USER_WRITE) != 0 ? PTE_AP_USER_RW : PTE_AP_USER_RO;
+  uint64_t xn = (flags & VMM_USER_EXEC) != 0 ? 0 : PTE_UXN;
+  struct leaf_range range = leaf_range(start, end);
+  while (next_leaf_range(as, &range)) {
+    for (size_t i = 0; i < range.count; ++i) {
+      uint64_t entry = range.ptes[i];
+      if ((entry & PTE_VALID) == 0) { continue; }
+      range.ptes[i] = leaf_with_ap(entry & ~PTE_UXN, ap) | xn;
+      aarch64_tlb_flush_va(range.va + i * PAGE_SIZE);
     }
-    *pte = entry;
-    aarch64_tlb_flush_va(va);
   }
 }
 
 size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t start, uint64_t end) {
   size_t pages = 0;
-  for (uint64_t va = start; va < end; va += PAGE_SIZE) {
-    if (vmm_is_mapped(as, va)) { ++pages; }
+  struct leaf_range range = leaf_range(start, end);
+  while (next_leaf_range(as, &range)) {
+    for (size_t i = 0; i < range.count; ++i) {
+      pages += (range.ptes[i] & PTE_VALID) != 0;
+    }
   }
   return pages;
 }
