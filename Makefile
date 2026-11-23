@@ -62,13 +62,13 @@ run-reset: runner image
 	@echo "reset persistent run disk: $(RUN_ROOT)"
 	$(RUN_CMD)
 
-run-tests: runner test-run-root
+run-tests: runner test-image
 	@root="$$(mktemp "$(BUILD_DIR)/run-tests-root.XXXXXX.ext2")"; \
 	cp -f "$(BUILD_DIR)/test_root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
 	$(RUN_QEMU) --mode filter --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img" --root "$$root"
 
-run-shell-check: runner run-root
+run-shell-check: runner image
 	@root="$$(mktemp "$(BUILD_DIR)/run-shell-root.XXXXXX.ext2")"; \
 	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
 	trap 'rm -f "$$root"' EXIT INT TERM; \
