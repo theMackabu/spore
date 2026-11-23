@@ -101,31 +101,38 @@ static uint32_t load_ip(const uint8_t *p) {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-static uint16_t checksum(const void *data, size_t len) {
+static uint32_t checksum_sum(uint32_t sum, const void *data, size_t len) {
   const uint8_t *p = data;
-  uint32_t sum = 0;
   while (len >= 2) {
     sum += load_be16(p);
     p += 2;
     len -= 2;
   }
   if (len != 0) { sum += (uint32_t)p[0] << 8; }
+  return sum;
+}
+
+static uint16_t checksum_finish(uint32_t sum) {
   while ((sum >> 16) != 0) {
     sum = (sum & 0xffffu) + (sum >> 16);
   }
   return (uint16_t)~sum;
 }
 
+static uint16_t checksum(const void *data, size_t len) {
+  return checksum_finish(checksum_sum(0, data, len));
+}
+
 static uint16_t ip_payload_checksum(uint8_t proto, uint32_t src_ip, uint32_t dst_ip, const void *payload, size_t len) {
-  uint8_t pseudo[12 + 1480];
-  if (len > sizeof(pseudo) - 12) { return 0; }
-  store_ip(pseudo, src_ip);
-  store_ip(pseudo + 4, dst_ip);
-  pseudo[8] = 0;
-  pseudo[9] = proto;
-  store_be16(pseudo + 10, (uint16_t)len);
-  kmemcpy(pseudo + 12, payload, len);
-  return checksum(pseudo, 12 + len);
+  if (len > UINT16_MAX) { return 0; }
+  uint32_t sum = 0;
+  sum += (uint32_t)(src_ip & 0xffu) << 8 | ((src_ip >> 8) & 0xffu);
+  sum += (uint32_t)((src_ip >> 16) & 0xffu) << 8 | ((src_ip >> 24) & 0xffu);
+  sum += (uint32_t)(dst_ip & 0xffu) << 8 | ((dst_ip >> 8) & 0xffu);
+  sum += (uint32_t)((dst_ip >> 16) & 0xffu) << 8 | ((dst_ip >> 24) & 0xffu);
+  sum += proto;
+  sum += (uint16_t)len;
+  return checksum_finish(checksum_sum(sum, payload, len));
 }
 
 static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, const void *tcp, size_t len) {
