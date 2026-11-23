@@ -109,12 +109,6 @@ struct ramfs {
   uint64_t next_ino;
 };
 
-struct ramfs_file {
-  const char *path;
-  const void *data;
-  uint64_t size;
-};
-
 struct ramfs_node {
   struct ramfs *fs;
   int index;
@@ -147,9 +141,7 @@ struct ramfs_dirent {
 
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);
 void ramfs_set_now(uint64_t epoch_sec);
-bool ramfs_lookup(const struct ramfs *fs, const char *path, struct ramfs_file *out);
 bool ramfs_lookup_node(const struct ramfs *fs, const char *path, struct ramfs_node *out);
-bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out);
 bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ramfs_dirent *out);
 bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode);
 bool ramfs_create(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);

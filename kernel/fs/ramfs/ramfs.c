@@ -529,15 +529,6 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
   }
 }
 
-bool ramfs_lookup(const struct ramfs *fs, const char *path, struct ramfs_file *out) {
-  int index = lookup_index(fs, path);
-  if (index < 0 || fs->nodes[index].is_dir || fs->nodes[index].device != RAMFS_DEV_NONE) { return false; }
-  out->path = path;
-  out->data = fs->nodes[index].writable ? NULL : fs->nodes[index].ro_data;
-  out->size = fs->nodes[index].size;
-  return true;
-}
-
 bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
   struct ramfs_mem_node *node = &fs->nodes[index];
@@ -662,17 +653,6 @@ bool ramfs_dirent(const struct ramfs *fs, int dir_index, size_t index, struct ra
     }
   }
   return false;
-}
-
-bool ramfs_root_dirent(size_t index, struct ramfs_dirent *out) {
-  static const struct ramfs_dirent entries[] = {
-    {.name = "dev", .ino = 2, .is_dir = true}, {.name = "proc", .ino = 3, .is_dir = true},
-    {.name = "sys", .ino = 4, .is_dir = true}, {.name = "tmp", .ino = 5, .is_dir = true},
-    {.name = "run", .ino = 6, .is_dir = true},
-  };
-  if (index >= sizeof(entries) / sizeof(entries[0])) { return false; }
-  *out = entries[index];
-  return true;
 }
 
 bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode) {
