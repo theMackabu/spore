@@ -147,7 +147,6 @@ bool vfs_shared_writable_mmap_sealed(const struct vfs_node *node);
 void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
-bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst);
 bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out);
 void vfs_page_cache_invalidate(const struct vfs_node *node);
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);

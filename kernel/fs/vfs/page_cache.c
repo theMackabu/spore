@@ -30,17 +30,8 @@ static struct vfs_page_cache_entry *page_cache;
 static uint32_t *page_cache_buckets;
 static size_t page_cache_capacity;
 static size_t page_cache_bucket_count;
+static size_t page_cache_entries;
 static uint32_t page_cache_evict_hand;
-
-static void *alloc_kernel_table(size_t count, size_t elem_size) {
-  uint64_t bytes = count * elem_size;
-  uint64_t pages = (bytes + VFS_PAGE_SIZE - 1) / VFS_PAGE_SIZE;
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (pa == 0) { return NULL; }
-  void *ptr = (void *)(uintptr_t)(vfs_hhdm_offset + pa);
-  kmemset(ptr, 0, pages * VFS_PAGE_SIZE);
-  return ptr;
-}
 
 static void free_kernel_table(void *ptr, size_t count, size_t elem_size) {
   if (ptr == NULL) { return; }
@@ -61,9 +52,9 @@ void vfs_page_cache_configure(void) {
   if (page_cache != NULL && page_cache_buckets != NULL) { return; }
   for (size_t entries = VFS_PAGE_CACHE_MAX_ENTRIES; entries >= VFS_PAGE_CACHE_MIN_ENTRIES; entries >>= 1) {
     size_t buckets = page_cache_bucket_count_for(entries);
-    struct vfs_page_cache_entry *entries_table = alloc_kernel_table(entries, sizeof(*entries_table));
+    struct vfs_page_cache_entry *entries_table = pmm_alloc_table(entries, sizeof(*entries_table));
     if (entries_table == NULL) { continue; }
-    uint32_t *bucket_table = alloc_kernel_table(buckets, sizeof(*bucket_table));
+    uint32_t *bucket_table = pmm_alloc_table(buckets, sizeof(*bucket_table));
     if (bucket_table == NULL) {
       free_kernel_table(entries_table, entries, sizeof(*entries_table));
       continue;
@@ -72,6 +63,7 @@ void vfs_page_cache_configure(void) {
     page_cache_buckets = bucket_table;
     page_cache_capacity = entries;
     page_cache_bucket_count = buckets;
+    page_cache_entries = 0;
     return;
   }
 }
@@ -137,10 +129,12 @@ static void page_cache_unlink(size_t index) {
 }
 
 static void page_cache_clear(size_t index) {
+  bool valid = page_cache[index].valid;
   page_cache_unlink(index);
   if (page_cache[index].pa != 0) { pmm_free_page(page_cache[index].pa); }
   kmemset(&page_cache[index], 0, sizeof(page_cache[index]));
   page_cache[index].hash_next = VFS_PAGE_CACHE_NONE;
+  if (valid) { --page_cache_entries; }
 }
 
 static uint64_t page_cache_alloc_page(void) {
@@ -162,11 +156,13 @@ static uint64_t page_cache_alloc_page(void) {
 static struct vfs_page_cache_entry *page_cache_victim(void) {
   if (page_cache == NULL || page_cache_capacity == 0) { return NULL; }
   page_cache_init_buckets_once();
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    uint32_t index = (page_cache_evict_hand + (uint32_t)i) % (uint32_t)page_cache_capacity;
-    if (!page_cache[index].valid) {
-      page_cache_evict_hand = (index + 1) % (uint32_t)page_cache_capacity;
-      return &page_cache[index];
+  if (page_cache_entries < page_cache_capacity) {
+    for (size_t i = 0; i < page_cache_capacity; ++i) {
+      uint32_t index = (page_cache_evict_hand + (uint32_t)i) % (uint32_t)page_cache_capacity;
+      if (!page_cache[index].valid) {
+        page_cache_evict_hand = (index + 1) % (uint32_t)page_cache_capacity;
+        return &page_cache[index];
+      }
     }
   }
   uint32_t index = page_cache_evict_hand++ % (uint32_t)page_cache_capacity;
@@ -219,7 +215,19 @@ static struct vfs_page_cache_entry *page_cache_load(const struct vfs_node *node,
     return NULL;
   }
   entry->valid = true;
+  ++page_cache_entries;
   page_cache_link(index);
+  return entry;
+}
+
+static struct vfs_page_cache_entry *page_cache_demand(const struct vfs_node *node, uint64_t off) {
+  bool hit;
+  struct vfs_page_cache_entry *entry = page_cache_load(node, off, &hit);
+  if (hit) {
+    ++vfs_stat_counters.page_cache_hits;
+  } else {
+    ++vfs_stat_counters.page_cache_misses;
+  }
   return entry;
 }
 
@@ -231,32 +239,10 @@ static void page_cache_readahead(const struct vfs_node *node, uint64_t off) {
   }
 }
 
-bool vfs_read_page_cached(const struct vfs_node *node, uint64_t off, void *dst) {
-  if (dst == NULL || !vfs_node_cacheable(node)) { return false; }
-  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  bool hit;
-  struct vfs_page_cache_entry *entry = page_cache_load(node, off, &hit);
-  if (hit) {
-    ++vfs_stat_counters.page_cache_hits;
-  } else {
-    ++vfs_stat_counters.page_cache_misses;
-  }
-  if (entry == NULL) { return false; }
-  kmemcpy(dst, (const void *)(uintptr_t)(vfs_hhdm_offset + entry->pa), VFS_PAGE_SIZE);
-  page_cache_readahead(node, off);
-  return true;
-}
-
 bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out) {
   if (pa_out == NULL || !vfs_node_cacheable(node)) { return false; }
   off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
-  bool hit;
-  struct vfs_page_cache_entry *entry = page_cache_load(node, off, &hit);
-  if (hit) {
-    ++vfs_stat_counters.page_cache_hits;
-  } else {
-    ++vfs_stat_counters.page_cache_misses;
-  }
+  struct vfs_page_cache_entry *entry = page_cache_demand(node, off);
   if (entry == NULL || entry->pa == 0 || !pmm_share_page(entry->pa)) { return false; }
   *pa_out = entry->pa;
   page_cache_readahead(node, off);
@@ -269,13 +255,7 @@ uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, u
   while (done < len) {
     uint64_t page_off = (off + done) & ~(uint64_t)(VFS_PAGE_SIZE - 1);
     uint64_t in_page = (off + done) - page_off;
-    bool hit;
-    struct vfs_page_cache_entry *entry = page_cache_load(node, page_off, &hit);
-    if (hit) {
-      ++vfs_stat_counters.page_cache_hits;
-    } else {
-      ++vfs_stat_counters.page_cache_misses;
-    }
+    struct vfs_page_cache_entry *entry = page_cache_demand(node, page_off);
     if (entry == NULL) { break; }
     uint64_t chunk = VFS_PAGE_SIZE - in_page;
     if (chunk > len - done) { chunk = len - done; }
@@ -318,11 +298,7 @@ void vfs_page_cache_invalidate_range(const struct vfs_node *node, uint64_t off, 
 }
 
 void vfs_page_cache_stats(struct vfs_stats *stats) {
-  uint64_t pages = 0;
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    if (page_cache[i].valid && page_cache[i].pa != 0) { ++pages; }
-  }
-  stats->page_cache_pages = pages;
+  stats->page_cache_pages = page_cache_entries;
   stats->page_cache_capacity = page_cache_capacity;
   stats->page_cache_buckets = page_cache_bucket_count;
 }
