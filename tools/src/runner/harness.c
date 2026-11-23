@@ -301,6 +301,9 @@ int run_harness(char **qemu_argv, const char *mode, bool timings) {
   bool shell_check_failed = false;
   bool shell_size_sent = false;
   struct shell_check shell_state = {0};
+  bool integration = strcmp(mode, "integration") == 0;
+  bool send_stdin = integration || strcmp(mode, "stdin") == 0;
+  bool filter = send_stdin || strcmp(mode, "filter") == 0;
   bool plain = strcmp(mode, "plain") == 0;
   bool shell = strcmp(mode, "shell") == 0;
   bool bench = strcmp(mode, "bench") == 0;
@@ -336,7 +339,7 @@ int run_harness(char **qemu_argv, const char *mode, bool timings) {
       drain_available(serial_pipe[0], buf, &len, plain || shell, false, stderr, &startup_serial);
       if (plain || shell) { flush_startup_serial(&startup_serial); }
       if (rng && rng_state.sample[0] != '\0') { printf("[rng] %s\n", rng_state.sample); }
-      if (strcmp(mode, "filter") == 0 || strcmp(mode, "stdin") == 0) {
+      if (filter) {
         print_guest_checks(buf);
       } else if (!plain && !shell && !bench && !rng) {
         fputs(buf, stdout);
@@ -349,6 +352,10 @@ int run_harness(char **qemu_argv, const char *mode, bool timings) {
       if (http_pid > 0) {
         (void)kill(http_pid, SIGTERM);
         (void)waitpid(http_pid, NULL, 0);
+      }
+      if (integration && rc == 0 && !strstr(buf, "[spore] integration regression: PASS")) {
+        fputs("spore-run: guest did not report a passing integration run\n", stderr);
+        rc = 1;
       }
       if (shell_check_failed) { rc = 1; }
       return finish_harness(rc, raw_terminal, &saved_termios);
@@ -363,6 +370,10 @@ int run_harness(char **qemu_argv, const char *mode, bool timings) {
       if (http_pid > 0) {
         (void)kill(http_pid, SIGTERM);
         (void)waitpid(http_pid, NULL, 0);
+      }
+      if (filter) {
+        drain_available(serial_pipe[0], buf, &len, false, false, stderr, &startup_serial);
+        print_guest_checks(buf);
       }
       return finish_harness(124, raw_terminal, &saved_termios);
     }
@@ -400,7 +411,7 @@ int run_harness(char **qemu_argv, const char *mode, bool timings) {
           send_terminal_size(in_pipe[1]);
           shell_size_sent = true;
         }
-        if (strcmp(mode, "stdin") == 0 && !stdin_sent) { stdin_sent = answer_guest_stdin(in_pipe[1], buf); }
+        if (send_stdin && !stdin_sent) { stdin_sent = answer_guest_stdin(in_pipe[1], buf); }
         if (shell && !shell_check_output(&shell_state, in_pipe[1], buf, &len)) {
           shell_check_failed = true;
           kill(pid, SIGTERM);

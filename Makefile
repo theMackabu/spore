@@ -64,7 +64,7 @@ run-reset: runner image
 	$(RUN_CMD)
 
 run-tests: runner test-image
-	$(RUN_QEMU) --mode filter --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img" --snapshot-root --root "$(BUILD_DIR)/test_root.ext2"
+	$(RUN_QEMU) --mode integration --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img" --snapshot-root --root "$(BUILD_DIR)/test_root.ext2"
 
 run-shell-check: runner image
 	$(RUN_QEMU) --mode shell --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --snapshot-root --root "$(BUILD_DIR)/root.ext2"

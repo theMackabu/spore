@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 static void usage(void) {
-  fputs("usage: spore-run [--mode plain|filter|shell|stdin|bench|rng] "
+  fputs("usage: spore-run [--mode plain|filter|integration|shell|stdin|bench|rng] "
         "[--timings] --image IMAGE [--root ROOT_EXT2] [--snapshot-root] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--memory MEM] "
         "[--smp N] [--vars VARS_FD]\n",
         stderr);
@@ -246,7 +246,7 @@ int main(int argc, char **argv) {
                   root_drive_arg, sizeof(root_drive_arg));
   (void)qemu_argc;
   if (strcmp(mode, "plain") == 0 || strcmp(mode, "filter") == 0 || strcmp(mode, "shell") == 0 ||
-      strcmp(mode, "stdin") == 0 || strcmp(mode, "bench") == 0 || strcmp(mode, "rng") == 0) {
+      strcmp(mode, "integration") == 0 || strcmp(mode, "stdin") == 0 || strcmp(mode, "bench") == 0 || strcmp(mode, "rng") == 0) {
     return run_harness(qemu_argv, mode, timings);
   }
   usage();
