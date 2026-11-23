@@ -115,13 +115,14 @@ bool ext2_cache_range_has_dirty(struct ext2_fs *fs, uint32_t first_block, uint32
   return false;
 }
 
-bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
-  if (block >= fs->block_count || fs->block_size > sizeof(block_cache[0].data)) { return false; }
+const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block) {
+  if (block >= fs->block_count || fs->block_size > sizeof(block_cache[0].data)) { return NULL; }
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
     ++ext2_stat_counters.block_cache_misses;
-    if (!cache_victim(&entry)) { return false; }
-    if (!fs->read(fs->ctx, (uint64_t)block * fs->block_size, entry->data, fs->block_size)) { return false; }
+    if (!cache_victim(&entry)) { return NULL; }
+    entry->valid = false;
+    if (!fs->read(fs->ctx, (uint64_t)block * fs->block_size, entry->data, fs->block_size)) { return NULL; }
     entry->valid = true;
     entry->dirty = false;
     entry->fs = fs;
@@ -130,7 +131,13 @@ bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
     ++ext2_stat_counters.block_cache_hits;
   }
   entry->age = ++block_cache_clock;
-  kmemcpy(dst, entry->data, fs->block_size);
+  return entry->data;
+}
+
+bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
+  const uint8_t *data = ext2_cached_block(fs, block);
+  if (data == NULL) { return false; }
+  kmemcpy(dst, data, fs->block_size);
   return true;
 }
 
@@ -165,13 +172,13 @@ bool ext2_write_blocks_direct(struct ext2_fs *fs, uint32_t first_block, const vo
 
 bool ext2_read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t len) {
   uint8_t *out = dst;
-  uint8_t block[4096];
   while (len > 0) {
     uint32_t block_index = (uint32_t)(offset / fs->block_size);
     uint32_t within = (uint32_t)(offset % fs->block_size);
     uint32_t chunk = fs->block_size - within;
     if (chunk > len) { chunk = len; }
-    if (!ext2_read_block(fs, block_index, block)) { return false; }
+    const uint8_t *block = ext2_cached_block(fs, block_index);
+    if (block == NULL) { return false; }
     kmemcpy(out, block + within, chunk);
     out += chunk;
     offset += chunk;

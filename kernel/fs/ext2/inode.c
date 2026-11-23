@@ -263,8 +263,6 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
     return true;
   }
   if ((uint64_t)len > (uint64_t)node->size - off) { len = (uint32_t)((uint64_t)node->size - off); }
-  uint8_t block[4096];
-  if (fs->block_size > sizeof(block)) { return false; }
   while (done < len) {
     uint32_t file_block_index = (uint32_t)(off / fs->block_size);
     uint32_t within = (uint32_t)(off % fs->block_size);
@@ -292,11 +290,12 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
       }
     }
     if (disk_block == 0) {
-      kmemset(block, 0, fs->block_size);
-    } else if (!ext2_read_block(fs, disk_block, block)) {
-      return false;
+      kmemset(out + done, 0, chunk);
+    } else {
+      const uint8_t *block = ext2_cached_block(fs, disk_block);
+      if (block == NULL) { return false; }
+      kmemcpy(out + done, block + within, chunk);
     }
-    kmemcpy(out + done, block + within, chunk);
     done += chunk;
     off += chunk;
   }

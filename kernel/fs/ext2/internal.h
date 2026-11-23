@@ -108,6 +108,7 @@ extern struct ext2_stats ext2_stat_counters;
 
 uint32_t ext2_now_sec(void);
 uint32_t ext2_div_round_up(uint32_t a, uint32_t b);
+const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block);
 bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst);
 bool ext2_write_block(struct ext2_fs *fs, uint32_t block, const void *src);
 bool ext2_write_blocks_direct(struct ext2_fs *fs, uint32_t first_block, const void *src, uint32_t block_count);

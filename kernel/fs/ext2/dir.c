@@ -71,8 +71,6 @@ bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t 
   ++ext2_stat_counters.dir_iter_count;
   if (!ext2_is_dir(dir)) { return false; }
   uint64_t off = cursor == NULL ? 0 : *cursor;
-  uint8_t block[4096];
-  if (fs->block_size > sizeof(block)) { return false; }
   while (off + 8 <= dir->size) {
     uint32_t file_block_index = (uint32_t)(off / fs->block_size);
     uint32_t within = (uint32_t)(off % fs->block_size);
@@ -81,13 +79,10 @@ bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t 
       continue;
     }
     uint32_t disk_block = 0;
-    if (!ext2_file_block(fs, dir, file_block_index, &disk_block)) { return false; }
-    if (disk_block == 0) {
-      kmemset(block, 0, fs->block_size);
-    } else if (!ext2_read_block(fs, disk_block, block)) {
-      return false;
-    }
-    uint8_t *record = block + within;
+    if (!ext2_file_block(fs, dir, file_block_index, &disk_block) || disk_block == 0) { return false; }
+    const uint8_t *block = ext2_cached_block(fs, disk_block);
+    if (block == NULL) { return false; }
+    const uint8_t *record = block + within;
     uint32_t ino =
       (uint32_t)record[0] | ((uint32_t)record[1] << 8) | ((uint32_t)record[2] << 16) | ((uint32_t)record[3] << 24);
     uint16_t rec_len = (uint16_t)record[4] | ((uint16_t)record[5] << 8);
@@ -97,12 +92,11 @@ bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t 
     off += rec_len;
     if (cursor != NULL) { *cursor = off; }
     if (ino != 0 && name_len > 0 && name_len <= EXT2_NAME_MAX && name_len + 8 <= rec_len) {
-      char name[EXT2_NAME_MAX + 1];
-      kmemcpy(name, record + 8, name_len);
-      name[name_len] = '\0';
+      const char *name = (const char *)(record + 8);
       bool dot = (name_len == 1 && name[0] == '.') || (name_len == 2 && name[0] == '.' && name[1] == '.');
       if (!dot && !ext2plus_hidden_name(fs, dir, name, name_len)) {
-        kmemcpy(out->name, name, name_len + 1);
+        kmemcpy(out->name, name, name_len);
+        out->name[name_len] = '\0';
         out->ino = ino;
         out->type = type;
         return true;
