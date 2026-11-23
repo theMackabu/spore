@@ -52,18 +52,21 @@ bool ext2_drop_cache(struct ext2_fs *fs) {
   bool ok = true;
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     if (block_cache[i].fs == fs) {
-      if (!cache_flush_entry(&block_cache[i])) { ok = false; }
+      if (!cache_flush_entry(&block_cache[i])) {
+        ok = false;
+        continue;
+      }
       block_cache[i].valid = false;
       block_cache[i].dirty = false;
       block_cache[i].fs = NULL;
     }
   }
-  ext2_dir_drop_cache(fs);
+  if (ok) { ext2_dir_drop_cache(fs); }
   return ok;
 }
 
-static void cache_reset(struct ext2_fs *fs) {
-  (void)ext2_drop_cache(fs);
+static bool cache_reset(struct ext2_fs *fs) {
+  return ext2_drop_cache(fs);
 }
 
 uint64_t ext2_cache_used_pages(void) {
@@ -316,7 +319,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   uint32_t supported_incompat = EXT2_INCOMPAT_FILETYPE | EXT2_INCOMPAT_SPORE_EXT2PLUS;
   if ((sb.feature_incompat & ~supported_incompat) != 0) { return false; }
 
-  cache_reset(fs);
+  if (!cache_reset(fs)) { return false; }
   fs->tmpfile_count = 0;
   fs->read = read;
   fs->write = write;

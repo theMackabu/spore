@@ -51,6 +51,25 @@ static bool file_write(void *ctx, uint64_t offset, const void *src, uint32_t len
   return fwrite(src, 1, len, f) == len && fflush(f) == 0;
 }
 
+struct retry_io {
+  FILE *file;
+  unsigned failed_writes;
+};
+
+static bool retry_read(void *ctx, uint64_t offset, void *dst, uint32_t len) {
+  struct retry_io *io = ctx;
+  return file_read(io->file, offset, dst, len);
+}
+
+static bool retry_write(void *ctx, uint64_t offset, const void *src, uint32_t len) {
+  struct retry_io *io = ctx;
+  if (io->failed_writes != 0) {
+    --io->failed_writes;
+    return false;
+  }
+  return file_write(io->file, offset, src, len);
+}
+
 static void copy_file(const char *src_path, const char *dst_path) {
 #if defined(__APPLE__)
   if (clonefile(src_path, dst_path, 0) == 0) { return; }
@@ -345,6 +364,40 @@ static void test_superblock_counter_coherence(bool ext2plus) {
   assert(remove(path) == 0);
 }
 
+static void test_cache_flush_retry(void) {
+  char path[256];
+  make_ext2_image(path, sizeof(path), 4096, 1024, 0);
+  FILE *f = fopen(path, "r+b");
+  assert(f != NULL);
+  struct retry_io io = {.file = f};
+  struct ext2_fs fs;
+  assert(ext2_mount_rw(&fs, retry_read, retry_write, &io));
+  struct ext2_node node;
+  assert(ext2_create(&fs, "/retry.bin", false, 0644, &node));
+  assert(ext2_write_file(&fs, &node, 0, "x", 1) == 1);
+
+  io.failed_writes = 1;
+  assert(!ext2_mount_rw(&fs, retry_read, retry_write, &io));
+  struct ext2_node fresh;
+  char value = '\0';
+  uint32_t read = 0;
+  assert(ext2_lookup(&fs, "/retry.bin", &fresh));
+  assert(ext2_read_file(&fs, &fresh, 0, &value, 1, &read));
+  assert(read == 1 && value == 'x');
+
+  assert(ext2_flush(&fs));
+  assert(ext2_drop_cache(&fs));
+  assert(ext2_mount_rw(&fs, retry_read, retry_write, &io));
+  assert(ext2_lookup(&fs, "/retry.bin", &fresh));
+  value = '\0';
+  read = 0;
+  assert(ext2_read_file(&fs, &fresh, 0, &value, 1, &read));
+  assert(read == 1 && value == 'x');
+  assert(ext2_drop_cache(&fs));
+  assert(fclose(f) == 0);
+  assert(remove(path) == 0);
+}
+
 static void test_large_file_write(struct ext2_fs *fs) {
   struct ext2_node node;
   assert(ext2_create(fs, "/large-write.bin", false, 0755, &node));
@@ -458,6 +511,7 @@ int main(int argc, char **argv) {
   test_ext2plus_dynamic_inodes();
   test_superblock_counter_coherence(false);
   test_superblock_counter_coherence(true);
+  test_cache_flush_retry();
 
   FILE *f = fopen(argv[1], "rb");
   assert(f != NULL);
