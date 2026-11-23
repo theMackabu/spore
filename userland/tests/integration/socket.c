@@ -14,8 +14,9 @@
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#define SYS_SENDTO 206
-#define SYS_ACCEPT4 242
+
+constexpr int SYS_SENDTO = 206;
+constexpr int SYS_ACCEPT4 = 242;
 
 static uint16_t integration_be16(uint16_t x) {
   return (uint16_t)((x << 8) | (x >> 8));
@@ -892,7 +893,7 @@ static int tcp_loopback_accept_regression(void) {
 }
 
 static int tcp_bulk_send_regression(void) {
-  enum { BULK_LEN = 65536 };
+  constexpr int BULK_LEN = 65536;
   int client = -1;
   int accepted = -1;
   if (!open_tcp_loopback_pair(45694, &client, &accepted)) {
@@ -933,7 +934,7 @@ static int tcp_bulk_send_regression(void) {
   ssize_t msg_first = -1;
   size_t msg_received = 0;
   if (ok && open_tcp_loopback_pair(45695, &msg_client, &msg_accepted)) {
-    enum { MSG_BULK_LEN = 32768 };
+    constexpr int MSG_BULK_LEN = 32768;
     char *msg_send = malloc(MSG_BULK_LEN);
     char *msg_recv = malloc(MSG_BULK_LEN);
     ok = msg_send != NULL && msg_recv != NULL;

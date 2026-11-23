@@ -7,7 +7,7 @@ struct domain;
 struct open_file;
 struct trap_frame;
 
-enum { CELL_PTY_CAP = 16 };
+constexpr int CELL_PTY_CAP = 16;
 
 int cell_pty_open_master(uint32_t flags, const char *path);
 int cell_pty_open_slave(int id, uint32_t flags, const char *path);

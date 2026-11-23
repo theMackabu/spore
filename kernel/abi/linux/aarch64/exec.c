@@ -29,8 +29,8 @@ enum {
   EXEC_ARG_MAX_BYTES = USER_STACK_SIZE / 16,
 };
 
-#define INTERP_LOAD_BASE 0x0000006000000000ull
-#define EXEC_LOAD_BASE 0x0000004000000000ull
+constexpr uint64_t INTERP_LOAD_BASE = 0x0000006000000000ull;
+constexpr uint64_t EXEC_LOAD_BASE = 0x0000004000000000ull;
 
 static bool streq(const char *a, const char *b) {
   while (*a != '\0' && *b != '\0') {

@@ -10,7 +10,7 @@ enum {
   TEST_STACK_SIZE = USER_STACK_SIZE,
 };
 
-#define TEST_STACK_TOP USER_STACK_TOP
+constexpr uint64_t TEST_STACK_TOP = USER_STACK_TOP;
 
 static uint8_t stack_mem[TEST_STACK_SIZE];
 static bool mapped[TEST_STACK_SIZE / PAGE_SIZE];

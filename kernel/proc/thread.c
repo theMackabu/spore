@@ -18,9 +18,7 @@
 #include "net/net.h"
 #include "net/socket.h"
 
-enum {
-  EINVAL = 22,
-};
+constexpr int EINVAL = 22;
 
 static struct thread *threads;
 static size_t thread_capacity;

@@ -32,7 +32,7 @@ enum wait_reason {
   WAIT_PTY,
 };
 
-enum { CELL_SWITCHED = -0x40000000 };
+constexpr int CELL_SWITCHED = -0x40000000;
 
 struct thread {
   int tid;

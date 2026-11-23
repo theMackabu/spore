@@ -6,7 +6,7 @@
 struct open_file;
 struct trap_frame;
 
-enum { CELL_MAX_POLL_FDS = 64 };
+constexpr int CELL_MAX_POLL_FDS = 64;
 
 enum cell_poll_events {
   CELL_POLLIN = 0x0001,

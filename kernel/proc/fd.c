@@ -21,6 +21,7 @@ enum {
   IN_NONBLOCK = 04000,
   IN_CLOEXEC = 02000000,
   EAGAIN = 11,
+  ENOMEM = 12,
   EFAULT = 14,
   EINVAL = 22,
   ENOSPC = 28,
@@ -28,6 +29,25 @@ enum {
   CELL_S_IFMT = 0170000,
   CELL_S_IFIFO = 0010000,
 };
+
+struct inotify_watch {
+  int32_t wd;
+  uint32_t mask;
+  char path[CELL_PATH_MAX];
+};
+
+struct inotify_state {
+  uint32_t next_wd;
+  struct inotify_watch watches[16];
+};
+
+constexpr size_t INOTIFY_PAGES = (sizeof(struct inotify_state) + PAGE_SIZE - 1) / PAGE_SIZE;
+
+static void free_inotify_pages(uint64_t pa) {
+  for (size_t i = 0; i < INOTIFY_PAGES; ++i) {
+    pmm_free_page(pa + i * PAGE_SIZE);
+  }
+}
 
 static struct open_file *open_files;
 static size_t open_file_capacity;
@@ -100,6 +120,9 @@ void cell_release_open_file(struct open_file *file) {
       cell_socket_release_listener(file);
     } else if (file->type == OPEN_SOCKET) {
       cell_socket_release_file(file);
+    } else if (file->type == OPEN_INOTIFY && file->inotify_pa != 0) {
+      free_inotify_pages(file->inotify_pa);
+      file->inotify_pa = 0;
     } else if (file->type == OPEN_PTY) {
       cell_pty_release_file(file);
     }
@@ -204,10 +227,24 @@ int cell_fd_inotify_init1(int flags) {
   if (file == NULL) { return -12; }
   file->type = OPEN_INOTIFY;
   file->flags = (uint32_t)(flags & ~IN_CLOEXEC);
-  file->inotify_next_wd = 1;
   domain->fds[fd] = file;
   domain->fd_flags[fd] = (flags & IN_CLOEXEC) != 0 ? 1 : 0;
   return fd;
+}
+
+static struct inotify_state *ensure_inotify_state(struct open_file *file) {
+  if (file->inotify_pa != 0) { return pmm_phys_to_virt(file->inotify_pa); }
+  uint64_t pa = pmm_alloc_contiguous_pages(INOTIFY_PAGES);
+  if (pa == 0) { return NULL; }
+  struct inotify_state *state = pmm_phys_to_virt(pa);
+  if (state == NULL) {
+    free_inotify_pages(pa);
+    return NULL;
+  }
+  kmemset(state, 0, sizeof(*state));
+  state->next_wd = 1;
+  file->inotify_pa = pa;
+  return state;
 }
 
 int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask) {
@@ -217,23 +254,23 @@ int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask) {
     return -9;
   }
   if (mask == 0) { return -EINVAL; }
-  struct open_file *file = domain->fds[fd];
+  struct inotify_state *state = ensure_inotify_state(domain->fds[fd]);
+  if (state == NULL) { return -ENOMEM; }
   struct inotify_watch *free_slot = NULL;
-  for (size_t i = 0; i < CELL_INOTIFY_WATCH_CAP; ++i) {
-    struct inotify_watch *watch = &file->inotify_watches[i];
-    if (watch->used && str_eq(watch->path, path)) {
+  for (size_t i = 0; i < sizeof(state->watches) / sizeof(state->watches[0]); ++i) {
+    struct inotify_watch *watch = &state->watches[i];
+    if (watch->wd != 0 && str_eq(watch->path, path)) {
       watch->mask = mask;
       return watch->wd;
     }
-    if (!watch->used && free_slot == NULL) { free_slot = watch; }
+    if (watch->wd == 0 && free_slot == NULL) { free_slot = watch; }
   }
   if (free_slot == NULL) { return -ENOSPC; }
-  uint32_t wd = file->inotify_next_wd++;
+  uint32_t wd = state->next_wd++;
   if (wd == 0 || wd > INT32_MAX) {
     wd = 1;
-    file->inotify_next_wd = 2;
+    state->next_wd = 2;
   }
-  free_slot->used = true;
   free_slot->wd = (int32_t)wd;
   free_slot->mask = mask;
   copy_cstr(free_slot->path, sizeof(free_slot->path), path);
@@ -245,11 +282,12 @@ int cell_fd_inotify_rm_watch(int fd, int wd) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || domain->fds[fd]->type != OPEN_INOTIFY) {
     return -9;
   }
-  if (wd <= 0) { return -EINVAL; }
-  struct open_file *file = domain->fds[fd];
-  for (size_t i = 0; i < CELL_INOTIFY_WATCH_CAP; ++i) {
-    if (file->inotify_watches[i].used && file->inotify_watches[i].wd == wd) {
-      kmemset(&file->inotify_watches[i], 0, sizeof(file->inotify_watches[i]));
+  uint64_t pa = domain->fds[fd]->inotify_pa;
+  if (wd <= 0 || pa == 0) { return -EINVAL; }
+  struct inotify_state *state = pmm_phys_to_virt(pa);
+  for (size_t i = 0; i < sizeof(state->watches) / sizeof(state->watches[0]); ++i) {
+    if (state->watches[i].wd == wd) {
+      kmemset(&state->watches[i], 0, sizeof(state->watches[i]));
       return 0;
     }
   }

@@ -15,7 +15,7 @@ static void *worker(void *arg) {
 }
 
 int main(void) {
-  enum { THREADS = 8 };
+  constexpr int THREADS = 8;
   pthread_t threads[THREADS];
   for (int i = 0; i < THREADS; ++i) {
     if (pthread_create(&threads[i], 0, worker, 0) != 0) {

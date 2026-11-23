@@ -7,7 +7,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define SYS_SPORE_APPLY_POLICY 0x4005
+constexpr int SYS_SPORE_APPLY_POLICY = 0x4005;
 
 static void egress_child(const char *manifest, int expect_success) {
   if (syscall(SYS_SPORE_APPLY_POLICY, manifest) != 0) { integration_exit_group(20); }

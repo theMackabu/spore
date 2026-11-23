@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { SYSCALL_UMASK = 0022 };
+constexpr int SYSCALL_UMASK = 0022;
 
 struct user_address_space *syscall_active_as(void);
 struct vfs_node;

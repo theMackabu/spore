@@ -11,7 +11,7 @@
 struct open_file;
 struct process_mm;
 
-enum { DOMAIN_GROUP_LIMIT = 32 };
+constexpr int DOMAIN_GROUP_LIMIT = 32;
 
 struct domain {
   int id;

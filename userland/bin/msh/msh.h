@@ -7,7 +7,7 @@
 
 extern char **environ;
 
-#define SYS_SPORE_APPLY_POLICY 0x4005
+constexpr int SYS_SPORE_APPLY_POLICY = 0x4005;
 
 enum {
   LINE_CAP = 8192,
@@ -65,7 +65,7 @@ struct redir_action {
   const char *path;
 };
 
-enum { REDIR_CAP = 8 };
+constexpr int REDIR_CAP = 8;
 
 struct redirs {
   struct redir_action actions[REDIR_CAP];

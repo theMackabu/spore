@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
@@ -13,15 +14,24 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define SYS_INOTIFY_INIT1 26
-#define SYS_INOTIFY_ADD_WATCH 27
-#define SYS_INOTIFY_RM_WATCH 28
-#ifndef IN_NONBLOCK
-#define IN_NONBLOCK 04000
-#endif
-#ifndef IN_CLOEXEC
-#define IN_CLOEXEC 02000000
-#endif
+static int inotify_shared_watch(void) {
+  int fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+  if (fd < 0) { return 0; }
+  int wd = inotify_add_watch(fd, "/tmp", IN_MODIFY);
+  int alias = dup(fd);
+  close(fd);
+  if (alias < 0) { return 0; }
+  char events[32];
+  int ok = wd > 0 && read(alias, events, sizeof(events)) == -1 && errno == EAGAIN;
+  pid_t child = fork();
+  if (child == 0) { _exit(inotify_rm_watch(alias, wd) == 0 ? 0 : 1); }
+  int status;
+  ok = child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 && ok;
+  ok = ok && inotify_rm_watch(alias, wd) == -1 && errno == EINVAL &&
+       inotify_add_watch(alias, "/tmp", IN_MODIFY) > 0;
+  close(alias);
+  return ok;
+}
 
 int integration_fs_demo(void) {
   int ok = 1;
@@ -62,18 +72,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  int ifd = (int)syscall(SYS_INOTIFY_INIT1, IN_NONBLOCK | IN_CLOEXEC);
-  if (ifd < 0) {
-    ok = 0;
-  } else {
-    int wd = (int)syscall(SYS_INOTIFY_ADD_WATCH, ifd, "/tmp", 0xffffffffu);
-    if (wd <= 0) { ok = 0; }
-    errno = 0;
-    char event_buf[32];
-    if (read(ifd, event_buf, sizeof(event_buf)) != -1 || errno != EAGAIN) { ok = 0; }
-    if (wd > 0 && syscall(SYS_INOTIFY_RM_WATCH, ifd, wd) != 0) { ok = 0; }
-    close(ifd);
-  }
+  if (!inotify_shared_watch()) { ok = 0; }
   if (unlink("b") != 0) { ok = 0; }
   if (chdir("/") != 0) { ok = 0; }
   (void)syscall(35, AT_FDCWD, "/tmp/spore-demo-d", 0x200);

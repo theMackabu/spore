@@ -15,10 +15,10 @@ enum {
   PTE_AP_USER_RO = 3ull << 6,
 };
 
-#define PTE_PXN (1ull << 53)
-#define PTE_UXN (1ull << 54)
-#define PTE_COW (1ull << 55)
-#define PTE_ADDR_MASK 0x0000fffffffff000ull
+constexpr uint64_t PTE_PXN = 1ull << 53;
+constexpr uint64_t PTE_UXN = 1ull << 54;
+constexpr uint64_t PTE_COW = 1ull << 55;
+constexpr uint64_t PTE_ADDR_MASK = 0x0000fffffffff000ull;
 
 static uint64_t *pt_virt(const struct user_address_space *as, uint64_t pa) {
   return (uint64_t *)(uintptr_t)(as->hhdm_offset + pa);

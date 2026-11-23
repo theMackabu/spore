@@ -19,7 +19,7 @@ enum {
   RAMFS_F_SEAL_MASK = 0x001f,
 };
 
-#define RAMFS_MAX_FILE_SIZE (((uint64_t)UINT32_MAX) * RAMFS_PAGE_SIZE)
+constexpr uint64_t RAMFS_MAX_FILE_SIZE = (uint64_t)UINT32_MAX * RAMFS_PAGE_SIZE;
 
 enum ramfs_mount {
   RAMFS_MOUNT_RAM0,

@@ -33,7 +33,7 @@ void restore_host_terminal_mouse(void) {
 }
 
 void write_serial_input(int fd, const char *buf, size_t len) {
-  enum { CHUNK = 32 };
+  constexpr int CHUNK = 32;
   for (size_t off = 0; off < len;) {
     size_t todo = len - off;
     if (todo > CHUNK) { todo = CHUNK; }

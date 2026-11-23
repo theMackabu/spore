@@ -10,9 +10,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SYS_FUTEX 98
-#define FUTEX_WAIT_PRIVATE 128
-#define FUTEX_WAKE_PRIVATE 129
+constexpr int SYS_FUTEX = 98;
+constexpr int FUTEX_WAIT_PRIVATE = 128;
+constexpr int FUTEX_WAKE_PRIVATE = 129;
 
 uint64_t integration_usec_now(void) {
   struct timespec ts;
@@ -235,7 +235,7 @@ static int signal_nested_regression(void) {
   return ok;
 }
 
-#define SYS_CLOCK_NANOSLEEP 115
+constexpr int SYS_CLOCK_NANOSLEEP = 115;
 
 static int absolute_sleep_regression(void) {
   struct timespec deadline;

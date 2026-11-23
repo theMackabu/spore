@@ -16,10 +16,7 @@ enum {
   DT_RUNPATH = 29,
 };
 
-#define ELFMAG                                                                                                         \
-  "\177"                                                                                                               \
-  "ELF"
-#define SELFMAG 4
+constexpr unsigned char ELFMAG[] = {0x7f, 'E', 'L', 'F'};
 
 typedef struct {
   unsigned char e_ident[16];
@@ -73,7 +70,7 @@ static int clean_one(const char *path) {
   }
 
   Elf64_Ehdr eh;
-  if (!read_at(file, 0, &eh, sizeof(eh)) || memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 ||
+  if (!read_at(file, 0, &eh, sizeof(eh)) || memcmp(eh.e_ident, ELFMAG, sizeof(ELFMAG)) != 0 ||
       eh.e_ident[EI_CLASS] != ELFCLASS64 || eh.e_ident[EI_DATA] != ELFDATA2LSB) {
     fprintf(stderr, "%s: not a supported ELF64 little-endian file\n", path);
     fclose(file);

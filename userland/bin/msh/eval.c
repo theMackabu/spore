@@ -11,7 +11,7 @@
 
 static bool xtrace;
 
-enum { JOB_CAP = 16 };
+constexpr int JOB_CAP = 16;
 
 struct job {
   pid_t pid;
@@ -394,7 +394,7 @@ static int run_external(struct command *cmd) {
 }
 
 static int run_pipeline(struct command *stages, size_t count, bool background, int last_status) {
-  enum { PIPELINE_CAP = 8 };
+  constexpr int PIPELINE_CAP = 8;
   int pipes[PIPELINE_CAP - 1][2];
   pid_t pids[PIPELINE_CAP];
   int created = 0;

@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 
-enum { PATH_CAP = 1024 };
+constexpr int PATH_CAP = 1024;
 
 void write_serial_input(int fd, const char *buf, size_t len);
 double now_seconds(void);

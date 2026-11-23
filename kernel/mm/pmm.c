@@ -2,7 +2,7 @@
 
 #include "lib/mem.h"
 
-#define BITS_PER_WORD 64
+constexpr int BITS_PER_WORD = 64;
 
 #if __STDC_HOSTED__
 #include <stdlib.h>

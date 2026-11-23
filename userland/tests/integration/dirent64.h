@@ -4,7 +4,7 @@
 #include <sys/syscall.h>
 
 #ifndef SYS_getdents64
-#define SYS_getdents64 61
+constexpr int SYS_getdents64 = 61;
 #endif
 
 struct linux_dirent64 {

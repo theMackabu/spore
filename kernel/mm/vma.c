@@ -8,9 +8,9 @@
 #include <stdlib.h>
 #endif
 
-#define VMAS_PER_CHUNK (VMA_CHUNK_BYTES / sizeof(struct vma))
+constexpr size_t VMAS_PER_CHUNK = VMA_CHUNK_BYTES / sizeof(struct vma);
 
-enum { MAP_SHARED = 0x01 };
+constexpr int MAP_SHARED = 0x01;
 
 static uint64_t vma_hhdm_offset;
 

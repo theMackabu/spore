@@ -2,12 +2,10 @@
 
 #include <stdint.h>
 
-#define SPORE_BOOT_MODULE_PATH_MAX 96u
-#define SPORE_BOOT_CPU_MAX 64u
+constexpr unsigned int SPORE_BOOT_MODULE_PATH_MAX = 96u;
+constexpr unsigned int SPORE_BOOT_CPU_MAX = 64u;
 
-enum spore_memmap_type {
-  SPORE_MEMMAP_USABLE = 1,
-};
+constexpr int SPORE_MEMMAP_USABLE = 1;
 
 struct spore_memmap_entry {
   uint64_t base;

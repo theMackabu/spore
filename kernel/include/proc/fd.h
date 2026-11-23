@@ -26,20 +26,13 @@ enum open_file_type {
   OPEN_PTY,
 };
 
-enum { CELL_EPOLL_WATCH_CAP = 16, CELL_INOTIFY_WATCH_CAP = 16 };
+constexpr int CELL_EPOLL_WATCH_CAP = 16;
 
 struct epoll_watch {
   bool used;
   int32_t fd;
   uint32_t events;
   uint64_t data;
-};
-
-struct inotify_watch {
-  bool used;
-  int32_t wd;
-  uint32_t mask;
-  char path[CELL_PATH_MAX];
 };
 
 struct open_file {
@@ -133,8 +126,7 @@ struct open_file {
   struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
   uint64_t eventfd_value;
   bool eventfd_semaphore;
-  uint32_t inotify_next_wd;
-  struct inotify_watch inotify_watches[CELL_INOTIFY_WATCH_CAP];
+  uint64_t inotify_pa;
 };
 
 bool cell_fd_table_reset(size_t capacity, uint64_t hhdm_offset);

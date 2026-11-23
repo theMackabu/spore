@@ -4,9 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum {
-  EXT2_NAME_MAX = 255,
-};
+constexpr int EXT2_NAME_MAX = 255;
 
 typedef bool (*ext2_read_fn)(void *ctx, uint64_t offset, void *dst, uint32_t len);
 typedef bool (*ext2_write_fn)(void *ctx, uint64_t offset, const void *src, uint32_t len);

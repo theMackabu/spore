@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { CELL_FS_RULE_CAP = 8 };
+constexpr int CELL_FS_RULE_CAP = 8;
 
 enum cell_fs_right {
   CELL_FS_READ = 1u << 0,

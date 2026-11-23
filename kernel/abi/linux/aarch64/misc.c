@@ -232,7 +232,7 @@ int64_t sys_spore_net_config(uint64_t op, uint64_t cfg_addr) {
 }
 
 int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len) {
-  enum { AFFINITY_WORDS = (SPORE_BOOT_CPU_MAX + 63u) / 64u };
+  constexpr int AFFINITY_WORDS = (SPORE_BOOT_CPU_MAX + 63u) / 64u;
   uint32_t possible = smp_possible_cpu_count();
   if (possible == 0) { possible = 1; }
   if (possible > SPORE_BOOT_CPU_MAX) { possible = SPORE_BOOT_CPU_MAX; }

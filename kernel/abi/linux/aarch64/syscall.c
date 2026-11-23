@@ -205,8 +205,7 @@ enum {
   SIGURG = 23,
 };
 
-#define SYSCALL_SWITCHED ((int64_t)CELL_SWITCHED)
-#define INTERP_LOAD_BASE 0x0000006000000000ull
+constexpr int64_t SYSCALL_SWITCHED = CELL_SWITCHED;
 
 struct fs_info64 {
   uint64_t block_size;
@@ -557,7 +556,7 @@ l_spore_shutdown:
 l_spore_procinfo: {
   size_t max = a1 / sizeof(struct proc_info);
   if (a0 == 0 || max == 0) { return (int64_t)cell_proc_info(NULL, 0); }
-  enum { PROCINFO_CHUNK = 64 };
+  constexpr int PROCINFO_CHUNK = 64;
   static struct proc_info infos[PROCINFO_CHUNK];
   size_t request = max < PROCINFO_CHUNK ? max : PROCINFO_CHUNK;
   size_t count = cell_proc_info(infos, request);

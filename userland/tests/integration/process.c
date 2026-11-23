@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,22 +10,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define SYS_SPORE_SNAPSHOT 0x4000
-#define SYS_SPORE_SPAWN 0x4001
-#define SYS_SPORE_REAP 0x4002
-#define SYS_SPORE_SET_BUDGET 0x4004
-#define SYS_EXIT 93
-#define SYS_EXIT_GROUP 94
-#define SYS_FUTEX 98
-#define SYS_GETTID 178
-#define CLONE_VM 0x00000100
-#define CLONE_FS 0x00000200
-#define CLONE_FILES 0x00000400
-#define CLONE_SIGHAND 0x00000800
-#define CLONE_THREAD 0x00010000
-#define CLONE_SYSVSEM 0x00040000
-#define FUTEX_WAIT_PRIVATE 128
-#define FUTEX_WAKE_PRIVATE 129
+constexpr int SYS_SPORE_SNAPSHOT = 0x4000;
+constexpr int SYS_SPORE_SPAWN = 0x4001;
+constexpr int SYS_SPORE_REAP = 0x4002;
+constexpr int SYS_SPORE_SET_BUDGET = 0x4004;
+constexpr int SYS_EXIT = 93;
+constexpr int SYS_EXIT_GROUP = 94;
+constexpr int SYS_FUTEX = 98;
+constexpr int SYS_GETTID = 178;
+constexpr int FUTEX_WAIT_PRIVATE = 128;
+constexpr int FUTEX_WAKE_PRIVATE = 129;
 
 long integration_raw_syscall3(long nr, long a0, long a1, long a2) {
   register long x0 __asm__("x0") = a0;
@@ -315,7 +310,7 @@ static void *phase_c_pthread_worker(void *arg) {
 }
 
 int integration_pthread_demo(void) {
-  enum { THREADS = 8 };
+  constexpr int THREADS = 8;
   pthread_t threads[THREADS];
   pthread_demo_counter = 0;
   for (long i = 0; i < THREADS; ++i) {
@@ -335,7 +330,7 @@ int integration_pthread_demo(void) {
 }
 
 static int fork_latency_profile(void) {
-  enum { SAMPLES = 4 };
+  constexpr int SAMPLES = 4;
   uint64_t start = integration_usec_now();
   for (int i = 0; i < SAMPLES; ++i) {
     pid_t pid = fork();
@@ -359,7 +354,7 @@ static int fork_latency_profile(void) {
 }
 
 static int fork_pressure_regression(void) {
-  enum { CHILDREN = 32 };
+  constexpr int CHILDREN = 32;
   pid_t pids[CHILDREN];
   int ok = 1;
   int spawned = 0;

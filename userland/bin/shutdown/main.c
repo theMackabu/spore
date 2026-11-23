@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 #ifndef SYS_pselect6
-#define SYS_pselect6 72
+constexpr int SYS_pselect6 = 72;
 #endif
 
 static int parse_delay(const char *arg, unsigned long *seconds) {

@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { PAGE_SIZE = 4096 };
+constexpr int PAGE_SIZE = 4096;
 
 struct pmm_stats {
   uint64_t alloc_attempts;

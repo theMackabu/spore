@@ -13,7 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SYS_MEMFD_CREATE 279
+constexpr int SYS_MEMFD_CREATE = 279;
 
 static int shared_mmap_regression(void) {
   int fd = open("/tmp/shared-mmap", O_CREAT | O_RDWR | O_TRUNC, 0666);
@@ -180,7 +180,7 @@ static int memfd_seals_regression(void) {
 
 static int growdown_mmap_regression(void) {
 #ifndef MAP_GROWSDOWN
-#define MAP_GROWSDOWN 0x0100
+  constexpr int MAP_GROWSDOWN = 0x0100;
 #endif
   char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN, -1, 0);
   int ok = map != MAP_FAILED;

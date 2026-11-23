@@ -9,7 +9,7 @@
 
 #include <unistd.h>
 
-#define SYS_SPORE_RESIDENT 0x4003
+constexpr int SYS_SPORE_RESIDENT = 0x4003;
 
 static uintptr_t integration_page_down(uintptr_t value) {
   return value & ~(uintptr_t)4095;

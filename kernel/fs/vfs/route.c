@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { BOOT_IMAGE_BYTES = 16 * 1024 * 1024 };
+constexpr int BOOT_IMAGE_BYTES = 16 * 1024 * 1024;
 
 static bool path_is_mount(const char *path, const char *mount) {
   if (!starts_with(path, mount)) { return false; }

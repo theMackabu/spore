@@ -1,6 +1,6 @@
 #include "internal.h"
 
-enum { BLOCK_CACHE_ENTRIES = 32 };
+constexpr int BLOCK_CACHE_ENTRIES = 32;
 
 struct block_cache_entry {
   bool valid;

@@ -5,9 +5,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-enum exit_code {
-  EXIT_USAGE = 64,
-};
+constexpr int EXIT_USAGE = 64;
 
 int eprintf(const char *fmt, ...);
 int usage(const char *tool, const char *usage);

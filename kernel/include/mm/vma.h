@@ -6,9 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum {
-  VMA_CHUNK_BYTES = 4096,
-};
+constexpr int VMA_CHUNK_BYTES = 4096;
 
 enum vma_type {
   VMA_ANON,
