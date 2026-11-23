@@ -1,5 +1,6 @@
 BUILD_DIR ?= build
 MESON ?= meson
+NINJA ?= ninja
 CLANG_FORMAT ?= clang-format
 QEMU_RUNNER ?= $(BUILD_DIR)/tools/spore-run
 QEMU ?= $(or $(wildcard /opt/homebrew/bin/qemu-system-aarch64),qemu-system-aarch64)
@@ -22,16 +23,16 @@ setup:
 	@test -d "$(BUILD_DIR)" || $(MESON) setup "$(BUILD_DIR)" --cross-file cross/aarch64-elf.ini
 
 build: setup
-	$(MESON) compile -C "$(BUILD_DIR)"
+	$(NINJA) -C "$(BUILD_DIR)"
 
 image: setup
-	$(MESON) compile -C "$(BUILD_DIR)" image.img
+	$(NINJA) -C "$(BUILD_DIR)" image.img
 
 test-image: setup
-	$(MESON) compile -C "$(BUILD_DIR)" test_image.img
+	$(NINJA) -C "$(BUILD_DIR)" test_image.img
 
 runner: setup
-	$(MESON) compile -C "$(BUILD_DIR)" spore-run
+	$(NINJA) -C "$(BUILD_DIR)" tools/spore-run
 
 run-root: image
 	@if [ ! -f "$(RUN_ROOT)" ]; then \
@@ -75,7 +76,7 @@ benchmark: runner image
 	$(RUN_QEMU) --mode bench --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
 
 bench-inodes: setup
-	$(MESON) compile -C "$(BUILD_DIR)" bench_ext2_inodes
+	$(NINJA) -C "$(BUILD_DIR)" tests/bench_ext2_inodes
 	"$(BUILD_DIR)/tests/bench_ext2_inodes"
 
 rng-smoke: runner image
