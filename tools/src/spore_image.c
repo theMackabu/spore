@@ -57,11 +57,6 @@ static bool exists(const char *path) {
   return stat(path, &st) == 0;
 }
 
-static bool is_dir(const char *path) {
-  struct stat st;
-  return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
-}
-
 static bool is_dir_lstat(const char *path) {
   struct stat st;
   return lstat(path, &st) == 0 && S_ISDIR(st.st_mode);
@@ -285,134 +280,6 @@ static void chown_tree_ext2(const char *image, const char *rootfs, const char *i
 
   run_debugfs_script_file(image, script_path);
   unlink(script_path);
-}
-
-static const char *basename_of(const char *path) {
-  const char *slash = strrchr(path, '/');
-  return slash == NULL ? path : slash + 1;
-}
-
-static void stem_of(char *out, size_t cap, const char *path) {
-  const char *base = basename_of(path);
-  snprintf(out, cap, "%s", base);
-  char *dot = strrchr(out, '.');
-  if (dot != NULL) { *dot = '\0'; }
-}
-
-static void module_name(char *out, size_t cap, const char *target) {
-  size_t pos = 0;
-  for (const char *p = target; *p != '\0'; ++p) {
-    if (*p == '/' && pos == 0) { continue; }
-    if (pos + 1 >= cap) { die_msg("module name too long"); }
-    out[pos++] = *p == '/' ? '_' : *p;
-    if (*p == '/' && pos + 1 < cap) { out[pos++] = '_'; }
-  }
-  if (pos == 0) {
-    snprintf(out, cap, "init");
-  } else {
-    out[pos] = '\0';
-  }
-}
-
-static bool prebuilt_path(char *out, size_t cap, const char *prebuilt_root, const char *source_root,
-                          const char *source) {
-  if (prebuilt_root == NULL || prebuilt_root[0] == '\0') { return false; }
-  int exact = snprintf(out, cap, "%s/%s", prebuilt_root, source);
-  if (exact < 0 || (size_t)exact >= cap) { die_msg("path too long"); }
-  if (exists(out) && !is_dir(out)) { return true; }
-
-  char src[MAX_PATH];
-  path_join(src, sizeof(src), source_root, source);
-  char name[MAX_PATH];
-  if (is_dir(src)) {
-    snprintf(name, sizeof(name), "%s", basename_of(src));
-  } else {
-    stem_of(name, sizeof(name), src);
-  }
-  int n = snprintf(out, cap, "%s/%s/%s", prebuilt_root, source, name);
-  if (n < 0 || (size_t)n >= cap) { die_msg("path too long"); }
-  return exists(out);
-}
-
-static void compile_or_copy_userland(const char *source_root, const char *source, const char *out,
-                                     const char *prebuilt_root) {
-  char prebuilt[MAX_PATH];
-  if (prebuilt_path(prebuilt, sizeof(prebuilt), prebuilt_root, source_root, source)) {
-    copy_file(prebuilt, out);
-    return;
-  }
-
-  char src[MAX_PATH];
-  path_join(src, sizeof(src), source_root, source);
-  char include[MAX_PATH];
-  snprintf(include, sizeof(include), "-I%s/userland/lib/spore", source_root);
-
-  if (is_dir(src)) {
-    char util_c[MAX_PATH];
-    snprintf(util_c, sizeof(util_c), "%s/userland/lib/spore/util.c", source_root);
-
-    char source_files[32][MAX_PATH];
-    size_t source_count = 0;
-    DIR *dir = opendir(src);
-    if (dir == NULL) { die(src); }
-    for (struct dirent *entry = readdir(dir); entry != NULL; entry = readdir(dir)) {
-      size_t len = strlen(entry->d_name);
-      if (len > 2 && strcmp(entry->d_name + len - 2, ".c") == 0) {
-        if (source_count >= sizeof(source_files) / sizeof(source_files[0])) { die_msg("too many userland sources"); }
-        path_join(source_files[source_count++], sizeof(source_files[0]), src, entry->d_name);
-      }
-    }
-    closedir(dir);
-    if (source_count == 0) {
-      copy_tree(src, out);
-      return;
-    }
-    for (size_t i = 0; i + 1 < source_count; ++i) {
-      for (size_t j = i + 1; j < source_count; ++j) {
-        if (strcmp(source_files[i], source_files[j]) > 0) {
-          char tmp[MAX_PATH];
-          snprintf(tmp, sizeof(tmp), "%s", source_files[i]);
-          snprintf(source_files[i], sizeof(source_files[i]), "%s", source_files[j]);
-          snprintf(source_files[j], sizeof(source_files[j]), "%s", tmp);
-        }
-      }
-    }
-
-    char *argv[48];
-    int argc = 0;
-    argv[argc++] = "aarch64-unknown-linux-musl-gcc";
-    bool static_binary = strcmp(source, "userland/bin/init") == 0;
-    if (static_binary) { argv[argc++] = "-static"; }
-    argv[argc++] = "-std=c23";
-    argv[argc++] = "-D_GNU_SOURCE";
-    argv[argc++] = "-s";
-    if (!static_binary) { argv[argc++] = "-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1"; }
-    argv[argc++] = include;
-    for (size_t i = 0; i < source_count; ++i) {
-      argv[argc++] = source_files[i];
-    }
-    argv[argc++] = util_c;
-    argv[argc++] = "-o";
-    argv[argc++] = (char *)out;
-    argv[argc] = NULL;
-    run_argv(argv, false);
-  } else if (strstr(src, ".c") == src + strlen(src) - 2) {
-    bool static_binary = strcmp(source, "userland/bin/init") == 0;
-    char *const argv[] = {
-      "aarch64-unknown-linux-musl-gcc",
-      static_binary ? "-static" : "-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1",
-      "-std=c23",
-      "-D_GNU_SOURCE",
-      "-s",
-      src,
-      "-o",
-      (char *)out,
-      NULL,
-    };
-    run_argv(argv, false);
-  } else {
-    copy_file(src, out);
-  }
 }
 
 static void mcopy_into(const char *efi_img, const char *src, const char *dst) {
@@ -684,11 +551,8 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root) {
 static void build_root_image(const char *source_root, const char *stage, const char *manifest,
                              const char *prebuilt_root, const char *output_root) {
   remove_tree(stage);
-  char programs_dir[MAX_PATH];
   char rootfs_dir[MAX_PATH];
-  path_join(programs_dir, sizeof(programs_dir), stage, "programs");
   path_join(rootfs_dir, sizeof(rootfs_dir), stage, "rootfs");
-  ensure_dir(programs_dir);
   ensure_dir(rootfs_dir);
 
   FILE *mf = fopen(manifest, "r");
@@ -716,12 +580,10 @@ static void build_root_image(const char *source_root, const char *stage, const c
       symlink_into_rootfs(target, rootfs_dir, link_path);
       continue;
     }
-    char name[MAX_PATH];
-    module_name(name, sizeof(name), target);
-    char out[MAX_PATH];
-    path_join(out, sizeof(out), programs_dir, name);
-    compile_or_copy_userland(source_root, source, out, prebuilt_root);
-    copy_into_rootfs(out, rootfs_dir, target);
+    char src[MAX_PATH];
+    path_join(src, sizeof(src), prebuilt_root, source);
+    if (!exists(src)) { path_join(src, sizeof(src), source_root, source); }
+    copy_into_rootfs(src, rootfs_dir, target);
   }
   fclose(mf);
   install_musl_runtime(source_root, rootfs_dir);
