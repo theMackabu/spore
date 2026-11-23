@@ -202,23 +202,31 @@ uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
   if (count == 0 || count > tracked_page_count) { return 0; }
   ++stats.alloc_attempts;
 
-  uint64_t run_start = 0;
   uint64_t run_len = 0;
-  for (uint64_t page = first; page < tracked_page_count; ++page) {
+  for (uint64_t page = first; page < tracked_page_count;) {
+    uint64_t used = bitmap[page / BITS_PER_WORD] >> (page % BITS_PER_WORD);
+    uint64_t width = BITS_PER_WORD - page % BITS_PER_WORD;
+    if (width > tracked_page_count - page) { width = tracked_page_count - page; }
     ++stats.bitmap_words_scanned;
-    if (!valid_page(page) || (bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD))) != 0) {
-      run_len = 0;
-      continue;
+    uint64_t end = page + width;
+    while (page < end) {
+      bool occupied = (used & 1) != 0;
+      uint64_t opposite = occupied ? ~used : used;
+      uint64_t span = opposite == 0 ? BITS_PER_WORD : (uint64_t)__builtin_ctzll(opposite);
+      if (span > end - page) { span = end - page; }
+      run_len = occupied ? 0 : run_len + span;
+      page += span;
+      if (run_len >= count) {
+        uint64_t start = page - run_len;
+        for (uint64_t i = 0; i < count; ++i) {
+          set_used(start + i);
+        }
+        next_free_page = start + count;
+        ++stats.alloc_successes;
+        return start * PAGE_SIZE;
+      }
+      if (page < end) { used >>= span; }
     }
-    if (run_len == 0) { run_start = page; }
-    ++run_len;
-    if (run_len < count) { continue; }
-    for (uint64_t i = 0; i < count; ++i) {
-      set_used(run_start + i);
-    }
-    next_free_page = run_start + count;
-    ++stats.alloc_successes;
-    return run_start * PAGE_SIZE;
   }
 
   ++stats.alloc_failures;

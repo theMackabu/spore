@@ -63,5 +63,23 @@ int main(void) {
   assert(pmm_tracked_pages() == ((9ull * 1024 * 1024 * 1024) / PAGE_SIZE) + 2);
   assert(pmm_alloc_page() == 9ull * 1024 * 1024 * 1024);
 
+  struct spore_memmap_entry fragments[] = {
+    {.base = 0x100000, .length = 3 * PAGE_SIZE, .type = SPORE_MEMMAP_USABLE},
+    {.base = 0x100000 + 61 * PAGE_SIZE, .length = 70 * PAGE_SIZE, .type = SPORE_MEMMAP_USABLE},
+  };
+  pmm_init(0, fragments, 2);
+  assert(pmm_alloc_contiguous_pages(71) == 0);
+  uint64_t run = pmm_alloc_contiguous_pages(70);
+  assert(run == fragments[1].base);
+  assert(pmm_free_pages() == 3);
+  for (uint64_t i = 0; i < 70; ++i) {
+    assert(pmm_refcount(run + i * PAGE_SIZE) == 1);
+  }
+  assert(pmm_alloc_contiguous_pages(3) == fragments[0].base);
+  assert(pmm_alloc_page() == 0);
+  pmm_free_page(run + 63 * PAGE_SIZE);
+  pmm_free_page(run + 64 * PAGE_SIZE);
+  assert(pmm_alloc_contiguous_pages(2) == run + 63 * PAGE_SIZE);
+
   return 0;
 }
