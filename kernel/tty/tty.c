@@ -2,6 +2,7 @@
 
 #include "arch/aarch64/regs.h"
 #include "drivers/pl011.h"
+#include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
@@ -108,19 +109,29 @@ void cell_tty_set_erase_char(uint8_t ch) {
 }
 
 int64_t cell_tty_write_console_from_user(struct domain *domain, uint64_t buf, uint64_t len) {
-  for (uint64_t i = 0; i < len; ++i) {
-    char c;
-    if (!vmm_copy_from_user(cell_domain_as(domain), &c, buf + i, 1)) { return -14; }
-    pl011_putc(c);
-    if (c == '\r' || c == '\n') {
-      tty_output_line_len = 0;
-      tty_output_line[0] = '\0';
-    } else if ((uint8_t)c >= 0x20 || c == '\t' || c == '\033') {
-      if (tty_output_line_len + 1 < sizeof(tty_output_line)) {
-        tty_output_line[tty_output_line_len++] = c;
-        tty_output_line[tty_output_line_len] = '\0';
+  const struct user_address_space *as = cell_domain_as_const(domain);
+  for (uint64_t done = 0; done < len;) {
+    uint64_t addr = buf + done;
+    if (addr < buf) { return -14; }
+    uint64_t pa = vmm_user_to_phys(as, addr);
+    if (pa == 0) { return -14; }
+    const char *data = (const char *)(uintptr_t)(as->hhdm_offset + pa);
+    size_t chunk = PAGE_SIZE - addr % PAGE_SIZE;
+    if (chunk > len - done) { chunk = len - done; }
+    for (size_t i = 0; i < chunk; ++i) {
+      char c = data[i];
+      pl011_putc(c);
+      if (c == '\r' || c == '\n') {
+        tty_output_line_len = 0;
+        tty_output_line[0] = '\0';
+      } else if ((uint8_t)c >= 0x20 || c == '\t' || c == '\033') {
+        if (tty_output_line_len + 1 < sizeof(tty_output_line)) {
+          tty_output_line[tty_output_line_len++] = c;
+          tty_output_line[tty_output_line_len] = '\0';
+        }
       }
     }
+    done += chunk;
   }
   return (int64_t)len;
 }
