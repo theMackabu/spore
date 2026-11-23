@@ -202,15 +202,17 @@ int integration_stdin_demo(void) {
     integration_exit_group(4);
   }
 
-  volatile unsigned long spin = 0;
-  for (unsigned long i = 0; i < 70000000ul; ++i) {
-    spin += i;
-  }
-  (void)spin;
-  kill(pid, SIGKILL);
   int status = 0;
-  waitpid(pid, &status, 0);
-  int ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  pid_t waited = 0;
+  for (int i = 0; i < 100 && waited == 0; ++i) {
+    waited = waitpid(pid, &status, WNOHANG);
+    if (waited == 0) { usleep(10000); }
+  }
+  if (waited == 0) {
+    kill(pid, SIGKILL);
+    waited = waitpid(pid, &status, 0);
+  }
+  int ok = waited == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
   printf("[spore] stdin demo: blocking read resume: %s\n", ok ? "PASS" : "SKIP");
   return ok;
 }

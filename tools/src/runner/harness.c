@@ -357,6 +357,10 @@ int run_harness(char **qemu_argv, const char *mode, bool timings) {
         fputs("spore-run: guest did not report a passing integration run\n", stderr);
         rc = 1;
       }
+      if (integration && rc == 0 && !strstr(buf, "[spore] stdin demo: blocking read resume: PASS")) {
+        fputs("spore-run: guest did not resume its blocked stdin reader\n", stderr);
+        rc = 1;
+      }
       if (shell_check_failed) { rc = 1; }
       return finish_harness(rc, raw_terminal, &saved_termios);
     }
