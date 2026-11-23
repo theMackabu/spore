@@ -1,4 +1,5 @@
 project('spore', 'c', default_options: [
+  'buildtype=debugoptimized',
   'c_std=c23',
   'build.c_std=c23',
   'warning_level=3',
