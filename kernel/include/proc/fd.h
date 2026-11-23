@@ -139,7 +139,6 @@ struct open_file {
 };
 
 bool cell_fd_table_reset(size_t capacity);
-size_t cell_open_file_capacity(void);
 int cell_find_free_fd(struct domain *domain, int start);
 void cell_retain_open_file(struct open_file *file);
 void cell_release_open_file(struct open_file *file);
@@ -149,7 +148,6 @@ void cell_copy_fd_table(struct domain *dst, const struct domain *src);
 void cell_copy_open_path(struct open_file *file, const char *path);
 int64_t cell_eventfd_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
 int64_t cell_eventfd_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
-int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
@@ -171,7 +169,6 @@ bool cell_fd_stat(int fd, struct vfs_node *out);
 bool cell_fd_is_dir(int fd);
 bool cell_fd_path(int fd, char *out, size_t cap);
 bool cell_fd_next_dirent(int fd, struct vfs_dirent *out);
-void cell_fd_rewind_one_dirent(int fd);
 uint64_t cell_fd_dir_offset(int fd);
 void cell_fd_set_dir_offset(int fd, uint64_t offset);
 struct open_file *cell_alloc_open_file(void);

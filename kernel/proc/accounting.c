@@ -10,7 +10,6 @@ static struct {
 } cpu_usage[SPORE_BOOT_CPU_MAX];
 
 static uint64_t scheduler_ticks;
-static uint64_t scheduler_idle_ticks;
 static uint64_t boot_epoch_sec;
 static uint64_t loadavg_scaled[3];
 static uint64_t next_loadavg_tick;
@@ -50,7 +49,6 @@ static void update_loadavg(void) {
 
 void cell_accounting_reset(void) {
   scheduler_ticks = 0;
-  scheduler_idle_ticks = 0;
   loadavg_scaled[0] = 0;
   loadavg_scaled[1] = 0;
   loadavg_scaled[2] = 0;
@@ -67,7 +65,6 @@ uint64_t cell_account_tick(uint32_t cpu, bool from_lower_el, bool idle) {
   }
   if (cpu != 0) { return scheduler_ticks; }
   ++scheduler_ticks;
-  if (idle) { ++scheduler_idle_ticks; }
   update_loadavg();
   return scheduler_ticks;
 }
@@ -88,10 +85,6 @@ uint64_t cell_realtime_seconds(void) {
 
 uint64_t cell_uptime_ticks(void) {
   return scheduler_ticks;
-}
-
-uint64_t cell_idle_ticks(void) {
-  return scheduler_idle_ticks;
 }
 
 uint64_t cell_cpu_busy_ticks(uint32_t cpu) {

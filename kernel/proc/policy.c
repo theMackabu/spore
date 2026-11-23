@@ -217,8 +217,6 @@ int cell_apply_policy(const char *manifest) {
   struct capability_set caps = {0};
   cap_allow_common(&caps);
   caps.flags = CAP_ENFORCE;
-  domain->fs_root[0] = '/';
-  domain->fs_root[1] = '\0';
 
   if (str_eq(manifest, "compute-only")) {
     domain->budget.max_ticks = 20;
@@ -237,11 +235,6 @@ int cell_apply_policy(const char *manifest) {
     } else if (!str_eq(manifest, "fs:/tmp")) {
       return -2;
     }
-    domain->fs_root[0] = '/';
-    domain->fs_root[1] = 't';
-    domain->fs_root[2] = 'm';
-    domain->fs_root[3] = 'p';
-    domain->fs_root[4] = '\0';
   } else if (str_eq(manifest, "mem:1")) {
     caps.memory_page_cap = 1;
   } else if (str_eq(manifest, "net:none")) {

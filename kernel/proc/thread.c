@@ -175,12 +175,6 @@ static void cleanup_reaped_current_domain(struct domain *old_domain, struct thre
   cell_destroy_domain(old_domain);
 }
 
-void cell_restore_current(struct trap_frame *frame) {
-  struct thread *current_thread = cell_current_thread_internal();
-  if (current_thread == NULL) { return; }
-  restore_thread(current_thread, frame);
-}
-
 void cell_schedule(struct trap_frame *frame) {
   uint32_t cpu = smp_current_cpu();
   struct thread *current_thread = cell_current_thread_internal();
@@ -345,11 +339,6 @@ int cell_block_current_on_socket_sendmsg_timeout(int fd, uint64_t msg_addr, uint
   current_thread->pipe_write = false;
   cell_schedule(frame);
   return CELL_SWITCHED;
-}
-
-int cell_block_current_on_socket_msg(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
-                                     uint64_t addrlen, uint32_t flags, struct trap_frame *frame) {
-  return cell_block_current_on_socket_msg_timeout(fd, msg_addr, iov, iovlen, addr, addrlen, flags, 0, frame);
 }
 
 int cell_block_current_on_socket_msg_timeout(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,

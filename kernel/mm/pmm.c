@@ -320,10 +320,6 @@ uint64_t pmm_tracked_pages(void) {
   return tracked_page_count;
 }
 
-uint64_t pmm_metadata_pages(void) {
-  return metadata_page_count;
-}
-
 struct pmm_stats pmm_get_stats(void) {
   return stats;
 }

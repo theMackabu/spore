@@ -84,10 +84,6 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
   return revents;
 }
 
-int cell_fd_poll_events(int fd, int events) {
-  return fd_poll_events_for_domain(cell_current_domain_internal(), fd, events);
-}
-
 static int64_t ppoll_check(struct thread *thread, bool commit) {
   if (thread == NULL || thread->domain == NULL || thread->poll_nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
   int64_t ready = 0;
@@ -347,15 +343,6 @@ int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data) 
   if (free_slot < 0) { return -12; }
   ep->epoll_watches[free_slot] = (struct epoll_watch){.used = true, .fd = fd, .events = events, .data = data};
   return 0;
-}
-
-int cell_fd_epoll_wait(int epfd, uint64_t events_addr, int maxevents) {
-  struct domain *domain = cell_current_domain_internal();
-  if (maxevents <= 0) { return -EINVAL; }
-  if (!cell_ensure_user_range(events_addr, (size_t)maxevents * sizeof(struct epoll_event64), VMM_ACCESS_WRITE)) {
-    return -EFAULT;
-  }
-  return epoll_wait_for_domain(domain, epfd, events_addr, maxevents, true);
 }
 
 int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, struct trap_frame *frame) {

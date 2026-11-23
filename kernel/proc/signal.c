@@ -38,10 +38,6 @@ enum {
 static const uint64_t SA_RESETHAND = 0x80000000ull;
 static const uint64_t SA_RESTART = 0x10000000ull;
 
-static struct domain *current_domain(void) {
-  return cell_current_domain_internal();
-}
-
 static bool signal_is_supported(int signal) {
   return signal == SIGHUP || signal == SIGINT || signal == SIGQUIT || signal == SIGABRT || signal == SIGKILL ||
          signal == SIGUSR1 || signal == SIGSEGV || signal == SIGUSR2 || signal == SIGPIPE || signal == SIGALRM ||

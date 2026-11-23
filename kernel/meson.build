@@ -13,7 +13,6 @@ kernel_c_args = [
   '-Wall',
   '-Wextra',
   '-Wpedantic',
-  '-Wno-unused-function',
 ]
 
 kernel_target_args = []

@@ -42,13 +42,6 @@ struct domain *cell_domain_slot(size_t index) {
   return index < domain_capacity ? &domains[index] : NULL;
 }
 
-size_t cell_domain_index(const struct domain *domain) {
-  if (domain == NULL || domains == NULL || domain < domains || domain >= domains + domain_capacity) {
-    return domain_capacity;
-  }
-  return (size_t)(domain - domains);
-}
-
 uint32_t cell_domain_last_id(void) {
   return (uint32_t)(next_domain_id - 1);
 }
@@ -80,8 +73,6 @@ struct domain *cell_alloc_domain(void) {
       copy_cstr(domains[i].cmdline, sizeof(domains[i].cmdline), "");
       domains[i].cwd[0] = '/';
       domains[i].cwd[1] = '\0';
-      domains[i].fs_root[0] = '/';
-      domains[i].fs_root[1] = '\0';
       domains[i].chroot[0] = '/';
       domains[i].chroot[1] = '\0';
       return &domains[i];
@@ -92,7 +83,6 @@ struct domain *cell_alloc_domain(void) {
 
 void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   kmemcpy(dst->cwd, src->cwd, sizeof(dst->cwd));
-  kmemcpy(dst->fs_root, src->fs_root, sizeof(dst->fs_root));
   kmemcpy(dst->chroot, src->chroot, sizeof(dst->chroot));
   kmemcpy(dst->name, src->name, sizeof(dst->name));
   kmemcpy(dst->exec_path, src->exec_path, sizeof(dst->exec_path));
@@ -302,11 +292,6 @@ bool cell_set_cwd(const char *path) {
   if (len >= sizeof(domain->cwd)) { return false; }
   kmemcpy(domain->cwd, path, len + 1);
   return true;
-}
-
-const char *cell_current_fs_root(void) {
-  struct domain *domain = cell_current_domain_internal();
-  return domain == NULL ? "/" : domain->fs_root;
 }
 
 const char *cell_current_chroot(void) {

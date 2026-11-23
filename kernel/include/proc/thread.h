@@ -102,13 +102,10 @@ int cell_block_current_on_socket_write_timeout(int fd, uint64_t buf, uint64_t le
                                                struct trap_frame *frame);
 int cell_block_current_on_socket_sendmsg_timeout(int fd, uint64_t msg_addr, uint64_t timeout_ticks,
                                                  struct trap_frame *frame);
-int cell_block_current_on_socket_msg(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
-                                     uint64_t addrlen, uint32_t flags, struct trap_frame *frame);
 int cell_block_current_on_socket_msg_timeout(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
                                              uint64_t addrlen, uint32_t flags, uint64_t timeout_ticks,
                                              struct trap_frame *frame);
 void cell_save_current(const struct trap_frame *frame);
-void cell_restore_current(struct trap_frame *frame);
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el);
 void cell_schedule(struct trap_frame *frame);
 int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame);

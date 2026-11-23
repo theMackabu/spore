@@ -296,15 +296,6 @@ size_t proc_fs_tmp_text(char *dst, size_t cap) {
   return len;
 }
 
-static uint64_t total_domain_cpu_ticks(void) {
-  uint64_t ticks = 0;
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
-    struct domain *domain = cell_domain_slot(i);
-    if (domain != NULL && domain->used) { ticks += domain->cpu_ticks; }
-  }
-  return ticks;
-}
-
 size_t proc_stat_text(char *dst, size_t cap) {
   size_t len = 0;
   uint32_t online = smp_online_cpu_count();

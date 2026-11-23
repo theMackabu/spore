@@ -40,10 +40,6 @@ bool cell_mm_reset(size_t capacity) {
   return true;
 }
 
-size_t cell_mm_capacity(void) {
-  return process_mm_capacity;
-}
-
 static struct process_mm *alloc_mm(void) {
   for (size_t i = 0; i < process_mm_capacity; ++i) {
     if (!process_mms[i].used) {

@@ -27,5 +27,4 @@ uint16_t pmm_refcount(uint64_t pa);
 uint64_t pmm_total_pages(void);
 uint64_t pmm_free_pages(void);
 uint64_t pmm_tracked_pages(void);
-uint64_t pmm_metadata_pages(void);
 struct pmm_stats pmm_get_stats(void);

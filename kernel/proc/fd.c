@@ -68,10 +68,6 @@ bool cell_fd_table_reset(size_t capacity) {
   return true;
 }
 
-size_t cell_open_file_capacity(void) {
-  return open_file_capacity;
-}
-
 int cell_find_free_fd(struct domain *domain, int start) {
   if (domain == NULL) { return -1; }
   for (int fd = start; fd < MAX_FDS; ++fd) {
@@ -286,14 +282,6 @@ int cell_fd_inotify_rm_watch(int fd, int wd) {
     }
   }
   return -EINVAL;
-}
-
-int64_t cell_fd_pread_kernel(int fd, uint64_t off, void *buf, uint64_t len) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
-  if (file->type != OPEN_RAMFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
-  return (int64_t)vfs_read(&file->node, off, buf, len);
 }
 
 int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
@@ -586,13 +574,6 @@ bool cell_fd_next_dirent(int fd, struct vfs_dirent *out) {
   struct open_file *file = domain->fds[fd];
   if (file->type != OPEN_RAMFS || !file->node.is_dir) { return false; }
   return vfs_next_dirent(&file->node, &file->offset, out);
-}
-
-void cell_fd_rewind_one_dirent(int fd) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain != NULL && fd >= 0 && fd < MAX_FDS && domain->fds[fd] != NULL && domain->fds[fd]->offset > 0) {
-    --domain->fds[fd]->offset;
-  }
 }
 
 uint64_t cell_fd_dir_offset(int fd) {

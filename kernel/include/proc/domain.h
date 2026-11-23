@@ -49,7 +49,6 @@ struct domain {
   char argv0[64];
   char cmdline[160];
   char cwd[CELL_PATH_MAX];
-  char fs_root[CELL_PATH_MAX];
   char chroot[CELL_PATH_MAX];
   struct capability_set caps;
   struct cpu_budget budget;
@@ -59,7 +58,6 @@ struct domain {
 
 bool cell_domain_reset(size_t capacity);
 size_t cell_domain_capacity(void);
-size_t cell_domain_index(const struct domain *domain);
 uint32_t cell_domain_last_id(void);
 void cell_copy_domain_metadata(struct domain *dst, const struct domain *src);
 void cell_destroy_domain(struct domain *domain);
@@ -79,7 +77,6 @@ int cell_setgid_current(uint32_t gid);
 void cell_apply_exec_creds(uint32_t mode, uint32_t uid, uint32_t gid);
 const char *cell_current_cwd(void);
 bool cell_set_cwd(const char *path);
-const char *cell_current_fs_root(void);
 const char *cell_current_chroot(void);
 bool cell_set_chroot(const char *path);
 int cell_getpgid(int pid);
