@@ -283,6 +283,7 @@ static void merge_mappings(struct vma_list *list, size_t first, size_t end) {
     ++out;
   }
   size_t removed = end - out;
+  if (removed == 0) { return; }
   for (size_t in = end; in < old_count; ++in) {
     *slot_at(list, out++) = *slot_at(list, in);
   }
