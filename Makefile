@@ -17,10 +17,7 @@ RUN_CMD = cd "$(CURDIR)" && $(RUN_QEMU) --mode plain --vars "$(EDK2_VARS)" --ima
 all: image test-image runner
 
 setup:
-	@if [ -d "$(BUILD_DIR)" ] && [ ! -f "$(BUILD_DIR)/build.ninja" ]; then \
-		rm -rf "$(BUILD_DIR)"; \
-	fi
-	@test -d "$(BUILD_DIR)" || $(MESON) setup "$(BUILD_DIR)" --cross-file cross/aarch64-elf.ini
+	@test -f "$(BUILD_DIR)/build.ninja" || $(MESON) setup "$(BUILD_DIR)" --cross-file cross/aarch64-elf.ini
 
 build: setup
 	$(NINJA) -C "$(BUILD_DIR)"
