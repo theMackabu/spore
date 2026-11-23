@@ -197,6 +197,16 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
   struct ext2_node fresh;
   assert(ext2_lookup(&fs, "/group-cross.bin", &fresh));
   assert(fresh.size == write_blocks * block_size);
+  uint32_t entries_per_block = block_size / sizeof(uint32_t);
+  uint32_t metadata_blocks = 0;
+  if (write_blocks > 12) {
+    ++metadata_blocks;
+    if (write_blocks > 12 + entries_per_block) {
+      uint32_t double_data = write_blocks - 12 - entries_per_block;
+      metadata_blocks += 1 + (double_data + entries_per_block - 1) / entries_per_block;
+    }
+  }
+  assert(fresh.sectors_count == (write_blocks + metadata_blocks) * (block_size / 512));
 
   uint8_t got[4096];
   uint32_t read = 0;
@@ -264,6 +274,7 @@ static void test_ext2plus_dynamic_inodes(void) {
   assert(first.ino >= EXT2PLUS_BASE_INO);
   const char payload[] = "stored through ext2+\n";
   assert(ext2_write_file(&fs, &first, 0, payload, sizeof(payload) - 1) == (int64_t)(sizeof(payload) - 1));
+  assert(first.sectors_count == fs.block_size / 512);
   assert(ext2_info(&fs, &info));
   assert(info.inode_count == 32 + EXT2PLUS_CHUNK_INODES);
 
@@ -294,6 +305,7 @@ static void test_ext2plus_dynamic_inodes(void) {
   struct ext2_node fresh;
   assert(ext2_lookup(&fs, "/first-dynamic", &fresh));
   assert(fresh.ino == first.ino);
+  assert(fresh.sectors_count == fs.block_size / 512);
   char got[sizeof(payload)] = {0};
   uint32_t read = 0;
   assert(ext2_read_file(&fs, &fresh, 0, got, sizeof(payload) - 1, &read));
@@ -328,6 +340,11 @@ static void test_large_file_write(struct ext2_fs *fs) {
   assert(ext2_read_file(fs, &fresh, double_indirect_offset, got, sizeof(payload) - 1, &read));
   assert(read == sizeof(payload) - 1);
   assert(strcmp(got, payload) == 0);
+  assert(fresh.sectors_count == 3 * (fs->block_size / 512));
+
+  assert(ext2_truncate(fs, &fresh, 0));
+  assert(ext2_lookup(fs, "/large-write.bin", &fresh));
+  assert(fresh.sectors_count == 0);
 
   assert(ext2_unlink(fs, "/large-write.bin"));
 }
@@ -383,8 +400,18 @@ static void test_mutations(const char *image_path) {
     assert(!ext2_lstat(&fs, tmp, &node));
     assert(ext2_lstat(&fs, final, &node));
     assert(ext2_is_symlink(&node));
+    assert(node.sectors_count == 0);
     assert_readlink(&fs, final, "../../bin/git");
   }
+
+  char long_target[128];
+  memset(long_target, 'x', sizeof(long_target) - 1);
+  long_target[sizeof(long_target) - 1] = '\0';
+  assert(ext2_symlink(&fs, long_target, "/apkdir/long-target"));
+  struct ext2_node long_link;
+  assert(ext2_lstat(&fs, "/apkdir/long-target", &long_link));
+  assert(long_link.sectors_count == fs.block_size / 512);
+  assert_readlink(&fs, "/apkdir/long-target", long_target);
 
   assert(ext2_symlink(&fs, "old", "/apkdir/.apk.replace"));
   assert(ext2_rename(&fs, "/apkdir/.apk.replace", "/apkdir/replace"));

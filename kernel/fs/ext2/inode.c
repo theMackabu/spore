@@ -34,31 +34,6 @@ bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   return ext2_read_inode(fs, ino, out);
 }
 
-static uint32_t count_indirect_tree_blocks(struct ext2_fs *fs, uint32_t block, uint32_t depth) {
-  if (block == 0) { return 0; }
-  uint32_t count = 1;
-  uint8_t buf[4096];
-  if (depth == 0 || fs->block_size > sizeof(buf) || !ext2_read_block(fs, block, buf)) { return count; }
-  const uint32_t *entries = (const uint32_t *)buf;
-  uint32_t n = fs->block_size / sizeof(uint32_t);
-  for (uint32_t i = 0; i < n; ++i) {
-    if (entries[i] == 0) { continue; }
-    count += depth == 1 ? 1 : count_indirect_tree_blocks(fs, entries[i], depth - 1);
-  }
-  return count;
-}
-
-static uint32_t count_allocated_blocks(struct ext2_fs *fs, const struct ext2_node *node) {
-  uint32_t count = 0;
-  for (size_t i = 0; i < 12; ++i) {
-    if (node->blocks[i] != 0) { ++count; }
-  }
-  count += count_indirect_tree_blocks(fs, node->blocks[12], 1);
-  count += count_indirect_tree_blocks(fs, node->blocks[13], 2);
-  count += count_indirect_tree_blocks(fs, node->blocks[14], 3);
-  return count;
-}
-
 bool ext2plus_load_store(struct ext2_fs *fs, struct ext2_node *out) {
   if (!fs->ext2plus_store_valid || fs->ext2plus_store_ino == 0 || !ext2_is_regular(&fs->ext2plus_store)) {
     return false;
@@ -129,9 +104,7 @@ static bool ext2plus_write_inode(struct ext2_fs *fs, const struct ext2_node *nod
   inode.ctime = node->ctime;
   inode.mtime = node->mtime;
   inode.links_count = node->links_count;
-  inode.sectors_count = ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)
-                          ? 0
-                          : count_allocated_blocks(fs, node) * (fs->block_size / 512);
+  inode.sectors_count = node->sectors_count;
   for (size_t i = 0; i < 15; ++i) {
     inode.block[i] = node->blocks[i];
   }
@@ -159,9 +132,7 @@ bool ext2_write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   inode.ctime = node->ctime;
   inode.mtime = node->mtime;
   inode.links_count = node->links_count;
-  inode.sectors_count = ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)
-                          ? 0
-                          : count_allocated_blocks(fs, node) * (fs->block_size / 512);
+  inode.sectors_count = node->sectors_count;
   for (size_t i = 0; i < 15; ++i) {
     inode.block[i] = node->blocks[i];
   }
@@ -342,6 +313,7 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
   ext2_free_indirect_tree(fs, node->blocks[14], 3);
   node->blocks[14] = 0;
   node->size = 0;
+  node->sectors_count = 0;
   uint32_t now = ext2_now_sec();
   node->mtime = now;
   node->ctime = now;

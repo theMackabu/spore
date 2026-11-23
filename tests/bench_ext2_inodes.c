@@ -40,6 +40,7 @@ struct ext2plus_header {
 
 struct timing {
   uint64_t create_ns;
+  uint64_t sparse_write_ns;
   uint64_t lookup_ns;
   uint64_t unlink_ns;
   uint32_t first_ino;
@@ -167,6 +168,15 @@ static struct timing run_case(const char *label, bool want_ext2plus, unsigned fi
   assert(ext2_flush(&fs));
   t.create_ns = now_ns() - start;
 
+  struct ext2_node sparse;
+  assert(ext2_create(&fs, "/sparse-accounting", false, 0644, &sparse));
+  start = now_ns();
+  for (unsigned i = 0; i < files; ++i) {
+    assert(ext2_write_file(&fs, &sparse, (uint64_t)i * fs.block_size, "x", 1) == 1);
+  }
+  assert(ext2_flush(&fs));
+  t.sparse_write_ns = now_ns() - start;
+
   start = now_ns();
   for (unsigned i = 0; i < files; ++i) {
     char name[64];
@@ -183,6 +193,7 @@ static struct timing run_case(const char *label, bool want_ext2plus, unsigned fi
     snprintf(name, sizeof(name), "/bench-%05u", i);
     assert(ext2_unlink(&fs, name));
   }
+  assert(ext2_unlink(&fs, "/sparse-accounting"));
   assert(ext2_flush(&fs));
   t.unlink_ns = now_ns() - start;
 
@@ -199,8 +210,9 @@ static struct timing run_case(const char *label, bool want_ext2plus, unsigned fi
          t.first_ino, t.last_ino, t.dynamic_inodes, (unsigned long long)t.start_inodes,
          (unsigned long long)t.end_inodes, (unsigned long long)t.start_free_inodes,
          (unsigned long long)t.end_free_inodes);
-  printf("         create+write=%8.3f ms  lookup=%8.3f ms  unlink=%8.3f ms\n", (double)t.create_ns / 1000000.0,
-         (double)t.lookup_ns / 1000000.0, (double)t.unlink_ns / 1000000.0);
+  printf("         create+write=%8.3f ms  sparse-write=%8.3f ms  lookup=%8.3f ms  unlink=%8.3f ms\n",
+         (double)t.create_ns / 1000000.0, (double)t.sparse_write_ns / 1000000.0, (double)t.lookup_ns / 1000000.0,
+         (double)t.unlink_ns / 1000000.0);
   return t;
 }
 
@@ -222,7 +234,8 @@ int main(int argc, char **argv) {
 
   struct timing plain = run_case("ext2", false, files);
   struct timing dynamic = run_case("ext2+", true, files);
-  printf("ratio    create+write=%.2fx  lookup=%.2fx  unlink=%.2fx\n", (double)dynamic.create_ns / plain.create_ns,
+  printf("ratio    create+write=%.2fx  sparse-write=%.2fx  lookup=%.2fx  unlink=%.2fx\n",
+         (double)dynamic.create_ns / plain.create_ns, (double)dynamic.sparse_write_ns / plain.sparse_write_ns,
          (double)dynamic.lookup_ns / plain.lookup_ns, (double)dynamic.unlink_ns / plain.unlink_ns);
   return EXIT_SUCCESS;
 }
