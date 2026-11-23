@@ -100,10 +100,10 @@ static struct vma *slot_at(const struct vma_list *list, size_t i) {
 }
 
 const struct vma *vma_at(const struct vma_list *list, size_t i) {
-  return list && i < vma_capacity(list) ? slot_at(list, i) : NULL;
+  return list && i < list->count ? slot_at(list, i) : NULL;
 }
 
-static size_t first_ending_after(const struct vma_list *list, uint64_t addr) {
+size_t vma_first_ending_after(const struct vma_list *list, uint64_t addr) {
   size_t lo = 0, hi = list->count;
   while (lo < hi) {
     size_t mid = lo + (hi - lo) / 2;
@@ -141,9 +141,7 @@ static void erase_slots(struct vma_list *list, size_t first, size_t end) {
   for (size_t i = end; i < list->count; ++i) {
     *slot_at(list, first++) = *slot_at(list, i);
   }
-  while (list->count > remaining) {
-    slot_at(list, --list->count)->used = false;
-  }
+  list->count = remaining;
   trim_chunks(list);
 }
 
@@ -158,7 +156,7 @@ static void insert_slot(struct vma_list *list, size_t i, const struct vma *vma) 
 
 static bool insert_mapping(struct vma_list *list, const struct vma *vma) {
   if (vma->start >= vma->end) { return false; }
-  size_t i = first_ending_after(list, vma->start);
+  size_t i = vma_first_ending_after(list, vma->start);
   struct vma *next = i < list->count ? slot_at(list, i) : NULL;
   if (next && next->start < vma->end) { return false; }
   struct vma *prev = i ? slot_at(list, i - 1) : NULL;
@@ -188,13 +186,9 @@ void vma_list_destroy(struct vma_list *list) {
   trim_chunks(list);
 }
 
-size_t vma_capacity(const struct vma_list *list) {
-  return list ? list->chunk_count * VMAS_PER_CHUNK : 0;
-}
-
 const struct vma *vma_lookup(const struct vma_list *list, uint64_t va) {
   if (!list) { return NULL; }
-  size_t i = first_ending_after(list, va);
+  size_t i = vma_first_ending_after(list, va);
   if (i == list->count) { return NULL; }
   const struct vma *vma = slot_at(list, i);
   return va >= vma->start ? vma : NULL;
@@ -208,21 +202,20 @@ const struct vma *vma_lookup_range(const struct vma_list *list, uint64_t start, 
 bool vma_overlaps(const struct vma_list *list, uint64_t start, uint64_t end) {
   if (start >= end) { return true; }
   if (!list) { return false; }
-  size_t i = first_ending_after(list, start);
+  size_t i = vma_first_ending_after(list, start);
   return i < list->count && slot_at(list, i)->start < end;
 }
 
 bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
                 enum vma_type type) {
-  struct vma vma = {.used = true, .start = start, .end = end, .prot = prot, .flags = flags, .type = type};
+  struct vma vma = {.start = start, .end = end, .prot = prot, .flags = flags, .type = type};
   return insert_mapping(list, &vma);
 }
 
 bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
                      const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
   if (!node || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
-  struct vma vma = {.used = true,
-                    .start = start,
+  struct vma vma = {.start = start,
                     .end = end,
                     .prot = prot,
                     .flags = flags,
@@ -236,7 +229,7 @@ bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32
 
 bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end) {
   if (start >= end) { return false; }
-  size_t i = first_ending_after(list, start);
+  size_t i = vma_first_ending_after(list, start);
   if (i == list->count || slot_at(list, i)->start >= end) { return true; }
   struct vma *first = slot_at(list, i);
   if (first->start < start) {
@@ -294,7 +287,7 @@ fail:
 
 bool vma_grow_down(struct vma_list *list, uint64_t page, uint32_t required_flags, struct vma *out) {
   if (!list || (page & (PAGE_SIZE - 1))) { return false; }
-  size_t i = first_ending_after(list, page);
+  size_t i = vma_first_ending_after(list, page);
   if (i == list->count) { return false; }
   struct vma *vma = slot_at(list, i);
   if (page >= vma->start || (vma->flags & required_flags) != required_flags || (vma->start - page) / PAGE_SIZE > 2048) {

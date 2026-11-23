@@ -15,7 +15,6 @@ enum vma_type {
 };
 
 struct vma {
-  bool used;
   uint64_t start;
   uint64_t end;
   uint32_t prot;
@@ -49,5 +48,5 @@ bool vma_grow_down(struct vma_list *list, uint64_t page, uint32_t required_flags
 bool vma_clone(struct vma_list *dst, const struct vma_list *src);
 size_t vma_count(const struct vma_list *list);
 uint64_t vma_virtual_pages(const struct vma_list *list);
-size_t vma_capacity(const struct vma_list *list);
+size_t vma_first_ending_after(const struct vma_list *list, uint64_t addr);
 const struct vma *vma_at(const struct vma_list *list, size_t index);

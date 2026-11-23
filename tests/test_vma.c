@@ -72,7 +72,7 @@ int main(void) {
     assert(vma_insert(&many, start, start + 0x1000, 3, 0x22, VMA_ANON));
   }
   assert(vma_count(&many) == target);
-  assert(vma_capacity(&many) >= target);
+  assert(vma_at(&many, target) == NULL);
   struct vma_list many_clone;
   assert(vma_clone(&many_clone, &many));
   assert(vma_count(&many_clone) == target);

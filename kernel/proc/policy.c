@@ -167,16 +167,12 @@ static uint64_t page_count(uint64_t start, uint64_t end) {
   return end > start ? (end - start) / 4096u : 0;
 }
 
-static bool ranges_overlap(uint64_t a_start, uint64_t a_end, uint64_t b_start, uint64_t b_end) {
-  return a_start < b_end && b_start < a_end;
-}
-
 static uint64_t overlap_pages(const struct vma_list *vmas, uint64_t start, uint64_t end) {
   if (vmas == NULL || end <= start) { return 0; }
   uint64_t total = 0;
-  for (size_t i = 0; i < vma_capacity(vmas); ++i) {
+  for (size_t i = vma_first_ending_after(vmas, start); i < vma_count(vmas); ++i) {
     const struct vma *vma = vma_at(vmas, i);
-    if (vma == NULL || !vma->used || !ranges_overlap(start, end, vma->start, vma->end)) { continue; }
+    if (vma->start >= end) { break; }
     uint64_t overlap_start = start > vma->start ? start : vma->start;
     uint64_t overlap_end = end < vma->end ? end : vma->end;
     total += page_count(overlap_start, overlap_end);

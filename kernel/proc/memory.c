@@ -25,7 +25,7 @@ static bool vma_is_shared_writable_file(const struct vma *vma);
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end);
 
 static bool vma_is_shared(const struct vma *vma) {
-  return vma != NULL && vma->used && (vma->flags & MAP_SHARED) != 0;
+  return vma != NULL && (vma->flags & MAP_SHARED) != 0;
 }
 
 bool cell_mm_reset(size_t capacity) {
@@ -82,7 +82,7 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
     mm->used = false;
     return NULL;
   }
-  for (size_t i = 0; i < vma_capacity(&src->vmas); ++i) {
+  for (size_t i = 0; i < vma_count(&src->vmas); ++i) {
     const struct vma *vma = vma_at(&src->vmas, i);
     if (!vma_is_shared(vma)) { continue; }
     if (!vmm_restore_shared_range(&src->as, &mm->as, vma->start, vma->end, vma->prot)) {
@@ -154,7 +154,7 @@ static bool access_allowed(const struct vma *vma, enum vmm_access access) {
 }
 
 static bool vma_is_shared_writable_file(const struct vma *vma) {
-  return vma != NULL && vma->used && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) != 0 &&
+  return vma != NULL && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) != 0 &&
          (vma->prot & VMM_USER_WRITE) != 0;
 }
 
@@ -179,9 +179,9 @@ static bool flush_shared_file_vma_range(struct user_address_space *as, const str
 
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end) {
   if (mm == NULL || !mm->used) { return true; }
-  for (size_t i = 0; i < vma_capacity(&mm->vmas); ++i) {
+  for (size_t i = vma_first_ending_after(&mm->vmas, start); i < vma_count(&mm->vmas); ++i) {
     const struct vma *vma = vma_at(&mm->vmas, i);
-    if (vma == NULL || !vma->used || vma->end <= start || vma->start >= end) { continue; }
+    if (vma->start >= end) { break; }
     if (!flush_shared_file_vma_range(&mm->as, vma, start, end)) { return false; }
   }
   return true;
@@ -422,9 +422,9 @@ bool cell_memory_accounting(const struct domain *domain, struct cell_memory_acco
   if (as == NULL || vmas == NULL) { return false; }
   out->virtual_pages = vma_virtual_pages(vmas);
   out->resident_pages = 0;
-  for (size_t i = 0; i < vma_capacity(vmas); ++i) {
+  for (size_t i = 0; i < vma_count(vmas); ++i) {
     const struct vma *vma = vma_at(vmas, i);
-    if (vma->used) { out->resident_pages += vmm_mapped_pages_in_range(as, vma->start, vma->end); }
+    out->resident_pages += vmm_mapped_pages_in_range(as, vma->start, vma->end);
   }
   out->minor_faults = domain->minor_faults;
   out->major_faults = domain->major_faults;

@@ -146,9 +146,9 @@ void cell_dump_current_fault(const struct trap_frame *frame, uint64_t far) {
       kprintf("[kernel] fault x19 mem: %p %p %p %p\n", (void *)(uintptr_t)words[0], (void *)(uintptr_t)words[1],
               (void *)(uintptr_t)words[2], (void *)(uintptr_t)words[3]);
     }
-    for (size_t i = 0; i < vma_capacity(cell_domain_vmas(domain)); ++i) {
-      const struct vma *vma = vma_at(cell_domain_vmas(domain), i);
-      if (vma == NULL || !vma->used) { continue; }
+    const struct vma_list *vmas = cell_domain_vmas_const(domain);
+    for (size_t i = 0; i < vma_count(vmas); ++i) {
+      const struct vma *vma = vma_at(vmas, i);
       bool interesting = (frame->sp_el0 >= vma->start && frame->sp_el0 < vma->end) ||
                          (frame->elr_el1 >= vma->start && frame->elr_el1 < vma->end) ||
                          (frame->x[19] >= vma->start && frame->x[19] < vma->end) ||
