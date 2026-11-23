@@ -1,0 +1,4 @@
+pmm_sources = files('pmm.c')
+vma_sources = files('vma.c')
+vmm_sources = files('vmm.c')
+kernel_sources += pmm_sources + vma_sources + vmm_sources

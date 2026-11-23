@@ -1,0 +1,71 @@
+#include "arch/aarch64/mmu.h"
+
+#include "arch/aarch64/smp.h"
+#include "mm/vmm.h"
+
+void aarch64_tlb_flush_all(void) {
+#if defined(__STDC_HOSTED__) && __STDC_HOSTED__
+  return;
+#else
+  __asm__ volatile("dsb ishst\n"
+                   "tlbi vmalle1is\n"
+                   "dsb ish\n"
+                   "isb\n"
+                   :
+                   :
+                   : "memory");
+#endif
+}
+
+void aarch64_enable_ttbr0(void) {
+#if defined(__STDC_HOSTED__) && __STDC_HOSTED__
+  return;
+#else
+  uint64_t tcr;
+  __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
+  const uint64_t clear =
+    0x3full | (1ull << 7) | (3ull << 8) | (3ull << 10) | (3ull << 12) | (3ull << 14) | (1ull << 22);
+  tcr = (tcr & ~clear) | 16ull | (1ull << 8) | (1ull << 10) | (3ull << 12);
+  __asm__ volatile("msr tcr_el1, %0\n"
+                   "isb\n"
+                   :
+                   : "r"(tcr)
+                   : "memory");
+  aarch64_tlb_flush_all();
+#endif
+}
+
+void vmm_install_user(const struct user_address_space *as) {
+#if defined(__STDC_HOSTED__) && __STDC_HOSTED__
+  (void)as;
+  return;
+#else
+  uint64_t tag = ((uint64_t)smp_current_cpu() + 1) << 48;
+  uint64_t ttbr = as->root_pa | tag;
+  __asm__ volatile("dsb ishst\n"
+                   "msr ttbr0_el1, %0\n"
+                   "isb\n"
+                   "tlbi aside1is, %1\n"
+                   "dsb ish\n"
+                   "isb\n"
+                   :
+                   : "r"(ttbr), "r"(tag)
+                   : "memory");
+#endif
+}
+
+void aarch64_tlb_flush_va(uint64_t va) {
+#if defined(__STDC_HOSTED__) && __STDC_HOSTED__
+  (void)va;
+  return;
+#else
+  uint64_t op = va >> 12;
+  __asm__ volatile("dsb ishst\n"
+                   "tlbi vaae1is, %0\n"
+                   "dsb ish\n"
+                   "isb\n"
+                   :
+                   : "r"(op)
+                   : "memory");
+#endif
+}

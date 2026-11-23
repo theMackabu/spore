@@ -1,4 +1,4 @@
-#include "ramfs.h"
+#include "fs/ramfs.h"
 
 #include <assert.h>
 #include <errno.h>

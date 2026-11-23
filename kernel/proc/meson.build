@@ -1,0 +1,17 @@
+kernel_sources += files(
+  'accounting.c',
+  'bootstrap.c',
+  'domain.c',
+  'fd.c',
+  'futex.c',
+  'info.c',
+  'io.c',
+  'memory.c',
+  'pipe.c',
+  'policy.c',
+  'poll.c',
+  'process.c',
+  'signal.c',
+  'snapshot.c',
+  'thread.c',
+)

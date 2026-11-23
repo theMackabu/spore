@@ -1,5 +1,5 @@
-#include "elf/loader.h"
-#include "vfs.h"
+#include "exec/elf.h"
+#include "fs/vfs.h"
 
 #include <assert.h>
 #include <stdbool.h>

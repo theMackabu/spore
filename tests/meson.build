@@ -1,98 +1,70 @@
 test_include = [
-  include_directories('../kernel/src/include'),
+  include_directories('../kernel/include'),
 ]
 
+host_mem = static_library('host-kernel-mem', memory_primitives,
+  include_directories: test_include,
+  native: true)
+
 test_pmm = executable('test_pmm',
-  files(
-    'test_pmm.c',
-    '../kernel/src/mm/pmm.c',
-    '../kernel/src/lib/mem.c',
-  ),
+  pmm_sources, 'test_pmm.c',
+  link_with: host_mem,
   include_directories: test_include,
   native: true)
 
 test('pmm', test_pmm)
 
 test_stack = executable('test_stack',
-  files(
-    'test_stack.c',
-    'random_stub.c',
-    '../kernel/src/exec/stack.c',
-    '../kernel/src/lib/mem.c',
-  ),
+  stack_sources, 'test_stack.c', 'random_stub.c',
+  link_with: host_mem,
   include_directories: test_include,
   native: true)
 
 test('stack', test_stack)
 
 test_elf = executable('test_elf',
-  files(
-    'test_elf.c',
-    'vfs_ref_stub.c',
-    '../kernel/src/elf/loader.c',
-    '../kernel/src/mm/vma.c',
-    '../kernel/src/lib/mem.c',
-  ),
+  elf_sources + vma_sources, 'test_elf.c', 'vfs_ref_stub.c',
+  link_with: host_mem,
   include_directories: test_include,
   native: true)
 
 test('elf', test_elf)
 
 test_ramfs = executable('test_ramfs',
-  files(
-    'test_ramfs.c',
-    '../kernel/src/ramfs.c',
-    '../kernel/src/lib/mem.c',
-  ),
+  ramfs_sources, 'test_ramfs.c',
+  link_with: host_mem,
   include_directories: test_include,
   native: true)
 
 test('ramfs', test_ramfs)
 
-test_ext2 = executable('test_ext2',
-  files(
-    'test_ext2.c',
-    '../kernel/src/ext2.c',
-    '../kernel/src/ext2_alloc.c',
-    '../kernel/src/ext2_dir.c',
-    '../kernel/src/ext2_inode.c',
-    '../kernel/src/lib/mem.c',
-  ),
+host_ext2 = static_library('host-ext2', ext2_sources,
+  include_directories: test_include,
+  native: true)
+
+test_ext2 = executable('test_ext2', 'test_ext2.c',
+  link_with: [host_ext2, host_mem],
   include_directories: test_include,
   native: true)
 
 test('ext2', test_ext2, args: [meson.project_build_root() / 'root.ext2'])
 
-bench_ext2_inodes = executable('bench_ext2_inodes',
-  files(
-    'bench_ext2_inodes.c',
-    '../kernel/src/ext2.c',
-    '../kernel/src/ext2_alloc.c',
-    '../kernel/src/ext2_dir.c',
-    '../kernel/src/ext2_inode.c',
-    '../kernel/src/lib/mem.c',
-  ),
+bench_ext2_inodes = executable('bench_ext2_inodes', 'bench_ext2_inodes.c',
+  link_with: [host_ext2, host_mem],
   include_directories: test_include,
   native: true)
 
 test_vmm = executable('test_vmm',
-  files(
-    'test_vmm.c',
-    '../kernel/src/mm/vmm.c',
-    '../kernel/src/lib/mem.c',
-  ),
+  vmm_sources + aarch64_mmu_sources, 'test_vmm.c',
+  link_with: host_mem,
   include_directories: test_include,
   native: true)
 
 test('vmm', test_vmm)
 
 test_vma = executable('test_vma',
-  files(
-    'test_vma.c',
-    'vfs_ref_stub.c',
-    '../kernel/src/mm/vma.c',
-    '../kernel/src/lib/mem.c',
-  ),
+  vma_sources, 'test_vma.c', 'vfs_ref_stub.c',
+  link_with: host_mem,
   include_directories: test_include,
   native: true)
 
@@ -133,11 +105,8 @@ test_mycelium_model = executable('test_mycelium_model',
 test('mycelium-model', test_mycelium_model)
 
 test_net = executable('test_net',
-  files(
-    'test_net.c',
-    '../kernel/src/net/net.c',
-    '../kernel/src/lib/mem.c',
-  ),
+  network_sources, 'test_net.c',
+  link_with: host_mem,
   include_directories: test_include,
   native: true)
 

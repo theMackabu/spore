@@ -1,4 +1,4 @@
-#include "ext2.h"
+#include "fs/ext2.h"
 
 #include <assert.h>
 #include <stdbool.h>

@@ -1,0 +1,17 @@
+kernel_sources += files(
+  'context.c',
+  'exec.c',
+  'file.c',
+  'io.c',
+  'ioctl.c',
+  'memory.c',
+  'message.c',
+  'misc.c',
+  'net.c',
+  'poll.c',
+  'process.c',
+  'signal.c',
+  'syscall.c',
+  'time.c',
+  'unix_msg.c',
+)

@@ -1,4 +1,4 @@
-#include "vfs.h"
+#include "fs/vfs.h"
 
 static unsigned retain_count;
 static unsigned release_count;

@@ -1,0 +1,120 @@
+#pragma once
+
+#include "arch/aarch64/regs.h"
+#include "proc/limits.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct domain;
+
+enum thread_state {
+  THREAD_UNUSED,
+  THREAD_RUNNABLE,
+  THREAD_BLOCKED,
+  THREAD_ZOMBIE,
+};
+
+enum wait_reason {
+  WAIT_NONE,
+  WAIT_CHILD,
+  WAIT_STDIN,
+  WAIT_SOCKET,
+  WAIT_THREAD,
+  WAIT_FUTEX,
+  WAIT_POLL,
+  WAIT_SLEEP,
+  WAIT_VFORK,
+  WAIT_PIPE,
+  WAIT_EPOLL,
+  WAIT_INOTIFY,
+  WAIT_PTY,
+};
+
+enum { CELL_SWITCHED = -0x40000000 };
+
+struct thread {
+  int tid;
+  int running_cpu;
+  struct domain *domain;
+  enum thread_state state;
+  struct trap_frame tf;
+  struct aarch64_thread_context context;
+  enum wait_reason wait_reason;
+  int wait_target;
+  uint64_t stdin_buf;
+  uint64_t stdin_len;
+  uint64_t pipe_buf;
+  uint64_t pipe_len;
+  uint64_t socket_addr;
+  uint64_t socket_addrlen;
+  int socket_accept_flags;
+  bool socket_write;
+  bool socket_msg;
+  uint64_t socket_msg_addr;
+  uint64_t socket_iov;
+  uint64_t socket_iovlen;
+  uint32_t socket_flags;
+  bool socket_has_deadline;
+  uint64_t socket_deadline_tick;
+  uint64_t signal_mask;
+  uint64_t pending_signals;
+  uint64_t sigaltstack_sp;
+  uint64_t sigaltstack_size;
+  uint32_t sigaltstack_flags;
+  bool pipe_write;
+  uint8_t poll_kind;
+  bool poll_has_deadline;
+  uint64_t poll_deadline_tick;
+  uint64_t sleep_deadline_tick;
+  uint64_t poll_fds;
+  uint64_t poll_nfds;
+  uint64_t poll_readfds;
+  uint64_t poll_writefds;
+  uint64_t poll_exceptfds;
+  int epoll_fd;
+  uint64_t epoll_events;
+  int epoll_maxevents;
+  uint64_t clear_child_tid;
+  uint64_t robust_list;
+  uint64_t futex_addr;
+};
+
+bool cell_thread_reset(size_t capacity, uint64_t hhdm_offset);
+size_t cell_thread_capacity(void);
+void cell_set_current_thread(struct thread *thread);
+bool cell_scheduler_waiting_for_interrupt(void);
+size_t cell_thread_index(const struct thread *thread);
+void cell_release_thread(struct thread *thread);
+size_t cell_runnable_or_blocked_threads_in_domain(const struct domain *domain);
+void cell_wake_vfork_parent_of(int child_id);
+void cell_wake_sleep_waiters(uint64_t scheduler_ticks);
+int cell_block_current_on_sleep(uint64_t deadline_tick, struct trap_frame *frame);
+int cell_block_current_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame);
+int cell_block_current_on_socket(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
+                                 struct trap_frame *frame);
+int cell_block_current_on_socket_flags_timeout(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
+                                               uint32_t flags, uint64_t timeout_ticks, struct trap_frame *frame);
+int cell_block_current_on_socket_timeout(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
+                                         uint64_t timeout_ticks, struct trap_frame *frame);
+int cell_block_current_on_socket_write_timeout(int fd, uint64_t buf, uint64_t len, uint64_t timeout_ticks,
+                                               struct trap_frame *frame);
+int cell_block_current_on_socket_sendmsg_timeout(int fd, uint64_t msg_addr, uint64_t timeout_ticks,
+                                                 struct trap_frame *frame);
+int cell_block_current_on_socket_msg(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
+                                     uint64_t addrlen, uint32_t flags, struct trap_frame *frame);
+int cell_block_current_on_socket_msg_timeout(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
+                                             uint64_t addrlen, uint32_t flags, uint64_t timeout_ticks,
+                                             struct trap_frame *frame);
+void cell_save_current(const struct trap_frame *frame);
+void cell_restore_current(struct trap_frame *frame);
+void cell_timer_tick(struct trap_frame *frame, bool from_lower_el);
+void cell_schedule(struct trap_frame *frame);
+int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame);
+struct thread *cell_current_thread_internal(void);
+struct thread *cell_thread_slot(size_t index);
+struct thread *cell_alloc_thread(struct domain *domain);
+struct thread *cell_thread_for_domain(const struct domain *domain);
+
+int cell_current_tid(void);

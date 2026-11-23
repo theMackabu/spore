@@ -25,82 +25,25 @@ kernel_link_args = kernel_target_args + [
   '-nostdlib',
   '-static',
   '-Wl,-z,max-page-size=0x1000',
-  '-T', meson.current_source_dir() / 'linker.ld',
+  '-T', meson.current_source_dir() / 'arch/aarch64/linker.ld',
 ]
 
-kernel_sources = files(
-  'src/arch/aarch64/boot.S',
-  'src/arch/aarch64/context.c',
-  'src/arch/aarch64/cpuinfo.c',
-  'src/arch/aarch64/exceptions.c',
-  'src/arch/aarch64/signal_frame.c',
-  'src/arch/aarch64/smp.S',
-  'src/arch/aarch64/smp.c',
-  'src/arch/aarch64/sys_context.c',
-  'src/arch/aarch64/sys_exec.c',
-  'src/arch/aarch64/sys_file.c',
-  'src/arch/aarch64/sys_ioctl.c',
-  'src/arch/aarch64/sys_io.c',
-  'src/arch/aarch64/sys_mem.c',
-  'src/arch/aarch64/sys_misc.c',
-  'src/arch/aarch64/sys_net.c',
-  'src/arch/aarch64/sys_unix_msg.c',
-  'src/arch/aarch64/sys_poll.c',
-  'src/arch/aarch64/sys_proc.c',
-  'src/arch/aarch64/sys_signal.c',
-  'src/arch/aarch64/syscall.c',
-  'src/arch/aarch64/sys_time.c',
-  'src/arch/aarch64/timer.c',
-  'src/arch/aarch64/vectors.S',
-  'src/cell.c',
-  'src/ext2.c',
-  'src/ext2_alloc.c',
-  'src/ext2_dir.c',
-  'src/ext2_inode.c',
-  'src/main.c',
-  'src/arch/aarch64/limine_boot.c',
-  'src/arch/aarch64/platform.c',
-  'src/drivers/pl011.c',
-  'src/drivers/virtio_blk.c',
-  'src/drivers/virtio_console.c',
-  'src/drivers/virtio_net.c',
-  'src/elf/loader.c',
-  'src/elf/vfs_reader.c',
-  'src/exec/stack.c',
-  'src/lib/mem.c',
-  'src/lib/kprintf.c',
-  'src/mm/pmm.c',
-  'src/mm/vma.c',
-  'src/mm/vmm.c',
-  'src/net/net.c',
-  'src/proc/domain.c',
-  'src/proc/fd.c',
-  'src/proc/futex.c',
-  'src/proc/io.c',
-  'src/proc/memory.c',
-  'src/proc/policy.c',
-  'src/proc/pipe.c',
-  'src/proc/poll.c',
-  'src/proc/process.c',
-  'src/proc/procfs.c',
-  'src/proc/procfs_text.c',
-  'src/proc/pty.c',
-  'src/proc/snapshot.c',
-  'src/proc/signal.c',
-  'src/proc/socket.c',
-  'src/proc/socket_unix.c',
-  'src/proc/socket_udp.c',
-  'src/proc/socket_tcp.c',
-  'src/proc/thread.c',
-  'src/proc/tty.c',
-  'src/ramfs.c',
-  'src/random.c',
-  'src/vfs.c',
-  'src/vfs_route.c',
-  'src/vfs_proc.c',
-  'src/vfs_lookup_cache.c',
-  'src/vfs_page_cache.c',
-)
+kernel_sources = []
+subdir('fs/ext2')
+subdir('fs/ramfs')
+subdir('fs/vfs')
+subdir('fs/procfs')
+subdir('net/socket')
+subdir('tty')
+subdir('exec')
+subdir('init')
+subdir('proc')
+subdir('arch/aarch64')
+subdir('abi/linux/aarch64')
+subdir('mm')
+subdir('net')
+subdir('drivers')
+subdir('lib')
 
 spore_version_conf = configuration_data()
 spore_version_conf.set_quoted('SPORE_UTS_SYSNAME', spore_sysname)
@@ -117,12 +60,12 @@ kernel_elf = executable('kernel.elf',
   kernel_sources, limine_header,
   include_directories: [
     include_directories('.'),
-    include_directories('src/include'),
+    include_directories('include'),
     include_directories('../boot'),
   ],
   c_args: kernel_target_args + kernel_c_args,
   link_args: kernel_link_args,
-  link_depends: files('linker.ld'),
+  link_depends: files('arch/aarch64/linker.ld'),
   install: false)
 
 image_root = meson.current_build_dir() / 'image_root'
