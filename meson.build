@@ -19,4 +19,23 @@ subdir('userland')
 subdir('tools')
 subdir('boot')
 subdir('kernel')
+foreach variant : [
+  ['image', 'root', 'userland/image.manifest', userland_image_targets],
+  ['test_image', 'test_root', 'userland/tests/integration/image.manifest', userland_test_targets],
+]
+  root_disk = custom_target(variant[1] + '.ext2',
+    input: [files(variant[2]), userland_image_data],
+    output: variant[1] + '.ext2',
+    command: [spore_image, 'rootfs', meson.project_source_root(),
+      meson.project_build_root() / (variant[0] + '_root'), '@INPUT0@',
+      meson.project_build_root(), '@OUTPUT@'],
+    depends: variant[3])
+  custom_target(variant[0] + '.img',
+    input: [kernel_elf, boot_efi, limine_data],
+    output: variant[0] + '.img',
+    command: [spore_image, 'esp', '@INPUT@', '@OUTPUT@'],
+    depends: root_disk,
+    build_by_default: variant[0] == 'image')
+endforeach
+
 subdir('tests')

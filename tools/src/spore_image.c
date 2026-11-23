@@ -128,41 +128,6 @@ static void copy_file(const char *src, const char *dst) {
   fclose(out);
 }
 
-static bool all_zero(const char *buf, size_t len) {
-  for (size_t i = 0; i < len; ++i) {
-    if (buf[i] != 0) { return false; }
-  }
-  return true;
-}
-
-static void copy_sparse_file(const char *src, const char *dst) {
-  FILE *in = fopen(src, "rb");
-  if (in == NULL) { die(src); }
-  int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  if (out < 0) { die(dst); }
-
-  char buf[65536];
-  uint64_t size = 0;
-  for (;;) {
-    size_t n = fread(buf, 1, sizeof(buf), in);
-    if (n > 0) {
-      size += n;
-      if (all_zero(buf, n)) {
-        if (lseek(out, (off_t)n, SEEK_CUR) < 0) { die("lseek"); }
-      } else if (write(out, buf, n) != (ssize_t)n) {
-        die("write");
-      }
-    }
-    if (n < sizeof(buf)) {
-      if (ferror(in)) { die("fread"); }
-      break;
-    }
-  }
-  if (ftruncate(out, (off_t)size) != 0) { die("ftruncate"); }
-  if (close(out) != 0) { die("close"); }
-  fclose(in);
-}
-
 static void copy_tree(const char *src, const char *dst) {
   if (is_symlink_lstat(src)) {
     char target[MAX_PATH];
@@ -642,7 +607,7 @@ static void write_ext2plus_store_seed(const char *rootfs_dir) {
   chmod(path, 0600);
 }
 
-static void build_root_ext2(const char *rootfs_dir, const char *output_root, const char *output_copy) {
+static void build_root_ext2(const char *rootfs_dir, const char *output_root) {
   char dev_dir[MAX_PATH];
   char etc_dir[MAX_PATH];
   char proc_dir[MAX_PATH];
@@ -714,59 +679,17 @@ static void build_root_ext2(const char *rootfs_dir, const char *output_root, con
                                   "set_inode_field /etc/sudoers uid 0\n"
                                   "set_inode_field /etc/sudoers gid 0\n");
   set_ext2plus_feature(output_root);
-  copy_sparse_file(output_root, output_copy);
 }
 
-int main(int argc, char **argv) {
-  if (argc < 9 || argc > 11) {
-    fputs("usage: spore-image SOURCE_ROOT ISO_ROOT KERNEL_ELF BOOT_EFI OUTPUT_IMAGE OUTPUT_COPY OUTPUT_ROOT_EXT2 "
-          "OUTPUT_ROOT_COPY [MANIFEST] [PREBUILT_ROOT]\n",
-          stderr);
-    return 2;
-  }
-  const char *source_root = argv[1];
-  const char *iso_root = argv[2];
-  const char *kernel_elf = argv[3];
-  const char *boot_efi = argv[4];
-  const char *output_image = argv[5];
-  const char *output_copy = argv[6];
-  const char *output_root = argv[7];
-  const char *output_root_copy = argv[8];
-  char default_manifest[MAX_PATH];
-  path_join(default_manifest, sizeof(default_manifest), source_root, "userland/image.manifest");
-  const char *manifest = argc >= 10 ? argv[9] : default_manifest;
-  const char *prebuilt_root = argc == 11 ? argv[10] : NULL;
-  char config[MAX_PATH];
-  char license[MAX_PATH];
-  path_join(config, sizeof(config), source_root, "boot/limine.conf");
-  path_join(license, sizeof(license), source_root, "boot/LIMINE-LICENSE");
-
-  remove_tree(iso_root);
+static void build_root_image(const char *source_root, const char *stage, const char *manifest,
+                             const char *prebuilt_root, const char *output_root) {
+  remove_tree(stage);
   char programs_dir[MAX_PATH];
-  char boot_dir[MAX_PATH];
-  char efi_boot_dir[MAX_PATH];
   char rootfs_dir[MAX_PATH];
-  path_join(programs_dir, sizeof(programs_dir), iso_root, "programs");
-  path_join(boot_dir, sizeof(boot_dir), iso_root, "boot");
-  path_join(efi_boot_dir, sizeof(efi_boot_dir), iso_root, "EFI/BOOT");
-  path_join(rootfs_dir, sizeof(rootfs_dir), iso_root, "rootfs");
+  path_join(programs_dir, sizeof(programs_dir), stage, "programs");
+  path_join(rootfs_dir, sizeof(rootfs_dir), stage, "rootfs");
   ensure_dir(programs_dir);
-  ensure_dir(boot_dir);
-  ensure_dir(efi_boot_dir);
   ensure_dir(rootfs_dir);
-
-  char kernel_dst[MAX_PATH];
-  char boot_dst[MAX_PATH];
-  char config_dst[MAX_PATH];
-  char license_dst[MAX_PATH];
-  path_join(kernel_dst, sizeof(kernel_dst), iso_root, "boot/kernel.elf");
-  path_join(boot_dst, sizeof(boot_dst), efi_boot_dir, "BOOTAA64.EFI");
-  copy_file(kernel_elf, kernel_dst);
-  copy_file(boot_efi, boot_dst);
-  path_join(config_dst, sizeof(config_dst), iso_root, "limine.conf");
-  path_join(license_dst, sizeof(license_dst), efi_boot_dir, "LICENSE");
-  copy_file(config, config_dst);
-  copy_file(license, license_dst);
 
   FILE *mf = fopen(manifest, "r");
   if (mf == NULL) { die(manifest); }
@@ -805,6 +728,11 @@ int main(int argc, char **argv) {
   install_musl_devel(rootfs_dir);
   install_default_accounts(rootfs_dir);
 
+  build_root_ext2(rootfs_dir, output_root);
+}
+
+static void build_esp(const char *kernel_elf, const char *boot_efi, const char *config, const char *license,
+                      const char *output_image) {
   uint64_t esp_payload = file_size(boot_efi) + file_size(kernel_elf) + file_size(config) + file_size(license);
   uint64_t esp_size = align_up_u64(esp_payload * 2u + 2u * 1024u * 1024u, 1024u * 1024u);
   if (esp_size < 9u * 1024u * 1024u) { esp_size = 9u * 1024u * 1024u; }
@@ -817,7 +745,18 @@ int main(int argc, char **argv) {
   mcopy_into(output_image, kernel_elf, "/boot/kernel.elf");
   mcopy_into(output_image, config, "/limine.conf");
   mcopy_into(output_image, license, "/EFI/BOOT/LICENSE");
-  copy_file(output_image, output_copy);
-  build_root_ext2(rootfs_dir, output_root, output_root_copy);
-  return 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc == 7 && strcmp(argv[1], "esp") == 0) {
+    build_esp(argv[2], argv[3], argv[4], argv[5], argv[6]);
+    return 0;
+  }
+  if (argc == 7 && strcmp(argv[1], "rootfs") == 0) {
+    build_root_image(argv[2], argv[3], argv[4], argv[5], argv[6]);
+    return 0;
+  }
+  fputs("usage: spore-image esp KERNEL_ELF BOOT_EFI CONFIG LICENSE OUTPUT\n"
+        "       spore-image rootfs SOURCE_ROOT STAGE MANIFEST PREBUILT_ROOT OUTPUT\n", stderr);
+  return 2;
 }
