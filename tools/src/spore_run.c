@@ -8,7 +8,7 @@
 
 static void usage(void) {
   fputs("usage: spore-run [--mode plain|filter|shell|stdin|bench|rng] "
-        "[--timings] --image IMAGE [--root ROOT_EXT2] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--memory MEM] "
+        "[--timings] --image IMAGE [--root ROOT_EXT2] [--snapshot-root] [--qemu QEMU] [--accel ACCEL] [--cpu CPU] [--memory MEM] "
         "[--smp N] [--vars VARS_FD]\n",
         stderr);
   exit(2);
@@ -126,7 +126,7 @@ static void ensure_vars_file(const char *qemu, const char *vars) {
 }
 
 static void build_qemu_args(char **argv, int *argc, const char *qemu, const char *image, const char *root,
-                            const char *accel, const char *cpu, const char *memory, const char *smp, const char *vars,
+                            bool snapshot_root, const char *accel, const char *cpu, const char *memory, const char *smp, const char *vars,
                             char *firmware_arg, size_t firmware_cap, char *vars_arg, size_t vars_cap,
                             char *image_drive_arg, size_t image_drive_cap, char *root_drive_arg,
                             size_t root_drive_cap) {
@@ -139,7 +139,10 @@ static void build_qemu_args(char **argv, int *argc, const char *qemu, const char
   snprintf(firmware_arg, firmware_cap, "if=pflash,format=raw,readonly=on,file=%s", firmware);
   if (vars != NULL) { snprintf(vars_arg, vars_cap, "if=pflash,format=raw,file=%s", vars); }
   snprintf(image_drive_arg, image_drive_cap, "if=none,format=raw,readonly=on,file=%s,id=sporeesp", image);
-  if (root != NULL) { snprintf(root_drive_arg, root_drive_cap, "if=none,format=raw,file=%s,id=sporeroot", root); }
+  if (root != NULL) {
+    snprintf(root_drive_arg, root_drive_cap, "if=none,format=raw,id=sporeroot,%sfile=%s",
+             snapshot_root ? "snapshot=on," : "", root);
+  }
   int i = 0;
   argv[i++] = (char *)qemu;
   argv[i++] = "-M";
@@ -203,6 +206,7 @@ int main(int argc, char **argv) {
   const char *smp = "4";
   const char *vars = NULL;
   bool timings = false;
+  bool snapshot_root = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
       mode = argv[++i];
@@ -210,6 +214,8 @@ int main(int argc, char **argv) {
       timings = true;
     } else if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
       image = argv[++i];
+    } else if (strcmp(argv[i], "--snapshot-root") == 0) {
+      snapshot_root = true;
     } else if (strcmp(argv[i], "--root") == 0 && i + 1 < argc) {
       root = argv[++i];
     } else if (strcmp(argv[i], "--qemu") == 0 && i + 1 < argc) {
@@ -228,14 +234,14 @@ int main(int argc, char **argv) {
       usage();
     }
   }
-  if (image == NULL) { usage(); }
+  if (image == NULL || (snapshot_root && root == NULL)) { usage(); }
   char firmware_arg[PATH_CAP];
   char vars_arg[PATH_CAP];
   char image_drive_arg[PATH_CAP];
   char root_drive_arg[PATH_CAP];
   char *qemu_argv[96];
   int qemu_argc = 0;
-  build_qemu_args(qemu_argv, &qemu_argc, qemu, image, root, accel, cpu, memory, smp, vars, firmware_arg,
+  build_qemu_args(qemu_argv, &qemu_argc, qemu, image, root, snapshot_root, accel, cpu, memory, smp, vars, firmware_arg,
                   sizeof(firmware_arg), vars_arg, sizeof(vars_arg), image_drive_arg, sizeof(image_drive_arg),
                   root_drive_arg, sizeof(root_drive_arg));
   (void)qemu_argc;

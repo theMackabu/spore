@@ -63,16 +63,10 @@ run-reset: runner image
 	$(RUN_CMD)
 
 run-tests: runner test-image
-	@root="$$(mktemp "$(BUILD_DIR)/run-tests-root.XXXXXX.ext2")"; \
-	cp -f "$(BUILD_DIR)/test_root.ext2" "$$root"; \
-	trap 'rm -f "$$root"' EXIT INT TERM; \
-	$(RUN_QEMU) --mode filter --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img" --root "$$root"
+	$(RUN_QEMU) --mode filter --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/test_image.img" --snapshot-root --root "$(BUILD_DIR)/test_root.ext2"
 
 run-shell-check: runner image
-	@root="$$(mktemp "$(BUILD_DIR)/run-shell-root.XXXXXX.ext2")"; \
-	cp -f "$(BUILD_DIR)/root.ext2" "$$root"; \
-	trap 'rm -f "$$root"' EXIT INT TERM; \
-	$(RUN_QEMU) --mode shell --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root"
+	$(RUN_QEMU) --mode shell --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --snapshot-root --root "$(BUILD_DIR)/root.ext2"
 
 benchmark: runner image
 	@root="$$(mktemp "$(BUILD_DIR)/bench-root.XXXXXX.ext2")"; \
@@ -85,15 +79,11 @@ bench-inodes: setup
 	"$(BUILD_DIR)/tests/bench_ext2_inodes"
 
 rng-smoke: runner image
-	@root1="$$(mktemp "$(BUILD_DIR)/rng-root-a.XXXXXX.ext2")"; \
-	root2="$$(mktemp "$(BUILD_DIR)/rng-root-b.XXXXXX.ext2")"; \
-	out1="$$(mktemp "$(BUILD_DIR)/rng-a.XXXXXX.txt")"; \
+	@set -e; out1="$$(mktemp "$(BUILD_DIR)/rng-a.XXXXXX.txt")"; \
 	out2="$$(mktemp "$(BUILD_DIR)/rng-b.XXXXXX.txt")"; \
-	cp -f "$(BUILD_DIR)/root.ext2" "$$root1"; \
-	cp -f "$(BUILD_DIR)/root.ext2" "$$root2"; \
-	trap 'rm -f "$$root1" "$$root2" "$$out1" "$$out2"' EXIT INT TERM; \
-	$(RUN_QEMU) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root1" > "$$out1"; \
-	$(RUN_QEMU) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --root "$$root2" > "$$out2"; \
+	trap 'rm -f "$$out1" "$$out2"' EXIT INT TERM; \
+	$(RUN_QEMU) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --snapshot-root --root "$(BUILD_DIR)/root.ext2" > "$$out1"; \
+	$(RUN_QEMU) --mode rng --vars "$(EDK2_VARS)" --image "$(BUILD_DIR)/image.img" --snapshot-root --root "$(BUILD_DIR)/root.ext2" > "$$out2"; \
 	cat "$$out1"; \
 	cat "$$out2"; \
 	if ! grep -q '^\[rng\] 00000000:' "$$out1" || ! grep -q '^\[rng\] 00000000:' "$$out2"; then \
