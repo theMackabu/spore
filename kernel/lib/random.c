@@ -6,11 +6,13 @@
 
 #include <stdbool.h>
 
+constexpr size_t CHACHA_BLOCK_BYTES = 64;
+
 struct chacha_rng {
   uint32_t key[8];
   uint64_t counter;
   uint32_t nonce[3];
-  uint8_t buf[64];
+  uint8_t buf[CHACHA_BLOCK_BYTES];
   size_t pos;
   bool seeded;
   bool have_rndr;
@@ -44,7 +46,7 @@ static void store32(uint8_t *p, uint32_t v) {
   p[3] = (uint8_t)(v >> 24);
 }
 
-static void chacha_block(uint8_t out[64]) {
+static void chacha_block(uint8_t out[static CHACHA_BLOCK_BYTES]) {
   static const uint32_t constants[4] = {0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u};
   uint32_t state[16];
   uint32_t work[16];
@@ -80,7 +82,7 @@ static void chacha_block(uint8_t out[64]) {
 }
 
 static void absorb_seed(const uint8_t *seed, size_t len) {
-  uint8_t block[64];
+  uint8_t block[CHACHA_BLOCK_BYTES];
   chacha_block(block);
   for (size_t i = 0; i < len; ++i) {
     block[i % sizeof(block)] ^= seed[i];
@@ -137,7 +139,7 @@ void random_bytes(void *dst, size_t len) {
     out[i] = rng.buf[rng.pos];
     rng.buf[rng.pos++] = 0;
   }
-  uint8_t rekey[32];
+  uint8_t rekey[CHACHA_BLOCK_BYTES];
   chacha_block(rekey);
   for (size_t i = 0; i < 8; ++i) {
     rng.key[i] = load32(rekey + i * 4);
