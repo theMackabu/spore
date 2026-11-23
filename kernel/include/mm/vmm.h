@@ -16,6 +16,9 @@ enum vmm_access {
   VMM_ACCESS_EXEC,
 };
 
+constexpr uint64_t USER_MMAP_BASE = 0x0000007000000000ull;
+constexpr uint64_t USER_VA_LIMIT = 1ull << 48;
+
 struct user_address_space {
   uint64_t context_id;
   uint64_t root_pa;

@@ -92,7 +92,7 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   as->hhdm_offset = hhdm_offset;
   as->brk_base = 0;
   as->brk_current = 0;
-  as->mmap_base = 0x0000007000000000ull;
+  as->mmap_base = USER_MMAP_BASE;
   return true;
 }
 

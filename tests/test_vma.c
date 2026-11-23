@@ -40,6 +40,17 @@ int main(void) {
   assert(vma_protect(&list, 0x1000, 0x5000, 3));
   assert(vma_count(&list) == 1);
 
+  struct vma_list gaps;
+  vma_list_init(&gaps);
+  assert(vma_insert(&gaps, 0x1000, 0x4001000, 0, 0, VMA_ANON));
+  assert(vma_insert(&gaps, 0x4002000, 0x4008000, 0, 0, VMA_ANON));
+  uint64_t address;
+  assert(vma_find_gap(&gaps, 0x2000, 0x400a000, 0x1000, &address) && address == 0x4001000);
+  assert(vma_find_gap(&gaps, 0x2000, 0x400a000, 0x2000, &address) && address == 0x4008000);
+  assert(!vma_find_gap(&gaps, 0x2000, 0x4009fff, 0x2000, &address));
+  assert(!vma_find_gap(&gaps, UINT64_MAX - 1, UINT64_MAX, 0x1000, &address));
+  vma_list_destroy(&gaps);
+
   struct vma_list heap;
   vma_list_init(&heap);
   uint64_t brk_base = 0x800000;

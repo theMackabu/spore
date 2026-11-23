@@ -38,6 +38,7 @@ void vma_list_init(struct vma_list *list);
 void vma_list_destroy(struct vma_list *list);
 const struct vma *vma_lookup(const struct vma_list *list, uint64_t va);
 const struct vma *vma_lookup_range(const struct vma_list *list, uint64_t start, uint64_t end);
+bool vma_find_gap(const struct vma_list *list, uint64_t start, uint64_t limit, uint64_t len, uint64_t *out);
 bool vma_overlaps(const struct vma_list *list, uint64_t start, uint64_t end);
 bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, enum vma_type type);
 bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,

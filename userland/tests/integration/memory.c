@@ -205,6 +205,33 @@ static int mmap_fixed_noreplace_regression(void) {
   return ok;
 }
 
+static int mmap_past_reservation(bool move) {
+  constexpr size_t page = 4096;
+  constexpr size_t reserve_size = 64 * 1024 * 1024;
+  int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+  char *original = mmap(NULL, page, PROT_READ | PROT_WRITE, flags, -1, 0);
+  if (original == MAP_FAILED) { return 0; }
+  original[0] = 'a';
+  void *reservation = mmap(original + page, reserve_size, PROT_NONE, flags | MAP_FIXED_NOREPLACE, -1, 0);
+  int ok = 0;
+  if (reservation != MAP_FAILED) {
+    size_t len = move ? 2 * page : page;
+    char *result = move ? mremap(original, page, len, MREMAP_MAYMOVE)
+                        : mmap(NULL, len, PROT_READ | PROT_WRITE, flags, -1, 0);
+    if (result != MAP_FAILED) {
+      ok = !move || result[0] == 'a';
+      result[len - 1] = 'z';
+      ok = ok && result[len - 1] == 'z';
+      munmap(result, len);
+      if (move) { original = MAP_FAILED; }
+    }
+    munmap(reservation, reserve_size);
+  }
+  if (original != MAP_FAILED) { munmap(original, page); }
+  printf("[spore] %s past 64 MiB reservation: %s\n", move ? "mremap" : "mmap", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int mmap_noreserve_regression(void) {
   char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
   int ok = map != MAP_FAILED;
@@ -219,5 +246,6 @@ static int mmap_noreserve_regression(void) {
 int integration_memory_suite(void) {
   return shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
-         mmap_fixed_noreplace_regression() && mmap_noreserve_regression();
+         mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mmap_past_reservation(false) &&
+         mmap_past_reservation(true);
 }

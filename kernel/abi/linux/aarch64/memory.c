@@ -1,5 +1,6 @@
 #include "handlers.h"
 #include "mm/pmm.h"
+#include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
 #include "proc/policy.h"
@@ -54,7 +55,12 @@ static uint32_t prot_to_vmm(uint64_t prot) {
   return out;
 }
 
-static bool find_free_mmap_range(uint64_t len, uint64_t *base_out);
+static bool find_free_mmap_range(uint64_t len, uint64_t *base_out) {
+  const struct vma_list *vmas = cell_domain_vmas_const(cell_current_domain_internal());
+  uint64_t start = syscall_active_as()->mmap_base;
+  if (vma_find_gap(vmas, start, USER_VA_LIMIT, len, base_out)) { return true; }
+  return start > USER_MMAP_BASE && vma_find_gap(vmas, USER_MMAP_BASE, USER_VA_LIMIT, len, base_out);
+}
 
 int64_t sys_brk(uint64_t requested) {
   struct user_address_space *as = syscall_active_as();
@@ -82,16 +88,15 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   bool shared = (flags & MAP_SHARED) != 0;
   if (len == 0 || private == shared || (!anon && (int64_t)fd < 0)) { return -(int64_t)EINVAL; }
   bool fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
-  uint64_t base = addr != 0 ? align_down(addr, PAGE_SIZE) : as->mmap_base;
-  uint64_t raw_end;
-  if (!checked_add(base, len, &raw_end)) { return -(int64_t)EINVAL; }
-  uint64_t end = align_up(raw_end, PAGE_SIZE);
-  if (end < raw_end) { return -(int64_t)EINVAL; }
-  if (!fixed && cell_vma_overlaps(base, end)) {
-    if (!find_free_mmap_range(end - base, &base)) { return -(int64_t)ENOMEM; }
-    if (!checked_add(base, len, &raw_end)) { return -(int64_t)EINVAL; }
-    end = align_up(raw_end, PAGE_SIZE);
-    if (end < raw_end) { return -(int64_t)EINVAL; }
+  uint64_t size = align_up(len, PAGE_SIZE);
+  if (size < len) { return -(int64_t)EINVAL; }
+  uint64_t base = align_down(addr, PAGE_SIZE);
+  uint64_t end;
+  if (!checked_add(base, size, &end)) { return -(int64_t)EINVAL; }
+  bool automatic = !fixed && (addr == 0 || end > USER_VA_LIMIT || cell_vma_overlaps(base, end));
+  if (automatic) {
+    if (!find_free_mmap_range(size, &base)) { return -(int64_t)ENOMEM; }
+    end = base + size;
   }
   if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
   if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }
@@ -113,7 +118,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
       return -(int64_t)ENOMEM;
     }
   }
-  if (!fixed && end > as->mmap_base) { as->mmap_base = end; }
+  if (automatic || (!fixed && end > as->mmap_base)) { as->mmap_base = end; }
   return (int64_t)base;
 }
 
@@ -157,22 +162,6 @@ int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
 
 static bool ranges_overlap(uint64_t a_start, uint64_t a_end, uint64_t b_start, uint64_t b_end) {
   return a_start < b_end && b_start < a_end;
-}
-
-static bool find_free_mmap_range(uint64_t len, uint64_t *base_out) {
-  struct user_address_space *as = syscall_active_as();
-  uint64_t base = align_up(as->mmap_base, PAGE_SIZE);
-  for (size_t attempts = 0; attempts < 4096; ++attempts) {
-    uint64_t end;
-    if (!checked_add(base, len, &end)) { return false; }
-    if (!cell_vma_overlaps(base, end)) {
-      *base_out = base;
-      as->mmap_base = end;
-      return true;
-    }
-    base = align_up(end + PAGE_SIZE, PAGE_SIZE);
-  }
-  return false;
 }
 
 static bool add_mremap_vma(uint64_t start, uint64_t end, const struct vma *old_vma, uint64_t file_start,
@@ -247,5 +236,6 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   if (!move_mapped_pages(old_addr, old_size < new_size ? old_size : new_size, new_start)) { return -(int64_t)ENOMEM; }
   (void)cell_remove_vma(old_addr, old_end);
   if (!add_mremap_vma(new_start, new_end, &old_vma, new_start, new_size)) { return -(int64_t)ENOMEM; }
+  if ((flags & MREMAP_FIXED) == 0) { syscall_active_as()->mmap_base = new_end; }
   return (int64_t)new_start;
 }
