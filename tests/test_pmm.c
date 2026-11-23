@@ -80,6 +80,8 @@ int main(void) {
   pmm_free_page(run + 63 * PAGE_SIZE);
   pmm_free_page(run + 64 * PAGE_SIZE);
   assert(pmm_alloc_contiguous_pages(2) == run + 63 * PAGE_SIZE);
+  for (size_t i = 0; i < 3; ++i) { pmm_free_page(fragments[0].base + i * PAGE_SIZE); }
+  assert(pmm_alloc_contiguous_pages(3) == fragments[0].base);
 
   return 0;
 }
