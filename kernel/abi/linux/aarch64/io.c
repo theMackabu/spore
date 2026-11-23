@@ -1,7 +1,6 @@
 #include "message_layout.h"
 #include "arch/aarch64/regs.h"
 #include "handlers.h"
-#include "lib/mem.h"
 #include "proc/fd.h"
 #include "proc/io.h"
 #include "proc/limits.h"
@@ -17,11 +16,6 @@ enum {
   ENOENT = 2,
   MAX_IOVCNT = 1024,
 };
-
-static bool checked_add(uint64_t a, uint64_t b, uint64_t *out) {
-  *out = a + b;
-  return *out >= a;
-}
 
 int64_t sys_write(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len) {
   if (!syscall_user_readable(buf, len)) { return -(int64_t)EFAULT; }
@@ -45,9 +39,8 @@ int64_t sys_pwrite64(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64
 
 int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt) {
   if (iovcnt > MAX_IOVCNT) { return -(int64_t)EINVAL; }
-  uint64_t iov_bytes;
-  if (!checked_add(0, iovcnt * sizeof(struct iovec64), &iov_bytes) ||
-      (iovcnt != 0 && iov_bytes / sizeof(struct iovec64) != iovcnt) || !syscall_user_readable(iov, iov_bytes)) {
+  uint64_t iov_bytes = iovcnt * sizeof(struct iovec64);
+  if (!syscall_user_readable(iov, iov_bytes)) {
     return -(int64_t)EFAULT;
   }
 
@@ -68,7 +61,7 @@ int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t
 int64_t sys_readv(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt) {
   if (iovcnt > MAX_IOVCNT) { return -(int64_t)EINVAL; }
   uint64_t iov_bytes = iovcnt * sizeof(struct iovec64);
-  if ((iovcnt != 0 && iov_bytes / sizeof(struct iovec64) != iovcnt) || !syscall_user_readable(iov, iov_bytes)) {
+  if (!syscall_user_readable(iov, iov_bytes)) {
     return -(int64_t)EFAULT;
   }
   if (cell_fd_is_datagram((int)fd)) { return cell_fd_dgram_readv((int)fd, iov, (int32_t)iovcnt, frame); }

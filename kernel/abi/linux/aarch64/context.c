@@ -52,13 +52,9 @@ void syscall_set_boot_time(uint64_t epoch_sec) {
   realtime_freq = aarch64_counter_frequency();
 }
 
-static struct user_address_space *active_as(void) {
+struct user_address_space *syscall_active_as(void) {
   struct user_address_space *as = cell_current_as();
   return as == NULL ? current_as : as;
-}
-
-struct user_address_space *syscall_active_as(void) {
-  return active_as();
 }
 
 void syscall_realtime_base(uint64_t *epoch_sec, uint64_t *counter, uint64_t *freq) {
@@ -83,7 +79,7 @@ bool syscall_user_writable(uint64_t buf, uint64_t len) {
 }
 
 int64_t syscall_read_user_string(uint64_t user, char *dst, size_t limit) {
-  struct user_address_space *as = active_as();
+  struct user_address_space *as = syscall_active_as();
   size_t done = 0;
   while (done < limit) {
     uint64_t addr = user + done;
@@ -114,7 +110,7 @@ bool syscall_copy_string_from_user(uint64_t user, char *dst, size_t cap) {
   return length > 0;
 }
 
-static bool normalize_path(const char *base, const char *path, char *out, size_t cap) {
+bool syscall_normalize_path(const char *base, const char *path, char *out, size_t cap) {
   if (cap < 2) { return false; }
   char input[CELL_PATH_MAX];
   size_t pos = 0;
@@ -171,10 +167,6 @@ static bool normalize_path(const char *base, const char *path, char *out, size_t
   return true;
 }
 
-bool syscall_normalize_path(const char *base, const char *path, char *out, size_t cap) {
-  return normalize_path(base, path, out, cap);
-}
-
 static bool resolve_virtual_path(const char *virtual_path, char *out, size_t cap) {
   const char *chroot = cell_current_chroot();
   if (streq(chroot, "/")) {
@@ -197,26 +189,22 @@ static bool resolve_virtual_path(const char *virtual_path, char *out, size_t cap
   return true;
 }
 
-static bool copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
+bool syscall_copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
   path_policy_denied = false;
   char raw[CELL_PATH_MAX];
   char virtual_path[CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw)) ||
-      !normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
+      !syscall_normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
     return false;
   }
   return resolve_virtual_path(virtual_path, out, cap);
-}
-
-bool syscall_copy_resolved_path(uint64_t path_addr, char *out, size_t cap) {
-  return copy_resolved_path(path_addr, out, cap);
 }
 
 bool syscall_path_policy_denied(void) {
   return path_policy_denied;
 }
 
-static int64_t copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
+int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
   path_policy_denied = false;
   char raw[CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
@@ -229,39 +217,27 @@ static int64_t copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *o
     if (!cell_fd_is_dir((int)dirfd)) { return -(int64_t)ENOTDIR; }
     base = dir_path;
   }
-  if (!normalize_path(base, raw, virtual_path, sizeof(virtual_path))) {
+  if (!syscall_normalize_path(base, raw, virtual_path, sizeof(virtual_path))) {
     return relative_to_fd ? -(int64_t)ENAMETOOLONG : -(int64_t)EFAULT;
   }
   return resolve_virtual_path(virtual_path, out, cap) ? 0 : (path_policy_denied ? -(int64_t)EPERM : -(int64_t)EFAULT);
 }
 
-int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
-  return copy_resolved_path_at(dirfd, path_addr, out, cap);
-}
-
-static bool copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
-  char raw[CELL_PATH_MAX];
-  return syscall_copy_string_from_user(path_addr, raw, sizeof(raw)) && normalize_path(cell_current_cwd(), raw, out, cap);
-}
-
 bool syscall_copy_virtual_path(uint64_t path_addr, char *out, size_t cap) {
-  return copy_virtual_path(path_addr, out, cap);
+  char raw[CELL_PATH_MAX];
+  return syscall_copy_string_from_user(path_addr, raw, sizeof(raw)) && syscall_normalize_path(cell_current_cwd(), raw, out, cap);
 }
 
-static int64_t copy_virtual_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
+int64_t syscall_copy_virtual_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
   char raw[CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
   if (raw[0] == '/' || (int64_t)dirfd == AT_FDCWD) {
-    return normalize_path(cell_current_cwd(), raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
+    return syscall_normalize_path(cell_current_cwd(), raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
   }
   if (!cell_fd_is_dir((int)dirfd)) { return cell_fd_path((int)dirfd, out, cap) ? -(int64_t)ENOTDIR : -(int64_t)EBADF; }
   char base[CELL_PATH_MAX];
   if (!cell_fd_path((int)dirfd, base, sizeof(base))) { return -(int64_t)EBADF; }
-  return normalize_path(base, raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
-}
-
-int64_t syscall_copy_virtual_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap) {
-  return copy_virtual_path_at(dirfd, path_addr, out, cap);
+  return syscall_normalize_path(base, raw, out, cap) ? 0 : -(int64_t)ENAMETOOLONG;
 }
 
 bool syscall_node_access_allowed(const struct vfs_node *node, uint64_t mask) {

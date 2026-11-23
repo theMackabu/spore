@@ -79,7 +79,6 @@ struct exec_scratch {
   const char **argv;
   const char **envp;
   uint64_t argv_cap;
-  uint64_t env_cap;
   char *data;
   uint64_t data_cap;
   uint64_t data_len;
@@ -123,7 +122,6 @@ static bool exec_scratch_alloc(struct exec_scratch *scratch, uint64_t argv_cap, 
                                uint64_t hhdm_offset) {
   kmemset(scratch, 0, sizeof(*scratch));
   scratch->argv_cap = argv_cap;
-  scratch->env_cap = env_cap;
   scratch->data_cap = data_cap;
 
   uint64_t ptr_count = argv_cap + env_cap;
