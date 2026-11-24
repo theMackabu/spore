@@ -180,6 +180,13 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
             }
             return status(&mut cmd);
         }
+        (false, Some("ports")) => {
+            return status(
+                Command::new("python3")
+                    .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ports/check.py"))
+                    .arg(build.join("spore")),
+            );
+        }
         (false, Some("stress")) | (true, Some("startup")) | (_, Some("appliance")) => {
             let script = match suite.to_str() {
                 Some("stress") => "stress.py",

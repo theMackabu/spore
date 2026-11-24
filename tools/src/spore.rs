@@ -16,12 +16,13 @@ const HELP: &str = "\
 Usage:
   spore boot [--snapshot | --reset] [--root EXT2] [VM options]
   spore boot SYSTEM_IMAGE --root EXT2 [--snapshot] [VM options]
+  spore boot --arch x86_64|riscv64 [--memory SIZE] [--qemu PATH]
   spore build                         Build the kernel and host CLI
   spore build --userland [--tests]    Enable and build the full system or integration image
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
-  spore test [host|guest|shell|appliance|rng|stress]
+  spore test [host|guest|shell|appliance|ports|rng|stress]
   spore bench [guest|inodes|appliance|startup]
 
 Image options:
@@ -148,6 +149,8 @@ fn execute() -> io::Result<i32> {
         return system::check(artifacts, action == "bench", suite.as_deref());
     }
     let mut vm = vm_config("app");
+    let mut architecture = None;
+    let mut qemu = None;
     let mut memory = None;
     let mut cpus = None;
     let mut root = None;
@@ -210,7 +213,8 @@ fn execute() -> io::Result<i32> {
             Some("--accel") if !build => vm.accel = Some(value),
             Some("--cpu") if !build => vm.cpu = Some(value),
             Some("--vars") if !build => vm.vars = Some(value),
-            Some("--qemu") if !build => vm.qemu = value,
+            Some("--qemu") if !build => qemu = Some(value),
+            Some("--arch") if boot => architecture = Some(value),
             Some("--smp") if !build => {
                 positive::<u32>(&value, "CPU count")?;
                 cpus = Some(value);
@@ -235,6 +239,61 @@ fn execute() -> io::Result<i32> {
                 )));
             }
         }
+    }
+    if let Some(arch) = architecture.as_deref().filter(|a| *a != "aarch64") {
+        if program.is_some()
+            || root.is_some()
+            || reset
+            || vm.snap
+            || vm.timings
+            || app_options
+            || !vm.forwards.is_empty()
+            || vm.accel.is_some()
+            || vm.cpu.is_some()
+            || vm.vars.is_some()
+            || cpus.is_some()
+        {
+            return Err(io::Error::other(
+                "kernel monitor accepts --memory and --qemu",
+            ));
+        }
+        return runner::port::boot(
+            arch.to_str().unwrap_or(""),
+            memory.as_deref(),
+            qemu.as_deref(),
+            None,
+        );
+    }
+    if let Some(qemu) = &qemu {
+        vm.qemu = qemu.clone();
+    }
+    if action == "run" {
+        runner::qemu::check_report(vm.report.as_deref(), &[program.as_deref()])?;
+    }
+    if action == "run"
+        && let Some(input) = program.as_deref().map(Path::new)
+        && input.is_file()
+        && let Some(arch) = runner::port::executable_arch(input)?
+    {
+        if !vm.forwards.is_empty()
+            || vm.root.is_some()
+            || vm.vars.is_some()
+            || vm.cpu.is_some()
+            || vm.accel.is_some()
+            || vm.timings
+            || cpus.as_deref().is_some_and(|n| n != "1")
+        {
+            return Err(io::Error::other(
+                "this port accepts --memory, --smp 1, --qemu, --result and --boot-timeout",
+            ));
+        }
+        let app = runner::port::Workload {
+            path: input,
+            args: &pack,
+            report: vm.report.as_deref().map(Path::new),
+            timeout: vm.timeout,
+        };
+        return runner::port::boot(arch, memory.as_deref(), qemu.as_deref(), Some(app));
     }
     let system = boot && (program.is_none() || root.is_some());
     if system {

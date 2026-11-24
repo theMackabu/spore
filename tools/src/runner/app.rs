@@ -37,11 +37,10 @@ impl Drop for Vm {
     }
 }
 
-fn relay_console(serial: ChildStdout) -> io::Result<()> {
+fn relay_console(serial: ChildStdout, marker: &[u8]) -> io::Result<()> {
     let mut serial = BufReader::new(serial);
     let mut line = Vec::new();
     let mut diagnostic = Vec::new();
-    let marker = b" handoff at EL1,";
     loop {
         line.clear();
         if serial.read_until(b'\n', &mut line)? == 0 {
@@ -108,7 +107,18 @@ impl GuestStatus {
     }
 }
 
-pub fn run(mut q: Vec<OsString>, result_path: Option<&Path>, deadline: u64) -> io::Result<i32> {
+pub enum StatusDevice {
+    Virtio,
+    Serial,
+}
+
+pub fn run(
+    mut q: Vec<OsString>,
+    result_path: Option<&Path>,
+    deadline: u64,
+    device: StatusDevice,
+    marker: &'static [u8],
+) -> io::Result<i32> {
     let (mut status, peer) = UnixStream::pair()?;
     let (mut events, notify) = UnixStream::pair()?;
     notify.set_nonblocking(true)?;
@@ -117,13 +127,18 @@ pub fn run(mut q: Vec<OsString>, result_path: Option<&Path>, deadline: u64) -> i
     let fd = peer.as_raw_fd();
     q.extend([
         "-no-reboot".into(),
-        "-device".into(),
-        "virtio-serial-device,id=statusbus".into(),
         "-chardev".into(),
         format!("socket,id=status,fd={fd},server=off").into(),
-        "-device".into(),
-        "virtconsole,bus=statusbus.0,chardev=status".into(),
     ]);
+    match device {
+        StatusDevice::Serial => q.extend(["-serial".into(), "chardev:status".into()]),
+        StatusDevice::Virtio => q.extend([
+            "-device".into(),
+            "virtio-serial-device,id=statusbus".into(),
+            "-device".into(),
+            "virtconsole,bus=statusbus.0,chardev=status".into(),
+        ]),
+    }
     let mut cmd = Command::new(&q[0]);
     cmd.args(&q[1..]).stdout(Stdio::piped());
     unsafe {
@@ -138,7 +153,7 @@ pub fn run(mut q: Vec<OsString>, result_path: Option<&Path>, deadline: u64) -> i
     let mut vm = Vm(cmd.spawn()?);
     drop(peer);
     let serial = vm.0.stdout.take().unwrap();
-    let output = thread::spawn(move || relay_console(serial));
+    let output = thread::spawn(move || relay_console(serial, marker));
     let mut guest = GuestStatus::default();
     let mut open = true;
     let mut buffer = [0; 512];

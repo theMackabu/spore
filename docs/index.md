@@ -6,6 +6,7 @@ then follow [kernel boot](kernel/boot.md), [ELF loading](kernel/elf.md), and [ap
 | Where to start | What it covers |
 | --- | --- |
 | [App images](app-images.md) | Package a program, forward a port, attach storage |
+| [Hosts and guest binaries](ports.md) | Host requirements, guest architectures, executable and syscall support |
 | [Interactive boot](interactive.md) | Start a shell and keep files between boots |
 | [Host tools](host/build.md) | Build images, launch QEMU, test and release |
 | [Kernel boot and platform](kernel/boot.md) | Limine, CPUs, interrupts, devices and the first process |

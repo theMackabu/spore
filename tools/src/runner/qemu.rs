@@ -7,7 +7,7 @@ use std::{
     path::Path,
     process::Command,
 };
-fn firmware_dirs(qemu: &OsStr) -> Vec<std::path::PathBuf> {
+pub(super) fn firmware_dirs(qemu: &OsStr) -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(output) = Command::new(qemu).args(["-L", "help"]).output() {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
@@ -25,13 +25,13 @@ fn firmware_dirs(qemu: &OsStr) -> Vec<std::path::PathBuf> {
     dirs
 }
 
-fn find(dirs: &[std::path::PathBuf], names: &[&str]) -> Option<std::path::PathBuf> {
+pub(super) fn find(dirs: &[std::path::PathBuf], names: &[&str]) -> Option<std::path::PathBuf> {
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
         .find(|p| fs::File::open(p).is_ok())
 }
 
-fn drive(prefix: &str, path: &OsStr, suffix: &str) -> OsString {
+pub(super) fn drive(prefix: &str, path: &OsStr, suffix: &str) -> OsString {
     let mut value = OsString::from(prefix);
     for (i, part) in path.as_bytes().split(|&b| b == b',').enumerate() {
         if i > 0 {
@@ -155,17 +155,9 @@ fn network_manifest(image: &OsStr) -> io::Result<[std::net::Ipv4Addr; 4]> {
         .map_err(|_| io::Error::other("invalid app network manifest"))
 }
 
-pub fn run(config: Config) -> io::Result<i32> {
-    if let Some(target) = config.report.as_ref().and_then(|p| fs::metadata(p).ok()) {
-        for input in [
-            Some(config.image.as_os_str()),
-            config.root.as_deref(),
-            config.vars.as_deref(),
-            config.direct.as_ref().map(|boot| boot.kernel.as_os_str()),
-        ]
-        .into_iter()
-        .flatten()
-        {
+pub fn check_report(report: Option<&OsStr>, inputs: &[Option<&OsStr>]) -> io::Result<()> {
+    if let Some(target) = report.and_then(|p| fs::metadata(p).ok()) {
+        for input in inputs.iter().flatten() {
             if let Ok(src) = fs::metadata(input)
                 && src.dev() == target.dev()
                 && src.ino() == target.ino()
@@ -174,6 +166,19 @@ pub fn run(config: Config) -> io::Result<i32> {
             }
         }
     }
+    Ok(())
+}
+
+pub fn run(config: Config) -> io::Result<i32> {
+    check_report(
+        config.report.as_deref(),
+        &[
+            Some(&config.image),
+            config.root.as_deref(),
+            config.vars.as_deref(),
+            config.direct.as_ref().map(|boot| boot.kernel.as_os_str()),
+        ],
+    )?;
     let report = config.report.clone();
     let app = config.mode == "app";
     let result = launch(config);
@@ -278,7 +283,13 @@ fn launch(config: Config) -> io::Result<i32> {
         "none".into(),
     ]);
     if mode == "app" {
-        return super::app::run(q, report.as_deref().map(Path::new), timeout);
+        return super::app::run(
+            q,
+            report.as_deref().map(Path::new),
+            timeout,
+            super::app::StatusDevice::Virtio,
+            b" handoff at EL1,",
+        );
     }
     super::fixtures::start(mode)?;
     super::harness::run(&q, mode, timings)
