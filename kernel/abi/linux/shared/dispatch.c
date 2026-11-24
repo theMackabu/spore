@@ -58,7 +58,7 @@ static bool signal_delivers_to_current(int signal) {
 }
 
 int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]) {
-  static const void *linux_dispatch[] = {
+  static const void *handlers[] = {
     [SYS_GETCWD] = &&l_getcwd,
     [SYS_EVENTFD2] = &&l_eventfd2,
     [SYS_EPOLL_CREATE1] = &&l_epoll_create1,
@@ -225,8 +225,8 @@ int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]
     return -(int64_t)EPERM;
   }
 
-  if (nr < sizeof(linux_dispatch) / sizeof(linux_dispatch[0]) && linux_dispatch[nr] != NULL) {
-    goto *linux_dispatch[nr];
+  if (nr < sizeof(handlers) / sizeof(handlers[0]) && handlers[nr] != NULL) {
+    goto *handlers[nr];
   }
   if (nr >= SYS_SPORE_SNAPSHOT) {
     uint64_t spore_index = nr - SYS_SPORE_SNAPSHOT;
@@ -585,4 +585,3 @@ l_unknown:
   return -(int64_t)ENOSYS;
 }
 #pragma clang diagnostic pop
-

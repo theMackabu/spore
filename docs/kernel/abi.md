@@ -11,4 +11,4 @@ AArch64, RV64 and x86-64 feed a common Linux dispatcher. CPU entry code reads th
 | Read clocks, system information or random bytes | [Time and kernel services](services.md) |
 
 Spore-specific calls cover snapshots, policy, CPU budgets, shutdown and network configuration.
-[Call numbers](../../kernel/abi/linux/shared/numbers.h) · [Confinement](../processes/confinement.md)
+[Linux syscall numbers by CPU](../../kernel/abi/linux/syscalls.def) · [Spore call numbers](../../kernel/abi/linux/shared/numbers.h) · [Confinement](../processes/confinement.md)
