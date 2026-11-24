@@ -1,0 +1,24 @@
+.Dd November 24, 2026
+.Dt EXT2+ 5
+.Os Spore
+.Sh NAME
+.Nm ext2+
+.Nd Spore disk filesystem with a growable inode store
+.Sh DESCRIPTION
+Spore-built system roots use ext2+.
+File data and directory entries use the ext2 layout.
+A hidden store lets the filesystem allocate more inode records from free
+data blocks as the number of files grows.
+.Pp
+The superblock marks the format with incompatibility bit
+.Li 0x80000000 .
+The first block of
+.Pa /.spore-inodes
+holds the store header.
+Dynamic inode numbers start at
+.Li 0x40000000 .
+The allocator reuses freed slots before growing the store.
+Spore-built disks grow the store in groups of 256 inode records.
+.Sh FILES
+.Pa /.spore-inodes
+stores filesystem metadata and is hidden from root directory listings.
