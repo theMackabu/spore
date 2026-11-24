@@ -56,7 +56,8 @@ void tcp_fail(struct open_file *file, int error) {
   file->tcp_keepalive_probes = 0;
   tcp_set_timer_active(file, false);
   tcp_tx_clear(file);
-  cell_socket_wake_file(file);
+  if (file->tcp_listener) { tcp_discard_pending(file); }
+  else { cell_socket_wake_file(file); }
 }
 
 static void keepalive(struct open_file *file, uint64_t now) {
@@ -77,13 +78,13 @@ static void keepalive(struct open_file *file, uint64_t now) {
 }
 
 static void service_timer(struct open_file *file, uint64_t now) {
-  if (file->tcp_state == TCP_SYN_SENT) {
+  if (file->tcp_state == TCP_SYN_SENT || file->tcp_state == TCP_SYN_RECEIVED) {
     if (now < file->tcp_retransmit_deadline_tick) { return; }
     if (file->tcp_syn_retries >= TCP_SYN_MAX_RETRIES) { tcp_fail(file, ETIMEDOUT); return; }
     ++file->tcp_syn_retries;
     file->tcp_syn_sent_tick = now;
     file->tcp_retransmit_deadline_tick = now + tcp_backoff_rto(file, file->tcp_syn_retries);
-    if (!tcp_send_syn(file, file->tcp_seq - 1, false)) { tcp_fail(file, EIO); }
+    if (!tcp_send_syn(file, file->tcp_seq - 1, file->tcp_state == TCP_SYN_RECEIVED)) { tcp_fail(file, EIO); }
     return;
   }
   if (file->tcp_tx_count) {

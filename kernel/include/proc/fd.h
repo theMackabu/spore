@@ -110,7 +110,9 @@ struct open_file {
       uint64_t tcp_syn_sent_tick;
       uint16_t tcp_local_port;
       uint16_t tcp_remote_port;
-      uint16_t tcp_listen_backlog;
+      uint16_t tcp_listen_backlog, tcp_pending_count;
+      struct open_file *tcp_half_open, *tcp_ready_head, **tcp_ready_tail;
+      struct open_file *tcp_listener, *tcp_pending_next, **tcp_pending_link;
       uint32_t tcp_rx_len;
       uint8_t tcp_state;
       uint8_t tcp_error;

@@ -31,14 +31,6 @@ struct tcp_ooo_state {
 
 static_assert(2 * TCP_OOO_PAYLOAD_CAP <= PAGE_SIZE, "two TCP reorder segments fit in one page");
 
-struct tcp_pending_conn {
-  bool used;
-  struct open_file *listener;
-  struct open_file *server_end;
-};
-
-static struct tcp_pending_conn tcp_pending[16];
-
 static struct open_file *tcp_port_buckets[TCP_PORT_BUCKETS];
 
 static struct tcp_ooo_state tcp_ooo_buffers[TCP_OOO_BUFFER_SLOTS];
@@ -49,7 +41,7 @@ static struct open_file **tcp_port_bucket(uint16_t port) {
   return &tcp_port_buckets[port % TCP_PORT_BUCKETS];
 }
 
-static void tcp_set_local_port(struct open_file *file, uint16_t port) {
+void tcp_set_local_port(struct open_file *file, uint16_t port) {
   if (file->tcp_local_port == port) { return; }
   file->tcp_local_port = port;
   socket_index_insert(tcp_port_bucket(port), file);
@@ -131,7 +123,7 @@ static int tcp_send_fin_once(struct open_file *file) {
   return 0;
 }
 
-static void tcp_send_abortive_close(struct open_file *file) {
+void tcp_send_abortive_close(struct open_file *file) {
   if (file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return; }
   if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT && file->tcp_state != TCP_SYN_RECEIVED) {
     return;
@@ -308,22 +300,12 @@ void tcp_init_socket(struct open_file *file) {
   tcp_init_keepalive(file, cell_uptime_ticks());
 }
 
-static bool tcp_listener_readable(const struct open_file *listener) {
-  for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
-    if (tcp_pending[i].used && tcp_pending[i].listener == listener &&
-        tcp_pending[i].server_end->tcp_state == TCP_ESTABLISHED) {
-      return true;
-    }
-  }
-  return false;
-}
-
 int tcp_poll_events(const struct open_file *file, int events) {
   int ready = file->tcp_error ? CELL_POLLERR : 0;
   if (events & CELL_POLLIN) {
     net_poll();
     if (file->tcp_state == TCP_LISTEN) {
-      if (tcp_listener_readable(file)) { ready |= CELL_POLLIN; }
+      if (file->tcp_ready_head) { ready |= CELL_POLLIN; }
     } else if (file->tcp_rx_len >= socket_effective_rcvlowat(file) || file->tcp_fin || file->tcp_error) {
       ready |= CELL_POLLIN;
     }
@@ -333,14 +315,7 @@ int tcp_poll_events(const struct open_file *file, int events) {
 }
 
 void tcp_release_file(struct open_file *file) {
-  if (file->tcp_state == TCP_LISTEN) {
-    for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
-      if (tcp_pending[i].used && tcp_pending[i].listener == file) {
-        cell_release_open_file(tcp_pending[i].server_end);
-        tcp_pending[i] = (struct tcp_pending_conn){0};
-      }
-    }
-  }
+  if (file->tcp_state == TCP_LISTEN) { tcp_close_backlog(file); }
   if (file->so_linger_enabled && file->so_linger_seconds == 0) {
     tcp_send_abortive_close(file);
   } else {
@@ -351,25 +326,6 @@ void tcp_release_file(struct open_file *file) {
   tcp_free_rx(file);
   tcp_free_ooo(file);
   socket_index_remove(tcp_port_bucket(file->tcp_local_port), file);
-}
-
-int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listener, int flags) {
-  int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
-  for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
-    if (!tcp_pending[i].used || tcp_pending[i].listener != listener ||
-        tcp_pending[i].server_end->tcp_state != TCP_ESTABLISHED) {
-      continue;
-    }
-    domain->fds[fd] = tcp_pending[i].server_end;
-    domain->fd_flags[fd] = 0;
-    tcp_set_timer_active(tcp_pending[i].server_end, true);
-    socket_index_insert(tcp_port_bucket(listener->tcp_local_port), tcp_pending[i].server_end);
-    socket_apply_accept_flags(domain, fd, flags);
-    tcp_pending[i] = (struct tcp_pending_conn){0};
-    return fd;
-  }
-  return -EAGAIN;
 }
 
 int tcp_copy_peer_addr_to_domain(struct domain *domain, int accepted_fd, uint64_t addr, uint64_t addrlen) {
@@ -401,9 +357,7 @@ static struct open_file *tcp_socket_for_fd(struct domain *domain, int fd) {
   return domain->fds[fd];
 }
 
-static uint32_t tcp_initial_seq(struct domain *domain, int fd) {
-  (void)domain;
-  (void)fd;
+uint32_t tcp_initial_seq(void) {
   uint32_t seq = 0;
   random_bytes(&seq, sizeof(seq));
   return seq;
@@ -455,7 +409,7 @@ int cell_fd_tcp_listen(int fd, int backlog) {
     if (port == 0) { return -EADDRINUSE; }
     tcp_set_local_port(file, port);
   }
-  file->tcp_listen_backlog = backlog <= 0 ? 1 : (uint16_t)(backlog > 16 ? 16 : backlog);
+  file->tcp_listen_backlog = backlog <= 0 ? 1 : (uint16_t)(backlog > MAX_OPEN_FILES ? MAX_OPEN_FILES : backlog);
   file->tcp_state = TCP_LISTEN;
   file->tcp_error = 0;
   file->tcp_fin = false;
@@ -498,7 +452,7 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
       if (local_port == 0) { return -EIO; }
       tcp_set_local_port(file, local_port);
     }
-    file->tcp_seq = tcp_initial_seq(domain, fd);
+    file->tcp_seq = tcp_initial_seq();
     file->tcp_ack = 0;
     tcp_init_rto(file);
     file->tcp_error = 0;
@@ -577,14 +531,6 @@ static bool socket_matches_tcp(struct open_file *file, uint32_t src_ip, uint16_t
          file->tcp_local_port == dst_port && file->tcp_remote_ip == src_ip && file->tcp_remote_port == src_port;
 }
 
-static uint16_t tcp_pending_for_listener(const struct open_file *listener) {
-  uint16_t count = 0;
-  for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
-    if (tcp_pending[i].used && tcp_pending[i].listener == listener) { ++count; }
-  }
-  return count;
-}
-
 static struct open_file *tcp_listener_for_port(uint16_t port) {
   for (struct open_file *file = *tcp_port_bucket(port); file != NULL; file = file->socket_index_next) {
     if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && file->tcp_state == TCP_LISTEN &&
@@ -602,56 +548,7 @@ static void tcp_deliver_syn_to_listener(uint32_t src_ip, uint16_t src_port, uint
     (void)net_tcp_send_segment(dst_port, src_ip, src_port, 0, seq + 1, 0, TCP_RST | TCP_ACK, NULL, 0);
     return;
   }
-  if (tcp_pending_for_listener(listener) >= listener->tcp_listen_backlog) { return; }
-
-  size_t pending_slot = sizeof(tcp_pending) / sizeof(tcp_pending[0]);
-  for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
-    if (!tcp_pending[i].used) {
-      pending_slot = i;
-      break;
-    }
-  }
-  if (pending_slot == sizeof(tcp_pending) / sizeof(tcp_pending[0])) { return; }
-
-  struct open_file *server = cell_alloc_open_file();
-  if (server == NULL) { return; }
-  server->type = OPEN_SOCKET;
-  server->socket_proto = IPPROTO_TCP;
-  server->flags = listener->flags;
-  server->so_reuseaddr = listener->so_reuseaddr;
-  server->so_reuseport = listener->so_reuseport;
-  server->so_keepalive = listener->so_keepalive;
-  server->so_linger_enabled = listener->so_linger_enabled;
-  server->tcp_nodelay = listener->tcp_nodelay;
-  server->tcp_keepidle = listener->tcp_keepidle;
-  server->tcp_keepintvl = listener->tcp_keepintvl;
-  server->tcp_keepcnt = listener->tcp_keepcnt;
-  server->tcp_user_timeout_ms = listener->tcp_user_timeout_ms;
-  server->so_sndbuf = listener->so_sndbuf;
-  server->so_rcvbuf = listener->so_rcvbuf;
-  server->so_linger_seconds = listener->so_linger_seconds;
-  server->so_rcvtimeo_ticks = listener->so_rcvtimeo_ticks;
-  server->so_sndtimeo_ticks = listener->so_sndtimeo_ticks;
-  server->ip_tos = listener->ip_tos;
-  server->ip_ttl = listener->ip_ttl;
-  server->ip_mtu_discover = listener->ip_mtu_discover;
-  server->ip_bind_address_no_port = listener->ip_bind_address_no_port;
-  server->tcp_local_port = dst_port;
-  server->tcp_remote_ip = src_ip;
-  server->tcp_remote_port = src_port;
-  server->tcp_seq = tcp_initial_seq(NULL, 0);
-  server->tcp_ack = seq + 1;
-  tcp_apply_syn_options(server, window, options, options_len);
-  tcp_init_rto(server);
-  tcp_note_activity(server, cell_uptime_ticks());
-  server->tcp_state = TCP_SYN_RECEIVED;
-  uint32_t syn_seq = server->tcp_seq;
-  server->tcp_seq += 1;
-  tcp_pending[pending_slot] = (struct tcp_pending_conn){.used = true, .listener = listener, .server_end = server};
-  if (!tcp_send_syn(server, syn_seq, true)) {
-    cell_release_open_file(server);
-    tcp_pending[pending_slot] = (struct tcp_pending_conn){0};
-  }
+  tcp_queue_syn(listener, src_ip, src_port, seq, window, options, options_len);
 }
 
 static uint32_t tcp_segment_ack_delta(uint8_t flags, size_t len) {
@@ -672,9 +569,10 @@ static void tcp_send_reset_for_unmatched(uint32_t src_ip, uint16_t src_port, uin
                              TCP_RST | TCP_ACK, NULL, 0);
 }
 
-static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
+static void tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
                                 const void *options, size_t options_len, const void *payload, size_t len) {
-  if (file->tcp_state == TCP_SYN_SENT && (flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK) && ack == file->tcp_seq) {
+  if (file->tcp_state == TCP_SYN_SENT && (flags & (TCP_SYN | TCP_ACK | TCP_RST)) == (TCP_SYN | TCP_ACK) &&
+      ack == file->tcp_seq) {
     if (file->tcp_syn_retries == 0) { tcp_note_rtt_sample(file, file->tcp_syn_sent_tick, cell_uptime_ticks()); }
     tcp_apply_syn_options(file, window, options, options_len);
     file->tcp_ack = seq + 1;
@@ -685,40 +583,42 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
     tcp_note_activity(file, cell_uptime_ticks());
     tcp_ack_current_state(file);
     cell_socket_wake_file(file);
-    return true;
+    return;
   }
-  if (file->tcp_state == TCP_SYN_RECEIVED && (flags & TCP_ACK) != 0 && ack == file->tcp_seq) {
-    file->tcp_remote_window = (uint32_t)window << file->tcp_remote_window_scale;
+  if (file->tcp_state == TCP_SYN_RECEIVED && flags == TCP_SYN && seq + 1 == file->tcp_ack) {
+    (void)tcp_send_syn(file, file->tcp_seq - 1, true);
+    return;
+  }
+  if (file->tcp_state == TCP_SYN_RECEIVED && (flags & (TCP_ACK | TCP_RST | TCP_SYN)) == TCP_ACK &&
+      seq == file->tcp_ack && ack == file->tcp_seq) {
+    if (!file->tcp_syn_retries) { tcp_note_rtt_sample(file, file->tcp_syn_sent_tick, cell_uptime_ticks()); }
     file->tcp_state = TCP_ESTABLISHED;
-    tcp_note_activity(file, cell_uptime_ticks());
-    cell_socket_wake_file(file);
-    for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
-      if (tcp_pending[i].used && tcp_pending[i].server_end == file) {
-        cell_socket_wake_file(tcp_pending[i].listener);
-        break;
-      }
-    }
-    return true;
+    file->tcp_retransmit_deadline_tick = 0;
+    tcp_ready_pending(file);
   }
   if ((flags & TCP_RST) != 0) {
     if (!tcp_rst_acceptable(file, seq, ack, flags)) {
       tcp_ack_current_state(file);
-      return true;
+      return;
     }
     tcp_fail(file, file->tcp_state == TCP_SYN_SENT ? ECONNREFUSED : ECONNRESET);
-    return true;
+    return;
   }
-  if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { return true; }
+  if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { return; }
+  if (flags & TCP_SYN) {
+    tcp_ack_current_state(file);
+    return;
+  }
   if ((flags & TCP_ACK) != 0 && tcp_ack_after_sent(file, ack)) {
     tcp_ack_current_state(file);
-    return true;
+    return;
   }
   tcp_note_activity(file, cell_uptime_ticks());
   file->tcp_remote_window = (uint32_t)window << file->tcp_remote_window_scale;
   if ((flags & TCP_ACK) != 0) { tcp_tx_ack(file, ack); }
   if (!len && flags == TCP_ACK && seq + 1 == file->tcp_ack) {
     tcp_ack_current_state(file);
-    return true;
+    return;
   }
   uint32_t packet_fin_seq = seq + (uint32_t)len;
   if (len != 0) {
@@ -729,7 +629,7 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
       if (skip >= data_len) {
         tcp_ack_current_state(file);
         cell_socket_wake_file(file);
-        return true;
+        return;
       }
       data += skip;
       data_len -= skip;
@@ -740,7 +640,7 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
       if ((flags & TCP_FIN) != 0) { tcp_record_fin(file, packet_fin_seq); }
       tcp_ack_current_state(file);
       cell_socket_wake_file(file);
-      return true;
+      return;
     }
     uint32_t n = tcp_append_rx(file, data, data_len);
     if (n != 0) {
@@ -759,7 +659,6 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
     if (tcp_accept_pending_fin(file)) { tcp_ack_current_state(file); }
   }
   cell_socket_wake_file(file);
-  return true;
 }
 
 void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
@@ -768,14 +667,10 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
   for (struct open_file *file = *tcp_port_bucket(dst_port); file != NULL;
        file = file->socket_index_next) {
     if (!socket_matches_tcp(file, src_ip, src_port, dst_port)) { continue; }
-    (void)tcp_deliver_to_file(file, seq, ack, window, flags, options, options_len, payload, len);
-    return;
-  }
-  for (size_t i = 0; i < sizeof(tcp_pending) / sizeof(tcp_pending[0]); ++i) {
-    if (!tcp_pending[i].used || !socket_matches_tcp(tcp_pending[i].server_end, src_ip, src_port, dst_port)) {
-      continue;
-    }
-    (void)tcp_deliver_to_file(tcp_pending[i].server_end, seq, ack, window, flags, options, options_len, payload, len);
+    bool pending = file->tcp_listener != NULL;
+    if (pending) { cell_retain_open_file(file); }
+    tcp_deliver_to_file(file, seq, ack, window, flags, options, options_len, payload, len);
+    if (pending) { cell_release_open_file(file); }
     return;
   }
   if ((flags & TCP_SYN) != 0 && (flags & TCP_ACK) == 0) {

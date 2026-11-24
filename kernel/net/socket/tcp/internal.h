@@ -12,6 +12,14 @@ enum {
 
 bool tcp_send_syn(const struct open_file *file, uint32_t seq, bool reply);
 void tcp_apply_syn_options(struct open_file *file, uint16_t window, const void *options, size_t len);
+void tcp_close_backlog(struct open_file *listener);
+void tcp_ready_pending(struct open_file *server);
+void tcp_discard_pending(struct open_file *server);
+void tcp_queue_syn(struct open_file *listener, uint32_t src_ip, uint16_t src_port, uint32_t seq, uint16_t window,
+                   const void *options, size_t options_len);
+void tcp_set_local_port(struct open_file *file, uint16_t port);
+uint32_t tcp_initial_seq(void);
+void tcp_send_abortive_close(struct open_file *file);
 void tcp_set_timer_active(struct open_file *file, bool active);
 void tcp_note_activity(struct open_file *file, uint64_t now);
 void tcp_init_keepalive(struct open_file *file, uint64_t now);
