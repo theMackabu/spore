@@ -2,12 +2,14 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <sys/auxv.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <string.h>
 
 static int exec_private_data = 0x12345678;
 
 int main(int argc, char **argv) {
+  if (syscall(SYS_gettid) != getpid()) { return 43; }
   if (argc == 4 && strcmp(argv[1], "check-cmdline") == 0) {
     argv[0][0] = 'C';
     const char expected[] = "Child\0check-cmdline\0two words\0";

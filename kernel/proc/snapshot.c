@@ -46,8 +46,9 @@ void cell_snapshot_reset(void) {
 
 int snapshot_create_current(void) {
   struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL) { return -12; }
   struct snapshot *snap = alloc_snapshot();
-  if (domain == NULL || snap == NULL) { return -12; }
+  if (snap == NULL) { return -12; }
   struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
   if (as == NULL || vmas == NULL || !vmm_clone_cow(&snap->as, as)) {
@@ -65,24 +66,19 @@ int snapshot_create_current(void) {
 int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame *frame) {
   struct domain *parent = cell_current_domain_internal();
   struct snapshot *snap = find_snapshot(snap_id);
-  struct domain *child_domain = cell_alloc_domain();
-  if (parent == NULL || snap == NULL || child_domain == NULL) { return -12; }
-  struct thread *child_thread = cell_alloc_thread(child_domain);
-  if (child_thread == NULL) {
-    child_domain->used = false;
-    return -12;
-  }
+  if (parent == NULL || snap == NULL) { return -12; }
+  struct thread *child_thread = cell_alloc_process();
+  if (child_thread == NULL) { return -12; }
+  struct domain *child_domain = child_thread->domain;
   struct user_address_space child_as;
   struct vma_list child_vmas;
   if (!vmm_clone_cow(&child_as, &snap->as)) {
-    child_thread->state = THREAD_UNUSED;
-    child_domain->used = false;
+    cell_destroy_domain(child_domain);
     return -12;
   }
   if (!vma_clone(&child_vmas, &snap->vmas)) {
     vmm_destroy(&child_as);
-    child_thread->state = THREAD_UNUSED;
-    child_domain->used = false;
+    cell_destroy_domain(child_domain);
     return -12;
   }
   struct process_mm *child_mm = cell_mm_from_owned(&child_as, &child_vmas);
@@ -90,8 +86,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
     if (child_mm != NULL) { cell_mm_release(child_mm); }
     vmm_destroy(&child_as);
     vma_list_destroy(&child_vmas);
-    child_thread->state = THREAD_UNUSED;
-    child_domain->used = false;
+    cell_destroy_domain(child_domain);
     return -12;
   }
   cell_copy_domain_metadata(child_domain, parent);

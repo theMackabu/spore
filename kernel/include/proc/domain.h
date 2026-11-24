@@ -58,7 +58,8 @@ struct domain {
 
 bool cell_domain_reset(size_t capacity);
 size_t cell_domain_slot_limit(void);
-uint32_t cell_domain_last_id(void);
+uint32_t cell_last_task_id(void);
+int cell_new_task_id(void);
 void cell_copy_domain_metadata(struct domain *dst, const struct domain *src);
 void cell_destroy_domain(struct domain *domain);
 void cell_set_domain_identity(struct domain *domain, const char *path, const char *const argv[], uint64_t argc);
@@ -91,4 +92,4 @@ void cell_note_unsupported_ioctl(uint64_t request);
 struct domain *cell_current_domain_internal(void);
 struct domain *cell_domain_slot(size_t index);
 struct domain *cell_find_domain(int id);
-struct domain *cell_alloc_domain(void);
+struct thread *cell_alloc_process(void);

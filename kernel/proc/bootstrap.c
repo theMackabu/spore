@@ -58,13 +58,9 @@ void cell_system_init(uint64_t hhdm_offset) {
 }
 
 bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp) {
-  struct domain *domain = cell_alloc_domain();
-  if (domain == NULL) { return false; }
-  struct thread *thread = cell_alloc_thread(domain);
-  if (thread == NULL) {
-    domain->used = false;
-    return false;
-  }
+  struct thread *thread = cell_alloc_process();
+  if (thread == NULL) { return false; }
+  struct domain *domain = thread->domain;
   domain->parent_id = 0;
   domain->pgrp_id = domain->id;
   domain->session_id = domain->id;
@@ -74,23 +70,16 @@ bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint
   struct process_mm *mm = cell_mm_from_owned(as, vmas);
   if (mm == NULL || !cell_domain_set_mm(domain, mm)) {
     if (mm != NULL) { cell_mm_release(mm); }
-    thread->state = THREAD_UNUSED;
-    domain->used = false;
+    cell_destroy_domain(domain);
     return false;
   }
   if (!vma_insert(cell_domain_vmas(domain), USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_TOP,
                   VMM_USER_READ | VMM_USER_WRITE, 0, VMA_STACK)) {
-    thread->state = THREAD_UNUSED;
-    cell_mm_release(domain->mm);
-    domain->mm = NULL;
-    domain->used = false;
+    cell_destroy_domain(domain);
     return false;
   }
   if (!cell_init_stdio(domain)) {
-    thread->state = THREAD_UNUSED;
-    cell_mm_release(domain->mm);
-    domain->mm = NULL;
-    domain->used = false;
+    cell_destroy_domain(domain);
     return false;
   }
   thread->state = THREAD_RUNNABLE;

@@ -131,20 +131,15 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
 
 int cell_fork_current(struct trap_frame *frame) {
   struct domain *parent = current_domain();
-  struct domain *child_domain = cell_alloc_domain();
   if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
-  if (child_domain == NULL) { return -EAGAIN; }
-  struct thread *child_thread = cell_alloc_thread(child_domain);
-  if (child_thread == NULL) {
-    child_domain->used = false;
-    return -EAGAIN;
-  }
+  struct thread *child_thread = cell_alloc_process();
+  if (child_thread == NULL) { return -EAGAIN; }
+  struct domain *child_domain = child_thread->domain;
   cell_save_current(frame);
   struct process_mm *child_mm = cell_mm_clone_cow(parent->mm);
   if (child_mm == NULL || !cell_domain_set_mm(child_domain, child_mm)) {
     if (child_mm != NULL) { cell_mm_release(child_mm); }
-    child_thread->state = THREAD_UNUSED;
-    child_domain->used = false;
+    cell_destroy_domain(child_domain);
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child_domain, parent);
@@ -169,17 +164,12 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
                        uint64_t child_tid) {
   struct domain *parent = current_domain();
   if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
-  struct domain *child = cell_alloc_domain();
-  if (child == NULL) { return -EAGAIN; }
-  struct thread *child_thread = cell_alloc_thread(child);
-  if (child_thread == NULL) {
-    child->used = false;
-    return -EAGAIN;
-  }
+  struct thread *child_thread = cell_alloc_process();
+  if (child_thread == NULL) { return -EAGAIN; }
+  struct domain *child = child_thread->domain;
   cell_save_current(frame);
   if (!cell_domain_set_mm(child, cell_mm_retain(parent->mm))) {
-    child_thread->state = THREAD_UNUSED;
-    child->used = false;
+    cell_destroy_domain(child);
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child, parent);
@@ -194,7 +184,7 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   child_thread->sigaltstack_size = cell_current_thread_internal()->sigaltstack_size;
   child_thread->sigaltstack_flags = cell_current_thread_internal()->sigaltstack_flags;
   trap_set_result(&child_thread->tf, 0);
-  if (newsp != 0 && child_thread != NULL) { trap_set_stack(&child_thread->tf, newsp); }
+  if (newsp != 0) { trap_set_stack(&child_thread->tf, newsp); }
   if ((flags & CLONE_SETTLS) != 0) { child_thread->context.thread_pointer = tls; }
   child_thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
   if ((flags & CLONE_PARENT_SETTID) != 0 && parent_tid != 0) {
@@ -231,7 +221,7 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
                               uint64_t tls, uint64_t child_tid) {
   struct domain *domain = current_domain();
   if (domain == NULL || cell_current_thread_internal() == NULL || newsp == 0) { return -22; }
-  struct thread *thread = cell_alloc_thread(domain);
+  struct thread *thread = cell_alloc_thread(domain, false);
   if (thread == NULL) { return -EAGAIN; }
   cell_save_current(frame);
   thread->state = THREAD_RUNNABLE;
@@ -351,8 +341,15 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   vmm_install_user(cell_domain_as(domain));
 
   aarch64_init_user_frame(frame, entry, sp);
-  cell_current_thread_internal()->tf = *frame;
-  struct aarch64_thread_context *context = &cell_current_thread_internal()->context;
+  struct thread *thread = cell_current_thread_internal();
+  thread->tid = domain->id;
+  thread->clear_child_tid = 0;
+  thread->robust_list = 0;
+  thread->sigaltstack_flags = 2;
+  thread->sigaltstack_sp = 0;
+  thread->sigaltstack_size = 0;
+  thread->tf = *frame;
+  struct aarch64_thread_context *context = &thread->context;
   kmemset(context, 0, sizeof(*context));
   aarch64_restore_context(context);
   cell_wake_vfork_parent_of(domain->id);

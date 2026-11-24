@@ -19,7 +19,8 @@ enum {
 static struct domain *domains;
 static size_t domain_capacity;
 static size_t domain_slot_limit;
-static int next_domain_id = 1;
+static int last_task_id;
+static bool task_ids_wrapped;
 
 bool cell_domain_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_DOMAINS) { return false; }
@@ -31,7 +32,8 @@ bool cell_domain_reset(size_t capacity) {
     kmemset(domains, 0, domain_capacity * sizeof(*domains));
   }
   domain_slot_limit = 0;
-  next_domain_id = 1;
+  last_task_id = 0;
+  task_ids_wrapped = false;
   return true;
 }
 
@@ -43,8 +45,8 @@ struct domain *cell_domain_slot(size_t index) {
   return index < domain_capacity ? &domains[index] : NULL;
 }
 
-uint32_t cell_domain_last_id(void) {
-  return (uint32_t)(next_domain_id - 1);
+uint32_t cell_last_task_id(void) {
+  return (uint32_t)last_task_id;
 }
 
 struct domain *cell_find_domain(int id) {
@@ -54,20 +56,41 @@ struct domain *cell_find_domain(int id) {
   return NULL;
 }
 
-struct domain *cell_alloc_domain(void) {
+static bool task_id_in_use(int id) {
+  for (size_t i = 0; i < domain_slot_limit; ++i) {
+    const struct domain *d = &domains[i];
+    if (d->used && (d->id == id || d->pgrp_id == id || d->session_id == id)) { return true; }
+  }
+  return cell_find_thread(id) != NULL;
+}
+
+int cell_new_task_id(void) {
+  do {
+    if (last_task_id == INT32_MAX) {
+      last_task_id = 0;
+      task_ids_wrapped = true;
+    }
+    ++last_task_id;
+  } while (task_ids_wrapped && task_id_in_use(last_task_id));
+  return last_task_id;
+}
+
+struct thread *cell_alloc_process(void) {
   for (size_t i = 0; i < domain_capacity; ++i) {
     if (!domains[i].used) {
       kmemset(&domains[i], 0, sizeof(domains[i]));
       if (i == domain_slot_limit) { ++domain_slot_limit; }
       domains[i].used = true;
-      domains[i].id = next_domain_id++;
+      domains[i].id = cell_new_task_id();
       domains[i].pgrp_id = domains[i].id;
       domains[i].session_id = domains[i].id;
       domains[i].start_ticks = cell_uptime_ticks();
       copy_cstr(domains[i].name, sizeof(domains[i].name), "?");
       domains[i].cwd[0] = '/';
       domains[i].chroot[0] = '/';
-      return &domains[i];
+      struct thread *leader = cell_alloc_thread(&domains[i], true);
+      if (leader == NULL) { domains[i].used = false; }
+      return leader;
     }
   }
   return NULL;

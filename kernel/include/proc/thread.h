@@ -128,7 +128,8 @@ void cell_schedule(struct trap_frame *frame);
 int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame);
 struct thread *cell_current_thread_internal(void);
 struct thread *cell_thread_slot(size_t index);
-struct thread *cell_alloc_thread(struct domain *domain);
+struct thread *cell_alloc_thread(struct domain *domain, bool leader);
+struct thread *cell_find_thread(int tid);
 struct thread *cell_thread_for_domain(const struct domain *domain);
 
 int cell_current_tid(void);

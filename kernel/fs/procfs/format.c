@@ -112,7 +112,7 @@ size_t proc_loadavg_text(char *dst, size_t cap) {
   proc_append_char(dst, cap, &len, '/');
   proc_append_u64(dst, cap, &len, total);
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, cell_domain_last_id());
+  proc_append_u64(dst, cap, &len, cell_last_task_id());
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }
@@ -335,7 +335,7 @@ size_t proc_stat_text(char *dst, size_t cap) {
   proc_append_str(dst, cap, &len, "\nbtime ");
   proc_append_u64(dst, cap, &len, cell_boot_epoch_seconds());
   proc_append_str(dst, cap, &len, "\nprocesses ");
-  proc_append_u64(dst, cap, &len, cell_domain_last_id());
+  proc_append_u64(dst, cap, &len, cell_last_task_id());
   proc_append_str(dst, cap, &len, "\nprocs_running ");
   proc_append_u64(dst, cap, &len, running == 0 ? 1 : running);
   proc_append_str(dst, cap, &len, "\nprocs_blocked ");

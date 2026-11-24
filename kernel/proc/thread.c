@@ -25,7 +25,6 @@ constexpr int ETIMEDOUT = 110;
 static struct thread *threads;
 static size_t thread_capacity;
 static size_t thread_slot_limit;
-static int next_thread_id = 1;
 
 bool cell_thread_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_THREADS) { return false; }
@@ -37,7 +36,6 @@ bool cell_thread_reset(size_t capacity) {
     kmemset(threads, 0, thread_capacity * sizeof(*threads));
   }
   thread_slot_limit = 0;
-  next_thread_id = 1;
   return true;
 }
 
@@ -74,12 +72,12 @@ struct thread *cell_thread_slot(size_t index) {
   return index < thread_capacity ? &threads[index] : NULL;
 }
 
-struct thread *cell_alloc_thread(struct domain *domain) {
+struct thread *cell_alloc_thread(struct domain *domain, bool leader) {
   for (size_t i = 0; i < thread_capacity; ++i) {
     if (threads[i].state == THREAD_UNUSED) {
       kmemset(&threads[i], 0, sizeof(threads[i]));
       if (i >= thread_slot_limit) { thread_slot_limit = i + 1; }
-      threads[i].tid = next_thread_id++;
+      threads[i].tid = leader ? domain->id : cell_new_task_id();
       threads[i].running_cpu = -1;
       threads[i].domain = domain;
       threads[i].wait.target = -1;
@@ -102,6 +100,13 @@ void cell_release_thread(struct thread *thread) {
   for (uint32_t cpu = 0; cpu < smp_present_cpu_count(); ++cpu) {
     smp_clear_current_thread_if(cpu, thread);
   }
+}
+
+struct thread *cell_find_thread(int tid) {
+  for (size_t i = 0; i < thread_slot_limit; ++i) {
+    if (threads[i].state != THREAD_UNUSED && threads[i].tid == tid) { return &threads[i]; }
+  }
+  return NULL;
 }
 
 struct thread *cell_thread_for_domain(const struct domain *domain) {
