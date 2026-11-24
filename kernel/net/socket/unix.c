@@ -182,7 +182,7 @@ int cell_fd_unix_listen(int fd, int backlog) {
   return 0;
 }
 
-static int take_pending_unix(struct domain *domain, struct open_file *listener, int flags) {
+int take_pending_unix(struct domain *domain, struct open_file *listener, int flags) {
   int fd = cell_find_free_fd(domain, 0);
   if (fd < 0) { return -24; }
   for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
@@ -194,19 +194,6 @@ static int take_pending_unix(struct domain *domain, struct open_file *listener, 
     return fd;
   }
   return -EAGAIN;
-}
-
-static void wake_unix_accept_waiters(struct open_file *listener) {
-  size_t cursor = 0;
-  struct thread *thread;
-  while ((thread = cell_next_waiter(WAIT_SOCKET, &cursor))) {
-    int fd = thread->wait.target;
-    if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] != listener) { continue; }
-    int accepted = take_pending_unix(thread->domain, listener, thread->wait.socket_accept_flags);
-    if (accepted == -EAGAIN) { continue; }
-    cell_finish_wait(thread, accepted);
-  }
-  cell_wake_poll_waiters_internal();
 }
 
 int cell_fd_unix_accept(int fd, int flags, struct trap_frame *frame) {
@@ -264,7 +251,7 @@ int cell_fd_unix_connect(int fd, const char *path) {
   for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
     if (!unix_pending[i].used) {
       unix_pending[i] = (struct unix_pending_conn){.used = true, .listener = listener, .server_end = server};
-      wake_unix_accept_waiters(listener);
+      cell_socket_wake_file(listener);
       return 0;
     }
   }

@@ -68,6 +68,7 @@ struct open_file {
       uint32_t unix_peer_gid;
       char unix_path[108];
       uint8_t socket_proto;
+      uint16_t socket_waiters;
       uint32_t udp_remote_ip;
       uint16_t udp_local_port;
       uint16_t udp_remote_port;

@@ -44,6 +44,7 @@ struct thread_wait {
   uint64_t deadline_tick;
   bool has_deadline;
   bool restore_signal_mask;
+  struct open_file *held_file;
   union {
     struct {
       uint64_t buf;
@@ -57,6 +58,7 @@ struct thread_wait {
       int socket_accept_flags;
       bool write;
       bool socket_msg;
+      bool socket_servicing;
     };
     struct {
       uint64_t saved_signal_mask;
@@ -71,7 +73,6 @@ struct thread_wait {
     };
     uint64_t futex_addr;
     struct {
-      struct open_file *held_file;
       union {
         uint8_t flock_mode;
         struct {

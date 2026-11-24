@@ -2,6 +2,7 @@
 #include "lib/mem.h"
 #include "proc/accounting.h"
 #include "proc/fd.h"
+#include "proc/domain.h"
 
 enum { WAIT_WORDS = (MAX_THREADS + 63) / 64 };
 static_assert(WAIT_WORDS <= 64);
@@ -51,11 +52,9 @@ void cell_wait_reset(void) {
 void cell_clear_wait(struct thread *thread) {
   remove_waiter(thread);
   if (thread->wait.restore_signal_mask) { thread->signal_mask = thread->wait.saved_signal_mask; }
-  struct open_file *file = NULL;
-  if (thread->wait.reason == WAIT_FLOCK || thread->wait.reason == WAIT_EVENTFD) {
-    file = thread->wait.held_file;
-    if (thread->wait.reason == WAIT_EVENTFD) { --file->eventfd_waiters; }
-  }
+  struct open_file *file = thread->wait.held_file;
+  if (thread->wait.reason == WAIT_EVENTFD) { --file->eventfd_waiters; }
+  if (thread->wait.reason == WAIT_SOCKET) { --file->socket_waiters; }
   thread->wait = (struct thread_wait){.target = -1};
   if (file != NULL) { cell_release_open_file(file); }
 }
@@ -72,6 +71,11 @@ void cell_finish_wait(struct thread *thread, int64_t result) {
 
 int cell_block_current(struct trap_frame *frame, struct thread_wait wait) {
   struct thread *thread = cell_current_thread_internal();
+  if (wait.reason == WAIT_SOCKET) {
+    wait.held_file = thread->domain->fds[wait.target];
+    cell_retain_open_file(wait.held_file);
+    ++wait.held_file->socket_waiters;
+  }
   thread->wait = wait;
   thread->running_cpu = -1;
   cell_mark_blocked(thread);

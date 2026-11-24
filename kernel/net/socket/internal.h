@@ -97,4 +97,4 @@ uint32_t socket_effective_buffer(const struct open_file *file, bool receive);
 uint8_t socket_effective_ttl(const struct open_file *file);
 void socket_apply_accept_flags(struct domain *domain, int fd, int flags);
 void socket_close_domain_fd(struct domain *domain, int fd);
-void wake_socket_waiters(struct open_file *file);
+int take_pending_unix(struct domain *domain, struct open_file *listener, int flags);

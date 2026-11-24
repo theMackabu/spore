@@ -419,10 +419,10 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
   for (struct open_file *file = *tcp_port_bucket(dst_port); file != NULL;
        file = file->socket_index_next) {
     if (!socket_matches_tcp(file, src_ip, src_port, dst_port)) { continue; }
-    bool pending = file->tcp_listener != NULL;
-    if (pending) { cell_retain_open_file(file); }
+    bool retained = file->refcount != 0;
+    if (retained) { cell_retain_open_file(file); }
     tcp_deliver_to_file(file, seq, ack, window, flags, options, options_len, payload, len);
-    if (pending) { cell_release_open_file(file); }
+    if (retained) { cell_release_open_file(file); }
     return;
   }
   if ((flags & TCP_SYN) != 0 && (flags & TCP_ACK) == 0) {
