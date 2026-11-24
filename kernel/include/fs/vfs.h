@@ -132,6 +132,7 @@ int vfs_get_seals(const struct vfs_node *node);
 bool vfs_write_sealed(const struct vfs_node *node);
 bool vfs_truncate_sealed(const struct vfs_node *node, uint64_t size);
 void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add);
+int64_t vfs_seek_extent(const struct vfs_node *node, uint64_t off, bool data);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
 int64_t vfs_writeback(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);

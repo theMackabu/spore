@@ -61,6 +61,38 @@ bool ext2_file_block(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
   return locate(fs, index, &path) && walk(fs, node, &path, out, &parent, &level);
 }
 
+int64_t ext2_seek_extent(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, bool data) {
+  if (off >= node->size) { return -6; }
+  uint32_t entries = fs->block_size / sizeof(uint32_t);
+  while (off < node->size) {
+    uint32_t index = off / fs->block_size;
+    struct block_path path;
+    uint32_t block, parent, level;
+    if (!locate(fs, index, &path) || !walk(fs, node, &path, &block, &parent, &level)) { return -EXT2_EIO; }
+    if ((block != 0) == data) { return (int64_t)off; }
+    uint64_t skip = 1;
+    if (level < path.depth) {
+      uint64_t within = 0;
+      for (uint32_t i = level; i < path.depth; ++i) {
+        skip *= entries;
+        within = within * entries + path.slot[i];
+      }
+      skip -= within;
+    } else if (parent) {
+      const uint8_t *table = ext2_cached_block(fs, parent);
+      if (!table) { return -EXT2_EIO; }
+      for (uint32_t i = path.slot[level - 1] + 1; i < entries; ++i) {
+        kmemcpy(&block, table + i * sizeof(block), sizeof(block));
+        if (block >= fs->block_count) { return -EXT2_EIO; }
+        if ((block != 0) == data) { break; }
+        ++skip;
+      }
+    }
+    off = (index + skip) * fs->block_size;
+  }
+  return data ? -6 : (int64_t)node->size;
+}
+
 int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32_t index, uint32_t *out,
                               bool zero_data) {
   struct block_path path;

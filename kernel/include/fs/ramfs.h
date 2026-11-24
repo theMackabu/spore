@@ -142,6 +142,7 @@ int ramfs_renameat(struct ramfs *fs, const char *old_path, const char *new_path,
 static inline bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path) {
   return ramfs_renameat(fs, old_path, new_path, false) == 0;
 }
+int64_t ramfs_seek_extent(struct ramfs *fs, int index, uint64_t off, bool data);
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len);
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
 int64_t ramfs_writeback(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);

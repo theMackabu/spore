@@ -38,6 +38,31 @@ static int sparse_shared_file(const char *path) {
   return ok;
 }
 
+static int sparse_seek(const char *name) {
+  constexpr off_t far = 128 * 1024 * 1024;
+  constexpr off_t page = 4096;
+  int fd = open(name, O_CREAT | O_TRUNC | O_RDWR, 0600);
+  if (fd < 0) { return 0; }
+  int ok = ftruncate(fd, far + 7 * page + 1) == 0 &&
+           lseek(fd, 1, SEEK_DATA) == -1 && errno == ENXIO && lseek(fd, 73, SEEK_HOLE) == 73;
+  char *map = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, far);
+  char bytes[4096] = {1};
+  if (map == MAP_FAILED) { ok = 0; }
+  else {
+    map[11] = 'A';
+    ok = ok && pwrite(fd, bytes, page, far + 4 * page) == page &&
+         lseek(fd, 0, SEEK_DATA) == far && lseek(fd, far + 11, SEEK_DATA) == far + 11;
+    off_t hole = lseek(fd, far, SEEK_HOLE);
+    ok = ok && hole > far + 11 && hole <= far + page && lseek(fd, hole, SEEK_DATA) == far + 4 * page &&
+         lseek(fd, far + 4 * page, SEEK_HOLE) == far + 5 * page &&
+         lseek(fd, far + 7 * page + 1, SEEK_HOLE) == -1 && errno == ENXIO &&
+         lseek(fd, 0, SEEK_CUR) == far + 5 * page;
+    munmap(map, page);
+  }
+  close(fd); unlink(name);
+  return ok;
+}
+
 static int sync_file_aliases(void) {
   constexpr size_t page = 4096;
   int fd = open("/mapped-aliases", O_RDWR | O_CREAT | O_TRUNC, 0600);
@@ -436,7 +461,7 @@ static int mmap_noreserve_regression(void) {
 }
 
 int integration_memory_suite(void) {
-  if (!read_across_dirty_mapping()) { return 0; }
+  if (!sparse_seek("/sparse-seek") || !sparse_seek("/tmp/sparse-seek") || !read_across_dirty_mapping()) { return 0; }
   return sync_file_aliases() && sparse_shared_file("/spore-sparse") && sparse_shared_file("/tmp/spore-sparse") && shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
          file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mapping_ranges() && grow_file_mapping() && mmap_past_reservation(false) &&

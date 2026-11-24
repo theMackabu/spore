@@ -83,6 +83,7 @@ void ext2_set_now(uint32_t epoch_sec);
 bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out);
 bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out);
 bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);
+int64_t ext2_seek_extent(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, bool data);
 bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, void *dst, uint32_t len,
                     uint32_t *read_out);
 int64_t ext2_writeback_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, size_t len);

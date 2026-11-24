@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include "lib/mem.h"
+#include "mm/pmm.h"
 #include "fs/procfs.h"
 #include "fs/notify.h"
 
@@ -307,6 +308,15 @@ bool vfs_truncate_sealed(const struct vfs_node *node, uint64_t size) {
 void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add) {
   if (node == NULL || node->backend != VFS_RAMFS) { return; }
   ramfs_note_shared_writable_mapping(node->ramfs.fs, node->ramfs.index, add);
+}
+
+int64_t vfs_seek_extent(const struct vfs_node *node, uint64_t off, bool data) {
+  if (!vfs_node_cacheable(node)) { return -22; }
+  if (!vfs_sync_mapped_range(node, off & ~(uint64_t)(PAGE_SIZE - 1), UINT64_MAX)) { return -5; }
+  if (node->backend == VFS_RAMFS) { return ramfs_seek_extent(node->ramfs.fs, node->ramfs.index, off, data); }
+  struct ext2_node fresh;
+  if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &fresh)) { return -5; }
+  return ext2_seek_extent(vfs_root_ext2, &fresh, off, data);
 }
 
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {

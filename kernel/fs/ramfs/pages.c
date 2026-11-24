@@ -173,6 +173,25 @@ bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
   return true;
 }
 
+int64_t ramfs_seek_extent(struct ramfs *fs, int index, uint64_t off, bool data) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || off >= node->size) { return -6; }
+  if (!node->writable) { return (int64_t)(data ? off : node->size); }
+  uint32_t page = off / RAMFS_PAGE_SIZE;
+  if ((find_backing_page(fs, index, page) >= 0) == data) { return (int64_t)off; }
+  if (data) {
+    uint32_t next = UINT32_MAX;
+    for (int i = node->first_page; i >= 0; i = backing_pages[i].next) {
+      uint32_t n = backing_pages[i].file_page;
+      if (n > page && n < next) { next = n; }
+    }
+    return next == UINT32_MAX ? -6 : (int64_t)next * RAMFS_PAGE_SIZE;
+  }
+  do { ++page; } while (find_backing_page(fs, index, page) >= 0);
+  uint64_t hole = (uint64_t)page * RAMFS_PAGE_SIZE;
+  return (int64_t)(hole < node->size ? hole : node->size);
+}
+
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len) {
   struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
   if (!node || node->is_dir ||

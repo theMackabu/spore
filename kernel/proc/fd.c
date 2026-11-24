@@ -105,22 +105,33 @@ void cell_copy_open_path(struct open_file *file, const char *path) {
 }
 
 int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
-  struct domain *domain = cell_current_domain_internal();
-  struct open_file *file = cell_file_at(domain, fd);
-  if (file == NULL) { return -9; }
+  struct open_file *file = cell_fd_file(fd);
+  if (!file || (file->flags & LINUX_O_PATH)) { return -9; }
+  if (file->type != OPEN_VFS || file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE) { return -29; }
   int64_t base = 0;
-  if (whence == 0) {
-    base = 0;
-  } else if (whence == 1) {
-    base = (int64_t)file->offset;
-  } else if (whence == 2) {
+  switch (whence) {
+  case 0: break;
+  case 1: base = (int64_t)file->offset; break;
+  case 2: {
     struct vfs_node fresh;
-    base = vfs_refresh(&file->node, &fresh) ? (int64_t)fresh.size : 0;
-  } else {
-    return -22;
+    if (!vfs_refresh(&file->node, &fresh)) { return -5; }
+    base = (int64_t)fresh.size;
+    break;
   }
-  int64_t next = base + off;
-  if (next < 0) { return -22; }
+  case 3:
+  case 4:
+    if (off < 0) { return -6; }
+    off = vfs_seek_extent(&file->node, off, whence == 3);
+    if (off < 0) { return off; }
+    break;
+  default: return -EINVAL;
+  }
+  int64_t next;
+  if (__builtin_add_overflow(base, off, &next) || next < 0) { return -EINVAL; }
+  if (file->node.device == RAMFS_DEV_NULL || file->node.device == RAMFS_DEV_ZERO ||
+      file->node.device == RAMFS_DEV_FULL || file->node.device == RAMFS_DEV_URANDOM || file->node.device == RAMFS_DEV_RANDOM) {
+    next = 0;
+  }
   file->offset = (uint64_t)next;
   return next;
 }
