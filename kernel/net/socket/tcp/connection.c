@@ -215,7 +215,7 @@ int cell_fd_tcp_accept(int fd, uint64_t addr, uint64_t addrlen, int flags, struc
   if (accepted >= 0) {
     int rc = tcp_copy_peer_addr_to_domain(domain, accepted, addr, addrlen);
     if (rc < 0) {
-      socket_close_domain_fd(domain, accepted);
+      cell_close_domain_fd(domain, accepted);
       return rc;
     }
     return accepted;

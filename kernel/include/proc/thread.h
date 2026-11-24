@@ -9,6 +9,7 @@
 
 struct domain;
 struct open_file;
+struct unix_rights;
 
 enum thread_state {
   THREAD_UNUSED,
@@ -52,6 +53,7 @@ struct thread_wait {
       uint64_t socket_addr;
       uint64_t socket_addrlen;
       uint64_t socket_msg_addr;
+      struct unix_rights *unix_rights;
       uint64_t socket_iov;
       uint64_t socket_iovlen;
       uint32_t socket_flags;

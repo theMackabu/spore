@@ -19,7 +19,7 @@ static uint32_t span(uint32_t pos, uint32_t remaining) {
   return remaining < room ? remaining : room;
 }
 
-static void consume(struct page_ring *ring, uint32_t bytes) {
+void page_ring_consume(struct page_ring *ring, uint32_t bytes) {
   uint32_t start = ring->head, end = start + bytes;
   ring->used -= bytes;
   if (!ring->used) {
@@ -81,6 +81,6 @@ int page_ring_read(struct page_ring *ring, uint32_t len, bool peek, ring_copy_ou
     done += size;
     pos = (pos + size) % ring->capacity;
   }
-  if (len && !peek) { consume(ring, len); }
+  if (len && !peek) { page_ring_consume(ring, len); }
   return (int)len;
 }

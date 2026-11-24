@@ -233,9 +233,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   }
   for (size_t i = 0; i < MAX_FDS; ++i) {
     if (domain->fds[i] != NULL && domain->fd_flags[i] != 0) {
-      cell_release_open_file(domain->fds[i]);
-      domain->fds[i] = NULL;
-      domain->fd_flags[i] = 0;
+      (void)cell_close_domain_fd(domain, (int)i);
     }
   }
   cell_domain_set_mm(domain, new_mm);

@@ -181,6 +181,7 @@ int cell_fd_get_fd_flags(int fd);
 int cell_fd_set_fd_flags(int fd, int flags);
 int cell_fd_add_seals(int fd, uint32_t seals);
 int cell_fd_get_seals(int fd);
+int cell_close_domain_fd(struct domain *domain, int fd);
 int cell_fd_close(int fd);
 int cell_fd_is_tty(int fd);
 bool cell_fd_stat(int fd, struct vfs_node *out);

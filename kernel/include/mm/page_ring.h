@@ -14,4 +14,5 @@ typedef int (*ring_copy_out)(void *destination, const uint8_t *src, size_t len);
 
 void page_ring_clear(struct page_ring *ring);
 int page_ring_write(struct page_ring *ring, uint32_t len, ring_copy_in copy, void *source);
+void page_ring_consume(struct page_ring *ring, uint32_t bytes);
 int page_ring_read(struct page_ring *ring, uint32_t len, bool peek, ring_copy_out copy, void *destination);

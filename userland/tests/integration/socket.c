@@ -12,7 +12,6 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/uio.h>
-#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -49,28 +48,6 @@ int integration_udp_demo(void) {
   close(fd);
   int ok = sent == (ssize_t)(sizeof(msg) - 1) && got == (ssize_t)(sizeof(msg) - 1) && strcmp(buf, msg) == 0;
   printf("[spore] v3e udp socket echo: %s (%s)\n", ok ? "PASS" : "FAIL", buf);
-  return ok;
-}
-
-static int unix_peer_close_poll_regression(void) {
-  int pair[2];
-  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, pair) < 0) {
-    printf("[spore] unix peer close poll: FAIL socketpair\n");
-    return 0;
-  }
-  struct pollfd pfd = {.fd = pair[0], .events = POLLIN | POLLOUT};
-  int ok = poll(&pfd, 1, 0) == 1 && pfd.revents == POLLOUT && write(pair[1], "x", 1) == 1;
-  close(pair[1]);
-
-  pfd.events = 0;
-  ok = ok && poll(&pfd, 1, 0) == 1 && pfd.revents == POLLHUP;
-  pfd.events = POLLIN | POLLOUT;
-  char byte;
-  ok = ok && poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) &&
-       read(pair[0], &byte, 1) == 1 && byte == 'x' &&
-       poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) && read(pair[0], &byte, 1) == 0;
-  close(pair[0]);
-  printf("[spore] unix peer close poll: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
@@ -1355,33 +1332,8 @@ int integration_udp_connect_send(uint32_t connect_ip, uint16_t connect_port, uin
   return rc;
 }
 
-static int unix_listener_names(void) {
-  int cwd = open(".", O_RDONLY | O_DIRECTORY);
-  if (cwd < 0 || chdir("/tmp") < 0) { return 0; }
-  struct sockaddr_un old = {.sun_family = AF_UNIX, .sun_path = "spore-listen"};
-  struct sockaddr_un moved = {.sun_family = AF_UNIX, .sun_path = "spore-listen-new"};
-  int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-  int replacement = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-  int client = socket(AF_UNIX, SOCK_STREAM, 0), first = -1, second = -1;
-  int ok = bind(listener, (void *)&old, sizeof(old)) == 0 && listen(listener, 4) == 0 &&
-           rename(old.sun_path, moved.sun_path) == 0 && bind(replacement, (void *)&old, sizeof(old)) == 0 &&
-           listen(replacement, 4) == 0 && connect(client, (void *)&old, sizeof(old)) == 0 &&
-           (first = accept(replacement, NULL, NULL)) >= 0 && accept(listener, NULL, NULL) < 0 && errno == EAGAIN;
-  close(client);
-  client = socket(AF_UNIX, SOCK_STREAM, 0);
-  ok = ok && connect(client, (void *)&moved, sizeof(moved)) == 0 && (second = accept(listener, NULL, NULL)) >= 0;
-  if (first >= 0) { close(first); }
-  if (second >= 0) { close(second); }
-  close(client); close(replacement); close(listener);
-  unlink(old.sun_path); unlink(moved.sun_path);
-  ok = fchdir(cwd) == 0 && ok;
-  close(cwd);
-  printf("[spore] Unix listener rename and rebind: %s\n", ok ? "PASS" : "FAIL");
-  return ok;
-}
-
 int integration_socket_suite(void) {
-  return unix_listener_names() && unix_peer_close_poll_regression() && udp_bind_conflict_regression() && udp_receive_queue_regression() &&
+  return integration_unix_suite() && udp_bind_conflict_regression() && udp_receive_queue_regression() &&
          udp_msg_iov_regression() &&
          udp_recvmsg_trunc_regression() && socket_msg_peek_regression() && socket_msg_waitall_regression() &&
          getsockname_regression() && socket_options_regression() && tcp_rcvlowat_poll_regression() &&

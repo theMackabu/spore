@@ -1,5 +1,6 @@
 #include "proc/thread.h"
 #include "lib/mem.h"
+#include "net/unix.h"
 #include "proc/accounting.h"
 #include "proc/fd.h"
 #include "proc/domain.h"
@@ -55,7 +56,9 @@ void cell_clear_wait(struct thread *thread) {
   struct open_file *file = thread->wait.held_file;
   if (thread->wait.reason == WAIT_EVENTFD) { --file->eventfd_waiters; }
   if (thread->wait.reason == WAIT_SOCKET) { --file->socket_waiters; }
+  struct unix_rights *rights = thread->wait.reason == WAIT_PIPE && thread->wait.socket_msg ? thread->wait.unix_rights : NULL;
   thread->wait = (struct thread_wait){.target = -1};
+  unix_release_rights(rights);
   if (file != NULL) { cell_release_open_file(file); }
 }
 
@@ -71,10 +74,10 @@ void cell_finish_wait(struct thread *thread, int64_t result) {
 
 int cell_block_current(struct trap_frame *frame, struct thread_wait wait) {
   struct thread *thread = cell_current_thread_internal();
-  if (wait.reason == WAIT_SOCKET) {
+  if (wait.reason == WAIT_SOCKET || wait.reason == WAIT_PIPE) {
     wait.held_file = thread->domain->fds[wait.target];
     cell_retain_open_file(wait.held_file);
-    ++wait.held_file->socket_waiters;
+    if (wait.reason == WAIT_SOCKET) { ++wait.held_file->socket_waiters; }
   }
   thread->wait = wait;
   thread->running_cpu = -1;

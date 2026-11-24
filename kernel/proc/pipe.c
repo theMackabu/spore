@@ -9,7 +9,8 @@
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
-#include "net/socket.h"
+#include "net/unix.h"
+#include "abi/linux/aarch64/unix.h"
 #include "proc/thread.h"
 
 enum {
@@ -31,6 +32,7 @@ struct pipe_obj {
   uint64_t ino, fifo_dev;
   uint64_t pages[PIPE_PAGES];
   struct page_ring ring;
+  struct unix_rights_queue rights;
   uint64_t read_offset;
   uint64_t write_offset;
 };
@@ -38,7 +40,7 @@ struct pipe_obj {
 static struct object_pool pipes;
 static struct pipe_obj *fifos;
 static uint64_t next_pipe_ino = 20;
-static bool pipe_waking;
+static bool pipe_waking, pipe_rescan;
 
 static struct pipe_obj *pipe_for_file(struct open_file *file) {
   return file && file->type == OPEN_PIPE ? file->pipe : NULL;
@@ -51,7 +53,7 @@ void cell_pipe_discard(struct pipe_obj *pipe) {
     while (*link != pipe) { link = &(*link)->fifo_next; }
     *link = pipe->fifo_next;
   }
-  cell_unix_release_rights_for_pipe(pipe);
+  unix_clear_rights(&pipe->rights);
   page_ring_clear(&pipe->ring);
   pool_free(&pipes, pipe);
 }
@@ -100,9 +102,11 @@ void cell_pipe_add_writer(struct pipe_obj *pipe) {
 }
 
 void cell_pipe_drop_reader(struct pipe_obj *pipe) {
-  if (pipe == NULL) { return; }
-  if (pipe->readers > 0) { --pipe->readers; }
-  if (pipe->readers == 0 && pipe->writers == 0) { cell_pipe_discard(pipe); }
+  if (!pipe || !pipe->readers || --pipe->readers) { return; }
+  struct unix_rights_queue abandoned = pipe->rights;
+  pipe->rights = (struct unix_rights_queue){0};
+  if (!pipe->writers) { cell_pipe_discard(pipe); }
+  unix_clear_rights(&abandoned);
 }
 
 void cell_pipe_drop_writer(struct pipe_obj *pipe) {
@@ -138,46 +142,35 @@ bool cell_pipe_hup(struct pipe_obj *pipe) {
   return pipe != NULL && pipe->writers == 0;
 }
 
-bool cell_pipe_read_offset(struct pipe_obj *pipe, uint64_t *out) {
-  if (pipe == NULL || out == NULL) { return false; }
-  *out = pipe->read_offset;
-  return true;
-}
-
-bool cell_pipe_write_offset(struct pipe_obj *pipe, uint64_t *out) {
-  if (pipe == NULL || out == NULL) { return false; }
-  *out = pipe->write_offset;
-  return true;
-}
+uint64_t cell_pipe_read_offset(const struct pipe_obj *pipe) { return pipe->read_offset; }
+struct unix_rights_queue *cell_pipe_rights(struct pipe_obj *pipe) { return &pipe->rights; }
 
 bool cell_pipe_release_file(struct open_file *file) {
   struct pipe_obj *pipe = pipe_for_file(file);
   if (pipe == NULL) { return false; }
-  if (file->pipe_write_end) {
-    if (pipe->writers > 0) { --pipe->writers; }
-  } else if (pipe->readers > 0) {
-    --pipe->readers;
-  }
-  if (pipe->readers == 0 && pipe->writers == 0) { cell_pipe_discard(pipe); }
+  if (file->pipe_write_end) { cell_pipe_drop_writer(pipe); }
+  else { cell_pipe_drop_reader(pipe); }
   return true;
 }
 
 static void wake_pipe_waiters(void) {
-  if (pipe_waking) { return; }
+  if (pipe_waking) { pipe_rescan = true; return; }
   pipe_waking = true;
-  size_t cursor = 0;
-  struct thread *thread;
-  while ((thread = cell_next_waiter(WAIT_PIPE, &cursor))) {
-    int fd = thread->wait.target;
-    if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] == NULL) {
-      cell_finish_wait(thread, -9);
-    } else {
-      struct open_file *file = thread->domain->fds[fd];
+  do {
+    pipe_rescan = false;
+    size_t cursor = 0;
+    struct thread *thread;
+    while ((thread = cell_next_waiter(WAIT_PIPE, &cursor))) {
+      struct open_file *file = thread->wait.held_file;
       int64_t rc;
-      if (file->type == OPEN_UNIX_STREAM) {
+      if (thread->wait.socket_msg) {
+        rc = aarch64_unix_transfer(thread->domain, file, thread->wait.socket_msg_addr, thread->wait.socket_flags,
+                                   thread->wait.write, &thread->wait.unix_rights);
+      } else if (file->type == OPEN_UNIX_STREAM) {
         rc = thread->wait.write
                ? cell_pipe_write_user(thread->domain, file->unix_tx_pipe, thread->wait.buf, thread->wait.len)
-               : cell_pipe_read_user(thread->domain, file->unix_rx_pipe, thread->wait.buf, thread->wait.len);
+               : cell_pipe_recv_user(thread->domain, file->unix_rx_pipe, thread->wait.buf, thread->wait.len,
+                                     thread->wait.socket_flags & 2);
       } else {
         rc = thread->wait.write ? cell_pipe_write_from_domain(thread->domain, file, thread->wait.buf, thread->wait.len)
                                 : cell_pipe_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len);
@@ -185,7 +178,7 @@ static void wake_pipe_waiters(void) {
       if (rc == -EAGAIN) { continue; }
       cell_finish_wait(thread, rc);
     }
-  }
+  } while (pipe_rescan);
   pipe_waking = false;
 }
 
@@ -195,55 +188,76 @@ void cell_pipe_notify(void) {
 }
 
 struct pipe_user_buffer {
-  struct user_address_space *as;
+  struct domain *domain;
   uint64_t addr;
 };
 
 static int read_user(void *source, uint8_t *dst, size_t len) {
   struct pipe_user_buffer *buf = source;
-  if (!vmm_copy_from_user(buf->as, dst, buf->addr, len)) { return -EFAULT; }
+  if (!vmm_copy_from_user(cell_domain_as(buf->domain), dst, buf->addr, len) &&
+      !(cell_domain_ensure_user_range(buf->domain, buf->addr, len, VMM_ACCESS_READ) &&
+        vmm_copy_from_user(cell_domain_as(buf->domain), dst, buf->addr, len))) { return -EFAULT; }
   buf->addr += len;
   return 0;
 }
 
 static int write_user(void *destination, const uint8_t *src, size_t len) {
   struct pipe_user_buffer *buf = destination;
-  if (!vmm_copy_to_user(buf->as, buf->addr, src, len)) { return -EFAULT; }
+  if (!vmm_copy_to_user(cell_domain_as(buf->domain), buf->addr, src, len) &&
+      !(cell_domain_ensure_user_range(buf->domain, buf->addr, len, VMM_ACCESS_WRITE) &&
+        vmm_copy_to_user(cell_domain_as(buf->domain), buf->addr, src, len))) { return -EFAULT; }
   buf->addr += len;
   return 0;
 }
 
-int64_t cell_pipe_write_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len) {
-  if (len == 0) { return 0; }
-  if (pipe == NULL) { return -9; }
-  if (pipe->readers == 0) { return -EPIPE; }
-
-  uint64_t room = PIPE_CAP - pipe->ring.used;
-  if (room == 0 || (len <= PIPE_BUF && room < len)) { return -EAGAIN; }
-  uint64_t target = len < room ? len : room;
-  if (!cell_domain_ensure_user_range(domain, buf, (size_t)target, VMM_ACCESS_READ)) { return -EFAULT; }
-  struct pipe_user_buffer source = {cell_domain_as(domain), buf};
-  int n = page_ring_write(&pipe->ring, (uint32_t)target, read_user, &source);
+int64_t cell_pipe_write_data(struct pipe_obj *pipe, uint64_t len, ring_copy_in copy, void *source,
+                             struct unix_rights **rights) {
+  if (!len) { return 0; }
+  if (!pipe) { return -9; }
+  if (!pipe->readers) { return -EPIPE; }
+  uint32_t room = PIPE_CAP - pipe->ring.used;
+  if (!room || (len <= PIPE_BUF && room < len)) { return -EAGAIN; }
+  int n = page_ring_write(&pipe->ring, len < room ? (uint32_t)len : room, copy, source);
   if (n > 0) {
+    uint64_t start = pipe->write_offset;
     pipe->write_offset += (uint32_t)n;
+    if (rights && *rights) {
+      unix_queue_rights(&pipe->rights, *rights, start, pipe->write_offset);
+      *rights = NULL;
+    }
     cell_pipe_notify();
   }
   return n;
 }
 
-int64_t cell_pipe_read_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len) {
-  if (len == 0) { return 0; }
-  if (pipe == NULL) { return -9; }
-  uint64_t target = len < pipe->ring.used ? len : pipe->ring.used;
-  if (!target) { return pipe->writers == 0 && (!pipe->fifo_dev || pipe->had_writer) ? 0 : -EAGAIN; }
-  if (!cell_domain_ensure_user_range(domain, buf, (size_t)target, VMM_ACCESS_WRITE)) { return -EFAULT; }
-  struct pipe_user_buffer dst = {cell_domain_as(domain), buf};
-  int n = page_ring_read(&pipe->ring, (uint32_t)target, false, write_user, &dst);
-  if (n > 0) {
-    pipe->read_offset += (uint32_t)n;
-    cell_pipe_notify();
-  }
+int64_t cell_pipe_peek_data(struct pipe_obj *pipe, uint64_t len, ring_copy_out copy, void *dst) {
+  if (!len) { return 0; }
+  if (!pipe) { return -9; }
+  if (!pipe->ring.used) { return !pipe->writers && (!pipe->fifo_dev || pipe->had_writer) ? 0 : -EAGAIN; }
+  return page_ring_read(&pipe->ring, len < pipe->ring.used ? (uint32_t)len : pipe->ring.used, true, copy, dst);
+}
+
+void cell_pipe_consume(struct pipe_obj *pipe, uint32_t bytes) {
+  page_ring_consume(&pipe->ring, bytes);
+  pipe->read_offset += bytes;
+  unix_discard_rights(&pipe->rights, pipe->read_offset);
+  cell_pipe_notify();
+}
+
+int64_t cell_pipe_write_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len) {
+  struct pipe_user_buffer src = {domain, buf};
+  return cell_pipe_write_data(pipe, len, read_user, &src, NULL);
+}
+
+int64_t cell_pipe_recv_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len, bool peek) {
+  struct pipe_user_buffer dst = {domain, buf};
+  int64_t n = cell_pipe_peek_data(pipe, len, write_user, &dst);
+  if (n > 0 && !peek) { cell_pipe_consume(pipe, (uint32_t)n); }
   return n;
+}
+
+int64_t cell_pipe_read_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len) {
+  return cell_pipe_recv_user(domain, pipe, buf, len, false);
 }
 
 int64_t cell_pipe_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "message_layout.h"
+#include <stdbool.h>
 
 struct trap_frame;
 
@@ -17,6 +18,5 @@ enum {
 };
 
 int aarch64_copy_socket_iov(uint64_t iov_addr, int32_t iovlen, int32_t index, struct iovec64 *out);
-int64_t aarch64_unix_sendmsg(struct trap_frame *frame, uint64_t fd, const struct msghdr64 *msg, uint64_t flags);
-int64_t aarch64_unix_recvmsg(struct trap_frame *frame, uint64_t fd, const struct msghdr64 *msg, uint64_t msg_addr,
-                             uint64_t flags);
+int64_t aarch64_unix_message(struct trap_frame *frame, int fd, uint64_t addr, const struct msghdr64 *msg,
+                             uint32_t flags, bool write);

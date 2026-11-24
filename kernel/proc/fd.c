@@ -97,9 +97,7 @@ void cell_release_open_file(struct open_file *file) {
 
 void cell_close_all_fds(struct domain *domain) {
   for (size_t i = 0; i < MAX_FDS; ++i) {
-    cell_release_open_file(domain->fds[i]);
-    domain->fds[i] = NULL;
-    domain->fd_flags[i] = 0;
+    if (domain->fds[i]) { (void)cell_close_domain_fd(domain, (int)i); }
   }
 }
 
@@ -361,9 +359,10 @@ int cell_fd_dup3(int oldfd, int newfd, int flags) {
   if (oldfd == newfd) { return -EINVAL; }
   struct open_file *file = domain->fds[oldfd];
   cell_retain_open_file(file);
-  if (domain->fds[newfd] != NULL) { cell_release_open_file(domain->fds[newfd]); }
+  struct open_file *previous = domain->fds[newfd];
   domain->fds[newfd] = file;
   domain->fd_flags[newfd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
+  cell_release_open_file(previous);
   return newfd;
 }
 
@@ -417,14 +416,16 @@ int cell_fd_get_seals(int fd) {
   return vfs_get_seals(&file->node);
 }
 
-int cell_fd_close(int fd) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  cell_release_open_file(domain->fds[fd]);
+int cell_close_domain_fd(struct domain *domain, int fd) {
+  if (!domain || fd < 0 || fd >= MAX_FDS || !domain->fds[fd]) { return -9; }
+  struct open_file *file = domain->fds[fd];
   domain->fds[fd] = NULL;
   domain->fd_flags[fd] = 0;
+  cell_release_open_file(file);
   return 0;
 }
+
+int cell_fd_close(int fd) { return cell_close_domain_fd(cell_current_domain_internal(), fd); }
 
 int cell_fd_is_tty(int fd) {
   struct domain *domain = cell_current_domain_internal();

@@ -414,13 +414,6 @@ void socket_apply_accept_flags(struct domain *domain, int fd, int flags) {
   if ((flags & CELL_O_CLOEXEC) != 0) { domain->fd_flags[fd] = 1; }
 }
 
-void socket_close_domain_fd(struct domain *domain, int fd) {
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return; }
-  cell_release_open_file(domain->fds[fd]);
-  domain->fds[fd] = NULL;
-  domain->fd_flags[fd] = 0;
-}
-
 int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, bool dontwait, struct trap_frame *frame,
                             uint64_t addr, uint64_t addrlen) {
   struct domain *domain = cell_current_domain_internal();
@@ -428,9 +421,10 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, 
   struct open_file *file = domain->fds[fd];
   if (file->type == OPEN_UNIX_STREAM) {
     if (!file->unix_connected) { return -ENOTCONN; }
-    int64_t got = cell_pipe_read_user(domain, file->unix_rx_pipe, buf, len);
+    int64_t got = cell_pipe_recv_user(domain, file->unix_rx_pipe, buf, len, flags & MSG_PEEK);
     if (got != -EAGAIN || dontwait || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
-    return cell_block_current_on_pipe(fd, buf, len, false, frame);
+    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_PIPE, .target = fd, .buf = buf, .len = len,
+                                                         .socket_flags = flags});
   }
   if (file->type != OPEN_SOCKET) { return -9; }
   net_poll();

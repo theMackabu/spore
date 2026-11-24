@@ -38,7 +38,7 @@ static int64_t resume_socket_wait(struct open_file *file, struct thread *thread)
     int accepted = cell_socket_take_pending_tcp(domain, file, wait->socket_accept_flags);
     if (accepted < 0) { return accepted; }
     int rc = tcp_copy_peer_addr_to_domain(domain, accepted, wait->socket_addr, wait->socket_addrlen);
-    if (rc < 0) { socket_close_domain_fd(domain, accepted); return rc; }
+    if (rc < 0) { cell_close_domain_fd(domain, accepted); return rc; }
     return accepted;
   }
   if (file->tcp_error) { return -(int)file->tcp_error; }
