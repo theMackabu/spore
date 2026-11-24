@@ -42,3 +42,14 @@ void arch_init_user_frame(struct trap_frame *frame, uint64_t entry, uint64_t sp,
 void arch_set_snapshot_entry(struct trap_frame *frame, uint64_t entry, uint64_t arg, uint64_t pid);
 bool arch_restart_syscall(struct trap_frame *frame);
 #endif
+
+static inline void arch_reset_context(struct arch_thread_context *context) {
+  *context = (struct arch_thread_context){0};
+#if defined(SPORE_NATIVE_PORT) && defined(__x86_64__)
+  const uint16_t control_word = 0x037f;
+  const uint32_t mxcsr = 0x1f80;
+  __builtin_memcpy(context->fp, &control_word, sizeof(control_word));
+  __builtin_memcpy(context->fp + 24, &mxcsr, sizeof(mxcsr));
+#endif
+  arch_restore_context(context);
+}

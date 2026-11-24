@@ -36,9 +36,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   thread->sigaltstack_sp = 0;
   thread->sigaltstack_size = 0;
   thread->tf = *frame;
-  struct arch_thread_context *context = &thread->context;
-  kmemset(context, 0, sizeof(*context));
-  arch_restore_context(context);
+  arch_reset_context(&thread->context);
   cell_wake_vfork_parent_of(domain->id);
   return true;
 }

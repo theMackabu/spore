@@ -8,6 +8,7 @@
 #include "arch/aarch64/mmu.h"
 #endif
 #include "arch/smp.h"
+#include "proc/thread.h"
 #include "exec/elf.h"
 #include "exec/stack.h"
 #include "fs/vfs.h"
@@ -28,6 +29,7 @@ static void enter_first_process(void *context) {
   if (!cell_create_init(first->program, &first->as, &first->vmas, first->entry, first->sp)) {
     boot_fail(BOOT_INIT_FAILED, "failed to create init cell");
   }
+  arch_reset_context(&cell_current_thread_internal()->context);
   smp_start_scheduler_cpus();
   syscall_set_address_space(cell_current_as());
 #ifndef SPORE_NATIVE_PORT
