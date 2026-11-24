@@ -53,6 +53,7 @@ void cell_release_open_file(struct open_file *file) {
   if (file == NULL || file->refcount == 0) { return; }
   --file->refcount;
   if (file->refcount == 0) {
+    if (file->type == OPEN_VFS || file->type == OPEN_PIPE) { fsnotify_closed(file); }
     if (file->epoll_observers || file->type == OPEN_EPOLL) { cell_epoll_release_file(file); }
     cell_flock_release(file);
     if (cell_pipe_release_file(file)) {
@@ -124,7 +125,7 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
   return next;
 }
 
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path) {
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
   if (node->device == RAMFS_DEV_PTMX) { return cell_pty_open_master(flags, path); }
@@ -167,7 +168,10 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   if (file->type == OPEN_VFS && (flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
   bool pipe = file->type == OPEN_PIPE;
   int fd = cell_install_fd(domain, file, flags & CELL_O_CLOEXEC);
-  if (fd >= 0 && pipe) { cell_pipe_notify(); }
+  if (fd >= 0) {
+    fsnotify_opened(file, resolved);
+    if (pipe) { cell_pipe_notify(); }
+  }
   return fd;
 }
 

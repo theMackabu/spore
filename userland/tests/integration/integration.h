@@ -27,4 +27,5 @@ int integration_signal_suite(void);
 int integration_memory_suite(void);
 int integration_fork_suite(void);
 int integration_fs_demo(void);
+int integration_notify_suite(void);
 int integration_tmpfile(const char *directory);

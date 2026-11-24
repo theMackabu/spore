@@ -2,6 +2,7 @@
 
 #include "lib/mem.h"
 #include "fs/procfs.h"
+#include "fs/notify.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -15,6 +16,7 @@ static void ext2_inode_freed(uint32_t ino) {
   struct vfs_node node;
   vfs_from_ext2(&ext, &node);
   vfs_page_cache_forget(&node);
+  fsnotify_reclaim(node.dev_id, ino);
 }
 
 static void ramfs_inode_freed(enum ramfs_mount mount, uint64_t ino) {
@@ -22,6 +24,7 @@ static void ramfs_inode_freed(enum ramfs_mount mount, uint64_t ino) {
   struct vfs_node node;
   vfs_from_ramfs(&ram, &node);
   vfs_page_cache_forget(&node);
+  fsnotify_reclaim(node.dev_id, ino);
 }
 
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2) {
@@ -67,7 +70,7 @@ bool vfs_mkdir(const char *path, uint32_t mode) {
   } else {
     ok = vfs_root_ramfs != NULL && ramfs_mkdir(vfs_root_ramfs, path, (uint16_t)mode);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE); }
   return ok;
 }
 
@@ -77,13 +80,13 @@ bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
     struct ext2_node node;
     if (!ext2_create(vfs_root_ext2, path, false, mode, &node)) { return false; }
     vfs_from_ext2(&node, out);
-    vfs_lookup_cache_clear();
+    vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
     return true;
   }
   struct ramfs_node node;
   if (vfs_root_ramfs == NULL || !ramfs_create(vfs_root_ramfs, path, mode, &node)) { return false; }
   vfs_from_ramfs(&node, out);
-  vfs_lookup_cache_clear();
+  vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
   return true;
 }
 
@@ -115,7 +118,7 @@ bool vfs_link_node(const struct vfs_node *node, const char *new_path) {
   } else if (node->backend == VFS_RAMFS && node->ramfs.fs != NULL) {
     ok = ramfs_link_node(node->ramfs.fs, node->ramfs.index, new_path);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_clear(); fsnotify_linked(new_path); }
   return ok;
 }
 
@@ -127,7 +130,7 @@ bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out) {
     return false;
   }
   vfs_from_ramfs(&node, out);
-  vfs_lookup_cache_clear();
+  vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
   return true;
 }
 
@@ -139,7 +142,7 @@ bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
     return false;
   }
   vfs_from_ramfs(&node, out);
-  vfs_lookup_cache_clear();
+  vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
   return true;
 }
 
@@ -161,6 +164,11 @@ bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
 }
 
 int vfs_remove(const char *path) {
+  struct fsnotify_entry old = {0};
+  fsnotify_capture(path, &old);
+  fsnotify_prepare_change(&old);
+  struct vfs_node held;
+  bool retained = fsnotify_hold_watched(path, &held);
   vfs_update_time_sources();
   int rc;
   if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
@@ -168,7 +176,8 @@ int vfs_remove(const char *path) {
   } else {
     rc = vfs_root_ramfs != NULL ? ramfs_remove(vfs_root_ramfs, path) : -2;
   }
-  if (rc == 0) { vfs_lookup_cache_clear(); }
+  if (rc == 0) { vfs_lookup_cache_clear(); fsnotify_removed(&old); }
+  if (retained) { vfs_release_node(&held); }
   return rc;
 }
 
@@ -180,14 +189,14 @@ bool vfs_link(const char *old_path, const char *new_path) {
   } else if (vfs_root_ramfs != NULL && vfs_paths_share_ramfs(old_path, new_path)) {
     ok = ramfs_link(vfs_root_ramfs, old_path, new_path);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_clear(); fsnotify_linked(new_path); }
   return ok;
 }
 
 bool vfs_symlink(const char *target, const char *link_path) {
   vfs_update_time_sources();
   bool ok = vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(link_path) && ext2_symlink(vfs_root_ext2, target, link_path);
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(link_path, FS_CREATE); }
   return ok;
 }
 
@@ -201,7 +210,7 @@ bool vfs_chmod(const char *path, uint32_t mode) {
     ok = vfs_root_ramfs != NULL && vfs_path_uses_ramfs(path) && ramfs_lookup_node(vfs_root_ramfs, path, &node) &&
          ramfs_chmod_node(vfs_root_ramfs, node.index, (uint16_t)mode);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_ATTRIB); }
   return ok;
 }
 
@@ -227,7 +236,7 @@ bool vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
     ok = vfs_root_ramfs != NULL && vfs_path_uses_ramfs(path) && ramfs_lookup_node(vfs_root_ramfs, path, &node) &&
          ramfs_chown_node(vfs_root_ramfs, node.index, uid, gid);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_ATTRIB); }
   return ok;
 }
 
@@ -244,6 +253,13 @@ bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
 }
 
 int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
+  struct fsnotify_entry old = {0}, to = {0};
+  fsnotify_capture(old_path, &old);
+  fsnotify_capture(new_path, &to);
+  fsnotify_prepare_change(&old);
+  fsnotify_prepare_change(&to);
+  struct vfs_node held;
+  bool retained = fsnotify_hold_watched(new_path, &held);
   vfs_update_time_sources();
   int rc = -18;
   if (vfs_root_ext2 && !vfs_path_uses_ramfs(old_path) && !vfs_path_uses_ramfs(new_path)) {
@@ -251,7 +267,8 @@ int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
   } else if (vfs_root_ramfs && vfs_paths_share_ramfs(old_path, new_path)) {
     rc = ramfs_renameat(vfs_root_ramfs, old_path, new_path, noreplace);
   }
-  if (!rc) { vfs_lookup_cache_clear(); }
+  if (!rc) { vfs_lookup_cache_clear(); fsnotify_renamed(&old, &to); }
+  if (retained) { vfs_release_node(&held); }
   return rc;
 }
 
@@ -264,6 +281,7 @@ bool vfs_retain_node(const struct vfs_node *node) {
 void vfs_release_node(const struct vfs_node *node) {
   if (node->backend == VFS_EXT2) { ext2_release_inode(vfs_root_ext2, node->ext2.ino); }
   if (node->backend == VFS_RAMFS) { ramfs_release_node(node->ramfs.fs, node->ramfs.index); }
+  inotify_flush();
 }
 
 bool vfs_set_sealable(const struct vfs_node *node, bool allow_sealing) {

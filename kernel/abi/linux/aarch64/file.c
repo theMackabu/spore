@@ -178,7 +178,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
     len = append_literal(virtual_path, sizeof(virtual_path), len, len == 1 ? "#" : "/#");
     len = append_u64(virtual_path, sizeof(virtual_path), len, tmp.ino);
     append_literal(virtual_path, sizeof(virtual_path), len, " (deleted)");
-    int fd = cell_fd_open_node(&tmp, flags, virtual_path);
+    int fd = cell_fd_open_node(&tmp, flags, virtual_path, NULL);
     vfs_release_node(&tmp);
     return fd;
   }
@@ -207,10 +207,10 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
     return -(int64_t)EACCES;
   }
   if ((flags & O_TRUNC) != 0 && !node.is_dir) {
-    (void)vfs_truncate(&node, 0);
+    if (vfs_truncate(&node, 0)) { fsnotify_path_event(path, FS_MODIFY); }
     (void)vfs_lookup(path, &node);
   }
-  return cell_fd_open_node(&node, (uint32_t)flags, virtual_path);
+  return cell_fd_open_node(&node, (uint32_t)flags, virtual_path, path);
 }
 
 static bool memfd_name_char_ok(char ch) {
@@ -241,7 +241,7 @@ int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
     (void)vfs_lookup(path, &node);
     (void)vfs_set_sealable(&node, (flags & MFD_ALLOW_SEALING) != 0);
     uint32_t open_flags = LINUX_O_RDWR | ((flags & MFD_CLOEXEC) != 0 ? O_CLOEXEC : 0);
-    int fd = cell_fd_open_node(&node, open_flags, path);
+    int fd = cell_fd_open_node(&node, open_flags, path, path);
     if (fd >= 0) { (void)vfs_remove(path); }
     return fd;
   }
@@ -689,7 +689,9 @@ int64_t sys_fchmodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_t
 int64_t sys_fchmod(uint64_t fd, uint64_t mode) {
   struct vfs_node node;
   if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
-  return vfs_chmod_node(&node, (uint32_t)mode) ? 0 : -(int64_t)EINVAL;
+  if (!vfs_chmod_node(&node, (uint32_t)mode)) { return -EINVAL; }
+  fsnotify_file_event(cell_fd_file(fd), FS_ATTRIB);
+  return 0;
 }
 
 static bool chown_ids(const struct vfs_node *node, uint64_t uid_arg, uint64_t gid_arg, uint32_t *uid, uint32_t *gid) {
@@ -720,7 +722,9 @@ int64_t sys_fchown(uint64_t fd, uint64_t uid_arg, uint64_t gid_arg) {
   uint32_t uid = 0;
   uint32_t gid = 0;
   if (!chown_ids(&node, uid_arg, gid_arg, &uid, &gid)) { return -(int64_t)EINVAL; }
-  return vfs_chown_node(&node, uid, gid) ? 0 : -(int64_t)EINVAL;
+  if (!vfs_chown_node(&node, uid, gid)) { return -EINVAL; }
+  fsnotify_file_event(cell_fd_file(fd), FS_ATTRIB);
+  return 0;
 }
 
 int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
@@ -729,5 +733,7 @@ int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
   if (file->type != OPEN_VFS || !linux_open_writable(file->flags) || (int64_t)size < 0 ||
       file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -EINVAL; }
   if (vfs_truncate_sealed(&file->node, size)) { return -EPERM; }
-  return vfs_truncate(&file->node, size) ? 0 : -EINVAL;
+  if (!vfs_truncate(&file->node, size)) { return -EINVAL; }
+  fsnotify_file_event(file, FS_MODIFY);
+  return 0;
 }

@@ -20,7 +20,7 @@ struct inotify_watch {
 
 static struct object_pool instances, watches;
 static struct inotify_watch *by_inode[WATCH_BUCKETS];
-static unsigned watch_count;
+static unsigned watch_count, directory_watches;
 
 static struct inotify_watch **bucket(uint64_t dev, uint64_t ino) { return &by_inode[(dev ^ ino) % WATCH_BUCKETS]; }
 
@@ -81,6 +81,7 @@ int inotify_add(int fd, const struct vfs_node *node, uint32_t mask) {
   if (w->inode_next) { w->inode_next->inode_link = &w->inode_next; }
   *head = w;
   ++watch_count;
+  directory_watches += w->directory;
   return w->wd;
 }
 
@@ -91,6 +92,7 @@ static void remove_watch(struct inotify_watch *w, bool report) {
   *w->link = w->next;
   if (w->next) { w->next->link = w->link; }
   --watch_count;
+  directory_watches -= w->directory;
   pool_free(&watches, w);
 }
 
@@ -112,6 +114,8 @@ void inotify_close(struct open_file *file) {
   pool_free(&instances, state);
 }
 
+bool fsnotify_directories(void) { return directory_watches != 0; }
+
 bool fsnotify_active(void) { return watch_count != 0; }
 
 void fsnotify_emit(uint64_t dev, uint64_t ino, uint32_t mask, uint32_t cookie, const char *name, bool unlinked) {
@@ -126,6 +130,14 @@ void fsnotify_emit(uint64_t dev, uint64_t ino, uint32_t mask, uint32_t cookie, c
   }
 }
 
+bool fsnotify_hold_watched(const char *path, struct vfs_node *node) {
+  if (!watch_count || !vfs_lstat(path, node) || node->is_dir) { return false; }
+  for (struct inotify_watch *w = *bucket(node->dev_id, node->ino); w; w = w->inode_next) {
+    if (w->dev == node->dev_id && w->ino == node->ino) { return vfs_retain_node(node); }
+  }
+  return false;
+}
+
 void fsnotify_reclaim(uint64_t dev, uint64_t ino) {
   struct inotify_watch *w = *bucket(dev, ino);
   while (w) {
@@ -138,5 +150,4 @@ void fsnotify_reclaim(uint64_t dev, uint64_t ino) {
     }
     w = next;
   }
-  inotify_flush();
 }

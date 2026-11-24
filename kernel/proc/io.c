@@ -137,6 +137,7 @@ static int64_t write_regular(struct domain *domain, struct open_file *file, uint
   uint64_t chunk = bounded_io_len(len);
   if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
   int64_t wrote = vfs_write(&file->node, off, file_io_tmp, chunk);
+  if (wrote > 0) { fsnotify_file_event(file, FS_MODIFY); }
   return wrote == 0 && chunk ? -28 : wrote;
 }
 
@@ -203,6 +204,7 @@ static int64_t read_regular(struct domain *domain, struct open_file *file, uint6
   uint64_t got = vfs_read(&file->node, off, file_io_tmp, chunk);
   if (got == 0) { return 0; }
   if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)got)) { return -14; }
+  fsnotify_file_event(file, FS_ACCESS);
   return (int64_t)got;
 }
 

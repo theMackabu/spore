@@ -2,6 +2,7 @@
 
 #include "proc/limits.h"
 #include "fs/vfs.h"
+#include "fs/notify.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -47,6 +48,9 @@ struct open_file {
     struct {
       struct pipe_obj *pipe;
       bool pipe_write_end;
+      bool name_unlinked, name_unresolved;
+      struct fsnotify_name notify_name;
+      struct open_file *name_next, **name_link;
     };
     struct {
       uint8_t pty_id;
@@ -174,7 +178,7 @@ bool cell_init_stdio(struct domain *domain);
 bool cell_copy_fd_table(struct domain *dst, const struct domain *src);
 void cell_copy_open_path(struct open_file *file, const char *path);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path);
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);
