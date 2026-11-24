@@ -4,14 +4,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct spore_elf_header {
-  uint16_t type;
-  uint16_t phentsize;
-  uint16_t phnum;
-  uint64_t entry;
-  uint64_t phoff;
-};
-
 struct spore_elf_program {
   uint32_t type;
   uint32_t flags;
@@ -22,6 +14,19 @@ struct spore_elf_program {
   uint64_t align;
 };
 
-bool spore_elf_parse_header(const uint8_t *data, size_t len, uint64_t image_size, struct spore_elf_header *out);
-bool spore_elf_parse_program(const uint8_t *data, size_t len, struct spore_elf_program *out);
-bool spore_elf_interp_valid(const uint8_t *data, size_t len);
+struct spore_elf_loaded {
+  uint64_t entry;
+  uint64_t load_base;
+  uint64_t phdr;
+  uint64_t brk_base;
+  uint16_t phent;
+  uint16_t phnum;
+};
+
+typedef bool (*spore_elf_read_fn)(void *ctx, uint64_t offset, void *dst, size_t len);
+typedef bool (*spore_elf_map_fn)(void *ctx, const struct spore_elf_program *program, uint64_t segment_vaddr,
+                                 uint64_t start, uint64_t end);
+
+bool spore_elf_load(spore_elf_read_fn read_at, void *reader_ctx, uint64_t image_size, uint64_t load_base,
+                    spore_elf_map_fn map, void *map_ctx, struct spore_elf_loaded *out);
+bool spore_elf_find_interp(spore_elf_read_fn read_at, void *reader_ctx, uint64_t image_size, char *out, size_t out_cap);

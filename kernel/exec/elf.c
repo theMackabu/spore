@@ -3,53 +3,7 @@
 
 #include "lib/mem.h"
 
-enum {
-  EI_NIDENT = 16,
-  ET_EXEC = 2,
-  ET_DYN = 3,
-  EM_AARCH64 = 183,
-  PT_INTERP = 3,
-  PT_LOAD = 1,
-  PF_X = 1,
-  PF_W = 2,
-  PAGE_SIZE = 4096,
-};
-
-struct elf64_ehdr {
-  unsigned char e_ident[EI_NIDENT];
-  uint16_t e_type;
-  uint16_t e_machine;
-  uint32_t e_version;
-  uint64_t e_entry;
-  uint64_t e_phoff;
-  uint64_t e_shoff;
-  uint32_t e_flags;
-  uint16_t e_ehsize;
-  uint16_t e_phentsize;
-  uint16_t e_phnum;
-  uint16_t e_shentsize;
-  uint16_t e_shnum;
-  uint16_t e_shstrndx;
-};
-
-struct elf64_phdr {
-  uint32_t p_type;
-  uint32_t p_flags;
-  uint64_t p_offset;
-  uint64_t p_vaddr;
-  uint64_t p_paddr;
-  uint64_t p_filesz;
-  uint64_t p_memsz;
-  uint64_t p_align;
-};
-
-static uint64_t align_down(uint64_t value, uint64_t align) {
-  return value & ~(align - 1);
-}
-
-static uint64_t align_up(uint64_t value, uint64_t align) {
-  return (value + align - 1) & ~(align - 1);
-}
+enum { PF_X = 1, PF_W = 2 };
 
 static bool bounds_ok(uint64_t off, uint64_t len, uint64_t image_size) {
   return off <= image_size && len <= image_size - off;
@@ -67,86 +21,38 @@ static uint32_t phdr_to_vmm_flags(uint32_t flags) {
   return out;
 }
 
-static bool valid_ehdr(const struct elf64_ehdr *ehdr, uint64_t image_size) {
-  struct spore_elf_header parsed;
-  return spore_elf_parse_header((const uint8_t *)ehdr, sizeof(*ehdr), image_size, &parsed) &&
-         parsed.type == ehdr->e_type && parsed.entry == ehdr->e_entry && parsed.phoff == ehdr->e_phoff &&
-         parsed.phentsize == ehdr->e_phentsize && parsed.phnum == ehdr->e_phnum;
-}
-
-static bool read_ehdr(const struct elf_reader *reader, struct elf64_ehdr *ehdr) {
-  return read_exact(reader, 0, ehdr, sizeof(*ehdr)) && valid_ehdr(ehdr, reader->size);
+static bool rust_read(void *ctx, uint64_t off, void *dst, size_t len) {
+  return read_exact(ctx, off, dst, len);
 }
 
 bool elf_find_interp_aarch64(const struct elf_reader *reader, char *out, size_t out_cap) {
-  if (out_cap == 0) { return false; }
-  struct elf64_ehdr ehdr;
-  if (!read_ehdr(reader, &ehdr)) { return false; }
+  return reader != NULL && spore_elf_find_interp(rust_read, (void *)reader, reader->size, out, out_cap);
+}
 
-  for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
-    struct elf64_phdr ph;
-    uint64_t ph_off = ehdr.e_phoff + (uint64_t)i * sizeof(ph);
-    if (!read_exact(reader, ph_off, &ph, sizeof(ph))) { return false; }
-    struct spore_elf_program parsed;
-    if (!spore_elf_parse_program((const uint8_t *)&ph, sizeof(ph), &parsed)) { return false; }
-    if (parsed.type != PT_INTERP) { continue; }
-    if (ph.p_filesz == 0 || ph.p_filesz >= out_cap || !bounds_ok(ph.p_offset, ph.p_filesz, reader->size)) {
-      return false;
-    }
-    if (!read_exact(reader, ph.p_offset, out, (size_t)ph.p_filesz)) { return false; }
-    if (!spore_elf_interp_valid((const uint8_t *)out, (size_t)ph.p_filesz)) { return false; }
-    return true;
-  }
-  return false;
+struct elf_map_context { struct vma_list *vmas; const struct elf_reader *reader; };
+static bool rust_map(void *ctx, const struct spore_elf_program *program, uint64_t segment, uint64_t start, uint64_t end) {
+  struct elf_map_context *map = ctx;
+  return map != NULL && program != NULL && vma_insert_file(map->vmas, start, end, phdr_to_vmm_flags(program->flags), 0,
+                                                           map->reader->node, segment, program->offset, program->filesz);
 }
 
 bool elf_load_aarch64(struct user_address_space *as, struct vma_list *vmas, const struct elf_reader *reader,
                       uint64_t load_base, struct loaded_elf *out) {
-  struct elf64_ehdr ehdr;
-  if (as == NULL || vmas == NULL || reader == NULL || reader->node == NULL || !read_ehdr(reader, &ehdr)) {
+  if (as == NULL || vmas == NULL || reader == NULL || reader->node == NULL) {
     return false;
   }
-
-  uint64_t high = 0;
-  uint64_t phdr_va = 0;
-  uint64_t base = ehdr.e_type == ET_DYN ? load_base : 0;
-
-  for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
-    struct elf64_phdr ph;
-    uint64_t ph_off = ehdr.e_phoff + (uint64_t)i * sizeof(ph);
-    if (!read_exact(reader, ph_off, &ph, sizeof(ph))) { return false; }
-    struct spore_elf_program parsed;
-    if (!spore_elf_parse_program((const uint8_t *)&ph, sizeof(ph), &parsed)) { return false; }
-    if (parsed.type != PT_LOAD) { continue; }
-    if (ph.p_memsz < ph.p_filesz || !bounds_ok(ph.p_offset, ph.p_filesz, reader->size) ||
-        (ph.p_align > PAGE_SIZE && (ph.p_vaddr % ph.p_align) != (ph.p_offset % ph.p_align))) {
-      return false;
-    }
-
-    uint64_t seg_vaddr = base + ph.p_vaddr;
-    uint64_t start = align_down(seg_vaddr, PAGE_SIZE);
-    uint64_t end = align_up(seg_vaddr + ph.p_memsz, PAGE_SIZE);
-    uint32_t flags = phdr_to_vmm_flags(ph.p_flags);
-    if (!vma_insert_file(vmas, start, end, flags, 0, reader->node, seg_vaddr, ph.p_offset, ph.p_filesz)) {
-      return false;
-    }
-
-    if (seg_vaddr + ph.p_memsz > high) { high = seg_vaddr + ph.p_memsz; }
-    if (ehdr.e_phoff >= ph.p_offset &&
-        ehdr.e_phoff + (uint64_t)ehdr.e_phentsize * ehdr.e_phnum <= ph.p_offset + ph.p_filesz) {
-      phdr_va = seg_vaddr + (ehdr.e_phoff - ph.p_offset);
-    }
-  }
-
-  out->entry = base + ehdr.e_entry;
+  struct elf_map_context map = {.vmas = vmas, .reader = reader};
+  struct spore_elf_loaded loaded;
+  if (!spore_elf_load(rust_read, (void *)reader, reader->size, load_base, rust_map, &map, &loaded)) { return false; }
+  out->entry = loaded.entry;
   out->runtime_entry = out->entry;
-  out->load_base = base;
+  out->load_base = loaded.load_base;
   out->at_base = 0;
-  out->phdr = phdr_va;
-  out->phent = ehdr.e_phentsize;
-  out->phnum = ehdr.e_phnum;
-  out->brk_base = align_up(high, PAGE_SIZE);
+  out->phdr = loaded.phdr;
+  out->phent = loaded.phent;
+  out->phnum = loaded.phnum;
+  out->brk_base = loaded.brk_base;
   as->brk_base = out->brk_base;
   as->brk_current = out->brk_base;
-  return high != 0;
+  return true;
 }
