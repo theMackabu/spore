@@ -46,7 +46,6 @@ struct open_file {
   char path[CELL_PATH_MAX];
   struct vfs_node node;
   union {
-    struct open_file *next_free;
     struct {
       uint8_t pipe_id;
       bool pipe_write_end;

@@ -4,6 +4,7 @@
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "mm/pool.h"
 #include "proc/domain.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
@@ -51,23 +52,10 @@ static void free_inotify_pages(uint64_t pa) {
   }
 }
 
-static struct open_file *open_files;
-static size_t open_file_capacity;
-static size_t next_unused;
-static struct open_file *free_files;
+static struct object_pool open_files;
 
 bool cell_fd_table_reset(size_t capacity) {
-  if (capacity == 0 || capacity > MAX_OPEN_FILES) { return false; }
-  if (open_files == NULL || open_file_capacity != capacity) {
-    open_files = pmm_alloc_table(capacity, sizeof(*open_files));
-    if (open_files == NULL) { return false; }
-    open_file_capacity = capacity;
-  } else {
-    kmemset(open_files, 0, open_file_capacity * sizeof(*open_files));
-  }
-  next_unused = 0;
-  free_files = NULL;
-  return true;
+  return capacity <= MAX_OPEN_FILES && pool_init(&open_files, sizeof(struct open_file), capacity);
 }
 
 int cell_find_free_fd(struct domain *domain, int start) {
@@ -79,14 +67,8 @@ int cell_find_free_fd(struct domain *domain, int start) {
 }
 
 struct open_file *cell_alloc_open_file(void) {
-  struct open_file *file = free_files;
-  if (file != NULL) {
-    free_files = file->next_free;
-  } else {
-    if (next_unused >= open_file_capacity) { return NULL; }
-    file = &open_files[next_unused++];
-  }
-  *file = (struct open_file){.refcount = 1};
+  struct open_file *file = pool_alloc(&open_files);
+  if (file != NULL) { file->refcount = 1; }
   return file;
 }
 
@@ -119,8 +101,7 @@ void cell_release_open_file(struct open_file *file) {
       cell_pty_release_file(file);
     }
     if (file->type == OPEN_RAMFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
-    file->next_free = free_files;
-    free_files = file;
+    pool_free(&open_files, file);
   }
 }
 

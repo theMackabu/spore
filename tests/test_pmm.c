@@ -1,7 +1,36 @@
 #include "mm/pmm.h"
+#include "mm/pool.h"
 
 #include <assert.h>
 #include <stdint.h>
+
+static void test_object_pool(void) {
+  alignas(PAGE_SIZE) static uint8_t backing[16 * PAGE_SIZE];
+  struct spore_memmap_entry memory = {.base = 0x100000, .length = sizeof(backing), .type = SPORE_MEMMAP_USABLE};
+  pmm_init((uintptr_t)backing - memory.base, &memory, 1);
+  struct object_pool pool = {0};
+  uint64_t free_pages = pmm_free_pages();
+  uint8_t *files[55];
+  assert(pool_init(&pool, 920, 55));
+  assert(pmm_free_pages() == free_pages);
+  for (size_t i = 0; i < 55; ++i) {
+    files[i] = pool_alloc(&pool);
+    assert(files[i] != NULL);
+    files[i][919] = (uint8_t)(i + 1);
+  }
+  assert(pool_alloc(&pool) == NULL);
+  for (size_t i = 0; i < 55; i += 3) { pool_free(&pool, files[i]); }
+  for (size_t i = 0; i < 55; ++i) {
+    if (i % 3 == 0) {
+      files[i] = pool_alloc(&pool);
+      assert(files[i] != NULL && files[i][919] == 0);
+    } else {
+      assert(files[i][919] == i + 1);
+    }
+  }
+  for (size_t i = 55; i > 0; --i) { pool_free(&pool, files[i - 1]); }
+  assert(pmm_free_pages() == free_pages);
+}
 
 int main(void) {
   struct spore_memmap_entry memmap[] = {{
@@ -83,5 +112,6 @@ int main(void) {
   for (size_t i = 0; i < 3; ++i) { pmm_free_page(fragments[0].base + i * PAGE_SIZE); }
   assert(pmm_alloc_contiguous_pages(3) == fragments[0].base);
 
+  test_object_pool();
   return 0;
 }

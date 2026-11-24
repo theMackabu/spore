@@ -10,7 +10,6 @@
 struct domain;
 
 struct process_mm {
-  bool used;
   uint16_t refcount;
   struct user_address_space as;
   struct vma_list vmas;

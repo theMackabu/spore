@@ -2,6 +2,7 @@
 
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "mm/pool.h"
 #include "proc/domain.h"
 #include "proc/limits.h"
 #include "proc/thread.h"
@@ -12,8 +13,7 @@ enum {
   MAP_GROWSDOWN = 0x0100,
 };
 
-static struct process_mm *process_mms;
-static size_t process_mm_capacity;
+static struct object_pool process_mms;
 
 struct user_address_space *cell_current_as(void) {
   struct domain *domain = cell_current_domain_internal();
@@ -28,35 +28,19 @@ static bool vma_is_shared(const struct vma *vma) {
 }
 
 bool cell_mm_reset(size_t capacity) {
-  if (capacity == 0 || capacity > MAX_DOMAINS + MAX_SNAPSHOTS) { return false; }
-  if (process_mms == NULL || process_mm_capacity != capacity) {
-    process_mms = pmm_alloc_table(capacity, sizeof(*process_mms));
-    if (process_mms == NULL) { return false; }
-    process_mm_capacity = capacity;
-  } else {
-    kmemset(process_mms, 0, process_mm_capacity * sizeof(*process_mms));
-  }
-  return true;
+  return capacity <= MAX_DOMAINS + MAX_SNAPSHOTS && pool_init(&process_mms, sizeof(struct process_mm), capacity);
 }
 
 static struct process_mm *alloc_mm(void) {
-  for (size_t i = 0; i < process_mm_capacity; ++i) {
-    if (!process_mms[i].used) {
-      kmemset(&process_mms[i], 0, sizeof(process_mms[i]));
-      process_mms[i].used = true;
-      process_mms[i].refcount = 1;
-      return &process_mms[i];
-    }
-  }
-  return NULL;
+  struct process_mm *mm = pool_alloc(&process_mms);
+  if (mm != NULL) { mm->refcount = 1; }
+  return mm;
 }
 
 struct process_mm *cell_mm_from_owned(struct user_address_space *as, struct vma_list *vmas) {
+  if (as == NULL || vmas == NULL) { return NULL; }
   struct process_mm *mm = alloc_mm();
-  if (mm == NULL || as == NULL || vmas == NULL) {
-    if (mm != NULL) { mm->used = false; }
-    return NULL;
-  }
+  if (mm == NULL) { return NULL; }
   mm->as = *as;
   mm->vmas = *vmas;
   kmemset(as, 0, sizeof(*as));
@@ -65,16 +49,16 @@ struct process_mm *cell_mm_from_owned(struct user_address_space *as, struct vma_
 }
 
 struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
-  if (src == NULL || !src->used) { return NULL; }
+  if (src == NULL) { return NULL; }
   struct process_mm *mm = alloc_mm();
   if (mm == NULL) { return NULL; }
   if (!vmm_clone_cow(&mm->as, &src->as)) {
-    mm->used = false;
+    pool_free(&process_mms, mm);
     return NULL;
   }
   if (!vma_clone(&mm->vmas, &src->vmas)) {
     vmm_destroy(&mm->as);
-    mm->used = false;
+    pool_free(&process_mms, mm);
     return NULL;
   }
   for (size_t i = 0; i < vma_count(&src->vmas); ++i) {
@@ -83,7 +67,7 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
     if (!vmm_restore_shared_range(&src->as, &mm->as, vma->start, vma->end, vma->prot)) {
       vmm_destroy(&mm->as);
       vma_list_destroy(&mm->vmas);
-      mm->used = false;
+      pool_free(&process_mms, mm);
       return NULL;
     }
   }
@@ -91,22 +75,22 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
 }
 
 struct process_mm *cell_mm_retain(struct process_mm *mm) {
-  if (mm != NULL && mm->used) { ++mm->refcount; }
+  if (mm != NULL) { ++mm->refcount; }
   return mm;
 }
 
 void cell_mm_release(struct process_mm *mm) {
-  if (mm == NULL || !mm->used || mm->refcount == 0) { return; }
+  if (mm == NULL || mm->refcount == 0) { return; }
   --mm->refcount;
   if (mm->refcount != 0) { return; }
   (void)flush_shared_file_vmas(mm, 0, UINT64_MAX);
   vmm_destroy(&mm->as);
   vma_list_destroy(&mm->vmas);
-  mm->used = false;
+  pool_free(&process_mms, mm);
 }
 
 bool cell_domain_set_mm(struct domain *domain, struct process_mm *mm) {
-  if (domain == NULL || mm == NULL || !mm->used) { return false; }
+  if (domain == NULL || mm == NULL) { return false; }
   if (domain->mm != NULL) { cell_mm_release(domain->mm); }
   domain->mm = mm;
   return true;
@@ -173,7 +157,7 @@ static bool flush_shared_file_vma_range(struct user_address_space *as, const str
 }
 
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end) {
-  if (mm == NULL || !mm->used) { return true; }
+  if (mm == NULL) { return true; }
   for (size_t i = vma_first_ending_after(&mm->vmas, start); i < vma_count(&mm->vmas); ++i) {
     const struct vma *vma = vma_at(&mm->vmas, i);
     if (vma->start >= end) { break; }
