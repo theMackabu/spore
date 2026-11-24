@@ -25,7 +25,10 @@ struct __attribute__((aligned(8))) ext2_node {
   uint32_t blocks[15];
 };
 
+struct ext2_dir_cache;
+
 struct ext2_fs {
+  struct ext2_dir_cache *dir_cache;
   void (*inode_freed)(uint32_t ino);
   ext2_read_fn read;
   ext2_write_fn write;
