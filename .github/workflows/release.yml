@@ -88,7 +88,7 @@ jobs:
       - name: Install Rust for the host, kernel and guest
         if: steps.release_gate.outputs.should_release == 'true'
         run: |
-          rustup toolchain install 1.100.0 --profile minimal --target aarch64-unknown-none-softfloat,aarch64-unknown-linux-musl
+          rustup toolchain install 1.100.0 --profile minimal --target aarch64-unknown-none-softfloat,aarch64-unknown-linux-musl,x86_64-unknown-none,riscv64gc-unknown-none-elf
           echo "RUSTUP_TOOLCHAIN=1.100.0" >> "$GITHUB_ENV"
 
       - name: Check out submodules
