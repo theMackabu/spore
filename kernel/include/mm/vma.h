@@ -46,6 +46,7 @@ bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32
                      const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size, bool shared_may_write);
 bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end);
 bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot);
+bool vma_extend(struct vma_list *list, uint64_t old_end, uint64_t new_end, bool extend_file);
 bool vma_grow_down(struct vma_list *list, uint64_t page, uint32_t required_flags, struct vma *out);
 bool vma_clone(struct vma_list *dst, const struct vma_list *src);
 size_t vma_count(const struct vma_list *list);

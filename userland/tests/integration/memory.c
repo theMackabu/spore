@@ -275,6 +275,27 @@ static int mmap_fixed_noreplace_regression(void) {
   return ok;
 }
 
+static int grow_file_mapping(void) {
+  constexpr size_t page = 4096;
+  int fd = open("/tmp/remap-file", O_CREAT | O_RDWR | O_TRUNC, 0600);
+  if (fd < 0) { return 0; }
+  int ok = pwrite(fd, "B", 1, 2 * page) == 1 && pwrite(fd, "C", 1, 3 * page) == 1;
+  char *base = mmap(NULL, 3 * page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (base != MAP_FAILED) {
+    munmap(base, 3 * page);
+    char *file = mmap(base, page, PROT_READ, MAP_PRIVATE | MAP_FIXED_NOREPLACE, fd, page);
+    if (file == base) {
+      ok = ok && mremap(base, page, 2 * page, 0) == base && base[page] == 'B';
+      ok = ok && mremap(base, 2 * page, 3 * page, 0) == base && base[2 * page] == 'C';
+      munmap(base, 3 * page);
+    } else { ok = 0; }
+  } else { ok = 0; }
+  close(fd);
+  unlink("/tmp/remap-file");
+  printf("[spore] repeated file mapping growth: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int mmap_past_reservation(bool move) {
   constexpr size_t page = 4096;
   constexpr size_t reserve_size = 64 * 1024 * 1024;
@@ -316,6 +337,6 @@ static int mmap_noreserve_regression(void) {
 int integration_memory_suite(void) {
   return sparse_shared_file("/spore-sparse") && sparse_shared_file("/tmp/spore-sparse") && shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
-         file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mmap_past_reservation(false) &&
+         file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && grow_file_mapping() && mmap_past_reservation(false) &&
          mmap_past_reservation(true);
 }

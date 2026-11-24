@@ -194,7 +194,7 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   uint64_t old_size = align_up(old_len, PAGE_SIZE);
   uint64_t new_size = align_up(new_len, PAGE_SIZE);
   uint64_t old_end;
-  if (old_len == 0 || old_size < old_len || new_size < new_len || !checked_add(old_addr, old_size, &old_end)) {
+  if (old_len == 0 || old_size < old_len || new_size < new_len || !checked_add(old_addr, old_size, &old_end) || old_end > USER_VA_LIMIT) {
     return -(int64_t)EINVAL;
   }
 
@@ -212,11 +212,18 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
     return cell_remove_vma(tail, old_end) ? (int64_t)old_addr : -(int64_t)ENOMEM;
   }
 
+  bool shared_anon = old_vma.type == VMA_ANON && (old_vma.flags & MAP_SHARED);
   if ((flags & MREMAP_FIXED) == 0) {
     uint64_t in_place_end;
-    if (checked_add(old_addr, new_size, &in_place_end) && !cell_vma_overlaps(old_end, in_place_end)) {
+    if (checked_add(old_addr, new_size, &in_place_end) && in_place_end <= USER_VA_LIMIT && !cell_vma_overlaps(old_end, in_place_end)) {
       if (!cell_map_add_allowed(old_end, in_place_end, false)) { return -(int64_t)ENOMEM; }
-      if (!add_mremap_vma(old_end, in_place_end, &old_vma, old_vma.file_start, new_size)) { return -(int64_t)ENOMEM; }
+      struct vma_list *vmas = cell_domain_vmas(cell_current_domain_internal());
+      bool extend_file = (old_vma.flags & (MAP_PRIVATE | MAP_SHARED)) != 0;
+      if (!vma_extend(vmas, old_end, in_place_end, extend_file)) { return -ENOMEM; }
+      if (shared_anon && !cell_prefault_anon_vma(old_end, in_place_end)) {
+        (void)cell_remove_vma(old_end, in_place_end);
+        return -ENOMEM;
+      }
       return (int64_t)old_addr;
     }
     if ((flags & MREMAP_MAYMOVE) == 0) { return -(int64_t)ENOMEM; }
@@ -230,14 +237,12 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
     return -(int64_t)ENOMEM;
   }
   uint64_t new_end;
-  if (!checked_add(new_start, new_size, &new_end)) { return -(int64_t)EINVAL; }
+  if (!checked_add(new_start, new_size, &new_end) || new_end > USER_VA_LIMIT) { return -(int64_t)EINVAL; }
   if (ranges_overlap(old_addr, old_end, new_start, new_end)) { return -(int64_t)EINVAL; }
 
   if (!cell_map_resize_allowed(old_addr, old_end, new_start, new_end, (flags & MREMAP_FIXED) != 0)) {
     return -(int64_t)ENOMEM;
   }
-  if ((flags & MREMAP_FIXED) && !cell_remove_vma(new_start, new_end)) { return -ENOMEM; }
-  if (cell_vma_overlaps(new_start, new_end)) { return -(int64_t)ENOMEM; }
   uint64_t file_start = new_start;
   uint64_t file_size = new_size;
   if (old_vma.type == VMA_FILE) {
@@ -255,7 +260,13 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
       file_size = old_vma.file_size < new_size - prefix ? old_vma.file_size : new_size - prefix;
     }
   }
+  if ((flags & MREMAP_FIXED) && !cell_remove_vma(new_start, new_end)) { return -ENOMEM; }
+  if (cell_vma_overlaps(new_start, new_end)) { return -(int64_t)ENOMEM; }
   if (!add_mremap_vma(new_start, new_end, &old_vma, file_start, file_size)) { return -ENOMEM; }
+  if (shared_anon && new_size > old_size && !cell_prefault_anon_vma(new_start + old_size, new_end)) {
+    (void)cell_remove_vma(new_start, new_end);
+    return -ENOMEM;
+  }
   uint64_t bytes = old_size < new_size ? old_size : new_size;
   struct user_address_space *as = syscall_active_as();
   if (!vmm_move_range(as, old_addr, new_start, bytes)) {
