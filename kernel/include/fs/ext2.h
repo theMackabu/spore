@@ -101,7 +101,10 @@ int ext2_remove(struct ext2_fs *fs, const char *path);
 static inline bool ext2_unlink(struct ext2_fs *fs, const char *path) {
   return ext2_remove(fs, path) == 0;
 }
-bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path);
+int ext2_renameat(struct ext2_fs *fs, const char *old_path, const char *new_path, bool noreplace);
+static inline bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path) {
+  return ext2_renameat(fs, old_path, new_path, false) == 0;
+}
 int ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool ext2_is_dir(const struct ext2_node *node);
 bool ext2_is_regular(const struct ext2_node *node);

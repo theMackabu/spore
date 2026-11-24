@@ -196,6 +196,28 @@ static void make_ext2plus_image(char *path, size_t path_cap) {
   assert(rmdir(root_dir) == 0);
 }
 
+static void test_directory_moves(struct ext2_fs *fs) {
+  struct ext2_node from, to, tree, file, found;
+  assert(ext2_create(fs, "/from", true, 0755, &from));
+  assert(ext2_create(fs, "/to", true, 0755, &to));
+  assert(ext2_create(fs, "/from/tree", true, 0755, &tree));
+  assert(ext2_create(fs, "/from/tree/child", false, 0600, &file));
+  assert(ext2_create(fs, "/to/target", true, 0755, NULL));
+  assert(ext2_renameat(fs, "/from/tree", "/to/target", true) == -17);
+  assert(ext2_renameat(fs, "/from", "/from/tree/loop", false) == -22);
+  assert(ext2_rename(fs, "/from/tree", "/to/target"));
+  assert(ext2_drop_cache(fs));
+  assert(!ext2_lookup(fs, "/from/tree", &found));
+  assert(ext2_lookup(fs, "/to/target/child", &found) && found.ino == file.ino);
+  assert(ext2_lookup(fs, "/to/target/..", &found) && found.ino == to.ino && found.links_count == 3);
+  assert(ext2_lookup(fs, "/from", &found) && found.ino == from.ino && found.links_count == 2);
+  assert(ext2_create(fs, "/to/empty", true, 0755, NULL));
+  assert(ext2_renameat(fs, "/to/empty", "/to/target", false) == -LINUX_ENOTEMPTY);
+  assert(ext2_rename(fs, "/to/target", "/to/empty"));
+  assert(ext2_lookup(fs, "/to", &found) && found.links_count == 3);
+  assert(ext2_lookup(fs, "/to/empty", &found) && found.ino == tree.ino);
+}
+
 static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks, uint32_t blocks_per_group,
                                       uint32_t write_blocks) {
   char path[256];
@@ -206,6 +228,7 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
   struct ext2_fs fs;
   assert(ext2_mount_rw(&fs, file_read, file_write, f));
   assert(fs.block_size == block_size);
+  test_directory_moves(&fs);
 
   struct ext2_node node;
   assert(ext2_create(&fs, "/group-cross.bin", false, 0755, &node));
