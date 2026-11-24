@@ -11,7 +11,7 @@ enum {
 };
 
 struct vfs_lookup_cache_entry {
-  bool valid;
+  uint32_t generation;
   bool lstat;
   uint64_t age;
   char path[LOOKUP_CACHE_PATH_MAX + 1];
@@ -20,6 +20,8 @@ struct vfs_lookup_cache_entry {
 
 static struct vfs_lookup_cache_entry entries[LOOKUP_CACHE_SETS][LOOKUP_CACHE_WAYS];
 static uint64_t clock;
+static uint32_t generation = 1;
+static bool populated;
 
 static bool same_path(const char *a, const char *b) {
   while (*a && *b) {
@@ -44,7 +46,7 @@ static bool cache_path(const char *path, bool lstat, size_t *len_out,
 static struct vfs_lookup_cache_entry *find_entry(struct vfs_lookup_cache_entry *set,
                                                   const char *path, bool lstat) {
   for (size_t i = 0; i < LOOKUP_CACHE_WAYS; ++i) {
-    if (set[i].valid && set[i].lstat == lstat && same_path(set[i].path, path)) { return &set[i]; }
+    if (set[i].generation == generation && set[i].lstat == lstat && same_path(set[i].path, path)) { return &set[i]; }
   }
   return NULL;
 }
@@ -69,7 +71,7 @@ bool vfs_lookup_cache_get(const char *path, bool lstat, struct vfs_node *out) {
 static struct vfs_lookup_cache_entry *victim(struct vfs_lookup_cache_entry *set) {
   struct vfs_lookup_cache_entry *oldest = &set[0];
   for (size_t i = 0; i < LOOKUP_CACHE_WAYS; ++i) {
-    if (!set[i].valid) { return &set[i]; }
+    if (set[i].generation != generation) { return &set[i]; }
     if (set[i].age < oldest->age) { oldest = &set[i]; }
   }
   return oldest;
@@ -82,23 +84,20 @@ void vfs_lookup_cache_put(const char *path, bool lstat, const struct vfs_node *n
   if (!cache_path(path, lstat, &len, &set)) { return; }
   struct vfs_lookup_cache_entry *entry = find_entry(set, path, lstat);
   if (entry == NULL) { entry = victim(set); }
-  entry->valid = false;
   entry->lstat = lstat;
   kmemcpy(entry->path, path, len + 1);
   entry->node = *node;
   entry->age = ++clock;
-  entry->valid = true;
+  entry->generation = generation;
+  populated = true;
 }
 
 void vfs_lookup_cache_clear(void) {
-  bool any = false;
-  for (size_t set = 0; set < LOOKUP_CACHE_SETS; ++set) {
-    for (size_t way = 0; way < LOOKUP_CACHE_WAYS; ++way) {
-      if (entries[set][way].valid) {
-        entries[set][way].valid = false;
-        any = true;
-      }
-    }
+  if (!populated) { return; }
+  populated = false;
+  ++vfs_stat_counters.lookup_cache_invalidations;
+  if (++generation == 0) {
+    kmemset(entries, 0, sizeof(entries));
+    generation = 1;
   }
-  if (any) { ++vfs_stat_counters.lookup_cache_invalidations; }
 }
