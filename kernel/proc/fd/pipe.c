@@ -12,7 +12,7 @@
 #include "proc/poll.h"
 #include "proc/epoll.h"
 #include "net/unix.h"
-#include "abi/linux/aarch64/unix.h"
+#include "abi/linux/shared/unix.h"
 #include "proc/thread.h"
 
 enum {
@@ -189,7 +189,7 @@ static void wake_pipe_waiters(void) {
       struct open_file *file = thread->wait.held_file;
       int64_t rc;
       if (thread->wait.socket_msg) {
-        rc = aarch64_unix_transfer(thread->domain, file, thread->wait.socket_msg_addr, thread->wait.socket_flags,
+        rc = linux_unix_transfer(thread->domain, file, thread->wait.socket_msg_addr, thread->wait.socket_flags,
                                    thread->wait.write, &thread->wait.unix_rights);
       } else if (file->type == OPEN_UNIX_STREAM) {
         rc = thread->wait.write

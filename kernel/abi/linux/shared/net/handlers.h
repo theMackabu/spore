@@ -20,3 +20,5 @@ int64_t sys_socket_name(uint64_t fd, uint64_t addr, uint64_t addrlen, bool peer)
 int64_t sys_shutdown(uint64_t fd, uint64_t how);
 int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t optval, uint64_t optlen_addr);
 int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t optval, uint64_t optlen);
+int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, uint64_t flags);
+int64_t sys_recvmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, uint64_t flags);

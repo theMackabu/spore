@@ -1,13 +1,12 @@
 #include "abi/linux/shared/usercopy.h"
 #include "abi/linux/shared/layout.h"
-#include "arch/aarch64/timer.h"
+#include "arch/clock.h"
 #include "handlers.h"
 #include "abi/linux/shared/time/handlers.h"
 #include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/thread.h"
-#include "abi/linux/aarch64/syscall.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -71,8 +70,8 @@ static uint64_t realtime_freq;
 
 void syscall_set_boot_time(uint64_t epoch_sec) {
   realtime_base_sec = epoch_sec;
-  realtime_base_cnt = aarch64_counter_value();
-  realtime_freq = aarch64_counter_frequency();
+  realtime_base_cnt = arch_counter_value();
+  realtime_freq = arch_counter_frequency();
 }
 
 struct timezone32 {
@@ -90,7 +89,7 @@ static int write_timespec(uint64_t addr, struct timespec64 ts) {
 }
 
 struct timespec64 syscall_wall_time(bool realtime) {
-  uint64_t cnt = aarch64_counter_value(), freq = aarch64_counter_frequency(), epoch = 0;
+  uint64_t cnt = arch_counter_value(), freq = arch_counter_frequency(), epoch = 0;
   if (realtime) {
     epoch = realtime_base_sec;
     if (cnt >= realtime_base_cnt) { cnt -= realtime_base_cnt; }
@@ -112,7 +111,7 @@ int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp) {
 int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
   uint64_t freq;
   if (cpu_clock(clk_id)) { freq = 100; }
-  else if (clk_id == CLOCK_REALTIME || clk_id == CLOCK_MONOTONIC) { freq = aarch64_counter_frequency(); }
+  else if (clk_id == CLOCK_REALTIME || clk_id == CLOCK_MONOTONIC) { freq = arch_counter_frequency(); }
   else { return -EINVAL; }
   if (!tp) { return 0; }
   return write_timespec(tp, (struct timespec64){.tv_nsec = (1000000000ULL + freq - 1) / freq});

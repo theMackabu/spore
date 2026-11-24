@@ -6,6 +6,6 @@ sends an interrupt to the foreground process group. [TTY input](../../kernel/tty
 
 A program can also open `/dev/ptmx` to allocate a pseudoterminal. Its peer opens the
 corresponding `/dev/pts/N` slave. The two ends buffer input and output and wake blocked
-readers or writers as data or space becomes available. [PTY implementation](../../kernel/tty/pty.c) · [Terminal ioctl handlers](../../kernel/abi/linux/aarch64/fd/ioctl.c)
+readers or writers as data or space becomes available. [PTY implementation](../../kernel/tty/pty.c) · [Terminal ioctl handlers](../../kernel/abi/linux/shared/fd/ioctl.c)
 
 [Guest shell](../userland/shell.md) · [Device nodes](../files/ramfs.md)

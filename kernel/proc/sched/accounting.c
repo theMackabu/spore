@@ -1,7 +1,7 @@
 #include "lib/kprintf.h"
 #include "proc/accounting.h"
 #include "accounting_internal.h"
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
 #include "proc/memory.h"

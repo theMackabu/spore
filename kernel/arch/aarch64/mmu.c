@@ -1,6 +1,6 @@
 #include "arch/aarch64/mmu.h"
 
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "mm/vmm.h"
 
 void aarch64_publish_table(uint64_t *slot, uint64_t descriptor) {

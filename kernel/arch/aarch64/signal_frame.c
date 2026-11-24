@@ -1,5 +1,5 @@
 #include "abi/linux/aarch64/signal_context.h"
-#include "arch/aarch64/signal_frame.h"
+#include "arch/signal_frame.h"
 
 #include "lib/kprintf.h"
 #include "lib/mem.h"
@@ -54,7 +54,7 @@ static void fill_signal_context(struct signal_frame64 *frame, const struct threa
   frame->ucontext.uc_mcontext.pstate = thread->tf.spsr_el1;
 }
 
-bool aarch64_push_signal_frame(struct thread *thread, const struct signal_action *action, int signal,
+bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action, int signal,
                                uint64_t fault_addr, int sig_code) {
   struct domain *domain = thread->domain;
   struct signal_frame64 frame;
@@ -104,7 +104,7 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
   }
   frame->sp_el0 = sigframe.ucontext.uc_mcontext.sp;
   frame->elr_el1 = sigframe.ucontext.uc_mcontext.pc;
-  frame->spsr_el1 = sigframe.ucontext.uc_mcontext.pstate;
+  frame->spsr_el1 = 0x340 | (sigframe.ucontext.uc_mcontext.pstate & 0xf0000000ull);
   struct thread *thread = cell_current_thread_internal();
   if (thread != NULL) {
     thread->tf = *frame;

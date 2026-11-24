@@ -1,6 +1,6 @@
 #include "proc/futex.h"
 
-#include "arch/aarch64/regs.h"
+#include "arch/regs.h"
 #include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/memory.h"

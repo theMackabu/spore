@@ -1,13 +1,6 @@
 # Linux system calls
 
-Each CPU decodes syscall numbers and registers in its own directory under `kernel/abi/linux/`. The shared handlers take decoded arguments. All three CPUs use the same `write` handler. AArch64 supplies a process descriptor table, while x86-64 and RV64 currently supply console output. [Shared handlers](../../kernel/abi/linux/shared/) · [Guest support](../ports.md)
-
-## AArch64
-
-When a guest program issues a supervisor call, Spore reads its syscall number and arguments
-from the saved registers. The dispatcher checks the process policy, calls the handler and
-returns its result to user space. A denied call returns `EPERM`. An unknown call is counted
-and returns `ENOSYS`. [Dispatcher](../../kernel/abi/linux/aarch64/syscall.c) · [User buffer checks](../../kernel/abi/linux/shared/usercopy.c)
+AArch64, RV64 and x86-64 feed a common Linux dispatcher. CPU entry code reads the guest registers and translates architecture-specific syscall numbers and argument layouts. The dispatcher applies process policy and calls the same handlers for memory, file descriptors, processes and sockets. It returns `EPERM` for a denied call and records unknown calls before returning `ENOSYS`. [Dispatcher](../../kernel/abi/linux/shared/dispatch.c) · [Guest support](../ports.md)
 
 | Guest operation | Kernel subsystem |
 | --- | --- |
@@ -18,4 +11,4 @@ and returns `ENOSYS`. [Dispatcher](../../kernel/abi/linux/aarch64/syscall.c) · 
 | Read clocks, system information or random bytes | [Time and kernel services](services.md) |
 
 Spore-specific calls cover snapshots, policy, CPU budgets, shutdown and network configuration.
-[Call numbers](../../kernel/abi/linux/aarch64/numbers.h) · [Confinement](../processes/confinement.md)
+[Call numbers](../../kernel/abi/linux/shared/numbers.h) · [Confinement](../processes/confinement.md)

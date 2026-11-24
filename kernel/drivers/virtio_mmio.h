@@ -72,11 +72,18 @@ struct virtq {
 
 #if defined(__riscv)
 static inline void virtio_barrier(void) { __asm__ volatile("fence iorw, iorw" ::: "memory"); }
+#elif defined(__x86_64__)
+static inline void virtio_barrier(void) { __asm__ volatile("mfence" ::: "memory"); }
 #else
 #include "arch/aarch64/platform.h"
 #define virtio_barrier aarch64_io_barrier
 #endif
 
+uintptr_t virtio_slot(uint64_t hhdm, unsigned index, uint32_t device);
+#if defined(SPORE_NATIVE_PORT) && defined(__x86_64__)
+uint32_t virtio_read(uintptr_t base, unsigned reg);
+void virtio_write(uintptr_t base, unsigned reg, uint32_t value);
+#else
 static inline uint32_t virtio_read(uintptr_t base, unsigned offset) {
   return *(volatile uint32_t *)(base + offset);
 }
@@ -85,6 +92,8 @@ static inline void virtio_write(uintptr_t base, unsigned offset, uint32_t value)
   *(volatile uint32_t *)(base + offset) = value;
   virtio_barrier();
 }
+
+#endif
 
 static inline void virtio_set_status(uintptr_t base, uint32_t bits) {
   virtio_write(base, VIRTIO_MMIO_STATUS, virtio_read(base, VIRTIO_MMIO_STATUS) | bits);

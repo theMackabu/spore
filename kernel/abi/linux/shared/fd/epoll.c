@@ -1,5 +1,5 @@
 #include "abi/linux/shared/fd/handlers.h"
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/file_layout.h"
 #include "abi/linux/shared/usercopy.h"
 #include "proc/poll.h"
 

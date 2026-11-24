@@ -1,15 +1,15 @@
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/file_layout.h"
 #include "abi/linux/shared/layout.h"
 
 #include <assert.h>
 #include <stddef.h>
 
 int main(void) {
-  assert(offsetof(struct stat64_aarch64, st_ino) == 8);
-  assert(offsetof(struct stat64_aarch64, st_mode) == 16);
-  assert(offsetof(struct stat64_aarch64, st_size) == 48);
-  assert(offsetof(struct stat64_aarch64, st_blocks) == 64);
-  assert(sizeof(struct stat64_aarch64) == 128);
+  assert(offsetof(struct linux_stat64, st_ino) == 8);
+  assert(offsetof(struct linux_stat64, st_mode) == 16);
+  assert(offsetof(struct linux_stat64, st_size) == 48);
+  assert(offsetof(struct linux_stat64, st_blocks) == 64);
+  assert(sizeof(struct linux_stat64) == 128);
 
   assert(offsetof(struct linux_dirent64_header, d_ino) == 0);
   assert(offsetof(struct linux_dirent64_header, d_off) == 8);

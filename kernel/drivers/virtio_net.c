@@ -79,14 +79,9 @@ static bool allocate_frames(uint64_t *physical, uint8_t **buffers, unsigned id) 
 bool virtio_net_init(uint64_t hhdm_offset) {
   hhdm = hhdm_offset;
   net_ready = false;
-  mmio_base = virtio_find(hhdm + VIRTIO_MMIO_BASE, VIRTIO_MMIO_SLOTS, VIRTIO_MMIO_SLOT_SIZE, VIRTIO_DEVICE_NET);
-  if (mmio_base == 0) {
-    mmio_base = hhdm + VIRTIO_MMIO_BASE;
-    kprintf("[spore] virtio-net: device not present magic=%x version=%u devid=%u\n",
-            (unsigned)virtio_read(mmio_base, VIRTIO_MMIO_MAGIC), (unsigned)virtio_read(mmio_base, VIRTIO_MMIO_VERSION),
-            (unsigned)virtio_read(mmio_base, VIRTIO_MMIO_DEVICE_ID));
-    return false;
-  }
+  mmio_base = 0;
+  for (unsigned i=0; i<VIRTIO_MMIO_SLOTS && !mmio_base; ++i) { mmio_base = virtio_slot(hhdm, i, VIRTIO_DEVICE_NET); }
+  if (!mmio_base) { return false; }
 
   enum virtio_features features = virtio_negotiate(mmio_base);
   if (features != VIRTIO_FEATURES_OK) {
@@ -123,7 +118,7 @@ bool virtio_net_init(uint64_t hhdm_offset) {
     tx_inflight[i] = false;
     tx_len[i] = 0;
   }
-  kprintf("[spore] virtio-net: mmio %p up rxq=%u txq=%u\n", (void *)(uintptr_t)(mmio_base - hhdm), (unsigned)QUEUE_SIZE,
+  kprintf("[spore] virtio-net: mmio %p up rxq=%u txq=%u\n", (void *)(uintptr_t)mmio_base, (unsigned)QUEUE_SIZE,
           (unsigned)QUEUE_SIZE);
   return true;
 }

@@ -112,7 +112,10 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   }
   uint64_t arg_start = cursor;
 
-  static const char platform[] = "aarch64";
+#ifndef SPORE_MACHINE
+#define SPORE_MACHINE "aarch64"
+#endif
+  static const char platform[] = SPORE_MACHINE;
   cursor -= sizeof(platform);
   uint64_t platform_va = cursor;
   if (!stack_copy_to_user(as, platform_va, platform, sizeof(platform))) { goto out; }
@@ -124,8 +127,16 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   if (!stack_copy_to_user(as, random_va, random, sizeof(random))) { goto out; }
   kmemset(random, 0, sizeof(random));
 
+#ifdef SPORE_NATIVE_PORT
+#if defined(__riscv)
+  const uint64_t hwcap = 1 | (1 << 2) | (1 << 8) | (1 << 12);
+#else
+  const uint64_t hwcap = 0;
+#endif
+#else
   const uint64_t hwcap = AARCH64_HWCAP_FP | AARCH64_HWCAP_ASIMD | AARCH64_HWCAP_AES | AARCH64_HWCAP_PMULL |
                          AARCH64_HWCAP_SHA1 | AARCH64_HWCAP_SHA2 | AARCH64_HWCAP_CRC32 | AARCH64_HWCAP_ATOMICS;
+#endif
   const uint64_t aux[][2] = {
     {AT_PHDR, elf->phdr},
     {AT_PHENT, elf->phent},

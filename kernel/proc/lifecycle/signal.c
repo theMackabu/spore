@@ -1,9 +1,9 @@
 #include "init/app.h"
 #include "proc/signal.h"
 
-#include "arch/aarch64/regs.h"
-#include "arch/aarch64/signal_frame.h"
-#include "arch/aarch64/smp.h"
+#include "arch/regs.h"
+#include "arch/signal_frame.h"
+#include "arch/smp.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
@@ -131,7 +131,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
   uint64_t handler_mask = thread->signal_mask;
   if (thread->state == THREAD_BLOCKED) {
     if ((action->flags & SA_RESTART) && wait_is_restartable(&thread->wait) &&
-        aarch64_restart_syscall(&thread->tf)) {
+        arch_restart_syscall(&thread->tf)) {
       cell_resume_wait(thread);
     } else {
       int64_t result = -EINTR;
@@ -140,7 +140,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
     }
   }
 
-  if (!aarch64_push_signal_frame(thread, action, signal, fault_addr, sig_code)) {
+  if (!arch_push_signal_frame(thread, action, signal, fault_addr, sig_code)) {
     terminate_domain_by_signal(domain, SIGSEGV);
     return true;
   }

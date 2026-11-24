@@ -20,6 +20,7 @@ fn guest(s: &str) -> io::Result<String> {
     Ok(s.into())
 }
 struct Package {
+    machine: u16,
     files: BTreeMap<String, PathBuf>,
     dirs: BTreeSet<String>,
     libs: Vec<PathBuf>,
@@ -74,11 +75,14 @@ impl Package {
             .map(|p| p.join(name))
             .find(|p| p.is_file())
             .or_else(|| {
+                if self.machine != goblin::elf::header::EM_AARCH64 {
+                    return None;
+                }
                 gcc_file(name)
                     .ok()
                     .filter(|p| p.is_absolute() && p.is_file())
             })
-            .ok_or_else(|| bad(format!("missing AArch64 library {name}")))
+            .ok_or_else(|| bad(format!("missing guest library {name}")))
     }
     fn elf(&mut self, src: &Path, dst: &str) -> io::Result<()> {
         self.file(src, dst)?;
@@ -91,14 +95,14 @@ impl Package {
         if !elf.is_64
             || !elf.little_endian
             || !matches!(elf.header.e_ident[7], 0 | 3 | 9)
-            || elf.header.e_machine != goblin::elf::header::EM_AARCH64
+            || elf.header.e_machine != self.machine
             || !matches!(
                 elf.header.e_type,
                 goblin::elf::header::ET_EXEC | goblin::elf::header::ET_DYN
             )
         {
             return Err(bad(format!(
-                "expected an AArch64 executable/shared object: {}",
+                "unexpected ELF machine or executable type: {}",
                 src.display()
             )));
         }
@@ -168,8 +172,10 @@ pub fn payload(
     default_port: Option<u16>,
     stage: &Path,
     bundle: &Path,
+    machine: u16,
 ) -> io::Result<[Ipv4Addr; 4]> {
     let mut pkg = Package {
+        machine,
         files: BTreeMap::new(),
         dirs: BTreeSet::new(),
         libs: Vec::new(),
@@ -304,22 +310,27 @@ pub fn build(
     program: &Path,
     opts: &[PathBuf],
     default_port: Option<u16>,
+    arch: crate::arch::Arch,
 ) -> io::Result<()> {
     build_image(output, |image| {
         let stage = image.with_extension("app-stage");
         fs::create_dir(&stage)?;
         let result = (|| {
             let bundle = stage.join("payload");
-            let net = payload(program, opts, default_port, &stage, &bundle)?;
+            let net = payload(program, opts, default_port, &stage, &bundle, arch.machine())?;
             let config = stage.join("limine.conf");
             fs::write(
                 &config,
                 format!(
-                    "# spore-ipv4 {} {} {} {}\ntimeout: 0\ngraphics: no\n/Spore app\n    protocol: limine\n    path: boot():/boot/kernel.elf\n    module_path: boot():/boot/app.bin\n    module_string: /spore.app\n",
-                    net[0], net[1], net[2], net[3]
+                    "# spore-arch {}\n# spore-ipv4 {} {} {} {}\ntimeout: 0\ngraphics: no\n/Spore app\n    protocol: limine\n    path: boot():/boot/kernel.elf\n    module_path: boot():/boot/app.bin\n    module_string: /spore.app\n",
+                    arch.name(),
+                    net[0],
+                    net[1],
+                    net[2],
+                    net[3]
                 ),
             )?;
-            build_esp(&config, image, Some(&bundle))
+            build_esp(&config, image, Some(&bundle), arch)
         })();
         let cleanup = fs::remove_dir_all(stage);
         result.and(cleanup)

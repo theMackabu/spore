@@ -14,8 +14,13 @@ enum {
   O_CREAT = 0100,
   O_EXCL = 0200,
   O_TRUNC = 01000,
+#ifdef SPORE_NATIVE_PORT
+  O_DIRECTORY = 00200000,
+  O_NOFOLLOW = 00400000,
+#else
   O_DIRECTORY = 040000,
   O_NOFOLLOW = 0100000,
+#endif
 };
 
 static size_t append_literal(char *dst, size_t cap, size_t len, const char *text) {

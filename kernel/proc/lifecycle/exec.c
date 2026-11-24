@@ -27,7 +27,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   cell_set_domain_identity(domain, path, argv, argc);
   vmm_install_user(cell_domain_as(domain));
 
-  aarch64_init_user_frame(frame, entry, sp, cell_domain_as(domain)->freebsd_abi);
+  arch_init_user_frame(frame, entry, sp, cell_domain_as(domain)->freebsd_abi);
   struct thread *thread = cell_current_thread_internal();
   thread->tid = domain->id;
   thread->clear_child_tid = 0;
@@ -36,9 +36,9 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   thread->sigaltstack_sp = 0;
   thread->sigaltstack_size = 0;
   thread->tf = *frame;
-  struct aarch64_thread_context *context = &thread->context;
+  struct arch_thread_context *context = &thread->context;
   kmemset(context, 0, sizeof(*context));
-  aarch64_restore_context(context);
+  arch_restore_context(context);
   cell_wake_vfork_parent_of(domain->id);
   return true;
 }

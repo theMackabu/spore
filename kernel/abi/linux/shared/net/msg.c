@@ -1,5 +1,5 @@
 #include "handlers.h"
-#include "socket_abi.h"
+#include "message_abi.h"
 #include "abi/linux/shared/net/handlers.h"
 #include "abi/linux/shared/usercopy.h"
 #include "net/socket.h"
@@ -12,7 +12,7 @@ enum {
   SENDMSG_SCRATCH_CAP = 1472,
 };
 
-int aarch64_copy_socket_iov(uint64_t iov_addr, int32_t iovlen, int32_t index, struct iovec64 *out) {
+int linux_copy_socket_iov(uint64_t iov_addr, int32_t iovlen, int32_t index, struct iovec64 *out) {
   if (iovlen < 0 || iovlen > MAX_IOVCNT || index < 0 || index >= iovlen || out == NULL) { return -EINVAL; }
   if (iov_addr == 0 || !syscall_user_readable(iov_addr + (uint64_t)index * sizeof(*out), sizeof(*out))) {
     return -EFAULT;
@@ -30,7 +30,7 @@ static int gather_iovecs(uint64_t iov_addr, int32_t iovlen, uint8_t *dst, size_t
   *copied = 0;
   for (int32_t i = 0; i < iovlen; ++i) {
     struct iovec64 iov;
-    int rc = aarch64_copy_socket_iov(iov_addr, iovlen, i, &iov);
+    int rc = linux_copy_socket_iov(iov_addr, iovlen, i, &iov);
     if (rc < 0) { return rc; }
     if (iov.len != 0 && !syscall_user_readable(iov.base, iov.len)) { return -EFAULT; }
     if (UINT64_MAX - *total_len < iov.len) { return -EINVAL; }
@@ -57,7 +57,7 @@ int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
     }
     return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
   }
-  if (is_socket && proto == 0 && msg.name == 0) { return aarch64_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, true); }
+  if (is_socket && proto == 0 && msg.name == 0) { return linux_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, true); }
   uint8_t tmp[SENDMSG_SCRATCH_CAP];
   uint64_t total_len = 0;
   size_t copied = 0;
@@ -77,7 +77,7 @@ int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
 
   if (msg.iovlen == 0) { return 0; }
   struct iovec64 first;
-  rc = aarch64_copy_socket_iov(msg.iov, msg.iovlen, 0, &first);
+  rc = linux_copy_socket_iov(msg.iov, msg.iovlen, 0, &first);
   if (rc < 0) { return (int64_t)rc; }
   return sys_sendto(frame, fd, first.base, first.len, flags, msg.name, msg.namelen);
 }
@@ -96,11 +96,11 @@ int64_t sys_recvmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
   struct msghdr64 msg;
   if (!vmm_copy_from_user(syscall_active_as(), &msg, msg_addr, sizeof(msg))) { return -(int64_t)EFAULT; }
   if (cell_fd_socket_info((int)fd, NULL, &proto) && proto == 0) {
-    int64_t rc = aarch64_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, false);
+    int64_t rc = linux_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, false);
     return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
   }
   struct iovec64 iov;
-  int rc_iov = aarch64_copy_socket_iov(msg.iov, msg.iovlen, 0, &iov);
+  int rc_iov = linux_copy_socket_iov(msg.iov, msg.iovlen, 0, &iov);
   if (rc_iov < 0) { return (int64_t)rc_iov; }
   int64_t rc = sys_recvfrom(frame, fd, iov.base, iov.len, flags, msg.name, msg_addr + 8);
   if (rc >= 0) {

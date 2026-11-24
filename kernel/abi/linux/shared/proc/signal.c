@@ -1,7 +1,7 @@
 #include "abi/linux/shared/usercopy.h"
-#include "abi/linux/aarch64/signal_context.h"
+#include "abi/linux/shared/signal.h"
 #include "proc/memory.h"
-#include "arch/aarch64/regs.h"
+#include "arch/regs.h"
 #include "handlers.h"
 #include "proc/domain.h"
 #include "proc/signal.h"
@@ -28,7 +28,9 @@ enum {
 struct k_sigaction64 {
   uint64_t handler;
   uint64_t flags;
+#ifndef __riscv
   uint64_t restorer;
+#endif
   uint32_t mask[2];
 };
 
@@ -113,7 +115,9 @@ int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t
     struct k_sigaction64 old = {
       .handler = domain->signal_actions[signal].handler,
       .flags = domain->signal_actions[signal].flags,
+#ifndef __riscv
       .restorer = domain->signal_actions[signal].restorer,
+#endif
     };
     old.mask[0] = (uint32_t)(domain->signal_actions[signal].mask & 0xffffffffu);
     old.mask[1] = (uint32_t)(domain->signal_actions[signal].mask >> 32);
@@ -130,7 +134,9 @@ int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t
     }
     domain->signal_actions[signal].handler = act.handler;
     domain->signal_actions[signal].flags = act.flags;
+#ifndef __riscv
     domain->signal_actions[signal].restorer = act.restorer;
+#endif
     domain->signal_actions[signal].mask = ((uint64_t)act.mask[1] << 32) | act.mask[0];
   }
   return 0;

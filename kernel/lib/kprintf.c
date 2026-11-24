@@ -1,6 +1,7 @@
 #include "lib/kprintf.h"
 
 #include "init/app.h"
+#include "drivers/serial.h"
 #include "drivers/pl011.h"
 #include "drivers/virtio_console.h"
 
@@ -11,6 +12,8 @@ static char kernel_log[16384];
 static uint64_t kernel_log_head;
 static uint64_t kernel_log_len;
 static bool kernel_log_handoff;
+
+void klog_handoff(void) { kernel_log_handoff = true; }
 
 static void klog_store(char c) {
   kernel_log[kernel_log_head] = c;
@@ -32,7 +35,7 @@ void kputc(char c) {
   if (!app_mode && virtio_console_ready()) {
     virtio_console_write((const uint8_t *)&c, 1);
   } else if (!kernel_log_handoff) {
-    pl011_putc(c);
+    serial_putc(c);
   }
 }
 
@@ -116,6 +119,6 @@ void kprintf(const char *fmt, ...) {
 void klog_init_console(uint64_t hhdm_offset, unsigned cpus, const char *loader) {
   pl011_init(hhdm_offset);
   kprintf("[kernel] %s handoff at EL1, %u CPU(s)\n", loader, cpus);
-  kernel_log_handoff = true;
+  klog_handoff();
   (void)virtio_console_init(hhdm_offset);
 }

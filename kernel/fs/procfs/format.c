@@ -1,6 +1,6 @@
 #include "text.h"
 
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "proc/accounting.h"
 #include "fs/ext2.h"
 #include "lib/kprintf.h"

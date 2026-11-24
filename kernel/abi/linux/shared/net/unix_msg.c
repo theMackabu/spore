@@ -1,7 +1,7 @@
 #include "abi/linux/shared/usercopy.h"
-#include "socket_abi.h"
-#include "abi/linux/aarch64/message.h"
-#include "abi/linux/aarch64/unix.h"
+#include "message_abi.h"
+#include "abi/linux/shared/message.h"
+#include "abi/linux/shared/unix.h"
 #include "handlers.h"
 #include "net/unix.h"
 #include "proc/domain.h"
@@ -75,20 +75,20 @@ fault:
   return -EFAULT;
 }
 
-int64_t aarch64_unix_transfer(struct domain *domain, struct open_file *file, uint64_t msg_addr, uint32_t flags,
+int64_t linux_unix_transfer(struct domain *domain, struct open_file *file, uint64_t msg_addr, uint32_t flags,
                               bool write, struct unix_rights **pending) {
   struct msghdr64 msg;
   if (!vmm_copy_from_user(cell_domain_as(domain), &msg, msg_addr, sizeof(msg))) { return -EFAULT; }
-  struct aarch64_iov_cursor cursor;
-  int rc = aarch64_iov_init(&cursor, domain, msg.iov, msg.iovlen);
+  struct linux_iov_cursor cursor;
+  int rc = linux_iov_init(&cursor, domain, msg.iov, msg.iovlen);
   if (rc) { return rc; }
-  if (write) { return cell_pipe_write_data(file->unix_tx_pipe, cursor.capacity, aarch64_gather_iov, &cursor, pending); }
+  if (write) { return cell_pipe_write_data(file->unix_tx_pipe, cursor.capacity, linux_gather_iov, &cursor, pending); }
 
   struct pipe_obj *pipe = file->unix_rx_pipe;
   struct unix_rights_queue *queue = cell_pipe_rights(pipe);
   uint64_t start = cell_pipe_read_offset(pipe), bytes = cursor.capacity;
   unix_next_rights(queue, start, &bytes);
-  int64_t n = cell_pipe_peek_data(pipe, bytes, aarch64_scatter_iov, &cursor);
+  int64_t n = cell_pipe_peek_data(pipe, bytes, linux_scatter_iov, &cursor);
   if (n < 0) { return n; }
   bytes = (uint64_t)n;
   const struct unix_rights *rights = unix_next_rights(queue, start, &bytes);
@@ -98,7 +98,7 @@ int64_t aarch64_unix_transfer(struct domain *domain, struct open_file *file, uin
   return n;
 }
 
-int64_t aarch64_unix_message(struct trap_frame *frame, int fd, uint64_t addr, const struct msghdr64 *msg,
+int64_t linux_unix_message(struct trap_frame *frame, int fd, uint64_t addr, const struct msghdr64 *msg,
                              uint32_t flags, bool write) {
   struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_fd_file(fd);
@@ -108,7 +108,7 @@ int64_t aarch64_unix_message(struct trap_frame *frame, int fd, uint64_t addr, co
     int rc = collect_rights(domain, msg, &rights);
     if (rc) { return rc; }
   }
-  int64_t rc = aarch64_unix_transfer(domain, file, addr, flags, write, &rights);
+  int64_t rc = linux_unix_transfer(domain, file, addr, flags, write, &rights);
   if (rc == -EAGAIN && frame && !(flags & MSG_DONTWAIT) && !(file->flags & 04000)) {
     struct thread_wait wait = {.reason = WAIT_PIPE, .target = fd, .socket_msg = true, .write = write,
                                .socket_flags = flags, .socket_msg_addr = addr, .unix_rights = rights};

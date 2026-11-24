@@ -13,7 +13,7 @@ in
 pkgs.mkShellNoCC {
   packages = with pkgs; [
     rust cmake curl dosfstools e2fsprogs git gnumake libarchive mtools
-    patch pkg-config python3 qemu zstd
+    patch pkg-config python3 qemu zig zstd
     llvmPackages.clang llvmPackages.lld llvmPackages.llvm
   ];
 

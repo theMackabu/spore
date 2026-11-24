@@ -1,10 +1,10 @@
-#include "abi/linux/aarch64/message.h"
+#include "abi/linux/shared/message.h"
 #include "message_layout.h"
 #include "proc/memory.h"
 
 enum { SOCKET_MAX_IOVCNT = 1024, EINVAL = 22, EFAULT = 14, MSG_CTRUNC = 8, IPPROTO_IP = 0, IP_TTL = 2 };
 
-int aarch64_read_socket_message(struct domain *domain, uint64_t addr, struct socket_user_message *out) {
+int linux_read_socket_message(struct domain *domain, uint64_t addr, struct socket_user_message *out) {
   struct msghdr64 msg;
   if (!vmm_copy_from_user(cell_domain_as(domain), &msg, addr, sizeof(msg))) { return -EFAULT; }
   *out = (struct socket_user_message){
@@ -16,23 +16,23 @@ int aarch64_read_socket_message(struct domain *domain, uint64_t addr, struct soc
   return 0;
 }
 
-int aarch64_write_msg_flags(struct domain *domain, uint64_t addr, int32_t flags) {
+int linux_write_msg_flags(struct domain *domain, uint64_t addr, int32_t flags) {
   return vmm_copy_to_user(cell_domain_as(domain), addr + offsetof(struct msghdr64, flags), &flags, sizeof(flags))
            ? 0
            : -EFAULT;
 }
 
-static bool read_bytes(struct aarch64_iov_cursor *cursor, void *dst, uint64_t addr, size_t size) {
+static bool read_bytes(struct linux_iov_cursor *cursor, void *dst, uint64_t addr, size_t size) {
   return vmm_copy_from_user(cursor->as, dst, addr, size) ||
          (cell_domain_ensure_user_range(cursor->domain, addr, size, VMM_ACCESS_READ) &&
           vmm_copy_from_user(cursor->as, dst, addr, size));
 }
 
-int aarch64_iov_init(struct aarch64_iov_cursor *cursor, struct domain *domain, uint64_t iov, int32_t count) {
+int linux_iov_init(struct linux_iov_cursor *cursor, struct domain *domain, uint64_t iov, int32_t count) {
   if (!domain || count < 0 || count > SOCKET_MAX_IOVCNT) { return -EINVAL; }
   uint64_t bytes = (uint64_t)count * sizeof(struct iovec64);
   if (bytes && (!iov || iov > UINT64_MAX - bytes)) { return -EFAULT; }
-  *cursor = (struct aarch64_iov_cursor){.domain = domain, .as = cell_domain_as(domain), .next = iov, .end = iov + bytes};
+  *cursor = (struct linux_iov_cursor){.domain = domain, .as = cell_domain_as(domain), .next = iov, .end = iov + bytes};
   for (uint64_t addr = iov; addr < cursor->end;) {
     struct iovec64 batch[16];
     size_t n = cursor->end - addr < sizeof(batch) ? cursor->end - addr : sizeof(batch);
@@ -46,7 +46,7 @@ int aarch64_iov_init(struct aarch64_iov_cursor *cursor, struct domain *domain, u
   return 0;
 }
 
-static size_t next_span(struct aarch64_iov_cursor *cursor, size_t want, uint64_t *addr) {
+static size_t next_span(struct linux_iov_cursor *cursor, size_t want, uint64_t *addr) {
   while (!cursor->remaining) {
     struct iovec64 entry;
     if (cursor->next == cursor->end || !read_bytes(cursor, &entry, cursor->next, sizeof(entry))) { return 0; }
@@ -62,8 +62,8 @@ static size_t next_span(struct aarch64_iov_cursor *cursor, size_t want, uint64_t
   return size;
 }
 
-int aarch64_gather_iov(void *source, uint8_t *dst, size_t len) {
-  struct aarch64_iov_cursor *cursor = source;
+int linux_gather_iov(void *source, uint8_t *dst, size_t len) {
+  struct linux_iov_cursor *cursor = source;
   while (len) {
     uint64_t addr;
     size_t n = next_span(cursor, len, &addr);
@@ -74,8 +74,8 @@ int aarch64_gather_iov(void *source, uint8_t *dst, size_t len) {
   return 0;
 }
 
-int aarch64_scatter_iov(void *destination, const uint8_t *src, size_t len) {
-  struct aarch64_iov_cursor *cursor = destination;
+int linux_scatter_iov(void *destination, const uint8_t *src, size_t len) {
+  struct linux_iov_cursor *cursor = destination;
   while (len) {
     uint64_t addr;
     size_t n = next_span(cursor, len, &addr);
@@ -89,7 +89,7 @@ int aarch64_scatter_iov(void *destination, const uint8_t *src, size_t len) {
   return 0;
 }
 
-int aarch64_recv_ip_control(struct domain *domain, uint64_t msg_addr, bool emit_ttl, int ttl_value, int32_t *flags) {
+int linux_recv_ip_control(struct domain *domain, uint64_t msg_addr, bool emit_ttl, int ttl_value, int32_t *flags) {
   struct msghdr64 msg;
   struct user_address_space *as = cell_domain_as(domain);
   if (!vmm_copy_from_user(as, &msg, msg_addr, sizeof(msg))) { return -EFAULT; }

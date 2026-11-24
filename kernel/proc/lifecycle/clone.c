@@ -3,7 +3,7 @@
 #include "proc/thread.h"
 #include "proc/memory.h"
 #include "proc/fd.h"
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "lib/kstr.h"
 
 enum {

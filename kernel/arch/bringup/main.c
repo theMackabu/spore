@@ -27,7 +27,11 @@ static void memory(void) {
   if (!boot) { puts_serial("Spore: invalid firmware handoff\n"); platform_poweroff(); }
   pmm_init(boot->hhdm_offset, boot->memmap, boot->memmap_count);
   if (!pmm_free_pages()) { puts_serial("Spore: no usable memory\n"); platform_poweroff(); }
-  if (boot->module_count) { puts_serial("[kernel] starting app\n"); user_start(boot); }
+  if (boot->module_count) { puts_serial("[kernel] starting app\n"); }
+  user_start(boot);
+}
+
+[[noreturn]] void port_monitor(void) {
   puts_serial("Spore kernel monitor\nCommands: memory, poweroff\n");
   for (;;) {
     char cmd[32];

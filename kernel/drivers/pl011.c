@@ -1,3 +1,4 @@
+#include "drivers/serial.h"
 #include "drivers/pl011.h"
 
 #include "arch/aarch64/platform.h"
@@ -49,9 +50,9 @@ void pl011_init(uint64_t hhdm_offset) {
   rx_tail = 0;
 }
 
-void pl011_putc(char c) {
+void serial_putc(char c) {
   if (uart_base == NULL) { return; }
-  if (c == '\n') { pl011_putc('\r'); }
+  if (c == '\n') { serial_putc('\r'); }
   while ((mmio_read32(PL011_FR) & PL011_FR_TXFF) != 0) {
     aarch64_cpu_relax();
   }
@@ -147,7 +148,7 @@ static void tty_control_char(char c) {
   }
 }
 
-bool pl011_getc(char *out) {
+bool serial_getc(char *out) {
   if (rx_tail == rx_head) { return false; }
   *out = rx_ring[rx_tail];
   rx_tail = (rx_tail + 1u) % RX_RING_SIZE;
@@ -162,7 +163,7 @@ bool pl011_poll_rx(void) {
   return rx_tail != rx_head;
 }
 
-void pl011_get_winsize(uint16_t *rows, uint16_t *cols) {
+void serial_get_winsize(uint16_t *rows, uint16_t *cols) {
   *rows = tty_rows;
   *cols = tty_cols;
 }

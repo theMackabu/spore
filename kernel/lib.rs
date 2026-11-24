@@ -16,7 +16,7 @@ mod records;
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     unsafe extern "C" {
-        #[cfg_attr(all(target_os = "none", target_arch = "aarch64"), link_name = "aarch64_halt")]
+        #[cfg_attr(all(target_os = "none", target_arch = "aarch64"), link_name = "arch_halt")]
         #[cfg_attr(all(target_os = "none", not(target_arch = "aarch64")), link_name = "platform_poweroff")]
         #[cfg_attr(not(target_os = "none"), link_name = "abort")]
         fn halt() -> !;

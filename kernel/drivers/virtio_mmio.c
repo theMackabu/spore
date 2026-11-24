@@ -62,3 +62,16 @@ bool virtq_setup(uintptr_t base, unsigned index, unsigned size, struct virtq *q)
   q->used_idx = q->used->idx;
   return true;
 }
+
+#if !defined(SPORE_NATIVE_PORT) || !defined(__x86_64__)
+uintptr_t virtio_slot(uint64_t hhdm, unsigned index, uint32_t device) {
+#ifdef __riscv
+  (void)hhdm;
+  if(index>=8)return 0;
+  uintptr_t base=0xffffffef00000000ull+(uint64_t)index*4096;
+#else
+  uintptr_t base=hhdm+VIRTIO_MMIO_BASE+(uint64_t)index*VIRTIO_MMIO_SLOT_SIZE;
+#endif
+  return virtio_matches(base,device) ? base : 0;
+}
+#endif

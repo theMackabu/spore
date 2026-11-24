@@ -1,4 +1,4 @@
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 
 #include "arch/aarch64/platform.h"
 #include "arch/aarch64/exceptions.h"

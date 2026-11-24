@@ -1,6 +1,6 @@
 #include "arch/aarch64/platform.h"
 
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "mm/pmm.h"
 
 uint64_t aarch64_current_el(void) {
@@ -19,7 +19,7 @@ enum {
   GICR_STRIDE = 0x20000,
 };
 
-void aarch64_halt(void) {
+void arch_halt(void) {
   for (;;) {
     __asm__ volatile("wfe");
   }
@@ -42,7 +42,7 @@ static void map_device_page(uint64_t hhdm_offset, uint64_t pa) {
     uint64_t desc = *entry;
     if ((desc & 3) != 3) {
       uint64_t next_pa = pmm_alloc_zero_page();
-      if (next_pa == 0) { aarch64_halt(); }
+      if (next_pa == 0) { arch_halt(); }
       if (desc & 1) {
         uint64_t *next = pmm_phys_to_virt(next_pa);
         uint64_t stride = 1ull << (shift - 9);
@@ -81,22 +81,22 @@ void aarch64_map_devices(uint64_t hhdm_offset) {
   __asm__ volatile("dsb ishst\ntlbi vmalle1is\ndsb ish\nisb" : : : "memory");
 }
 
-void aarch64_poweroff(void) {
+void arch_poweroff(void) {
   __asm__ volatile("mov x0, #0x0008\n"
                    "movk x0, #0x8400, lsl #16\n"
                    "hvc #0\n"
                    :
                    :
                    : "x0", "memory");
-  aarch64_halt();
+  arch_halt();
 }
 
-void aarch64_reboot(void) {
+void arch_reboot(void) {
   __asm__ volatile("mov x0, #0x0009\n"
                    "movk x0, #0x8400, lsl #16\n"
                    "hvc #0\n"
                    :
                    :
                    : "x0", "memory");
-  aarch64_halt();
+  arch_halt();
 }

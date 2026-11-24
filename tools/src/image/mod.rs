@@ -349,13 +349,20 @@ fn build_root(
     disk.seek(incompat)?;
     disk.write_all(&(u32::from_le_bytes(flags) | 0x8000_0000).to_le_bytes())
 }
-fn build_esp(config: &Path, image: &Path, bundle: Option<&Path>) -> io::Result<()> {
+pub(crate) fn build_esp(
+    config: &Path,
+    image: &Path,
+    bundle: Option<&Path>,
+    arch: crate::arch::Arch,
+) -> io::Result<()> {
     let tmp = crate::Workspace::new()?;
     let kernel = tmp.0.join("kernel.elf");
-    let boot = tmp.0.join("BOOTAA64.EFI");
+    let (name, efi, elf) = arch.boot_files();
+    let boot = tmp.0.join(name);
+    let efi_path = format!("::/EFI/BOOT/{name}");
     let license = tmp.0.join("LICENSE");
-    fs::write(&kernel, spore_kernel::ELF)?;
-    fs::write(&boot, spore_kernel::EFI)?;
+    fs::write(&kernel, elf)?;
+    fs::write(&boot, efi)?;
     fs::write(&license, spore_kernel::LICENSE)?;
     let extra = bundle.map(fs::metadata).transpose()?.map_or(0, |m| m.len());
     let payload = fs::metadata(&kernel)?.len()
@@ -374,7 +381,7 @@ fn build_esp(config: &Path, image: &Path, bundle: Option<&Path>) -> io::Result<(
         .arg(image)
         .args(["::/EFI", "::/EFI/BOOT", "::/boot"]))?;
     for (src, dst) in [
-        (boot.as_path(), "::/EFI/BOOT/BOOTAA64.EFI"),
+        (boot.as_path(), efi_path.as_str()),
         (kernel.as_path(), "::/boot/kernel.elf"),
         (config, "::/limine.conf"),
         (license.as_path(), "::/EFI/BOOT/LICENSE"),
@@ -414,5 +421,7 @@ pub fn system_image(build: &Path, tests: bool) -> io::Result<()> {
     })?;
     let config = stage.0.join("limine.conf");
     fs::write(&config, include_bytes!("../../../boot/limine.conf"))?;
-    build_image(&build.join(esp), |tmp| build_esp(&config, tmp, None))
+    build_image(&build.join(esp), |tmp| {
+        build_esp(&config, tmp, None, crate::arch::Arch::Aarch64)
+    })
 }

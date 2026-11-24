@@ -36,6 +36,21 @@ fn abi_sources(arch: &str) -> impl Iterator<Item = std::path::PathBuf> {
         .flat_map(move |os| files(&Path::new("abi").join(os).join(arch), &["c", "S"]))
 }
 
+fn runtime_sources() -> impl Iterator<Item = std::path::PathBuf> {
+    [
+        "mm",
+        "fs",
+        "proc",
+        "net",
+        "tty",
+        "lib",
+        "exec",
+        "abi/linux/shared",
+    ]
+    .into_iter()
+    .flat_map(|dir| files(Path::new(dir), &["c", "S"]))
+}
+
 fn build_port(arch: &str, flags: &[&str], out: &Path) {
     let target = format!("{arch}-unknown-none-elf");
     let mut compiler = cc::Build::new();
@@ -46,20 +61,46 @@ fn build_port(arch: &str, flags: &[&str], out: &Path) {
         .no_default_flags(true)
         .flag(format!("--target={target}"))
         .std("c23")
-        .flags(["-Os", "-ffreestanding", "-fno-stack-protector", "-fno-pic"])
+        .define("SPORE_NATIVE_PORT", None)
+        .flags([
+            "-Os",
+            "-ffreestanding",
+            "-fno-stack-protector",
+            "-fno-pic",
+            "-ffunction-sections",
+            "-fdata-sections",
+        ])
+        .define("SPORE_MACHINE", format!("\"{arch}\"").as_str())
+        .define(
+            "SPORE_VERSION",
+            format!("\"{}\"", env!("CARGO_PKG_VERSION")).as_str(),
+        )
         .flags(flags.iter().copied())
         .include("include")
         .include("../.cache/limine")
         .include("arch/bringup")
-        .files(["init/limine.c", "init/event.c", "mm/pmm.c", "lib/mem.c"])
+        .files([
+            "init/limine.c",
+            "init/event.c",
+            "init/process.c",
+            "init/profile.c",
+            "init/payload.c",
+            "init/rootfs.c",
+            "init/status.c",
+            "abi/freebsd/dispatch.c",
+            "drivers/virtio_console.c",
+            "drivers/virtio_mmio.c",
+            "drivers/virtio_net.c",
+            "drivers/virtio_blk.c",
+        ])
+        .files(runtime_sources())
         .files(files(Path::new("arch/bringup"), &["c", "S"]))
         .files(abi_sources(arch))
-        .files(["abi/freebsd/console.c", "abi/linux/shared/fd/write.c"])
         .include(".")
         .files(files(&Path::new("arch").join(arch), &["c", "S"]))
         .out_dir(out.join(arch));
-    if arch == "riscv64" {
-        compiler.files(["drivers/virtio_console.c", "drivers/virtio_mmio.c"]);
+    if env::var_os("CARGO_FEATURE_USERLAND").is_some() {
+        compiler.define("SPORE_USERLAND", None);
     }
     let objects = compiler.compile_intermediates();
     let rust = out.join(arch).join("libkernel.a");
@@ -77,6 +118,7 @@ fn build_port(arch: &str, flags: &[&str], out: &Path) {
             "-T",
             "arch/bringup/linker.ld",
         ])
+        .arg("--error-limit=0")
         .arg("--gc-sections")
         .args(objects)
         .arg(rust)
@@ -125,23 +167,14 @@ fn main() {
         clang.define("SPORE_USERLAND", None);
     }
     let objects = clang
+        .define("SPORE_MACHINE", "\"aarch64\"")
+        .file("abi/freebsd/dispatch.c")
         .files(abi_sources("aarch64"))
+        .files(runtime_sources())
         .files(
-            [
-                "arch/aarch64",
-                "abi/linux/shared",
-                "drivers",
-                "exec",
-                "fs",
-                "init",
-                "lib",
-                "mm",
-                "net",
-                "proc",
-                "tty",
-            ]
-            .into_iter()
-            .flat_map(|dir| files(Path::new(dir), &["c", "S"])),
+            ["arch/aarch64", "drivers", "init"]
+                .into_iter()
+                .flat_map(|dir| files(Path::new(dir), &["c", "S"])),
         )
         .compile_intermediates();
     let rust = out.join("libkernel.a");

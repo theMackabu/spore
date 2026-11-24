@@ -1,8 +1,8 @@
 #include "init/app.h"
 #include "proc/snapshot.h"
 
-#include "arch/aarch64/regs.h"
-#include "arch/aarch64/smp.h"
+#include "arch/regs.h"
+#include "arch/smp.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
@@ -103,7 +103,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   cell_save_current(frame);
   child_thread->tf = *frame;
   child_thread->context = cell_current_thread_internal()->context;
-  aarch64_set_snapshot_entry(&child_thread->tf, entry, arg, (uint64_t)child_domain->id);
+  arch_set_snapshot_entry(&child_thread->tf, entry, arg, (uint64_t)child_domain->id);
   smp_notify();
   return child_domain->id;
 }

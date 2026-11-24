@@ -8,7 +8,7 @@ static uint32_t ramfs_smp_possible_cpu_count(void) {
   return 1;
 }
 #else
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 static uint32_t ramfs_smp_possible_cpu_count(void) {
   return smp_possible_cpu_count();
 }

@@ -7,6 +7,6 @@ descriptor for the server. Mycelium and trustd both use local stream sockets.
 
 With `SCM_RIGHTS`, the sender passes references to open files in a message. The kernel
 retains them while the message is queued and can install descriptors for them in the
-receiver's table. [Descriptor passing](../../kernel/net/socket/rights.c) · [Message handling](../../kernel/abi/linux/aarch64/net/unix_msg.c)
+receiver's table. [Descriptor passing](../../kernel/net/socket/rights.c) · [Message handling](../../kernel/abi/linux/shared/net/unix_msg.c)
 
 [File descriptors](../processes/descriptors.md) · [Guest socket tests](../../userland/tests/integration/unix.c)

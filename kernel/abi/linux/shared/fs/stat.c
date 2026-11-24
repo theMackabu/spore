@@ -1,13 +1,13 @@
 #include "handlers.h"
 #include "abi/linux/shared/usercopy.h"
 #include "abi/linux/shared/fs/file_abi.h"
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/file_layout.h"
 #include "fs/vfs.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "proc/fd.h"
 
-struct statfs64_aarch64 {
+struct linux_statfs64 {
   uint64_t f_type;
   uint64_t f_bsize;
   uint64_t f_blocks;
@@ -63,7 +63,7 @@ static uint64_t allocated_sectors(const struct vfs_node *node) {
   return 0;
 }
 
-static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
+static void fill_stat(struct linux_stat64 *st, const struct vfs_node *node) {
   kmemset(st, 0, sizeof(*st));
   st->st_dev = node->dev_id;
   st->st_ino = node->ino;
@@ -88,7 +88,7 @@ static uint32_t dev_minor(uint64_t dev) {
   return (uint32_t)(dev & 0xffu);
 }
 
-static bool fill_statfs(struct statfs64_aarch64 *st, const struct vfs_node *node) {
+static bool fill_statfs(struct linux_statfs64 *st, const struct vfs_node *node) {
   struct vfs_fs_info info;
   if (!vfs_device_fs_info(node->dev_id, &info)) { return false; }
   kmemset(st, 0, sizeof(*st));
@@ -130,13 +130,13 @@ static int copy_result(uint64_t addr, const void *value, size_t size) {
 }
 
 static int copy_stat(uint64_t addr, const struct vfs_node *node) {
-  struct stat64_aarch64 st;
+  struct linux_stat64 st;
   fill_stat(&st, node);
   return copy_result(addr, &st, sizeof(st));
 }
 
 static int copy_statfs(uint64_t addr, const struct vfs_node *node) {
-  struct statfs64_aarch64 st;
+  struct linux_statfs64 st;
   if (!fill_statfs(&st, node)) { return -EIO; }
   return copy_result(addr, &st, sizeof(st));
 }

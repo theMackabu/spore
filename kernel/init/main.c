@@ -1,8 +1,8 @@
 #include "boot.h"
-#include "abi/linux/aarch64/syscall.h"
+#include "arch/clock.h"
 #include "arch/aarch64/exceptions.h"
 #include "arch/aarch64/platform.h"
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "arch/aarch64/timer.h"
 #include "drivers/virtio_net.h"
 #include "lib/kprintf.h"
@@ -13,7 +13,7 @@
 #include "proc/bootstrap.h"
 
 void kernel_main(const struct spore_boot_info *boot) {
-  if (boot == NULL || aarch64_current_el() != 1) { aarch64_halt(); }
+  if (boot == NULL || aarch64_current_el() != 1) { arch_halt(); }
   struct boot_profile profile = {0};
   boot_select_profile(boot, &profile);
   pmm_init(boot->hhdm_offset, boot->memmap, boot->memmap_count);

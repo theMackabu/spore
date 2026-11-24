@@ -19,7 +19,11 @@ enum vmm_access {
 };
 
 constexpr uint64_t USER_MMAP_BASE = 0x0000007000000000ull;
+#ifdef SPORE_NATIVE_PORT
+constexpr uint64_t USER_VA_LIMIT = 1ull << 47;
+#else
 constexpr uint64_t USER_VA_LIMIT = 1ull << 48;
+#endif
 
 struct user_address_space {
   uint64_t context_id;

@@ -1,4 +1,5 @@
 mod app_network;
+mod arch;
 mod image;
 mod runner;
 mod system;
@@ -16,7 +17,7 @@ const HELP: &str = "\
 Usage:
   spore boot [--snapshot | --reset] [--root EXT2] [VM options]
   spore boot SYSTEM_IMAGE --root EXT2 [--snapshot] [VM options]
-  spore boot --arch x86_64|riscv64 [--memory SIZE] [--qemu PATH]
+  spore boot --arch CPU [--root EXT2] [VM options]
   spore build                         Build the kernel and host CLI
   spore build --userland [--tests]    Enable and build the full system or integration image
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
@@ -31,7 +32,7 @@ Image options:
   --cwd PATH         Working directory (default /)
   --env NAME=VALUE   Environment entry, repeatable
   --file HOST=/PATH  Include an asset, repeatable
-  --lib-dir DIR      Search for AArch64 libraries, repeatable
+  --lib-dir DIR      Search for guest libraries, repeatable
   --ip IP --netmask MASK --gateway IP --dns IP
 
 VM options:
@@ -80,13 +81,13 @@ fn positive<T: std::str::FromStr + Default + PartialEq>(
         .ok_or_else(|| io::Error::other(format!("invalid {label}: {}", v.to_string_lossy())))
 }
 
-fn qemu_default() -> OsString {
+fn qemu_default(arch: arch::Arch) -> OsString {
     env::var_os("QEMU").unwrap_or_else(|| {
         let brew = "/opt/homebrew/bin/qemu-system-aarch64";
-        if cfg!(target_os = "macos") && Path::new(brew).exists() {
+        if arch == arch::Arch::Aarch64 && cfg!(target_os = "macos") && Path::new(brew).exists() {
             brew.into()
         } else {
-            "qemu-system-aarch64".into()
+            format!("qemu-system-{}", arch.name()).into()
         }
     })
 }
@@ -101,7 +102,8 @@ fn vm_config(mode: &str) -> runner::qemu::Config {
         report: None,
         forwards: vec![],
         timeout: 30,
-        qemu: qemu_default(),
+        arch: arch::Arch::Aarch64,
+        qemu: None,
         accel: None,
         cpu: None,
         mem: if mode == "app" { "128M" } else { "8G" }.into(),
@@ -240,65 +242,24 @@ fn execute() -> io::Result<i32> {
             }
         }
     }
-    if let Some(arch) = architecture.as_deref().filter(|a| *a != "aarch64") {
-        if program.is_some()
-            || root.is_some()
-            || reset
-            || vm.snap
-            || vm.timings
-            || app_options
-            || !vm.forwards.is_empty()
-            || vm.accel.is_some()
-            || vm.cpu.is_some()
-            || vm.vars.is_some()
-            || cpus.is_some()
-        {
-            return Err(io::Error::other(
-                "kernel monitor accepts --memory and --qemu",
-            ));
-        }
-        return runner::port::boot(
-            arch.to_str().unwrap_or(""),
-            memory.as_deref(),
-            qemu.as_deref(),
-            None,
-        );
+    if let Some(arch) = architecture.as_deref() {
+        vm.arch = arch::Arch::parse(arch.to_str().unwrap_or(""))?;
     }
     if let Some(qemu) = &qemu {
-        vm.qemu = qemu.clone();
+        vm.qemu = Some(qemu.clone());
     }
     if action == "run" {
         runner::qemu::check_report(vm.report.as_deref(), &[program.as_deref()])?;
     }
-    if action == "run"
-        && let Some(input) = program.as_deref().map(Path::new)
-        && input.is_file()
-        && let Some(arch) = runner::port::executable_arch(input)?
-    {
-        if !vm.forwards.is_empty()
-            || vm.root.is_some()
-            || vm.vars.is_some()
-            || vm.cpu.is_some()
-            || vm.accel.is_some()
-            || vm.timings
-            || cpus.as_deref().is_some_and(|n| n != "1")
-        {
-            return Err(io::Error::other(
-                "this port accepts --memory, --smp 1, --qemu, --result and --boot-timeout",
-            ));
-        }
-        let app = runner::port::Workload {
-            path: input,
-            args: &pack,
-            report: vm.report.as_deref().map(Path::new),
-            timeout: vm.timeout,
-        };
-        return runner::port::boot(arch, memory.as_deref(), qemu.as_deref(), Some(app));
-    }
     let system = boot && (program.is_none() || root.is_some());
     if system {
         vm.mem = "8G".into();
-        vm.smp = "4".into();
+        vm.smp = if vm.arch == arch::Arch::Aarch64 {
+            "4"
+        } else {
+            "1"
+        }
+        .into();
     }
     if let Some(memory) = memory {
         vm.mem = memory;
@@ -314,6 +275,25 @@ fn execute() -> io::Result<i32> {
         }
         vm.mode = "plain".into();
         vm.root = root;
+        if program.is_none()
+            && architecture.is_some()
+            && (vm.root.is_some() || vm.arch != arch::Arch::Aarch64)
+        {
+            if reset {
+                return Err(io::Error::other(
+                    "--reset requires a default persistent root disk",
+                ));
+            }
+            if vm.root.is_some() {
+                system::userland()?;
+            }
+            let tmp = Workspace::new()?;
+            let image = tmp.0.join("boot.img");
+            let config = tmp.0.join("limine.conf");
+            fs::write(&config, include_bytes!("../../boot/limine.conf"))?;
+            image::build_esp(&config, &image, None, vm.arch)?;
+            return system::boot(artifacts, vm, Some(image.into()), false);
+        }
         return system::boot(artifacts, vm, program, reset);
     }
     if reset || vm.snap || vm.timings {
@@ -345,10 +325,21 @@ fn execute() -> io::Result<i32> {
             .map(|&(_, port)| port)
             .filter(|port| vm.forwards.iter().all(|(_, guest)| guest == port));
         let result = system::program(&input).and_then(|program| {
-            if !build && let Some(ram) = runner::qemu::DirectBoot::memory(&vm) {
+            vm.arch = arch::Arch::executable(&program)?;
+            if !build
+                && vm.arch == arch::Arch::Aarch64
+                && let Some(ram) = runner::qemu::DirectBoot::memory(&vm)
+            {
                 let kernel = tmp.0.join("spore.bin");
                 fs::write(&kernel, spore_kernel::DIRECT)?;
-                let network = image::app::payload(&program, &pack, default_port, &tmp.0, &image)?;
+                let network = image::app::payload(
+                    &program,
+                    &pack,
+                    default_port,
+                    &tmp.0,
+                    &image,
+                    goblin::elf::header::EM_AARCH64,
+                )?;
                 vm.direct = Some(runner::qemu::DirectBoot {
                     kernel,
                     ram,
@@ -356,7 +347,7 @@ fn execute() -> io::Result<i32> {
                 });
                 Ok(())
             } else {
-                image::app::build(&image, &program, &pack, default_port)
+                image::app::build(&image, &program, &pack, default_port, vm.arch)
             }
         });
         if let Err(e) = result {

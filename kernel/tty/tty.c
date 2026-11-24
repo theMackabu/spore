@@ -1,7 +1,7 @@
 #include "tty/tty.h"
 
-#include "arch/aarch64/regs.h"
-#include "drivers/pl011.h"
+#include "arch/regs.h"
+#include "drivers/serial.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
@@ -120,7 +120,7 @@ int64_t cell_tty_write_console_from_user(struct domain *domain, uint64_t buf, ui
     if (chunk > len - done) { chunk = len - done; }
     for (size_t i = 0; i < chunk; ++i) {
       char c = data[i];
-      pl011_putc(c);
+      serial_putc(c);
       if (c == '\r' || c == '\n') {
         tty_output_line_len = 0;
         tty_output_line[0] = '\0';
@@ -151,32 +151,32 @@ static void tty_begin_canonical_read(void) {
 static void tty_echo_char(char c) {
   if (!tty_echo()) { return; }
   if (c == '\n') {
-    pl011_putc('\n');
+    serial_putc('\n');
     tty_output_line_len = 0;
     tty_output_line[0] = '\0';
   } else if (c == '\b' || c == 0x7f) {
-    pl011_putc('\b');
-    pl011_putc(' ');
-    pl011_putc('\b');
+    serial_putc('\b');
+    serial_putc(' ');
+    serial_putc('\b');
   } else if ((uint8_t)c >= 0x20 || c == '\t') {
-    pl011_putc(c);
+    serial_putc(c);
   }
 }
 
 static void tty_echo_str(const char *s) {
   if (!tty_echo()) { return; }
   while (*s != '\0') {
-    pl011_putc(*s++);
+    serial_putc(*s++);
   }
 }
 
 static void tty_redraw_line(void) {
   tty_echo_str("\r\033[K");
   for (size_t i = 0; i < tty_prompt_len; ++i) {
-    pl011_putc(tty_prompt[i]);
+    serial_putc(tty_prompt[i]);
   }
   for (size_t i = 0; i < tty_line_len; ++i) {
-    pl011_putc(tty_line[i]);
+    serial_putc(tty_line[i]);
   }
   if (tty_line_cursor < tty_line_len) {
     tty_echo_str("\033[");
@@ -188,10 +188,10 @@ static void tty_redraw_line(void) {
       move /= 10u;
     } while (move != 0 && n < sizeof(rev));
     while (n > 0) {
-      pl011_putc(rev[n - 1]);
+      serial_putc(rev[n - 1]);
       --n;
     }
-    pl011_putc('D');
+    serial_putc('D');
   }
 }
 
@@ -230,11 +230,11 @@ static void tty_line_commit(void) {
 
 static bool tty_try_escape(void) {
   char bracket;
-  if (!pl011_getc(&bracket)) { return true; }
+  if (!serial_getc(&bracket)) { return true; }
   if (bracket != '[') { return true; }
 
   char final = '\0';
-  while (pl011_getc(&final)) {
+  while (serial_getc(&final)) {
     if (final >= '@' && final <= '~') { break; }
   }
 
@@ -254,12 +254,12 @@ static bool tty_try_escape(void) {
 
 void cell_tty_process_input(void) {
   char c;
-  while (tty_ready_len == 0 && pl011_getc(&c)) {
+  while (tty_ready_len == 0 && serial_getc(&c)) {
     if (tty_isig() && c == 3) {
       if (tty_echo()) {
-        pl011_putc('^');
-        pl011_putc('C');
-        pl011_putc('\n');
+        serial_putc('^');
+        serial_putc('C');
+        serial_putc('\n');
       }
       tty_clear_pending_input();
       tty_pending_signal = SIGINT;
@@ -282,9 +282,9 @@ void cell_tty_process_input(void) {
     }
     if (c == 3) {
       if (tty_echo()) {
-        pl011_putc('^');
-        pl011_putc('C');
-        pl011_putc('\n');
+        serial_putc('^');
+        serial_putc('C');
+        serial_putc('\n');
       }
       tty_clear_pending_input();
       tty_ready_push('\n');

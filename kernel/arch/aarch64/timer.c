@@ -2,7 +2,7 @@
 
 #include "arch/aarch64/platform.h"
 #include "arch/aarch64/regs.h"
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "proc/thread.h"
 #include "lib/kprintf.h"
 #include "drivers/pl011.h"
@@ -135,7 +135,7 @@ static void arm_virtual_timer(void) {
 
 void timer_init(uint64_t hhdm_offset) {
   gic_hhdm_offset = hhdm_offset;
-  uint64_t freq = aarch64_counter_frequency();
+  uint64_t freq = arch_counter_frequency();
   enable_user_cpu_features();
   timer_interval = (uint32_t)(freq / 100);
   if (timer_interval == 0) { timer_interval = 1; }
@@ -188,13 +188,13 @@ void handle_irq(struct trap_frame *frame, uint64_t from_lower_el) {
   if (intid != SPURIOUS_INTID) { irq_eoi(iar); }
 }
 
-uint64_t aarch64_counter_value(void) {
+uint64_t arch_counter_value(void) {
   uint64_t value;
   __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
   return value;
 }
 
-uint64_t aarch64_counter_frequency(void) {
+uint64_t arch_counter_frequency(void) {
   uint64_t frequency;
   __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
   return frequency;

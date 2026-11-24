@@ -37,15 +37,27 @@ static int read_timeout(uint64_t addr, uint64_t *ticks) {
   return 0;
 }
 
-int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
-                  uint64_t sigsetsize) {
+static int validate_poll(uint64_t fds, uint64_t nfds) {
   if (nfds > cell_current_domain_internal()->nofile_soft) { return -(int64_t)EINVAL; }
   uint64_t fds_bytes = nfds * sizeof(struct pollfd64);
   if ((nfds != 0 && fds_bytes / sizeof(struct pollfd64) != nfds) || !syscall_user_readable(fds, fds_bytes) ||
       !syscall_user_writable(fds, fds_bytes)) {
     return -(int64_t)EFAULT;
   }
+  return 0;
+}
 
+int64_t sys_poll_ms(struct trap_frame *frame, uint64_t fds, uint64_t nfds, int timeout) {
+  int rc = validate_poll(fds, nfds);
+  if (rc) { return rc; }
+  uint64_t ticks = timeout > 0 ? ((uint64_t)timeout + 9) / 10 : 0;
+  return cell_ppoll_current(fds, nfds, timeout >= 0, ticks, NULL, frame);
+}
+
+int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
+                  uint64_t sigsetsize) {
+  int checked = validate_poll(fds, nfds);
+  if (checked) { return checked; }
   uint64_t timeout_ticks;
   int rc = read_timeout(timeout_addr, &timeout_ticks);
   if (rc) { return rc; }

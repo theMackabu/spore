@@ -1,4 +1,4 @@
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/file_layout.h"
 #include "mm/pool.h"
 #include "net/net.h"
 #include "proc/domain.h"

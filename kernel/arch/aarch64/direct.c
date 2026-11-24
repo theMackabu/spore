@@ -25,7 +25,7 @@ static uint64_t table(uint64_t *entries) {
 void direct_build_tables(void) {
   const struct handoff *args = (const void *)HANDOFF_PA;
   if (args->ram_bytes < (32ull << 20) || args->ram_bytes > (1ull << 30) ||
-      (args->ram_bytes & ((2ull << 20) - 1))) { aarch64_poweroff(); }
+      (args->ram_bytes & ((2ull << 20) - 1))) { arch_poweroff(); }
   direct_low_root[0] = table(identity_l1);
   identity_l1[1] = table(identity_l2);
   identity_l2[1] = KERNEL_PA | ACCESSED_NORMAL | READ_ONLY | NO_USER_EXEC | 1;
@@ -53,7 +53,7 @@ const struct spore_boot_info *direct_boot_info(void) {
   static struct spore_memmap_entry free_ram[2];
   static struct spore_boot_module app = {.phys_addr = PAYLOAD_PA, .path = "/spore.app"};
   static struct spore_boot_info boot = {.hhdm_offset = DIRECT_MAP, .modules = &app, .module_count = 1, .memmap = free_ram};
-  if (!args->payload_bytes || args->payload_bytes > args->ram_bytes - (PAYLOAD_PA - RAM_BASE)) { aarch64_poweroff(); }
+  if (!args->payload_bytes || args->payload_bytes > args->ram_bytes - (PAYLOAD_PA - RAM_BASE)) { arch_poweroff(); }
   uint64_t after_app = PAYLOAD_PA + args->payload_bytes;
   uint64_t kernel_end = KERNEL_PA + ((uintptr_t)__bss_end - (uintptr_t)direct_start);
   free_ram[0] = (struct spore_memmap_entry){kernel_end, HANDOFF_PA - kernel_end, SPORE_MEMMAP_USABLE, 0};

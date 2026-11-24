@@ -1,6 +1,6 @@
 #include "tty/pty.h"
 
-#include "arch/aarch64/regs.h"
+#include "arch/regs.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "proc/domain.h"

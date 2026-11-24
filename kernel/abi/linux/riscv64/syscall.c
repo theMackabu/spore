@@ -1,12 +1,22 @@
-#include "arch/bringup/user.h"
-#include "abi/linux/shared/fd/write.h"
-#include "arch/riscv64/syscall_frame.h"
+#include "abi/linux/shared/dispatch.h"
+#include "abi/linux/shared/numbers.h"
+#include "abi/linux/shared/usercopy.h"
+#include "arch/regs.h"
+#include "mm/vmm.h"
+#include "proc/domain.h"
+#include "proc/signal.h"
+#include "proc/thread.h"
 
-void linux_riscv64_syscall(struct riscv64_syscall_frame *f) {
-  switch (f->a[7]) {
-  case 64: f->a[0] = sys_write(NULL, f->a[0], f->a[1], f->a[2]); break;
-  case 93:
-  case 94: user_finish('E', f->a[0]);
-  default: f->a[0] = -38; break;
+void linux_riscv64_syscall(struct trap_frame *f) {
+  int64_t rc;
+  if (f->a[7] == 259) {
+    __asm__ volatile("fence.i" ::: "memory");
+    rc = 0;
+  } else {
+    rc = linux_dispatch(f, f->a[7], f->a);
+  }
+  if (rc != CELL_SWITCHED) {
+    f->a[0] = rc;
+    (void)cell_deliver_pending_signals_current(f);
   }
 }

@@ -51,7 +51,7 @@ static uint64_t alloc_zero_contiguous(uint64_t pages, void **virt) {
 }
 
 static bool setup_device(uint64_t base) {
-  mmio_base = hhdm + base;
+  mmio_base = base;
   active_base = base;
   if (virtio_negotiate(mmio_base) != VIRTIO_FEATURES_OK || !virtq_alloc(&queue, hhdm)) { return false; }
   if (req_pa == 0) { req_pa = virtio_alloc_page(hhdm, (void **)&req); }
@@ -162,9 +162,8 @@ bool virtio_blk_init(uint64_t hhdm_offset) {
   boot_base = 0;
   active_base = 0;
   for (uint32_t i = 0; i < VIRTIO_MMIO_SLOTS; ++i) {
-    uint64_t base = VIRTIO_MMIO_BASE + (uint64_t)i * VIRTIO_MMIO_SLOT_SIZE;
-    mmio_base = hhdm + base;
-    if (virtio_matches(mmio_base, VIRTIO_DEVICE_BLK)) {
+    uintptr_t base = virtio_slot(hhdm, i, VIRTIO_DEVICE_BLK);
+    if (base) {
       if (!setup_device(base)) {
         blk_ready = false;
         continue;

@@ -1,6 +1,6 @@
 #include "proc/process.h"
 #include "abi/linux/shared/usage.h"
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/thread.h"

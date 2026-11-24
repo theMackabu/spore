@@ -3,15 +3,15 @@
 #include "init/boot_info.h"
 #include "mm/pmm.h"
 
-constexpr uint64_t USER_TOP = 1ull << 32;
-enum page_flags { PAGE_READ = 1, PAGE_WRITE = 2, PAGE_EXEC = 4, PAGE_USER = 8 };
+[[noreturn]] void port_monitor(void);
+enum page_flags { PAGE_READ = 1, PAGE_WRITE = 2, PAGE_EXEC = 4, PAGE_USER = 8, PAGE_DEVICE = 16 };
 
+extern bool user_freebsd;
 uint64_t active_root(void);
 void install_root(uint64_t root_pa);
 uint64_t table_entry(uint64_t pa);
 uint64_t entry_phys(uint64_t entry);
 uint64_t page_entry(uint64_t pa, unsigned flags);
-bool page_allows(uint64_t entry, unsigned flags);
 unsigned page_levels(void);
 bool map_page(uint64_t va, uint64_t pa, unsigned flags);
 bool status_init(uint64_t hhdm);

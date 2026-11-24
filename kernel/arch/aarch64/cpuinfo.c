@@ -1,6 +1,6 @@
-#include "arch/aarch64/cpuinfo.h"
+#include "arch/cpuinfo.h"
 
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "fs/procfs_format.h"
 
 #include <stdbool.h>

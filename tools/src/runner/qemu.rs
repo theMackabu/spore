@@ -1,4 +1,4 @@
-use crate::app_network;
+use crate::{app_network, arch::Arch};
 use std::{
     ffi::{OsStr, OsString},
     fs, io,
@@ -120,7 +120,8 @@ pub struct Config {
     pub report: Option<OsString>,
     pub forwards: Vec<(u16, u16)>,
     pub timeout: u64,
-    pub qemu: OsString,
+    pub qemu: Option<OsString>,
+    pub arch: Arch,
     pub accel: Option<OsString>,
     pub cpu: Option<OsString>,
     pub mem: OsString,
@@ -129,7 +130,7 @@ pub struct Config {
     pub snap: bool,
 }
 
-fn network_manifest(image: &OsStr) -> io::Result<[std::net::Ipv4Addr; 4]> {
+fn network_manifest(image: &OsStr) -> io::Result<(Arch, [std::net::Ipv4Addr; 4])> {
     let output = Command::new("mtype")
         .arg("-i")
         .arg(image)
@@ -151,7 +152,14 @@ fn network_manifest(image: &OsStr) -> io::Result<[std::net::Ipv4Addr; 4]> {
         .map(str::parse)
         .collect::<Result<Vec<_>, _>>()
         .map_err(io::Error::other)?;
+    let arch = Arch::parse(
+        config
+            .lines()
+            .find_map(|l| l.strip_prefix("# spore-arch "))
+            .unwrap_or("aarch64"),
+    )?;
     ips.try_into()
+        .map(|ips| (arch, ips))
         .map_err(|_| io::Error::other("invalid app network manifest"))
 }
 
@@ -190,6 +198,7 @@ pub fn run(config: Config) -> io::Result<i32> {
 
 fn launch(config: Config) -> io::Result<i32> {
     let Config {
+        mut arch,
         direct,
         mode,
         image,
@@ -217,7 +226,11 @@ fn launch(config: Config) -> io::Result<i32> {
         }
         let cfg = match &direct {
             Some(boot) => boot.network,
-            None => network_manifest(&image)?,
+            None => {
+                let (machine, net) = network_manifest(&image)?;
+                arch = machine;
+                net
+            }
         };
         (app_network::user_network(cfg)?, cfg[0].to_string())
     } else {
@@ -226,7 +239,25 @@ fn launch(config: Config) -> io::Result<i32> {
     for (host, port) in forwards {
         net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-{guest}:{port}"));
     }
-    let accel = accel.unwrap_or_else(|| default_accelerator().into());
+    let qemu = qemu.unwrap_or_else(|| crate::qemu_default(arch));
+    let accel = accel.unwrap_or_else(|| {
+        if arch == Arch::Aarch64 {
+            default_accelerator().into()
+        } else {
+            "tcg".into()
+        }
+    });
+    let machine = match arch {
+        Arch::Aarch64 => "virt,gic-version=3,virtualization=off",
+        Arch::Riscv64 => "virt",
+        Arch::X86_64 => "q35",
+    };
+    if arch != Arch::Aarch64 && smp != "1" {
+        return Err(io::Error::other(
+            "secondary CPUs require platform interrupt routing",
+        ));
+    }
+
     let cpu = cpu.unwrap_or_else(|| {
         if accel.as_bytes().split(|&b| b == b',').next() == Some(b"tcg") {
             "max".into()
@@ -237,7 +268,7 @@ fn launch(config: Config) -> io::Result<i32> {
     let mut q = vec![
         qemu,
         "-M".into(),
-        "virt,gic-version=3,virtualization=off".into(),
+        machine.into(),
         "-accel".into(),
         accel,
         "-cpu".into(),
@@ -246,17 +277,26 @@ fn launch(config: Config) -> io::Result<i32> {
         mem,
         "-smp".into(),
         smp,
-        "-global".into(),
-        "virtio-mmio.force-legacy=false".into(),
         "-netdev".into(),
         net.into(),
         "-device".into(),
-        "virtio-net-device,netdev=sporenet,mac=52:54:00:12:34:56".into(),
+        format!(
+            "{},netdev=sporenet,mac=52:54:00:12:34:56",
+            if arch == Arch::X86_64 {
+                "virtio-net-pci,disable-legacy=on"
+            } else {
+                "virtio-net-device"
+            }
+        )
+        .into(),
     ];
+    if arch != Arch::X86_64 {
+        q.extend(["-global".into(), "virtio-mmio.force-legacy=false".into()]);
+    }
     if let Some(boot) = direct {
         boot.append(&mut q, &image)?;
     } else {
-        append_firmware(&mut q, &image, vars.as_deref())?;
+        append_firmware(&mut q, &image, vars.as_deref(), arch)?;
     }
     if let Some(r) = root {
         q.extend([
@@ -271,7 +311,15 @@ fn launch(config: Config) -> io::Result<i32> {
                 "",
             ),
             "-device".into(),
-            "virtio-blk-device,drive=sporeroot".into(),
+            format!(
+                "{},drive=sporeroot",
+                if arch == Arch::X86_64 {
+                    "virtio-blk-pci,disable-legacy=on"
+                } else {
+                    "virtio-blk-device"
+                }
+            )
+            .into(),
         ])
     }
     q.extend([
@@ -287,22 +335,41 @@ fn launch(config: Config) -> io::Result<i32> {
             q,
             report.as_deref().map(Path::new),
             timeout,
-            super::app::StatusDevice::Virtio,
-            b" handoff at EL1,",
+            if arch == Arch::X86_64 {
+                super::app::StatusDevice::Serial
+            } else {
+                super::app::StatusDevice::Virtio
+            },
+            if arch == Arch::Aarch64 {
+                b" handoff at EL1,"
+            } else {
+                b"[kernel] starting app"
+            },
         );
     }
     super::fixtures::start(mode)?;
     super::harness::run(&q, mode, timings)
 }
 
-fn append_firmware(q: &mut Vec<OsString>, image: &OsStr, vars: Option<&OsStr>) -> io::Result<()> {
+fn append_firmware(
+    q: &mut Vec<OsString>,
+    image: &OsStr,
+    vars: Option<&OsStr>,
+    arch: Arch,
+) -> io::Result<()> {
     let dirs = firmware_dirs(&q[0]);
-    let Some(firmware) = find(&dirs, &["edk2-aarch64-code.fd"]) else {
-        return Err(io::Error::other("edk2-aarch64-code.fd not found"));
+    let (code, template_name) = arch.firmware();
+    let Some(firmware) = find(&dirs, &[code]) else {
+        return Err(io::Error::other(format!("{code} not found")));
     };
 
     let template = || {
-        find(&dirs, &["edk2-arm-vars.fd", "edk2-aarch64-vars.fd"])
+        find(&dirs, &[template_name])
+            .or_else(|| {
+                (arch == Arch::Aarch64)
+                    .then(|| find(&dirs, &["edk2-aarch64-vars.fd"]))
+                    .flatten()
+            })
             .ok_or_else(|| io::Error::other("edk2 vars template not found"))
     };
     let vars_drive = if let Some(v) = vars {
@@ -349,7 +416,15 @@ fn append_firmware(q: &mut Vec<OsString>, image: &OsStr, vars: Option<&OsStr>) -
                 ",id=sporeesp",
             ),
             "-device".into(),
-            "virtio-blk-device,drive=sporeesp,bootindex=0".into(),
+            format!(
+                "{},drive=sporeesp,bootindex=0",
+                if arch == Arch::Aarch64 {
+                    "virtio-blk-device"
+                } else {
+                    "virtio-blk-pci,disable-legacy=on"
+                }
+            )
+            .into(),
         ])
     }
     Ok(())

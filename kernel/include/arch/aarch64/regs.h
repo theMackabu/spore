@@ -20,13 +20,13 @@ struct fp_state {
   uint64_t fpsr;
 } __attribute__((aligned(16)));
 
-struct aarch64_thread_context {
+struct arch_thread_context {
   struct fp_state fp;
   uint64_t thread_pointer;
 };
 
-void aarch64_save_context(struct aarch64_thread_context *context);
-void aarch64_restore_context(const struct aarch64_thread_context *context);
+void arch_save_context(struct arch_thread_context *context);
+void arch_restore_context(const struct arch_thread_context *context);
 
 static inline uint64_t trap_syscall_number(const struct trap_frame *frame) {
   return frame->x[8];
@@ -44,6 +44,6 @@ static inline void trap_set_stack(struct trap_frame *frame, uint64_t sp) {
   frame->sp_el0 = sp;
 }
 
-void aarch64_init_user_frame(struct trap_frame *frame, uint64_t entry, uint64_t sp, bool freebsd);
-void aarch64_set_snapshot_entry(struct trap_frame *frame, uint64_t entry, uint64_t arg, uint64_t pid);
-bool aarch64_restart_syscall(struct trap_frame *frame);
+void arch_init_user_frame(struct trap_frame *frame, uint64_t entry, uint64_t sp, bool freebsd);
+void arch_set_snapshot_entry(struct trap_frame *frame, uint64_t entry, uint64_t arg, uint64_t pid);
+bool arch_restart_syscall(struct trap_frame *frame);

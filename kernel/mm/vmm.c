@@ -1,6 +1,18 @@
 #include "mm/vmm.h"
 
+#ifdef SPORE_NATIVE_PORT
+#include "arch/bringup/mmu.h"
+#define publish_table native_publish_table
+#define tlb_flush_va native_flush_va
+#define tlb_flush_all native_flush_all
+#define tlb_flush_pages native_flush_pages
+#else
 #include "arch/aarch64/mmu.h"
+#define publish_table aarch64_publish_table
+#define tlb_flush_va aarch64_tlb_flush_va
+#define tlb_flush_all aarch64_tlb_flush_all
+#define tlb_flush_pages aarch64_tlb_flush_pages
+#endif
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "mm/file_page.h"
@@ -24,6 +36,46 @@ constexpr uint64_t PTE_WRITE_ALLOWED = 1ull << 57;
 constexpr uint64_t PTE_FILE_CACHE = 1ull << 58;
 constexpr uint64_t PTE_ADDR_MASK = 0x0000fffffffff000ull;
 
+#ifdef SPORE_NATIVE_PORT
+constexpr unsigned USER_ROOT_ENTRIES = 256;
+static bool table_present(uint64_t entry) { return (entry & 1) != 0; }
+static uint64_t table_pa(uint64_t entry) { return entry_phys(entry); }
+static uint64_t table_link(uint64_t pa) { return table_entry(pa); }
+
+static uint64_t allocate_table(bool leaf) {
+  if (!leaf) { return pmm_alloc_zero_page(); }
+  uint64_t pa = pmm_alloc_contiguous_pages(2);
+  if (pa) { kmemset(pmm_phys_to_virt(pa), 0, 2 * PAGE_SIZE); }
+  return pa;
+}
+static void release_table(uint64_t pa, bool leaf) {
+  if (leaf) { pmm_free_page(pa + PAGE_SIZE); }
+  pmm_free_page(pa);
+}
+static uint64_t *software_leaves(uint64_t *hardware) { return hardware + 512; }
+static void store_leaf(uint64_t *slot, uint64_t entry) {
+  *slot = entry;
+  unsigned prot = PAGE_USER;
+  if (entry & PTE_AP_USER_RW) { prot |= PAGE_READ; }
+  if ((entry & PTE_AP_MASK) == PTE_AP_USER_RW) { prot |= PAGE_WRITE; }
+  if (!(entry & PTE_UXN)) { prot |= PAGE_EXEC; }
+  slot[-512] = (entry & PTE_VALID) && (prot & (PAGE_READ | PAGE_WRITE | PAGE_EXEC)) ?
+      page_entry(entry & PTE_ADDR_MASK, prot) : 0;
+}
+void vmm_install_user(const struct user_address_space *as) {
+  if (active_root() != as->root_pa) { install_root(as->root_pa); }
+}
+#else
+constexpr unsigned USER_ROOT_ENTRIES = 512;
+static bool table_present(uint64_t entry) { return (entry & 3) == 3; }
+static uint64_t table_pa(uint64_t entry) { return entry & PTE_ADDR_MASK; }
+static uint64_t table_link(uint64_t pa) { return pa | PTE_VALID | PTE_TABLE; }
+static uint64_t allocate_table(bool leaf) { (void)leaf; return pmm_alloc_zero_page(); }
+static void release_table(uint64_t pa, bool leaf) { (void)leaf; pmm_free_page(pa); }
+static uint64_t *software_leaves(uint64_t *table) { return table; }
+static void store_leaf(uint64_t *slot, uint64_t entry) { *slot = entry; }
+#endif
+
 static uint64_t *pt_virt(const struct user_address_space *as, uint64_t pa) {
   return (uint64_t *)(uintptr_t)(as->hhdm_offset + pa);
 }
@@ -41,14 +93,14 @@ static uint64_t *walk_to_leaf(const struct user_address_space *as, uint64_t va, 
   uint64_t *table = pt_virt(as, as->root_pa);
   for (unsigned shift = 39; shift > 12; shift -= 9) {
     uint64_t entry = table[pt_index(va, shift)];
-    if ((entry & (PTE_VALID | PTE_TABLE)) != (PTE_VALID | PTE_TABLE)) {
+    if (!table_present(entry)) {
       *span_shift = shift;
       return NULL;
     }
-    table = pt_virt(as, entry & PTE_ADDR_MASK);
+    table = pt_virt(as, table_pa(entry));
   }
   *span_shift = 21;
-  return &table[pt_index(va, 12)];
+  return &software_leaves(table)[pt_index(va, 12)];
 }
 
 static uint64_t *leaf_for_va(const struct user_address_space *as, uint64_t va) {
@@ -92,6 +144,11 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   static uint64_t last_context_id;
   uint64_t root = pmm_alloc_zero_page();
   if (root == 0) { return false; }
+#ifdef SPORE_NATIVE_PORT
+  uint64_t *table = pmm_phys_to_virt(root);
+  const uint64_t *kernel = pmm_phys_to_virt(active_root());
+  kmemcpy(table + USER_ROOT_ENTRIES, kernel + USER_ROOT_ENTRIES, PAGE_SIZE / 2);
+#endif
   as->context_id = __atomic_add_fetch(&last_context_id, 1, __ATOMIC_RELAXED);
   as->root_pa = root;
   as->hhdm_offset = hhdm_offset;
@@ -123,25 +180,27 @@ static uint64_t *ensure_leaf(struct user_address_space *as, uint64_t va) {
   uint64_t *table = pt_virt(as, as->root_pa);
   uint64_t *first_missing = NULL;
   uint64_t allocated[3];
+  bool leaves[3];
   size_t count = 0;
   for (unsigned shift = 39; shift > 12; shift -= 9) {
     uint64_t *slot = &table[pt_index(va, shift)];
     uint64_t entry = *slot;
     if (!(entry & PTE_VALID)) {
-      uint64_t pa = pmm_alloc_zero_page();
+      uint64_t pa = allocate_table(shift == 21);
       if (!pa) {
-        while (count) { pmm_free_page(allocated[--count]); }
+        while (count) { --count; release_table(allocated[count], leaves[count]); }
         return NULL;
       }
+      leaves[count] = shift == 21;
       allocated[count++] = pa;
-      entry = pa | PTE_VALID | PTE_TABLE;
+      entry = table_link(pa);
       if (!first_missing) { first_missing = slot; }
       else { *slot = entry; }
-    } else if (!(entry & PTE_TABLE)) { return NULL; }
-    table = pt_virt(as, entry & PTE_ADDR_MASK);
+    } else if (!table_present(entry)) { return NULL; }
+    table = pt_virt(as, table_pa(entry));
   }
-  if (first_missing) { aarch64_publish_table(first_missing, allocated[0] | PTE_VALID | PTE_TABLE); }
-  return &table[pt_index(va, 12)];
+  if (first_missing) { publish_table(first_missing, table_link(allocated[0])); }
+  return &software_leaves(table)[pt_index(va, 12)];
 }
 
 static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags,
@@ -152,10 +211,10 @@ static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t p
   uint64_t entry = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER | PTE_PXN | permissions;
   if (flags & VMM_MAP_SHARED) { entry |= PTE_SHARED; }
   if (flags & VMM_MAP_FILE_CACHE) { entry |= PTE_FILE_CACHE; }
-  *pte = with_protection(entry, flags);
+  store_leaf(pte, with_protection(entry, flags));
   ++as->resident_pages;
   if (as->resident_pages > as->peak_resident_pages) { as->peak_resident_pages = as->resident_pages; }
-  aarch64_tlb_flush_va(va);
+  tlb_flush_va(va);
   return true;
 }
 
@@ -177,7 +236,7 @@ bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags) 
 
 static bool is_leaf_at_level(uint64_t entry, unsigned level) {
   if ((entry & PTE_VALID) == 0) { return false; }
-  return level == 3 || (entry & PTE_TABLE) == 0;
+  return level == 3 || !table_present(entry);
 }
 
 static bool is_writable_leaf(uint64_t entry) {
@@ -195,8 +254,8 @@ static void forget_file_writer(uint64_t *pte) {
 }
 
 void vmm_write_protect_file_pte(uint64_t *pte, uint64_t va) {
-  *pte = leaf_with_ap(*pte, PTE_AP_USER_RO);
-  aarch64_tlb_flush_va(va);
+  store_leaf(pte, leaf_with_ap(*pte, PTE_AP_USER_RO));
+  tlb_flush_va(va);
 }
 
 static bool clone_table(struct user_address_space *dst, struct user_address_space *src, uint64_t dst_table_pa,
@@ -204,7 +263,8 @@ static bool clone_table(struct user_address_space *dst, struct user_address_spac
   uint64_t *dst_table = pt_virt(dst, dst_table_pa);
   uint64_t *src_table = pt_virt(src, src_table_pa);
 
-  for (size_t i = 0; i < 512; ++i) {
+  if (level == 3) { dst_table = software_leaves(dst_table); src_table = software_leaves(src_table); }
+  for (size_t i = 0; i < (level ? 512u : USER_ROOT_ENTRIES); ++i) {
     uint64_t entry = src_table[i];
     if ((entry & PTE_VALID) == 0) { continue; }
 
@@ -227,17 +287,17 @@ static bool clone_table(struct user_address_space *dst, struct user_address_spac
         } else if (!(entry & PTE_SHARED)) {
           entry |= PTE_COW;
           if (is_writable_leaf(entry)) { entry = leaf_with_ap(entry, PTE_AP_USER_RO); }
-          src_table[i] = entry;
+          store_leaf(&src_table[i], entry);
         }
       }
-      dst_table[i] = entry;
+      store_leaf(&dst_table[i], entry);
       continue;
     }
 
-    uint64_t child_pa = pmm_alloc_zero_page();
+    uint64_t child_pa = allocate_table(level == 2);
     if (child_pa == 0) { return false; }
-    dst_table[i] = child_pa | PTE_VALID | PTE_TABLE;
-    if (!clone_table(dst, src, child_pa, entry & PTE_ADDR_MASK, level + 1, mode)) { return false; }
+    dst_table[i] = table_link(child_pa);
+    if (!clone_table(dst, src, child_pa, table_pa(entry), level + 1, mode)) { return false; }
   }
   return true;
 }
@@ -259,14 +319,15 @@ bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, e
   } else {
     vmm_destroy(dst);
   }
-  aarch64_tlb_flush_all();
+  tlb_flush_all();
   return ok;
 }
 
-static size_t destroy_table(struct user_address_space *as, uint64_t table_pa, unsigned level) {
+static size_t destroy_table(struct user_address_space *as, uint64_t pa_table, unsigned level) {
   size_t leaves = 0;
-  uint64_t *table = pt_virt(as, table_pa);
-  for (size_t i = 0; i < 512; ++i) {
+  uint64_t *table = pt_virt(as, pa_table);
+  if (level == 3) { table = software_leaves(table); }
+  for (size_t i = 0; i < (level ? 512u : USER_ROOT_ENTRIES); ++i) {
     uint64_t entry = table[i];
     if ((entry & PTE_VALID) == 0) { continue; }
     uint64_t pa = entry & PTE_ADDR_MASK;
@@ -275,10 +336,10 @@ static size_t destroy_table(struct user_address_space *as, uint64_t table_pa, un
       pmm_free_page(pa);
       ++leaves;
     } else {
-      leaves += destroy_table(as, pa, level + 1);
+      leaves += destroy_table(as, table_pa(entry), level + 1);
     }
   }
-  pmm_free_page(table_pa);
+  release_table(pa_table, level == 3);
   return leaves;
 }
 
@@ -317,9 +378,9 @@ bool vmm_handle_write_fault(struct user_address_space *as, uint64_t va) {
              (PTE_VALID | PTE_FILE_CACHE | PTE_WRITE_ALLOWED)) {
     if (!is_writable_leaf(*pte)) {
       if (!vmm_file_writer_add(*pte & PTE_ADDR_MASK, pte, va & ~(uint64_t)(PAGE_SIZE - 1))) { return false; }
-      *pte = leaf_with_ap(*pte, PTE_AP_USER_RW);
+      store_leaf(pte, leaf_with_ap(*pte, PTE_AP_USER_RW));
     }
-    aarch64_tlb_flush_va(va);
+    tlb_flush_va(va);
     return true;
   }
   constexpr uint64_t writable_cow = PTE_VALID | PTE_COW | PTE_WRITE_ALLOWED;
@@ -328,8 +389,8 @@ bool vmm_handle_write_fault(struct user_address_space *as, uint64_t va) {
   uint64_t old_entry = *pte;
   uint64_t old_pa = old_entry & PTE_ADDR_MASK;
   if (pmm_is_last_ref(old_pa)) {
-    *pte = leaf_with_ap(old_entry & ~PTE_COW, PTE_AP_USER_RW);
-    aarch64_tlb_flush_va(va);
+    store_leaf(pte, leaf_with_ap(old_entry & ~PTE_COW, PTE_AP_USER_RW));
+    tlb_flush_va(va);
     return true;
   }
 
@@ -338,12 +399,12 @@ bool vmm_handle_write_fault(struct user_address_space *as, uint64_t va) {
   kmemcpy((void *)(uintptr_t)(as->hhdm_offset + new_pa), (const void *)(uintptr_t)(as->hhdm_offset + old_pa),
           PAGE_SIZE);
 
-  *pte = 0;
-  aarch64_tlb_flush_va(va);
+  store_leaf(pte, 0);
+  tlb_flush_va(va);
   uint64_t new_entry = leaf_with_ap((old_entry & ~PTE_ADDR_MASK & ~PTE_COW) | (new_pa & PTE_ADDR_MASK), PTE_AP_USER_RW);
-  *pte = new_entry;
+  store_leaf(pte, new_entry);
   pmm_free_page(old_pa);
-  aarch64_tlb_flush_va(va);
+  tlb_flush_va(va);
   return true;
 }
 
@@ -371,12 +432,12 @@ static uint64_t transfer_pages(struct user_address_space *as, uint64_t from, uin
         forget_file_writer(&range.ptes[i]);
         entry = leaf_with_ap(entry, PTE_AP_USER_RO);
       }
-      *pte = entry;
-      range.ptes[i] = 0;
+      store_leaf(pte, entry);
+      store_leaf(&range.ptes[i], 0);
       moved |= UINT64_C(1) << i;
     }
-    aarch64_tlb_flush_pages(range.va, moved);
-    aarch64_tlb_flush_pages(dest, moved);
+    tlb_flush_pages(range.va, moved);
+    tlb_flush_pages(dest, moved);
     if (i != range.count) { return range.va - from + i * PAGE_SIZE; }
   }
   return bytes;
@@ -400,7 +461,7 @@ struct retired_tables {
 
 static void reclaim_tables(struct user_address_space *as, struct retired_tables *retired) {
   if (!retired->count) { return; }
-  aarch64_tlb_flush_all();
+  tlb_flush_all();
   while (retired->count) {
     uint64_t tagged = retired->pages[--retired->count];
     as->resident_pages -= destroy_table(as, tagged & PTE_ADDR_MASK, tagged & 3);
@@ -416,10 +477,10 @@ static void unmap_leaves(struct user_address_space *as, uint64_t *table, uint64_
     for (size_t i = 0; i < count; ++i) {
       if (!(ptes[i] & PTE_VALID)) { continue; }
       forget_file_writer(&ptes[i]);
-      ptes[i] &= ~PTE_VALID;
+      store_leaf(&ptes[i], ptes[i] & ~PTE_VALID);
       removed |= UINT64_C(1) << i;
     }
-    aarch64_tlb_flush_pages(start, removed);
+    tlb_flush_pages(start, removed);
     as->resident_pages -= (unsigned)__builtin_popcountll(removed);
     while (removed) {
       size_t i = (size_t)__builtin_ctzll(removed);
@@ -446,12 +507,12 @@ static void unmap_tables(struct user_address_space *as, uint64_t *table, unsigne
     uint64_t base = start & ~(span - 1);
     uint64_t limit = base + span < end ? base + span : end;
     uint64_t *slot = &table[pt_index(start, shift)];
-    if ((*slot & (PTE_VALID | PTE_TABLE)) == (PTE_VALID | PTE_TABLE)) {
-      uint64_t pa = *slot & PTE_ADDR_MASK;
+    if (table_present(*slot)) {
+      uint64_t pa = table_pa(*slot);
       bool whole = start == base && limit - start == span;
       if (!whole) {
         uint64_t *child = pt_virt(as, pa);
-        if (level == 2) { unmap_leaves(as, child, start, limit); }
+        if (level == 2) { child = software_leaves(child); unmap_leaves(as, child, start, limit); }
         else { unmap_tables(as, child, level + 1, start, limit, retired); }
         whole = table_empty(child);
       }
@@ -485,10 +546,10 @@ void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t e
       uint64_t next = with_protection(entry, flags);
       if (next == entry) { continue; }
       if (!is_writable_leaf(next)) { forget_file_writer(&range.ptes[i]); }
-      range.ptes[i] = next;
+      store_leaf(&range.ptes[i], next);
       changed |= UINT64_C(1) << i;
     }
-    aarch64_tlb_flush_pages(range.va, changed);
+    tlb_flush_pages(range.va, changed);
   }
 }
 

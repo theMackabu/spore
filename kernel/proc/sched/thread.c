@@ -1,9 +1,9 @@
 #include "mm/table.h"
 #include "proc/thread.h"
 
-#include "arch/aarch64/platform.h"
-#include "arch/aarch64/regs.h"
-#include "arch/aarch64/smp.h"
+#include "arch/platform.h"
+#include "arch/regs.h"
+#include "arch/smp.h"
 #include "accounting_internal.h"
 #include "proc/accounting.h"
 #include "lib/kprintf.h"
@@ -164,12 +164,12 @@ void cell_save_current(const struct trap_frame *frame) {
   struct thread *current_thread = cell_current_thread_internal();
   if (current_thread == NULL) { return; }
   current_thread->tf = *frame;
-  aarch64_save_context(&current_thread->context);
+  arch_save_context(&current_thread->context);
 }
 
 static void restore_thread(struct thread *thread, struct trap_frame *frame) {
   vmm_install_user(cell_domain_as(thread->domain));
-  aarch64_restore_context(&thread->context);
+  arch_restore_context(&thread->context);
   *frame = thread->tf;
 }
 
@@ -221,7 +221,7 @@ void cell_schedule(struct trap_frame *frame) {
     smp_set_scheduler_waiting(cpu, false);
   }
   kprintf("[kernel] no runnable threads\n");
-  aarch64_poweroff();
+  arch_poweroff();
 }
 
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {

@@ -37,3 +37,30 @@ with tempfile.TemporaryDirectory(prefix="spore-ports-") as tmp:
         check(directory, arch + "-unknown-linux-musl", f"linux-{arch}.S", b"PASS", 42)
         check(directory, arch + "-unknown-linux-musl", f"linux-{arch}.S", b"", 132, "signal")
         check(directory, arch + "-unknown-freebsd", f"freebsd-{arch}.S", b"PASS", 42)
+
+    for arch in ("aarch64", "x86_64", "riscv64"):
+        exe = directory / ("uring-" + arch)
+        subprocess.run(["zig", "cc", "-target", arch + "-linux-musl", "-O2", "-static",
+                        sources.parent / "appliance/uring.c", "-o", exe], check=True)
+        subprocess.run([cli, "run", exe], check=True, timeout=45)
+        print(f"{arch} mmap, epoll, wait and io_uring passed", flush=True)
+
+        image = directory / (arch + ".img")
+        subprocess.run([cli, "build", exe, "-o", image], check=True)
+        subprocess.run([cli, "boot", image], check=True, timeout=45)
+
+        if "--userland" in sys.argv[2:]:
+            root = directory / arch
+            (root / "sbin").mkdir(parents=True)
+            subprocess.run(["zig", "cc", "-target", arch + "-linux-musl", "-O2", "-static",
+                            sources / "child.c", "-o", root / "sbin/init"], check=True)
+            disk = directory / (arch + ".ext2")
+            with disk.open("wb") as f:
+                f.truncate(32 << 20)
+            subprocess.run(["mke2fs", "-q", "-t", "ext2", "-b", "4096", "-O",
+                            "none,filetype,sparse_super,large_file", "-d", root, disk], check=True)
+            vm = subprocess.run([cli, "boot", "--arch", arch, "--memory", "128M", "--smp", "1",
+                                 "--root", disk, "--snapshot"], input=b"", stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=45, check=True)
+            assert b"child wait passed" in vm.stdout, (arch, vm.stdout[-1024:])
+            print(f"{arch} fork, shared mapping, copy-on-write and waitpid passed", flush=True)

@@ -3,8 +3,8 @@
 #include "init/program.h"
 #include "lib/kstr.h"
 #include "proc/sched/accounting_internal.h"
-#include "arch/aarch64/platform.h"
-#include "arch/aarch64/regs.h"
+#include "arch/platform.h"
+#include "arch/regs.h"
 #include "exec/stack.h"
 #include "lib/kprintf.h"
 #include "mm/pmm.h"
@@ -37,7 +37,7 @@ static void derive_table_sizes(size_t *domains, size_t *threads, size_t *mms, si
 
 static void halt_table_init_failure(const char *name) {
   kprintf("[spore] failed to allocate %s table\n", name);
-  aarch64_halt();
+  arch_halt();
 }
 
 void cell_system_init(void) {
@@ -86,7 +86,7 @@ bool cell_create_init(const struct init_program *program, struct user_address_sp
     return false;
   }
   thread->state = THREAD_RUNNABLE;
-  aarch64_init_user_frame(&thread->tf, entry, sp, cell_domain_as(domain)->freebsd_abi);
+  arch_init_user_frame(&thread->tf, entry, sp, cell_domain_as(domain)->freebsd_abi);
   cell_set_current_thread(thread);
   kprintf("[spore] booting... domain %d / thread %d\n", domain->id, thread->tid);
   return true;

@@ -3,7 +3,7 @@
 #include "fs/notify.h"
 #include "file_io.h"
 
-#include "arch/aarch64/regs.h"
+#include "arch/regs.h"
 #include "net/net.h"
 #include "proc/domain.h"
 #include "proc/fd.h"

@@ -1,5 +1,5 @@
-#include "arch/aarch64/entropy.h"
-#include "arch/aarch64/timer.h"
+#include "arch/entropy.h"
+#include "arch/clock.h"
 #include "lib/random.h"
 
 #include "lib/mem.h"
@@ -96,7 +96,7 @@ static void absorb_seed(const uint8_t *seed, size_t len) {
 }
 
 void random_init(uint64_t seed_hint) {
-  rng.have_rndr = aarch64_rndr_supported();
+  rng.have_rndr = arch_rndr_supported();
   rng.key[0] = 0x73706f72u;
   rng.key[1] = 0x652d6373u;
   rng.key[2] = 0x70726e67u;
@@ -104,18 +104,18 @@ void random_init(uint64_t seed_hint) {
   rng.key[4] = (uint32_t)seed_hint;
   rng.key[5] = (uint32_t)(seed_hint >> 32);
   rng.key[6] = (uint32_t)(uintptr_t)&rng;
-  rng.key[7] = (uint32_t)aarch64_counter_value();
-  rng.counter = aarch64_counter_value() ^ seed_hint;
-  rng.nonce[0] = (uint32_t)(aarch64_counter_value() >> 8);
+  rng.key[7] = (uint32_t)arch_counter_value();
+  rng.counter = arch_counter_value() ^ seed_hint;
+  rng.nonce[0] = (uint32_t)(arch_counter_value() >> 8);
   rng.nonce[1] = (uint32_t)(uintptr_t)&random_init;
   rng.nonce[2] = (uint32_t)(uintptr_t)&random_bytes;
   rng.seeded = true;
 
   uint64_t seed_words[8];
   for (size_t i = 0; i < sizeof(seed_words) / sizeof(seed_words[0]); ++i) {
-    uint64_t word = aarch64_counter_value() ^ seed_hint ^ ((uint64_t)i << 56);
+    uint64_t word = arch_counter_value() ^ seed_hint ^ ((uint64_t)i << 56);
     uint64_t rndr;
-    if (rng.have_rndr && aarch64_rndr64(&rndr)) { word ^= rndr; }
+    if (rng.have_rndr && arch_rndr64(&rndr)) { word ^= rndr; }
     seed_words[i] = word;
   }
   absorb_seed((const uint8_t *)seed_words, sizeof(seed_words));
@@ -123,12 +123,12 @@ void random_init(uint64_t seed_hint) {
 }
 
 void random_bytes(void *dst, size_t len) {
-  if (!rng.seeded) { random_init(aarch64_counter_value()); }
+  if (!rng.seeded) { random_init(arch_counter_value()); }
   uint8_t *out = dst;
   uint8_t rekey[CHACHA_BLOCK_BYTES];
   while (len) {
     uint64_t rndr;
-    if (rng.have_rndr && (rng.counter & 0x3fu) == 0 && aarch64_rndr64(&rndr)) {
+    if (rng.have_rndr && (rng.counter & 0x3fu) == 0 && arch_rndr64(&rndr)) {
       absorb_seed((const uint8_t *)&rndr, sizeof(rndr));
     }
     if (len < CHACHA_BLOCK_BYTES) {

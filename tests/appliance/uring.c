@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include <errno.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/io_uring.h>
 #include <poll.h>
@@ -11,6 +12,8 @@
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static void *wait_for_cqe(void *arg) {
@@ -76,6 +79,10 @@ static void exercise(unsigned flags) {
 }
 
 int main(void) {
+  int status;
+  assert(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD);
+  const struct timespec delay = {.tv_nsec = 20000000};
+  assert(nanosleep(&delay, NULL) == 0);
   exercise(0);
   exercise(IORING_SETUP_NO_SQARRAY);
   return 0;

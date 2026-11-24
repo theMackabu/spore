@@ -1,6 +1,6 @@
 #pragma once
 
-#include "arch/aarch64/regs.h"
+#include "arch/regs.h"
 #include "proc/limits.h"
 
 #include <stdbool.h>
@@ -105,7 +105,7 @@ struct thread {
   struct domain *domain;
   enum thread_state state;
   struct trap_frame tf;
-  struct aarch64_thread_context context;
+  struct arch_thread_context context;
   struct thread_wait wait;
   uint64_t signal_mask;
   uint64_t pending_signals;

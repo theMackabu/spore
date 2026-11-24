@@ -1,7 +1,7 @@
 #include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
 #include "fs/notify.h"
-#include "drivers/pl011.h"
+#include "drivers/serial.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
@@ -230,7 +230,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (file != NULL && file->type == OPEN_PTY) {
       cell_pty_get_winsize(file, &rows, &cols);
     } else {
-      pl011_get_winsize(&rows, &cols);
+      serial_get_winsize(&rows, &cols);
     }
     struct winsize64 ws = {
       .ws_row = rows,

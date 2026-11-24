@@ -4,7 +4,7 @@
 #include "lib/mem.h"
 
 #if defined(__riscv)
-constexpr uint64_t PAGING_MODE = LIMINE_PAGING_MODE_RISCV_SV39;
+constexpr uint64_t PAGING_MODE = LIMINE_PAGING_MODE_RISCV_SV48;
 #elif defined(__x86_64__)
 constexpr uint64_t PAGING_MODE = LIMINE_PAGING_MODE_X86_64_4LVL;
 #else

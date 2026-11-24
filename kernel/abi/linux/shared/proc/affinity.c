@@ -1,6 +1,6 @@
 #include "handlers.h"
 #include "abi/linux/shared/usercopy.h"
-#include "arch/aarch64/smp.h"
+#include "arch/smp.h"
 #include "lib/mem.h"
 
 enum { EINVAL = 22, EFAULT = 14 };

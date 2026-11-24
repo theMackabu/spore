@@ -6,7 +6,7 @@
 
 #include "abi/linux/aarch64/syscall.h"
 #include "abi/freebsd/aarch64.h"
-#include "arch/aarch64/signal_frame.h"
+#include "arch/signal_frame.h"
 #include "proc/memory.h"
 #include "proc/signal.h"
 
