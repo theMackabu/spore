@@ -172,7 +172,17 @@ static int memfd_seals_regression(void) {
   ok = ok && map != MAP_FAILED;
   errno = 0;
   ok = ok && fcntl(busy_fd, F_ADD_SEALS, F_SEAL_WRITE) == -1 && errno == EBUSY;
-  if (map != MAP_FAILED) { ok = ok && munmap(map, 4096) == 0; }
+  if (map != MAP_FAILED) {
+    ok = ok && fcntl(busy_fd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) == 0;
+    map[0] = 'W';
+    ok = ok && msync(map, 4096, MS_SYNC) == 0 && mprotect(map, 4096, PROT_READ) == 0;
+    ok = ok && fcntl(busy_fd, F_ADD_SEALS, F_SEAL_WRITE) == -1 && errno == EBUSY;
+    ok = ok && mprotect(map, 4096, PROT_READ | PROT_WRITE) == 0;
+    if (ok) { map[1] = 'B'; }
+    ok = ok && munmap(map, 4096) == 0;
+    char saved[2];
+    ok = ok && pread(busy_fd, saved, sizeof(saved), 0) == 2 && memcmp(saved, "WB", 2) == 0;
+  }
   ok = ok && fcntl(busy_fd, F_ADD_SEALS, F_SEAL_WRITE) == 0;
   errno = 0;
   ok = ok && write(busy_fd, "x", 1) == -1 && errno == EPERM;
@@ -210,6 +220,11 @@ static int file_mapping_access(void) {
     ok = ok && replacement == MAP_FAILED && errno == EACCES && original[0] == 'A';
     replacement = mmap(original, page, PROT_READ, MAP_FIXED | MAP_PRIVATE, writer, 0);
     ok = ok && replacement == MAP_FAILED && errno == EACCES && original[0] == 'A';
+    char *shared = mmap(NULL, page, PROT_READ, MAP_SHARED, reader, 0);
+    if (shared != MAP_FAILED) {
+      ok = ok && mprotect(shared, page, PROT_READ | PROT_WRITE) == -1 && errno == EACCES && shared[0] == 'F';
+      munmap(shared, page);
+    } else { ok = 0; }
     char *copy = mmap(original, page, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE, reader, 0);
     if (copy == original) {
       ok = ok && copy[0] == 'F';

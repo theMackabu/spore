@@ -149,7 +149,6 @@ int ramfs_add_seals(struct ramfs *fs, int index, uint32_t seals);
 int ramfs_get_seals(struct ramfs *fs, int index);
 bool ramfs_write_sealed(struct ramfs *fs, int index);
 bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size);
-bool ramfs_shared_writable_mmap_sealed(struct ramfs *fs, int index);
 void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add);
 int ramfs_remove(struct ramfs *fs, const char *path);
 static inline bool ramfs_unlink(struct ramfs *fs, const char *path) {
@@ -162,5 +161,6 @@ bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path);
 bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path);
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len);
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
+int64_t ramfs_writeback(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
 bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out);
 uint64_t ramfs_backing_used_pages(void);

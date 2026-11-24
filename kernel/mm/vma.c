@@ -10,12 +10,10 @@
 
 constexpr size_t VMAS_PER_CHUNK = VMA_CHUNK_BYTES / sizeof(struct vma);
 
-constexpr int MAP_SHARED = 0x01;
-
 static uint64_t vma_hhdm_offset;
 
 static bool compatible(const struct vma *a, const struct vma *b) {
-  if (a->prot != b->prot || a->flags != b->flags || a->type != b->type) { return false; }
+  if (a->prot != b->prot || a->flags != b->flags || a->type != b->type || a->shared_may_write != b->shared_may_write) { return false; }
   if (a->type != VMA_FILE) { return true; }
   return a->file_node.backend == b->file_node.backend && a->file_node.ino == b->file_node.ino &&
          a->file_node.dev_id == b->file_node.dev_id && a->file_start == b->file_start &&
@@ -119,7 +117,7 @@ size_t vma_first_ending_after(const struct vma_list *list, uint64_t addr) {
 static bool retain_mapping(const struct vma *vma) {
   if (vma->type != VMA_FILE) { return true; }
   if (!vfs_retain_node(&vma->file_node)) { return false; }
-  if ((vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE)) {
+  if (vma->shared_may_write) {
     vfs_note_shared_writable_mapping(&vma->file_node, true);
   }
   return true;
@@ -127,23 +125,10 @@ static bool retain_mapping(const struct vma *vma) {
 
 static void release_mapping(const struct vma *vma) {
   if (vma->type != VMA_FILE) { return; }
-  if ((vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE)) {
+  if (vma->shared_may_write) {
     vfs_note_shared_writable_mapping(&vma->file_node, false);
   }
   vfs_release_node(&vma->file_node);
-}
-
-static bool shared_writable_file(const struct vma *vma) {
-  return vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE);
-}
-
-static void set_mapping_protection(struct vma *vma, uint32_t prot) {
-  bool old_shared_writable = shared_writable_file(vma);
-  bool new_shared_writable = vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && (prot & VMM_USER_WRITE);
-  if (old_shared_writable != new_shared_writable) {
-    vfs_note_shared_writable_mapping(&vma->file_node, new_shared_writable);
-  }
-  vma->prot = prot;
 }
 
 static void erase_slots(struct vma_list *list, size_t first, size_t end) {
@@ -247,13 +232,14 @@ bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t pr
 }
 
 bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
-                     const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
+                     const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size, bool shared_may_write) {
   if (!node || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
   struct vma vma = {.start = start,
                     .end = end,
                     .prot = prot,
                     .flags = flags,
                     .type = VMA_FILE,
+                    .shared_may_write = shared_may_write,
                     .file_node = *node,
                     .file_start = file_start,
                     .file_offset = file_offset,
@@ -355,7 +341,7 @@ bool vma_protect(struct vma_list *list, uint64_t start, uint64_t end, uint32_t p
       insert_slot(list, middle, &part);
     } else {
       slot_at(list, i)->end = mid_end;
-      set_mapping_protection(slot_at(list, i), prot);
+      slot_at(list, i)->prot = prot;
     }
     if (mid_end < old.end) {
       struct vma part = old;

@@ -276,11 +276,6 @@ bool vfs_truncate_sealed(const struct vfs_node *node, uint64_t size) {
   return node != NULL && node->backend == VFS_RAMFS && ramfs_truncate_sealed(node->ramfs.fs, node->ramfs.index, size);
 }
 
-bool vfs_shared_writable_mmap_sealed(const struct vfs_node *node) {
-  return node != NULL && node->backend == VFS_RAMFS &&
-         ramfs_shared_writable_mmap_sealed(node->ramfs.fs, node->ramfs.index);
-}
-
 void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add) {
   if (node == NULL || node->backend != VFS_RAMFS) { return; }
   ramfs_note_shared_writable_mapping(node->ramfs.fs, node->ramfs.index, add);
@@ -293,22 +288,30 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
   return vfs_read_cached(node, off, dst, len);
 }
 
-int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
+static int64_t write_node(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len, bool writeback) {
   vfs_update_time_sources();
-  if (vfs_write_sealed(node)) { return -1; }
   int64_t written = -28;
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;
     if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &ext)) { return -5; }
     written = ext2_write_file(vfs_root_ext2, &ext, off, src, len);
   } else if (node->backend == VFS_RAMFS) {
-    written = ramfs_write(node->ramfs.fs, node->ramfs.index, off, src, len);
+    written = writeback ? ramfs_writeback(node->ramfs.fs, node->ramfs.index, off, src, len)
+                        : ramfs_write(node->ramfs.fs, node->ramfs.index, off, src, len);
   }
   if (written > 0) {
     vfs_page_cache_write(node, off, src, (uint64_t)written);
     vfs_lookup_cache_clear();
   }
   return written;
+}
+
+int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
+  return write_node(node, off, src, len, false);
+}
+
+int64_t vfs_writeback(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
+  return write_node(node, off, src, len, true);
 }
 
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {

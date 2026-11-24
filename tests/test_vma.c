@@ -124,24 +124,24 @@ int main(void) {
     .size = 0x8000,
   };
   enum { MAP_SHARED_TEST = 0x01, MAP_PRIVATE_TEST = 0x02 };
-  assert(vma_insert_file(&files, 0x900000, 0x902000, 3, MAP_SHARED_TEST, &node, 0x900000, 0, 0x2000));
+  assert(vma_insert_file(&files, 0x900000, 0x902000, 3, MAP_SHARED_TEST, &node, 0x900000, 0, 0x2000, true));
   assert(vfs_ref_stub_retain_count() == 1);
   assert(vfs_ref_stub_release_count() == 0);
   assert(vfs_ref_stub_shared_write_count() == 1);
   assert(vma_protect(&files, 0x901000, 0x902000, 1));
-  assert(vfs_ref_stub_shared_write_count() == 1);
+  assert(vfs_ref_stub_shared_write_count() == 2);
   assert(vma_remove(&files, 0x900000, 0x901000));
-  assert(vfs_ref_stub_shared_write_count() == 0);
+  assert(vfs_ref_stub_shared_write_count() == 1);
   vma_list_destroy(&files);
   assert(vfs_ref_stub_retain_count() == vfs_ref_stub_release_count());
 
   vfs_ref_stub_reset();
   vma_list_init(&files);
-  assert(vma_insert_file(&files, 0xa00000, 0xa02000, 3, MAP_SHARED_TEST, &node, 0xa00000, 0, 0x2000));
+  assert(vma_insert_file(&files, 0xa00000, 0xa02000, 3, MAP_SHARED_TEST, &node, 0xa00000, 0, 0x2000, true));
   assert(vfs_ref_stub_shared_write_count() == 1);
   assert(vma_protect(&files, 0xa00000, 0xa02000, 1));
   assert(vma_count(&files) == 1);
-  assert(vfs_ref_stub_shared_write_count() == 0);
+  assert(vfs_ref_stub_shared_write_count() == 1);
   assert(vma_protect(&files, 0xa00000, 0xa02000, 3));
   assert(vma_count(&files) == 1);
   assert(vfs_ref_stub_shared_write_count() == 1);
@@ -151,7 +151,7 @@ int main(void) {
 
   vfs_ref_stub_reset();
   vma_list_init(&files);
-  assert(vma_insert_file(&files, 0xa00000, 0xa01000, 3, MAP_PRIVATE_TEST, &node, 0xa00000, 0, 0x1000));
+  assert(vma_insert_file(&files, 0xa00000, 0xa01000, 3, MAP_PRIVATE_TEST, &node, 0xa00000, 0, 0x1000, false));
   assert(vfs_ref_stub_shared_write_count() == 0);
   vma_list_destroy(&files);
   assert(vfs_ref_stub_retain_count() == vfs_ref_stub_release_count());

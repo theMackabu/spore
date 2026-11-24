@@ -44,10 +44,10 @@ bool cell_add_vma_typed(uint64_t start, uint64_t end, uint32_t prot, uint32_t fl
 bool cell_prefault_anon_vma(uint64_t start, uint64_t end);
 bool cell_grow_down_vma(uint64_t page, uint32_t required_flags, struct vma *out);
 bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
-                       uint64_t file_start, uint64_t file_offset, uint64_t file_size);
+                       uint64_t file_start, uint64_t file_offset, uint64_t file_size, bool shared_may_write);
 bool cell_remove_vma(uint64_t start, uint64_t end);
 bool cell_sync_shared_vmas(uint64_t start, uint64_t end);
-bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
+int cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
 size_t cell_resident_pages(uint64_t start, uint64_t end);
 bool cell_memory_accounting(const struct domain *domain, struct cell_memory_accounting *out);
 

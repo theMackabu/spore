@@ -109,6 +109,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   }
   if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
   struct vfs_node node;
+  bool shared_may_write = false;
   if (!anon) {
     struct domain *domain = cell_current_domain_internal();
     if (!domain || fd >= MAX_FDS || !domain->fds[fd]) { return -EBADF; }
@@ -121,7 +122,8 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
         (file->node.backend != VFS_EXT2 && file->node.backend != VFS_RAMFS)) { return -ENODEV; }
     if (!vfs_refresh(&file->node, &node)) { return -ENODEV; }
     if (off > UINT64_MAX - size) { return -EINVAL; }
-    if (shared && (prot & PROT_WRITE) && vfs_shared_writable_mmap_sealed(&node)) { return -EPERM; }
+    shared_may_write = shared && access == O_RDWR && !vfs_write_sealed(&node);
+    if (shared && (prot & PROT_WRITE) && !shared_may_write) { return -EPERM; }
   }
   if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }
   if ((flags & MAP_FIXED) != 0 && !cell_remove_vma(base, end)) { return -(int64_t)ENOMEM; }
@@ -133,7 +135,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
       return -(int64_t)ENOMEM;
     }
   } else {
-    if (!cell_add_file_vma(base, end, prot_to_vmm(prot), (uint32_t)flags, &node, base, off, len)) {
+    if (!cell_add_file_vma(base, end, prot_to_vmm(prot), (uint32_t)flags, &node, base, off, len, shared_may_write)) {
       return -(int64_t)ENOMEM;
     }
   }
@@ -149,16 +151,10 @@ int64_t sys_munmap(uint64_t addr, uint64_t len) {
 }
 
 int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
-  if (len == 0) { return 0; }
-  uint64_t start = align_down(addr, PAGE_SIZE);
-  uint64_t end = align_up(addr + len, PAGE_SIZE);
-  uint32_t vmm_prot = prot_to_vmm(prot);
-  if (cell_protect_vma(start, end, vmm_prot)) { return 0; }
-  for (uint64_t va = start; va < end; va += PAGE_SIZE) {
-    if (!vmm_is_mapped(syscall_active_as(), va)) { return -(int64_t)EINVAL; }
-  }
-  vmm_protect_range(syscall_active_as(), start, end, vmm_prot);
-  return 0;
+  if ((addr & (PAGE_SIZE - 1)) || (prot & ~(uint64_t)(PROT_READ | PROT_WRITE | PROT_EXEC))) { return -EINVAL; }
+  if (!len) { return 0; }
+  if (addr >= USER_VA_LIMIT || len > USER_VA_LIMIT - addr) { return -ENOMEM; }
+  return cell_protect_vma(addr, align_up(addr + len, PAGE_SIZE), prot_to_vmm(prot));
 }
 
 int64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
@@ -187,7 +183,7 @@ static bool add_mremap_vma(uint64_t start, uint64_t end, const struct vma *old_v
                            uint64_t file_size) {
   if (old_vma->type == VMA_FILE) {
     return cell_add_file_vma(start, end, old_vma->prot, old_vma->flags, &old_vma->file_node, file_start,
-                             old_vma->file_offset, file_size);
+                             old_vma->file_offset, file_size, old_vma->shared_may_write);
   }
   return cell_add_vma_typed(start, end, old_vma->prot, old_vma->flags, old_vma->type);
 }

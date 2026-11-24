@@ -642,11 +642,6 @@ bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size) {
          (size > fs->nodes[index].size && (seals & RAMFS_F_SEAL_GROW) != 0);
 }
 
-bool ramfs_shared_writable_mmap_sealed(struct ramfs *fs, int index) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  return (fs->nodes[index].seals & (RAMFS_F_SEAL_WRITE | RAMFS_F_SEAL_FUTURE_WRITE)) != 0;
-}
-
 void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add) {
   if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return; }
   if (add) {
@@ -887,13 +882,17 @@ uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64
   return n;
 }
 
-int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len) {
+static int64_t write_file(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len, bool writeback) {
   if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
       fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || off > RAMFS_MAX_FILE_SIZE ||
       len > RAMFS_MAX_FILE_SIZE - off) {
     return -1;
   }
-  if (ramfs_write_sealed(fs, index)) { return -1; }
+  const struct ramfs_mem_node *node = &fs->nodes[index];
+  if (writeback && (!node->shared_write_mappings || off + len > node->size)) { return -1; }
+  if ((node->seals & RAMFS_F_SEAL_WRITE) || (!writeback && (node->seals & RAMFS_F_SEAL_FUTURE_WRITE)) ||
+      ((node->seals & RAMFS_F_SEAL_GROW) && len && off + len > node->size)) { return -1; }
+  if (!len) { return 0; }
   const uint8_t *in = src;
   uint64_t done = 0;
   while (done < len) {
@@ -911,4 +910,12 @@ int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, 
   fs->nodes[index].mtime = ramfs_now_sec;
   fs->nodes[index].ctime = ramfs_now_sec;
   return (int64_t)len;
+}
+
+int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len) {
+  return write_file(fs, index, off, src, len, false);
+}
+
+int64_t ramfs_writeback(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len) {
+  return write_file(fs, index, off, src, len, true);
 }

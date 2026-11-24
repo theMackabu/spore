@@ -11,6 +11,9 @@
 enum {
   MAP_SHARED = 0x01,
   MAP_GROWSDOWN = 0x0100,
+  EIO = 5,
+  ENOMEM = 12,
+  EACCES = 13,
 };
 
 static struct object_pool process_mms;
@@ -142,7 +145,7 @@ static bool writeback_page(void *ctx, uint64_t page, uint64_t pa) {
   uint64_t offset = wb->vma->file_offset + (page - wb->vma->file_start);
   uint64_t bytes = wb->file_end - page;
   if (bytes > PAGE_SIZE) { bytes = PAGE_SIZE; }
-  return vfs_write(wb->node, offset, pmm_phys_to_virt(pa), bytes) == (int64_t)bytes;
+  return vfs_writeback(wb->node, offset, pmm_phys_to_virt(pa), bytes) == (int64_t)bytes;
 }
 
 static bool flush_shared_file_vma_range(struct user_address_space *as, const struct vma *vma, uint64_t start,
@@ -343,10 +346,10 @@ bool cell_grow_down_vma(uint64_t page, uint32_t required_flags, struct vma *out)
 }
 
 bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
-                       uint64_t file_start, uint64_t file_offset, uint64_t file_size) {
+                       uint64_t file_start, uint64_t file_offset, uint64_t file_size, bool shared_may_write) {
   struct domain *domain = cell_current_domain_internal();
   struct vma_list *vmas = cell_domain_vmas(domain);
-  return vmas != NULL && vma_insert_file(vmas, start, end, prot, flags, node, file_start, file_offset, file_size);
+  return vmas != NULL && vma_insert_file(vmas, start, end, prot, flags, node, file_start, file_offset, file_size, shared_may_write);
 }
 
 bool cell_vma_overlaps(uint64_t start, uint64_t end) {
@@ -384,15 +387,23 @@ bool cell_sync_shared_vmas(uint64_t start, uint64_t end) {
   return flush_shared_file_vmas(domain->mm, start, end);
 }
 
-bool cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {
+int cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) { return false; }
-  struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
-  if (as == NULL || vmas == NULL) { return false; }
-  if (!vma_protect(vmas, start, end, prot)) { return false; }
+  struct user_address_space *as = cell_domain_as(domain);
+  if (!vmas || !as) { return -ENOMEM; }
+  uint64_t covered = start;
+  for (size_t i = vma_first_ending_after(vmas, start); covered < end; ++i) {
+    const struct vma *vma = vma_at(vmas, i);
+    if (!vma || vma->start > covered) { return -ENOMEM; }
+    if ((prot & VMM_USER_WRITE) && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) &&
+        !vma->shared_may_write) { return -EACCES; }
+    if (!(prot & VMM_USER_WRITE) && !flush_shared_file_vma_range(as, vma, start, end)) { return -EIO; }
+    covered = vma->end;
+  }
+  if (!vma_protect(vmas, start, end, prot)) { return -ENOMEM; }
   vmm_protect_range(as, start, end, prot);
-  return true;
+  return 0;
 }
 
 size_t cell_resident_pages(uint64_t start, uint64_t end) {

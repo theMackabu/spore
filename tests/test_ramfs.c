@@ -184,7 +184,7 @@ int main(void) {
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_SHRINK | RAMFS_F_SEAL_FUTURE_WRITE) == 0);
   assert(!ramfs_truncate(&fs, node.index, 1024));
   assert(ramfs_write(&fs, node.index, 0, "x", 1) < 0);
-  assert(ramfs_shared_writable_mmap_sealed(&fs, node.index));
+  assert(ramfs_write_sealed(&fs, node.index));
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_SEAL) == 0);
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_WRITE) == -EPERM);
 
