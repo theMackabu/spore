@@ -1,7 +1,8 @@
+#include "mm/pool.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
-#include "mm/pool.h"
+#include "record_lock.h"
 
 enum { EBADF = 9, ENOMEM = 12, EFAULT = 14, EINVAL = 22, EMFILE = 24, O_CLOEXEC = 02000000 };
 
@@ -85,6 +86,7 @@ void cell_assign_fd(struct domain *domain, int fd, struct open_file *file, bool 
   if (cloexec) { chunk->cloexec |= bit; }
   else { chunk->cloexec &= ~bit; }
   if (!file) { trim(table, index); }
+  if (old) { cell_record_unlock_file(domain->id, old); }
   cell_release_open_file(old);
 }
 

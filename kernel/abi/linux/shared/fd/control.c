@@ -8,6 +8,8 @@ enum {
   F_DUPFD_CLOEXEC = 1030,
   F_ADD_SEALS = 1033,
   F_GET_SEALS = 1034,
+  F_GETLK = 5,
+  F_SETLK = 6,
   F_GETFL = 3,
   F_SETFL = 4,
   EINVAL = 22,
@@ -24,6 +26,7 @@ int64_t sys_fcntl(uint64_t fd_num, uint64_t cmd, uint64_t arg) {
     }
     return fd;
   }
+  if (cmd == F_GETLK || cmd == F_SETLK) { return sys_record_lock(fd_num, arg, cmd == F_GETLK); }
   if (cmd == F_GETFD) { return cell_fd_get_fd_flags((int)fd_num); }
   if (cmd == F_SETFD) { return cell_fd_set_fd_flags((int)fd_num, (int)arg); }
   if (cmd == F_GETFL) { return cell_fd_get_flags((int)fd_num); }

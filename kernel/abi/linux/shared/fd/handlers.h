@@ -23,3 +23,4 @@ int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_ad
 
 int64_t sys_poll_ms(struct trap_frame *frame, uint64_t fds, uint64_t nfds, int timeout);
 int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg);
+int64_t sys_record_lock(uint64_t fd, uint64_t arg, bool query);

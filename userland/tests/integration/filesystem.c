@@ -248,6 +248,44 @@ static int pathname_page_boundary(void) {
   return ok;
 }
 
+static bool check_record_locks(int fd, bool locked) {
+  pid_t owner = getpid(), child = fork();
+  if (child == 0) {
+    struct flock left = {.l_type = F_WRLCK, .l_start = 20, .l_len = 1};
+    struct flock right = {.l_type = F_RDLCK, .l_start = 60, .l_len = 1};
+    if (fcntl(fd, F_GETLK, &left) || fcntl(fd, F_GETLK, &right)) { _exit(1); }
+    if (locked) {
+      if (left.l_pid != owner || left.l_type != F_WRLCK || left.l_start != 10 || left.l_len != 20 ||
+          right.l_pid != owner || right.l_type != F_WRLCK || right.l_start != 50 || right.l_len != 50) {
+        _exit(1);
+      }
+      if (fcntl(fd, F_SETLK, &left) != -1 || errno != EAGAIN) { _exit(1); }
+    } else if (left.l_type != F_UNLCK || right.l_type != F_UNLCK) {
+      _exit(1);
+    }
+    struct flock hole = {.l_type = F_WRLCK, .l_start = 30, .l_len = 20};
+    _exit(fcntl(fd, F_SETLK, &hole) ? 1 : 0);
+  }
+  int status;
+  return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static bool record_lock_regression(void) {
+  char path[] = "/tmp/record-lock-test";
+  int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) { return false; }
+  int alias = open(path, O_RDWR);
+  unlink(path);
+  struct flock lock = {.l_type = F_WRLCK, .l_start = 10, .l_len = 90};
+  bool ok = alias >= 0 && fcntl(fd, F_SETLK, &lock) == 0;
+  lock = (struct flock){.l_type = F_UNLCK, .l_start = 50, .l_len = -20};
+  ok = ok && fcntl(alias, F_SETLK, &lock) == 0 && check_record_locks(fd, true);
+  if (alias >= 0) { close(alias); }
+  ok = ok && check_record_locks(fd, false);
+  close(fd);
+  return ok;
+}
+
 static void flock_alarm(int signal) {
   (void)signal;
 }
@@ -430,8 +468,11 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !integration_fifo_suite() || !integration_open_suite() || !pathname_page_boundary() ||
-      !getdents_proc_batches() || !getdents_fault_resume()) {
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() ||
+      !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() ||
+      !record_lock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() ||
+      !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !integration_fifo_suite() ||
+      !integration_open_suite() || !pathname_page_boundary() || !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }
   if (unlink("b") != 0) { ok = 0; }
