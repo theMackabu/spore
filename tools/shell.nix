@@ -1,6 +1,10 @@
 { pkgs }:
 
 let
+  rust = pkgs.rust-bin.stable."1.100.0".minimal.override {
+    extensions = [ "rustfmt" ];
+    targets = [ "aarch64-unknown-none-softfloat" "aarch64-unknown-linux-musl" ];
+  };
   musl = pkgs.pkgsCross.aarch64-multiplatform-musl;
   guestTools = pkgs.lib.makeBinPath [
     pkgs.llvmPackages.clang-unwrapped musl.stdenv.cc musl.buildPackages.binutils
@@ -8,7 +12,7 @@ let
 in
 pkgs.mkShellNoCC {
   packages = with pkgs; [
-    cmake dosfstools e2fsprogs git gnumake meson mtools ninja
+    rust cmake dosfstools e2fsprogs git gnumake meson mtools ninja
     patch pkg-config python3 qemu zstd
     llvmPackages.clang llvmPackages.lld llvmPackages.llvm
   ];
