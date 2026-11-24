@@ -264,22 +264,22 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   if ((node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
     bool write_end = (flags & LINUX_O_ACCMODE) == LINUX_O_WRONLY;
     bool needs_reader = write_end && (flags & CELL_O_NONBLOCK) != 0;
-    int pipe_id = cell_fifo_pipe_for_ino(node->ino, !needs_reader);
-    if (needs_reader && (pipe_id < 0 || !cell_pipe_has_readers((uint8_t)pipe_id))) {
+    struct pipe_obj *pipe = cell_fifo_open(node, !needs_reader);
+    if (needs_reader && (!pipe || !cell_pipe_has_readers(pipe))) {
       cell_release_open_file(file);
       return -ENXIO;
     }
-    if (pipe_id < 0) {
+    if (!pipe) {
       cell_release_open_file(file);
       return -23;
     }
     file->type = OPEN_PIPE;
-    file->pipe_id = (uint8_t)pipe_id;
+    file->pipe = pipe;
     file->pipe_write_end = write_end;
     if (write_end) {
-      cell_pipe_add_writer((uint8_t)pipe_id);
+      cell_pipe_add_writer(pipe);
     } else {
-      cell_pipe_add_reader((uint8_t)pipe_id);
+      cell_pipe_add_reader(pipe);
     }
   }
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
@@ -299,28 +299,28 @@ int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
   int write_fd = read_fd < 0 ? -1 : cell_find_free_fd(domain, read_fd + 1);
   if (read_fd < 0 || write_fd < 0) { return -24; }
 
-  int pipe_id = cell_alloc_pipe_obj(0);
-  if (pipe_id < 0) { return -23; }
+  struct pipe_obj *pipe = cell_pipe_create();
+  if (!pipe) { return -23; }
 
   struct open_file *read_file = cell_alloc_open_file();
   struct open_file *write_file = cell_alloc_open_file();
   if (read_file == NULL || write_file == NULL) {
     cell_release_open_file(read_file);
     cell_release_open_file(write_file);
-    cell_pipe_free((uint8_t)pipe_id);
+    cell_pipe_discard(pipe);
     return -12;
   }
 
-  cell_pipe_add_reader((uint8_t)pipe_id);
-  cell_pipe_add_writer((uint8_t)pipe_id);
+  cell_pipe_add_reader(pipe);
+  cell_pipe_add_writer(pipe);
 
   read_file->type = OPEN_PIPE;
   read_file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
-  read_file->pipe_id = (uint8_t)pipe_id;
+  read_file->pipe = pipe;
   read_file->pipe_write_end = false;
   write_file->type = OPEN_PIPE;
   write_file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
-  write_file->pipe_id = (uint8_t)pipe_id;
+  write_file->pipe = pipe;
   write_file->pipe_write_end = true;
 
   int fds[2] = {read_fd, write_fd};
@@ -446,9 +446,10 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
     return vfs_lookup("/dev/console", out);
   }
   if (file->type == OPEN_PIPE) {
+    if (file->node.backend != VFS_NONE) { return vfs_refresh(&file->node, out); }
     *out = (struct vfs_node){
       .backend = VFS_RAMFS,
-      .ino = 20 + (uint64_t)file->pipe_id,
+      .ino = cell_pipe_ino(file->pipe),
       .is_dir = false,
       .device = RAMFS_DEV_NONE,
       .mode = 0010666u,

@@ -6,6 +6,7 @@
 
 struct domain;
 struct open_file;
+struct pipe_obj;
 struct trap_frame;
 
 enum {
@@ -33,7 +34,7 @@ int cell_fd_unix_recv_right_for_range(int fd, uint64_t start, uint64_t end, int 
 bool cell_fd_unix_tx_offset(int fd, uint64_t *out);
 bool cell_fd_unix_rx_offset(int fd, uint64_t *out);
 bool cell_fd_unix_next_right_range(int fd, uint64_t *start, uint64_t *end);
-void cell_unix_release_rights_for_pipe(uint8_t pipe_id);
+void cell_unix_release_rights_for_pipe(struct pipe_obj *pipe);
 int cell_fd_socket_inet(uint8_t proto);
 int cell_fd_socket_unix(void);
 bool cell_fd_is_datagram(int fd);

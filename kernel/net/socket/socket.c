@@ -428,7 +428,7 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, 
   struct open_file *file = domain->fds[fd];
   if (file->type == OPEN_UNIX_STREAM) {
     if (!file->unix_connected) { return -ENOTCONN; }
-    int64_t got = cell_pipe_read_id_to_domain(domain, file->unix_rx_pipe, buf, len);
+    int64_t got = cell_pipe_read_user(domain, file->unix_rx_pipe, buf, len);
     if (got != -EAGAIN || dontwait || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     return cell_block_current_on_pipe(fd, buf, len, false, frame);
   }

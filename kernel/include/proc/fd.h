@@ -10,6 +10,7 @@
 struct domain;
 struct trap_frame;
 struct tcp_fragment;
+struct pipe_obj;
 struct tcp_segment;
 struct socket_datagram;
 struct tcp_rx_state;
@@ -49,7 +50,7 @@ struct open_file {
   struct vfs_node node;
   union {
     struct {
-      uint8_t pipe_id;
+      struct pipe_obj *pipe;
       bool pipe_write_end;
     };
     struct {
@@ -80,8 +81,8 @@ struct open_file {
       union {
         struct {
           bool unix_connected;
-          uint8_t unix_rx_pipe;
-          uint8_t unix_tx_pipe;
+          struct pipe_obj *unix_rx_pipe;
+          struct pipe_obj *unix_tx_pipe;
           int unix_owner_pid;
           uint32_t unix_owner_uid;
           uint32_t unix_owner_gid;

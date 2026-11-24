@@ -165,7 +165,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   }
   if (file->type == OPEN_UNIX_STREAM) {
     if (!file->unix_connected) { return -ENOTCONN; }
-    int64_t wrote = cell_pipe_write_id_from_domain(domain, file->unix_tx_pipe, buf, len);
+    int64_t wrote = cell_pipe_write_user(domain, file->unix_tx_pipe, buf, len);
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }
     return cell_block_current_on_pipe(fd, buf, len, true, frame);
   }
@@ -226,7 +226,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   }
   if (file->type == OPEN_UNIX_STREAM) {
     if (!file->unix_connected) { return -ENOTCONN; }
-    int64_t got = cell_pipe_read_id_to_domain(domain, file->unix_rx_pipe, buf, len);
+    int64_t got = cell_pipe_read_user(domain, file->unix_rx_pipe, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     return cell_block_current_on_pipe(fd, buf, len, false, frame);
   }

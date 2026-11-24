@@ -1,6 +1,7 @@
 #include "proc/pipe.h"
 
 #include "mm/pmm.h"
+#include "mm/pool.h"
 #include "mm/page_ring.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
@@ -23,99 +24,91 @@ enum {
 static_assert(PIPE_CAP % PAGE_SIZE == 0 && PIPE_PAGES <= 64);
 
 struct pipe_obj {
-  bool used;
+  struct pipe_obj *fifo_next;
   bool had_writer;
   uint16_t readers;
   uint16_t writers;
-  uint64_t fifo_ino;
+  uint64_t ino, fifo_dev;
   uint64_t pages[PIPE_PAGES];
   struct page_ring ring;
   uint64_t read_offset;
   uint64_t write_offset;
 };
 
-static struct pipe_obj pipes[16];
+static struct object_pool pipes;
+static struct pipe_obj *fifos;
+static uint64_t next_pipe_ino = 20;
 static bool pipe_waking;
 
-static struct pipe_obj *pipe_for_id(uint8_t pipe_id) {
-  if (pipe_id >= sizeof(pipes) / sizeof(pipes[0]) || !pipes[pipe_id].used) { return NULL; }
-  return &pipes[pipe_id];
-}
-
 static struct pipe_obj *pipe_for_file(struct open_file *file) {
-  if (file == NULL || file->type != OPEN_PIPE) { return NULL; }
-  return pipe_for_id(file->pipe_id);
+  return file && file->type == OPEN_PIPE ? file->pipe : NULL;
 }
 
-static void pipe_destroy(struct pipe_obj *pipe) {
-  if (pipe == NULL) { return; }
-  cell_unix_release_rights_for_pipe((uint8_t)(pipe - pipes));
+void cell_pipe_discard(struct pipe_obj *pipe) {
+  if (!pipe) { return; }
+  if (pipe->fifo_dev) {
+    struct pipe_obj **link = &fifos;
+    while (*link != pipe) { link = &(*link)->fifo_next; }
+    *link = pipe->fifo_next;
+  }
+  cell_unix_release_rights_for_pipe(pipe);
   page_ring_clear(&pipe->ring);
-  *pipe = (struct pipe_obj){0};
+  pool_free(&pipes, pipe);
 }
 
-int cell_alloc_pipe_obj(uint64_t fifo_ino) {
-  for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
-    if (!pipes[i].used) {
-      pipes[i] = (struct pipe_obj){0};
-      pipes[i].ring = (struct page_ring){.pages = pipes[i].pages, .capacity = PIPE_CAP};
-      pipes[i].used = true;
-      pipes[i].fifo_ino = fifo_ino;
-      pipes[i].had_writer = fifo_ino == 0;
-      return (int)i;
-    }
+struct pipe_obj *cell_pipe_create(void) {
+  if (!pipes.limit && !pool_init(&pipes, sizeof(struct pipe_obj), SIZE_MAX)) { return NULL; }
+  struct pipe_obj *pipe = pool_alloc(&pipes);
+  if (pipe) {
+    pipe->ring = (struct page_ring){.pages = pipe->pages, .capacity = PIPE_CAP};
+    pipe->ino = next_pipe_ino++;
+    pipe->had_writer = true;
   }
-  return -1;
+  return pipe;
 }
 
-void cell_pipe_free(uint8_t pipe_id) {
-  if (pipe_id < sizeof(pipes) / sizeof(pipes[0])) { pipe_destroy(&pipes[pipe_id]); }
-}
-
-void cell_pipe_reset(void) {
-  for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
-    pipe_destroy(&pipes[i]);
+struct pipe_obj *cell_fifo_open(const struct vfs_node *node, bool create) {
+  for (struct pipe_obj *pipe = fifos; pipe; pipe = pipe->fifo_next) {
+    if (pipe->fifo_dev == node->dev_id && pipe->ino == node->ino) { return pipe; }
   }
-}
-
-int cell_fifo_pipe_for_ino(uint64_t ino, bool create) {
-  if (ino == 0) { return -1; }
-  for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
-    if (pipes[i].used && pipes[i].fifo_ino == ino) { return (int)i; }
+  struct pipe_obj *pipe = create ? cell_pipe_create() : NULL;
+  if (pipe) {
+    pipe->fifo_next = fifos;
+    fifos = pipe;
+    pipe->fifo_dev = node->dev_id;
+    pipe->ino = node->ino;
+    pipe->had_writer = false;
   }
-  return create ? cell_alloc_pipe_obj(ino) : -1;
+  return pipe;
 }
 
-bool cell_pipe_has_readers(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+uint64_t cell_pipe_ino(const struct pipe_obj *pipe) { return pipe->ino; }
+
+bool cell_pipe_has_readers(struct pipe_obj *pipe) {
   return pipe != NULL && pipe->readers != 0;
 }
 
-void cell_pipe_add_reader(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+void cell_pipe_add_reader(struct pipe_obj *pipe) {
   if (pipe != NULL) { ++pipe->readers; }
 }
 
-void cell_pipe_add_writer(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+void cell_pipe_add_writer(struct pipe_obj *pipe) {
   if (pipe != NULL) {
     ++pipe->writers;
     pipe->had_writer = true;
   }
 }
 
-void cell_pipe_drop_reader(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+void cell_pipe_drop_reader(struct pipe_obj *pipe) {
   if (pipe == NULL) { return; }
   if (pipe->readers > 0) { --pipe->readers; }
-  if (pipe->readers == 0 && pipe->writers == 0) { pipe_destroy(pipe); }
+  if (pipe->readers == 0 && pipe->writers == 0) { cell_pipe_discard(pipe); }
 }
 
-void cell_pipe_drop_writer(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+void cell_pipe_drop_writer(struct pipe_obj *pipe) {
   if (pipe == NULL) { return; }
   if (pipe->writers > 0) { --pipe->writers; }
-  if (pipe->readers == 0 && pipe->writers == 0) { pipe_destroy(pipe); }
+  if (pipe->readers == 0 && pipe->writers == 0) { cell_pipe_discard(pipe); }
 }
 
 bool cell_pipe_file_readable(struct open_file *file) {
@@ -133,30 +126,25 @@ bool cell_pipe_file_hup(struct open_file *file) {
   return pipe != NULL && !file->pipe_write_end && pipe->writers == 0;
 }
 
-bool cell_pipe_id_readable(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+bool cell_pipe_readable(struct pipe_obj *pipe) {
   return pipe != NULL && (pipe->ring.used != 0 || pipe->writers == 0);
 }
 
-bool cell_pipe_id_writable(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+bool cell_pipe_writable(struct pipe_obj *pipe) {
   return pipe != NULL && pipe->readers != 0 && pipe->ring.used < PIPE_CAP;
 }
 
-bool cell_pipe_id_hup(uint8_t pipe_id) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+bool cell_pipe_hup(struct pipe_obj *pipe) {
   return pipe != NULL && pipe->writers == 0;
 }
 
-bool cell_pipe_id_read_offset(uint8_t pipe_id, uint64_t *out) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+bool cell_pipe_read_offset(struct pipe_obj *pipe, uint64_t *out) {
   if (pipe == NULL || out == NULL) { return false; }
   *out = pipe->read_offset;
   return true;
 }
 
-bool cell_pipe_id_write_offset(uint8_t pipe_id, uint64_t *out) {
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
+bool cell_pipe_write_offset(struct pipe_obj *pipe, uint64_t *out) {
   if (pipe == NULL || out == NULL) { return false; }
   *out = pipe->write_offset;
   return true;
@@ -170,7 +158,7 @@ bool cell_pipe_release_file(struct open_file *file) {
   } else if (pipe->readers > 0) {
     --pipe->readers;
   }
-  if (pipe->readers == 0 && pipe->writers == 0) { pipe_destroy(pipe); }
+  if (pipe->readers == 0 && pipe->writers == 0) { cell_pipe_discard(pipe); }
   return true;
 }
 
@@ -188,8 +176,8 @@ static void wake_pipe_waiters(void) {
       int64_t rc;
       if (file->type == OPEN_UNIX_STREAM) {
         rc = thread->wait.write
-               ? cell_pipe_write_id_from_domain(thread->domain, file->unix_tx_pipe, thread->wait.buf, thread->wait.len)
-               : cell_pipe_read_id_to_domain(thread->domain, file->unix_rx_pipe, thread->wait.buf, thread->wait.len);
+               ? cell_pipe_write_user(thread->domain, file->unix_tx_pipe, thread->wait.buf, thread->wait.len)
+               : cell_pipe_read_user(thread->domain, file->unix_rx_pipe, thread->wait.buf, thread->wait.len);
       } else {
         rc = thread->wait.write ? cell_pipe_write_from_domain(thread->domain, file, thread->wait.buf, thread->wait.len)
                                 : cell_pipe_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len);
@@ -225,9 +213,8 @@ static int write_user(void *destination, const uint8_t *src, size_t len) {
   return 0;
 }
 
-int64_t cell_pipe_write_id_from_domain(struct domain *domain, uint8_t pipe_id, uint64_t buf, uint64_t len) {
+int64_t cell_pipe_write_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len) {
   if (len == 0) { return 0; }
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
   if (pipe == NULL) { return -9; }
   if (pipe->readers == 0) { return -EPIPE; }
 
@@ -244,12 +231,11 @@ int64_t cell_pipe_write_id_from_domain(struct domain *domain, uint8_t pipe_id, u
   return n;
 }
 
-int64_t cell_pipe_read_id_to_domain(struct domain *domain, uint8_t pipe_id, uint64_t buf, uint64_t len) {
+int64_t cell_pipe_read_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len) {
   if (len == 0) { return 0; }
-  struct pipe_obj *pipe = pipe_for_id(pipe_id);
   if (pipe == NULL) { return -9; }
   uint64_t target = len < pipe->ring.used ? len : pipe->ring.used;
-  if (!target) { return pipe->writers == 0 && (!pipe->fifo_ino || pipe->had_writer) ? 0 : -EAGAIN; }
+  if (!target) { return pipe->writers == 0 && (!pipe->fifo_dev || pipe->had_writer) ? 0 : -EAGAIN; }
   if (!cell_domain_ensure_user_range(domain, buf, (size_t)target, VMM_ACCESS_WRITE)) { return -EFAULT; }
   struct pipe_user_buffer dst = {cell_domain_as(domain), buf};
   int n = page_ring_read(&pipe->ring, (uint32_t)target, false, write_user, &dst);
@@ -262,10 +248,10 @@ int64_t cell_pipe_read_id_to_domain(struct domain *domain, uint8_t pipe_id, uint
 
 int64_t cell_pipe_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
   if (file == NULL || file->type != OPEN_PIPE || !file->pipe_write_end) { return -9; }
-  return cell_pipe_write_id_from_domain(domain, file->pipe_id, buf, len);
+  return cell_pipe_write_user(domain, file->pipe, buf, len);
 }
 
 int64_t cell_pipe_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
   if (file == NULL || file->type != OPEN_PIPE || file->pipe_write_end) { return -9; }
-  return cell_pipe_read_id_to_domain(domain, file->pipe_id, buf, len);
+  return cell_pipe_read_user(domain, file->pipe, buf, len);
 }

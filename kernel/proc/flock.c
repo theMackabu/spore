@@ -20,7 +20,7 @@ static bool flock_same_file(const struct open_file *a, const struct open_file *b
   if (a->type == OPEN_VFS) {
     return a->node.backend == b->node.backend && a->node.dev_id == b->node.dev_id && a->node.ino == b->node.ino;
   }
-  if (a->type == OPEN_PIPE) { return a->pipe_id == b->pipe_id; }
+  if (a->type == OPEN_PIPE) { return a->pipe == b->pipe; }
   if (a->type == OPEN_PTY) { return a->pty_id == b->pty_id && a->pty_master == b->pty_master; }
   return false;
 }

@@ -14,7 +14,7 @@ enum {
 
 struct unix_right {
   bool used;
-  uint8_t pipe_id;
+  struct pipe_obj *pipe;
   uint64_t start;
   uint64_t end;
   struct open_file *file;
@@ -55,11 +55,11 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
   int fd1 = fd0 < 0 ? -1 : cell_find_free_fd(domain, fd0 + 1);
   if (fd0 < 0 || fd1 < 0) { return -24; }
 
-  int a2b = cell_alloc_pipe_obj(0);
-  int b2a = cell_alloc_pipe_obj(0);
-  if (a2b < 0 || b2a < 0) {
-    if (a2b >= 0) { cell_pipe_free((uint8_t)a2b); }
-    if (b2a >= 0) { cell_pipe_free((uint8_t)b2a); }
+  struct pipe_obj *a2b = cell_pipe_create();
+  struct pipe_obj *b2a = cell_pipe_create();
+  if (!a2b || !b2a) {
+    cell_pipe_discard(a2b);
+    cell_pipe_discard(b2a);
     return -23;
   }
 
@@ -68,21 +68,21 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
   if (a == NULL || b == NULL) {
     cell_release_open_file(a);
     cell_release_open_file(b);
-    cell_pipe_free((uint8_t)a2b);
-    cell_pipe_free((uint8_t)b2a);
+    cell_pipe_discard(a2b);
+    cell_pipe_discard(b2a);
     return -12;
   }
 
-  cell_pipe_add_reader((uint8_t)a2b);
-  cell_pipe_add_writer((uint8_t)a2b);
-  cell_pipe_add_reader((uint8_t)b2a);
-  cell_pipe_add_writer((uint8_t)b2a);
+  cell_pipe_add_reader(a2b);
+  cell_pipe_add_writer(a2b);
+  cell_pipe_add_reader(b2a);
+  cell_pipe_add_writer(b2a);
 
   a->type = OPEN_UNIX_STREAM;
   a->flags = (uint32_t)(flags & CELL_O_NONBLOCK);
   a->unix_connected = true;
-  a->unix_rx_pipe = (uint8_t)b2a;
-  a->unix_tx_pipe = (uint8_t)a2b;
+  a->unix_rx_pipe = b2a;
+  a->unix_tx_pipe = a2b;
   a->unix_owner_pid = domain->id;
   a->unix_owner_uid = domain->euid;
   a->unix_owner_gid = domain->egid;
@@ -93,8 +93,8 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
   b->type = OPEN_UNIX_STREAM;
   b->flags = (uint32_t)(flags & CELL_O_NONBLOCK);
   b->unix_connected = true;
-  b->unix_rx_pipe = (uint8_t)a2b;
-  b->unix_tx_pipe = (uint8_t)b2a;
+  b->unix_rx_pipe = a2b;
+  b->unix_tx_pipe = b2a;
   b->unix_owner_pid = domain->id;
   b->unix_owner_uid = domain->euid;
   b->unix_owner_gid = domain->egid;
@@ -133,9 +133,9 @@ int unix_poll_events(const struct open_file *file, int events) {
     return (events & CELL_POLLIN) && file->unix_pending_head ? CELL_POLLIN : 0;
   }
   if (!file->unix_connected) { return 0; }
-  int ready = cell_pipe_id_hup(file->unix_rx_pipe) ? CELL_POLLHUP : 0;
-  if ((events & CELL_POLLIN) && cell_pipe_id_readable(file->unix_rx_pipe)) { ready |= CELL_POLLIN; }
-  if ((events & CELL_POLLOUT) && cell_pipe_id_writable(file->unix_tx_pipe)) { ready |= CELL_POLLOUT; }
+  int ready = cell_pipe_hup(file->unix_rx_pipe) ? CELL_POLLHUP : 0;
+  if ((events & CELL_POLLIN) && cell_pipe_readable(file->unix_rx_pipe)) { ready |= CELL_POLLIN; }
+  if ((events & CELL_POLLOUT) && cell_pipe_writable(file->unix_tx_pipe)) { ready |= CELL_POLLOUT; }
   return ready;
 }
 
@@ -215,33 +215,33 @@ int cell_fd_unix_connect(int fd, const char *path) {
   struct open_file *listener = unix_listener_for_node(&node);
   if (listener == NULL) { return -ECONNREFUSED; }
   if (listener->unix_pending_count >= listener->unix_backlog) { return -EAGAIN; }
-  int c2s = cell_alloc_pipe_obj(0);
-  int s2c = cell_alloc_pipe_obj(0);
-  if (c2s < 0 || s2c < 0) {
-    if (c2s >= 0) { cell_pipe_free((uint8_t)c2s); }
-    if (s2c >= 0) { cell_pipe_free((uint8_t)s2c); }
+  struct pipe_obj *c2s = cell_pipe_create();
+  struct pipe_obj *s2c = cell_pipe_create();
+  if (!c2s || !s2c) {
+    cell_pipe_discard(c2s);
+    cell_pipe_discard(s2c);
     return -23;
   }
   struct open_file *server = cell_alloc_open_file();
   if (server == NULL) {
-    cell_pipe_free((uint8_t)c2s);
-    cell_pipe_free((uint8_t)s2c);
+    cell_pipe_discard(c2s);
+    cell_pipe_discard(s2c);
     return -12;
   }
-  cell_pipe_add_reader((uint8_t)c2s);
-  cell_pipe_add_writer((uint8_t)c2s);
-  cell_pipe_add_reader((uint8_t)s2c);
-  cell_pipe_add_writer((uint8_t)s2c);
-  client->unix_rx_pipe = (uint8_t)s2c;
-  client->unix_tx_pipe = (uint8_t)c2s;
+  cell_pipe_add_reader(c2s);
+  cell_pipe_add_writer(c2s);
+  cell_pipe_add_reader(s2c);
+  cell_pipe_add_writer(s2c);
+  client->unix_rx_pipe = s2c;
+  client->unix_tx_pipe = c2s;
   client->unix_connected = true;
   client->unix_peer_pid = listener->unix_owner_pid;
   client->unix_peer_uid = listener->unix_owner_uid;
   client->unix_peer_gid = listener->unix_owner_gid;
   server->type = OPEN_UNIX_STREAM;
   server->unix_connected = true;
-  server->unix_rx_pipe = (uint8_t)c2s;
-  server->unix_tx_pipe = (uint8_t)s2c;
+  server->unix_rx_pipe = c2s;
+  server->unix_tx_pipe = s2c;
   server->unix_owner_pid = listener->unix_owner_pid;
   server->unix_owner_uid = listener->unix_owner_uid;
   server->unix_owner_gid = listener->unix_owner_gid;
@@ -271,7 +271,7 @@ int cell_fd_unix_queue_right_range(int fd, int passed_fd, uint64_t start, uint64
     cell_retain_open_file(domain->fds[passed_fd]);
     unix_rights[i] = (struct unix_right){
       .used = true,
-      .pipe_id = file->unix_tx_pipe,
+      .pipe = file->unix_tx_pipe,
       .start = start,
       .end = end,
       .file = domain->fds[passed_fd],
@@ -287,7 +287,7 @@ int cell_fd_unix_recv_right_for_range(int fd, uint64_t start, uint64_t end, int 
   struct open_file *file = domain->fds[fd];
   if (file->type != OPEN_UNIX_STREAM || !file->unix_connected) { return -ENOTCONN; }
   for (size_t i = 0; i < sizeof(unix_rights) / sizeof(unix_rights[0]); ++i) {
-    if (!unix_rights[i].used || unix_rights[i].pipe_id != file->unix_rx_pipe) { continue; }
+    if (!unix_rights[i].used || unix_rights[i].pipe != file->unix_rx_pipe) { continue; }
     if (unix_rights[i].start < start || unix_rights[i].start >= end) { continue; }
     int newfd = cell_find_free_fd(domain, 0);
     if (newfd < 0) { return -EMFILE; }
@@ -303,14 +303,14 @@ bool cell_fd_unix_tx_offset(int fd, uint64_t *out) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || out == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
-  return file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_id_write_offset(file->unix_tx_pipe, out);
+  return file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_write_offset(file->unix_tx_pipe, out);
 }
 
 bool cell_fd_unix_rx_offset(int fd, uint64_t *out) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || out == NULL) { return false; }
   struct open_file *file = domain->fds[fd];
-  return file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_id_read_offset(file->unix_rx_pipe, out);
+  return file->type == OPEN_UNIX_STREAM && file->unix_connected && cell_pipe_read_offset(file->unix_rx_pipe, out);
 }
 
 bool cell_fd_unix_next_right_range(int fd, uint64_t *start, uint64_t *end) {
@@ -324,7 +324,7 @@ bool cell_fd_unix_next_right_range(int fd, uint64_t *start, uint64_t *end) {
   uint64_t best_start = 0;
   uint64_t best_end = 0;
   for (size_t i = 0; i < sizeof(unix_rights) / sizeof(unix_rights[0]); ++i) {
-    if (!unix_rights[i].used || unix_rights[i].pipe_id != file->unix_rx_pipe) { continue; }
+    if (!unix_rights[i].used || unix_rights[i].pipe != file->unix_rx_pipe) { continue; }
     if (!found || unix_rights[i].start < best_start) {
       found = true;
       best_start = unix_rights[i].start;
@@ -337,11 +337,12 @@ bool cell_fd_unix_next_right_range(int fd, uint64_t *start, uint64_t *end) {
   return true;
 }
 
-void cell_unix_release_rights_for_pipe(uint8_t pipe_id) {
+void cell_unix_release_rights_for_pipe(struct pipe_obj *pipe) {
   for (size_t i = 0; i < sizeof(unix_rights) / sizeof(unix_rights[0]); ++i) {
-    if (!unix_rights[i].used || unix_rights[i].pipe_id != pipe_id) { continue; }
-    cell_release_open_file(unix_rights[i].file);
+    if (!unix_rights[i].used || unix_rights[i].pipe != pipe) { continue; }
+    struct open_file *file = unix_rights[i].file;
     unix_rights[i] = (struct unix_right){0};
+    cell_release_open_file(file);
   }
 }
 

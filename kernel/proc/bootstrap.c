@@ -9,7 +9,6 @@
 #include "proc/fd.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
-#include "proc/pipe.h"
 #include "proc/snapshot.h"
 #include "proc/thread.h"
 #include "tty/tty.h"
@@ -50,7 +49,6 @@ void cell_system_init(void) {
   if (!cell_thread_reset(thread_count)) { halt_table_init_failure("thread"); }
   cell_snapshot_reset();
   if (!cell_fd_table_reset(open_file_count)) { halt_table_init_failure("open-file"); }
-  cell_pipe_reset();
   cell_accounting_reset();
   cell_tty_reset();
   kprintf("[spore] process tables: domains=%u threads=%u mms=%u open-files=%u\n", (unsigned)domain_count,
