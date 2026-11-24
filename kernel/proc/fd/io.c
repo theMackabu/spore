@@ -104,7 +104,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   if (file == NULL) { return -9; }
   if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
   if (file->type == OPEN_SOCKET && file->socket_proto != IPPROTO_TCP) { return cell_fd_udp_send(fd, 0, 0, buf, len); }
-  if (len == 0) { return 0; }
+  if (!len && !(file->type == OPEN_UNIX_STREAM && cell_pipe_is_packet(file->unix_tx_pipe))) { return 0; }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
     int64_t wrote = cell_socket_tcp_write_from_domain(domain, file, buf, len);
     if (wrote != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return wrote; }

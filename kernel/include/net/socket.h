@@ -28,7 +28,7 @@ void cell_unix_release_file(struct open_file *file);
 void cell_socket_release_file(struct open_file *file);
 void cell_socket_wake_file(struct open_file *file);
 void cell_socket_timer_tick(uint64_t now_ticks);
-int cell_fd_socketpair_unix(uint64_t sv_addr, int flags);
+int cell_fd_socketpair_unix(uint64_t sv_addr, int flags, bool packet);
 int cell_fd_socket_inet(uint8_t proto);
 int cell_fd_socket_unix(void);
 bool cell_fd_is_datagram(int fd);

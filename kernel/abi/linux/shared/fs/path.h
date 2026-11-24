@@ -21,3 +21,4 @@ int syscall_may_change_entry(char *path, bool replacing);
 struct vfs_node;
 bool syscall_node_access_allowed(const struct vfs_node *node, uint64_t mask);
 uint8_t syscall_fs_rights_from_access(uint64_t access);
+int syscall_follow_final_links(char path[CELL_PATH_MAX]);

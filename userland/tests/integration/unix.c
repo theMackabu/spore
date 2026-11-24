@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -45,11 +46,15 @@ static int unix_listener_names(void) {
            (first = accept(replacement, NULL, NULL)) >= 0 && accept(listener, NULL, NULL) < 0 && errno == EAGAIN;
   close(client);
   client = socket(AF_UNIX, SOCK_STREAM, 0);
-  ok = ok && connect(client, (void *)&moved, sizeof(moved)) == 0 && (second = accept(listener, NULL, NULL)) >= 0;
+  struct sockaddr_un alias = {.sun_family = AF_UNIX, .sun_path = "/socket-test-alias"};
+  ok = ok && symlink("tmp/spore-listen-new", alias.sun_path) == 0 &&
+       connect(client, (void *)&alias, sizeof(alias)) == 0 && (second = accept(listener, NULL, NULL)) >= 0;
   if (first >= 0) { close(first); }
   if (second >= 0) { close(second); }
   close(client); close(replacement); close(listener);
-  unlink(old.sun_path); unlink(moved.sun_path);
+  unlink(old.sun_path);
+  unlink(moved.sun_path);
+  unlink(alias.sun_path);
   ok = fchdir(cwd) == 0 && ok;
   close(cwd);
   printf("[spore] Unix listener rename and rebind: %s\n", ok ? "PASS" : "FAIL");
@@ -123,6 +128,31 @@ static int unix_rights_lifetime(void) {
   return ok;
 }
 
+static int unix_sequenced_packets(void) {
+  int pair[2];
+  if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, pair)) { return 0; }
+  struct iovec parts[] = {{.iov_base = "ab", .iov_len = 2}, {.iov_base = "cd", .iov_len = 2}};
+  char buffer[8] = {0};
+  int type = 0;
+  socklen_t typelen = sizeof(type);
+  bool ok = getsockopt(pair[0], SOL_SOCKET, SO_TYPE, &type, &typelen) == 0 && type == SOCK_SEQPACKET &&
+            writev(pair[0], parts, 2) == 4 && write(pair[0], "ef", 2) == 2 &&
+            recv(pair[1], buffer, 1, MSG_PEEK | MSG_TRUNC) == 4 && *buffer == 'a';
+  struct iovec small = {.iov_base = buffer, .iov_len = 2};
+  struct msghdr msg = {.msg_iov = &small, .msg_iovlen = 1};
+  ok = ok && recvmsg(pair[1], &msg, 0) == 2 && (msg.msg_flags & MSG_TRUNC) && !memcmp(buffer, "ab", 2);
+  parts[0] = (struct iovec){.iov_base = buffer, .iov_len = 1};
+  parts[1] = (struct iovec){.iov_base = buffer + 1, .iov_len = 4};
+  ok = ok && readv(pair[1], parts, 2) == 2 && !memcmp(buffer, "ef", 2) && send(pair[0], "", 0, 0) == 0 &&
+       recv(pair[1], buffer, sizeof(buffer), MSG_PEEK) == 0 && recv(pair[1], buffer, sizeof(buffer), 0) == 0 &&
+       recv(pair[1], buffer, sizeof(buffer), 0) == -1 && errno == EAGAIN;
+  close(pair[0]);
+  ok = ok && read(pair[1], buffer, sizeof(buffer)) == 0;
+  close(pair[1]);
+  return ok;
+}
+
 int integration_unix_suite(void) {
-  return unix_listener_names() && unix_peer_close_poll_regression() && unix_rights_regression() && unix_rights_lifetime();
+  return unix_sequenced_packets() && unix_listener_names() && unix_peer_close_poll_regression() &&
+         unix_rights_regression() && unix_rights_lifetime();
 }

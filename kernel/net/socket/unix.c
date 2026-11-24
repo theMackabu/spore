@@ -40,15 +40,15 @@ int cell_fd_socket_unix(void) {
   return cell_install_fd(domain, file, false);
 }
 
-int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
+int cell_fd_socketpair_unix(uint64_t sv_addr, int flags, bool packet) {
   enum {
     CELL_O_NONBLOCK = 04000,
     CELL_O_CLOEXEC = 02000000,
   };
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
-  struct pipe_obj *a2b = cell_pipe_create();
-  struct pipe_obj *b2a = cell_pipe_create();
+  struct pipe_obj *a2b = cell_pipe_create_mode(packet);
+  struct pipe_obj *b2a = cell_pipe_create_mode(packet);
   if (!a2b || !b2a) {
     cell_pipe_discard(a2b);
     cell_pipe_discard(b2a);

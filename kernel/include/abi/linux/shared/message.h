@@ -5,9 +5,11 @@
 #include <stdint.h>
 
 struct domain;
+struct iovec64;
 struct user_address_space;
 
 struct linux_iov_cursor {
+  const struct iovec64 *snapshot;
   struct domain *domain;
   struct user_address_space *as;
   uint64_t next, end, addr, remaining, capacity;
@@ -26,3 +28,5 @@ int linux_iov_init(struct linux_iov_cursor *cursor, struct domain *domain, uint6
 int linux_gather_iov(void *cursor, uint8_t *dst, size_t len);
 int linux_scatter_iov(void *cursor, const uint8_t *src, size_t len);
 int linux_recv_ip_control(struct domain *domain, uint64_t msg_addr, bool emit_ttl, int ttl_value, int32_t *flags);
+int linux_iov_from_snapshot(struct linux_iov_cursor *cursor, struct domain *domain, const struct iovec64 *iov,
+                            unsigned count);

@@ -26,7 +26,14 @@ enum {
 
 static_assert(PIPE_CAP % PAGE_SIZE == 0 && PIPE_PAGES <= 64);
 
+struct packet_record {
+  struct packet_record *next;
+  uint32_t size;
+};
+
 struct pipe_obj {
+  bool packet;
+  struct packet_record *first, *last;
   struct pipe_obj *fifo_next;
   bool had_writer;
   uint16_t readers;
@@ -40,7 +47,7 @@ struct pipe_obj {
   uint64_t write_offset;
 };
 
-static struct object_pool pipes;
+static struct object_pool pipes, packets;
 static struct pipe_obj *fifos;
 static uint64_t next_pipe_ino = 20;
 static bool pipe_waking, pipe_rescan;
@@ -57,14 +64,30 @@ void cell_pipe_discard(struct pipe_obj *pipe) {
     *link = pipe->fifo_next;
   }
   unix_clear_rights(&pipe->rights);
+  while (pipe->first) {
+    struct packet_record *record = pipe->first;
+    pipe->first = record->next;
+    pool_free(&packets, record);
+  }
   page_ring_clear(&pipe->ring);
   pool_free(&pipes, pipe);
 }
 
-struct pipe_obj *cell_pipe_create(void) {
+bool cell_pipe_is_packet(const struct pipe_obj *pipe) {
+  return pipe && pipe->packet;
+}
+
+bool cell_pipe_packet_size(const struct pipe_obj *pipe, uint32_t *size) {
+  if (!pipe || !pipe->first) { return false; }
+  *size = pipe->first->size;
+  return true;
+}
+
+struct pipe_obj *cell_pipe_create_mode(bool packet) {
   if (!pipes.limit && !pool_init(&pipes, sizeof(struct pipe_obj), SIZE_MAX)) { return NULL; }
   struct pipe_obj *pipe = pool_alloc(&pipes);
   if (pipe) {
+    pipe->packet = packet;
     pipe->ring = (struct page_ring){.pages = pipe->pages, .capacity = PIPE_CAP};
     pipe->ino = next_pipe_ino++;
     pipe->had_writer = true;
@@ -188,14 +211,17 @@ static void wake_pipe_waiters(void) {
     while ((thread = cell_next_waiter(WAIT_PIPE, &cursor))) {
       struct open_file *file = thread->wait.held_file;
       int64_t rc;
-      if (thread->wait.socket_msg) {
+      if (thread->wait.socket_vector) {
+        rc = linux_unix_vector(thread->domain, file, thread->wait.socket_iov, thread->wait.socket_iovlen,
+                               thread->wait.write, NULL);
+      } else if (thread->wait.socket_msg) {
         rc = linux_unix_transfer(thread->domain, file, thread->wait.socket_msg_addr, thread->wait.socket_flags,
                                    thread->wait.write, &thread->wait.unix_rights);
       } else if (file->type == OPEN_UNIX_STREAM) {
         rc = thread->wait.write
                ? cell_pipe_write_user(thread->domain, file->unix_tx_pipe, thread->wait.buf, thread->wait.len)
                : cell_pipe_recv_user(thread->domain, file->unix_rx_pipe, thread->wait.buf, thread->wait.len,
-                                     thread->wait.socket_flags & 2);
+                                     thread->wait.socket_flags);
       } else {
         rc = thread->wait.write ? cell_pipe_write_from_domain(thread->domain, file, thread->wait.buf, thread->wait.len)
                                 : cell_pipe_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len);
@@ -235,15 +261,40 @@ static int write_user(void *destination, const uint8_t *src, size_t len) {
   return 0;
 }
 
+static int empty_record_byte(void *ctx, uint8_t *dst, size_t len) {
+  (void)ctx;
+  (void)len;
+  *dst = 0;
+  return 0;
+}
+
 int64_t cell_pipe_write_data(struct pipe_obj *pipe, uint64_t len, ring_copy_in copy, void *source,
                              struct unix_rights **rights) {
-  if (!len) { return 0; }
   if (!pipe) { return -9; }
+  if (!len && !pipe->packet) { return 0; }
   if (!pipe->readers) { return -EPIPE; }
+  if (pipe->packet && len > PIPE_CAP) { return -90; }
+  uint64_t stored = len ? len : 1;
   uint32_t room = PIPE_CAP - pipe->ring.used;
-  if (!room || (len <= PIPE_BUF && room < len)) { return -EAGAIN; }
-  int n = page_ring_write(&pipe->ring, len < room ? (uint32_t)len : room, copy, source);
+  if (!room || ((pipe->packet || len <= PIPE_BUF) && room < stored)) { return -EAGAIN; }
+  struct packet_record *record = NULL;
+  if (pipe->packet) {
+    if (!packets.limit) { pool_init(&packets, sizeof(*record), SIZE_MAX); }
+    record = pool_alloc(&packets);
+    if (!record) { return -12; }
+    record->size = len;
+  }
+  int n = page_ring_write(&pipe->ring, stored < room ? (uint32_t)stored : room, len ? copy : empty_record_byte, source);
+  if (n <= 0 && record) { pool_free(&packets, record); }
   if (n > 0) {
+    if (record) {
+      if (pipe->last) {
+        pipe->last->next = record;
+      } else {
+        pipe->first = record;
+      }
+      pipe->last = record;
+    }
     uint64_t start = pipe->write_offset;
     pipe->write_offset += (uint32_t)n;
     if (rights && *rights) {
@@ -253,17 +304,25 @@ int64_t cell_pipe_write_data(struct pipe_obj *pipe, uint64_t len, ring_copy_in c
     cell_epoll_source_activity(&pipe->poll_source, CELL_POLLIN);
     cell_pipe_notify();
   }
-  return n;
+  return !len && n > 0 ? 0 : n;
 }
 
 int64_t cell_pipe_peek_data(struct pipe_obj *pipe, uint64_t len, ring_copy_out copy, void *dst) {
-  if (!len) { return 0; }
   if (!pipe) { return -9; }
+  if (!len && !pipe->packet) { return 0; }
   if (!pipe->ring.used) { return !pipe->writers && (!pipe->fifo_dev || pipe->had_writer) ? 0 : -EAGAIN; }
+  if (pipe->first && len > pipe->first->size) { len = pipe->first->size; }
   return page_ring_read(&pipe->ring, len < pipe->ring.used ? (uint32_t)len : pipe->ring.used, true, copy, dst);
 }
 
 void cell_pipe_consume(struct pipe_obj *pipe, uint32_t bytes) {
+  if (pipe->first) {
+    struct packet_record *record = pipe->first;
+    bytes = record->size ? record->size : 1;
+    pipe->first = record->next;
+    if (!pipe->first) { pipe->last = NULL; }
+    pool_free(&packets, record);
+  }
   page_ring_consume(&pipe->ring, bytes);
   pipe->read_offset += bytes;
   unix_discard_rights(&pipe->rights, pipe->read_offset);
@@ -276,11 +335,13 @@ int64_t cell_pipe_write_user(struct domain *domain, struct pipe_obj *pipe, uint6
   return cell_pipe_write_data(pipe, len, read_user, &src, NULL);
 }
 
-int64_t cell_pipe_recv_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len, bool peek) {
+int64_t cell_pipe_recv_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len, unsigned flags) {
   struct pipe_user_buffer dst = {domain, buf};
   int64_t n = cell_pipe_peek_data(pipe, len, write_user, &dst);
-  if (n > 0 && !peek) { cell_pipe_consume(pipe, (uint32_t)n); }
-  return n;
+  uint32_t size = 0;
+  bool packet = cell_pipe_packet_size(pipe, &size);
+  if (n >= 0 && (n || packet) && !(flags & 2)) { cell_pipe_consume(pipe, (uint32_t)n); }
+  return n >= 0 && packet && (flags & 32) ? (int64_t)size : n;
 }
 
 int64_t cell_pipe_read_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len) {

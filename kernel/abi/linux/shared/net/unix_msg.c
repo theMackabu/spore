@@ -42,14 +42,13 @@ static int collect_rights(struct domain *domain, const struct msghdr64 *msg, str
 }
 
 static int write_control(struct domain *domain, const struct unix_rights *rights, const struct msghdr64 *msg,
-                         uint64_t addr, uint32_t flags) {
+                         uint64_t addr, uint32_t flags, int32_t result_flags) {
   struct {
     struct cmsghdr64 header;
     int fds[UNIX_MAX_RIGHTS];
   } control = {0};
   unsigned count = 0;
   uint64_t used = 0;
-  int32_t result_flags = 0;
   struct user_address_space *as = cell_domain_as(domain);
   if (rights) {
     unsigned capacity = 0;
@@ -59,7 +58,7 @@ static int write_control(struct domain *domain, const struct unix_rights *rights
     }
     bool truncated;
     count = unix_install_rights(domain, rights, control.fds, capacity, flags & MSG_CMSG_CLOEXEC, &truncated);
-    result_flags = truncated ? MSG_CTRUNC : 0;
+    if (truncated) { result_flags |= MSG_CTRUNC; }
     if (count) {
       control.header = (struct cmsghdr64){sizeof(control.header) + count * sizeof(int), SOL_SOCKET, SCM_RIGHTS};
       used = cmsg_align(control.header.len);
@@ -73,6 +72,20 @@ static int write_control(struct domain *domain, const struct unix_rights *rights
 fault:
   while (count) { cell_close_domain_fd(domain, control.fds[--count]); }
   return -EFAULT;
+}
+
+int64_t linux_unix_vector(struct domain *domain, struct open_file *file, uint64_t iov, unsigned count, bool write,
+                          const struct iovec64 *snapshot) {
+  struct linux_iov_cursor cursor;
+  int rc =
+    snapshot ? linux_iov_from_snapshot(&cursor, domain, snapshot, count) : linux_iov_init(&cursor, domain, iov, count);
+  if (rc) { return rc; }
+  if (write) { return cell_pipe_write_data(file->unix_tx_pipe, cursor.capacity, linux_gather_iov, &cursor, NULL); }
+  struct pipe_obj *pipe = file->unix_rx_pipe;
+  int64_t n = cell_pipe_peek_data(pipe, cursor.capacity, linux_scatter_iov, &cursor);
+  uint32_t size;
+  if (n >= 0 && cell_pipe_packet_size(pipe, &size)) { cell_pipe_consume(pipe, (uint32_t)n); }
+  return n;
 }
 
 int64_t linux_unix_transfer(struct domain *domain, struct open_file *file, uint64_t msg_addr, uint32_t flags,
@@ -90,12 +103,14 @@ int64_t linux_unix_transfer(struct domain *domain, struct open_file *file, uint6
   unix_next_rights(queue, start, &bytes);
   int64_t n = cell_pipe_peek_data(pipe, bytes, linux_scatter_iov, &cursor);
   if (n < 0) { return n; }
-  bytes = (uint64_t)n;
+  uint32_t size = 0;
+  bool packet = cell_pipe_packet_size(pipe, &size);
+  bytes = packet ? (size ? size : 1) : (uint64_t)n;
   const struct unix_rights *rights = unix_next_rights(queue, start, &bytes);
-  rc = write_control(domain, rights, &msg, msg_addr, flags);
+  rc = write_control(domain, rights, &msg, msg_addr, flags, packet && size > (uint64_t)n ? 32 : 0);
   if (rc) { return rc; }
-  if (n && !(flags & MSG_PEEK)) { cell_pipe_consume(pipe, (uint32_t)n); }
-  return n;
+  if ((n || packet) && !(flags & MSG_PEEK)) { cell_pipe_consume(pipe, (uint32_t)n); }
+  return packet && (flags & 32) ? (int64_t)size : n;
 }
 
 int64_t linux_unix_message(struct trap_frame *frame, int fd, uint64_t addr, const struct msghdr64 *msg,

@@ -23,6 +23,7 @@ enum {
   EPERM = 1,
   EAFNOSUPPORT = 97,
   EPROTONOSUPPORT = 93,
+  SOCK_SEQPACKET = 5,
   O_NONBLOCK = 04000,
   O_CLOEXEC = 02000000,
 };
@@ -91,9 +92,9 @@ int64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64
   int flags = (int)(type & (O_NONBLOCK | O_CLOEXEC));
   if ((type & ~(uint64_t)(0xf | O_NONBLOCK | O_CLOEXEC)) != 0) { return -(int64_t)EINVAL; }
   if (domain != AF_UNIX) { return -(int64_t)EAFNOSUPPORT; }
-  if (base_type != SOCK_STREAM || protocol != 0) { return -(int64_t)EPROTONOSUPPORT; }
+  if ((base_type != SOCK_STREAM && base_type != SOCK_SEQPACKET) || protocol != 0) { return -(int64_t)EPROTONOSUPPORT; }
   if (sv == 0 || !syscall_user_writable(sv, sizeof(int32_t) * 2)) { return -(int64_t)EFAULT; }
-  return cell_fd_socketpair_unix(sv, flags);
+  return cell_fd_socketpair_unix(sv, flags, base_type == SOCK_SEQPACKET);
 }
 
 int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
@@ -122,6 +123,7 @@ int64_t sys_connect(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64
   if (family == AF_UNIX) {
     char path[CELL_PATH_MAX];
     int rc = unix_socket_path(addr, len, path);
+    if (!rc) { rc = syscall_follow_final_links(path); }
     return rc ? rc : cell_fd_unix_connect((int)fd, path);
   }
   struct sockaddr_in64 sa;

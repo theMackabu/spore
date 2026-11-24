@@ -1,6 +1,7 @@
 #include "abi/linux/shared/fd/handlers.h"
 #include "abi/linux/shared/iovec.h"
 #include "abi/linux/shared/numbers.h"
+#include "abi/linux/shared/unix.h"
 #include "abi/linux/shared/usercopy.h"
 #include "internal.h"
 #include "net/socket.h"
@@ -25,7 +26,7 @@ int uring_retry_io(struct domain *d, struct open_file *f, const struct sqe *e) {
   if (f->type == OPEN_UNIX_STREAM) {
     if (!f->unix_connected) { return -107; }
     return write ? cell_pipe_write_user(d, f->unix_tx_pipe, e->addr, e->len)
-                 : cell_pipe_recv_user(d, f->unix_rx_pipe, e->addr, e->len, flags & 2);
+                 : cell_pipe_recv_user(d, f->unix_rx_pipe, e->addr, e->len, flags);
   }
   if (f->type == OPEN_SOCKET && f->socket_proto == 6) {
     return write ? cell_socket_tcp_write_from_domain(d, f, e->addr, e->len)
@@ -63,6 +64,11 @@ int uring_rw(struct open_file *ring, const struct sqe *e) {
   }
   if (!vector) { return single_io(ring, target, e, true); }
   if (e->len > 1024) { return -EINVAL; }
+  if (target->type == OPEN_UNIX_STREAM && cell_pipe_is_packet(target->unix_rx_pipe)) {
+    int n = linux_unix_vector(cell_current_domain_internal(), target, e->addr, e->len, write, NULL);
+    if (n == -11 && !(target->flags & 04000) && !(e->op_flags & 8)) { return uring_defer_io(ring, target, e); }
+    return n;
+  }
   if (target->type == OPEN_SOCKET && target->socket_proto != 6) {
     if (e->flags & FIXED_FILE) { return -95; }
     return sys_vector_io(NULL, e->fd, e->addr, e->len, write);
@@ -93,6 +99,9 @@ int uring_rw(struct open_file *ring, const struct sqe *e) {
 }
 
 int uring_retry_vector(struct domain *d, struct open_file *target, const struct sqe *e, const struct iovec64 *iov) {
+  if (target->type == OPEN_UNIX_STREAM && cell_pipe_is_packet(target->unix_rx_pipe)) {
+    return linux_unix_vector(d, target, 0, e->len, e->opcode == OP_WRITEV, iov);
+  }
   int total = 0;
   struct sqe part = *e;
   part.opcode = e->opcode == OP_WRITEV ? OP_WRITE : OP_READ;

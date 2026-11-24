@@ -46,10 +46,26 @@ int linux_iov_init(struct linux_iov_cursor *cursor, struct domain *domain, uint6
   return 0;
 }
 
+int linux_iov_from_snapshot(struct linux_iov_cursor *cursor, struct domain *domain, const struct iovec64 *iov,
+                            unsigned count) {
+  *cursor = (struct linux_iov_cursor){
+    .domain = domain, .as = cell_domain_as(domain), .snapshot = iov, .end = count * sizeof(*iov)};
+  for (unsigned i = 0; i < count; ++i) {
+    if (iov[i].len > INT64_MAX - cursor->capacity) { return -EINVAL; }
+    cursor->capacity += iov[i].len;
+  }
+  return 0;
+}
+
 static size_t next_span(struct linux_iov_cursor *cursor, size_t want, uint64_t *addr) {
   while (!cursor->remaining) {
     struct iovec64 entry;
-    if (cursor->next == cursor->end || !read_bytes(cursor, &entry, cursor->next, sizeof(entry))) { return 0; }
+    if (cursor->next == cursor->end) { return 0; }
+    if (cursor->snapshot) {
+      entry = cursor->snapshot[cursor->next / sizeof(entry)];
+    } else if (!read_bytes(cursor, &entry, cursor->next, sizeof(entry))) {
+      return 0;
+    }
     if (entry.len > UINT64_MAX - entry.base) { return 0; }
     cursor->addr = entry.base;
     cursor->remaining = entry.len;

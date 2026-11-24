@@ -9,6 +9,20 @@
 
 size_t spore_normalize_path(const char *base, size_t base_len, const char *raw, size_t len, char *out, size_t cap);
 
+static int resolve_from(const char *base, size_t base_len, const char *raw, size_t len, char *visible, char *out,
+                        size_t cap) {
+  size_t name_len = spore_normalize_path(base, base_len, raw, len, visible, CELL_PATH_MAX);
+  if (!name_len) { return -ENAMETOOLONG; }
+  const char *root = cell_current_chroot();
+  size_t prefix = root[1] ? kstrlen(root) : 0;
+  if (prefix && name_len == 1) { name_len = 0; }
+  if (prefix + name_len >= cap) { return -ENAMETOOLONG; }
+  if (prefix) { kmemcpy(out, root, prefix); }
+  kmemcpy(out + prefix, visible, name_len);
+  out[prefix + name_len] = 0;
+  return cell_fs_path_allowed(out, 0) ? 0 : -EPERM;
+}
+
 static int resolve_at(uint64_t dirfd, const char *raw, size_t len, char *visible, char *out, size_t cap) {
   if (!len) { return -ENOENT; }
   char dir[CELL_PATH_MAX];
@@ -24,21 +38,34 @@ static int resolve_at(uint64_t dirfd, const char *raw, size_t len, char *visible
     }
     base_len = kstrlen(base);
   }
-  size_t name_len = spore_normalize_path(base, base_len, raw, len, visible, CELL_PATH_MAX);
-  if (!name_len) { return -ENAMETOOLONG; }
-  const char *root = cell_current_chroot();
-  size_t prefix = root[1] ? kstrlen(root) : 0;
-  if (prefix && name_len == 1) { name_len = 0; }
-  if (prefix + name_len >= cap) { return -ENAMETOOLONG; }
-  if (prefix) { kmemcpy(out, root, prefix); }
-  kmemcpy(out + prefix, visible, name_len);
-  out[prefix + name_len] = 0;
-  return cell_fs_path_allowed(out, 0) ? 0 : -EPERM;
+  return resolve_from(base, base_len, raw, len, visible, out, cap);
 }
 
 int64_t syscall_resolve_path_at(uint64_t dirfd, const char *raw, char *out, size_t cap) {
   char visible[CELL_PATH_MAX];
   return resolve_at(dirfd, raw, kstrlen(raw), visible, out, cap);
+}
+
+int syscall_follow_final_links(char path[CELL_PATH_MAX]) {
+  const char *root = cell_current_chroot();
+  size_t prefix = root[1] ? kstrlen(root) : 0;
+  for (unsigned depth = 0;; ++depth) {
+    struct vfs_node node;
+    if (!vfs_lstat(path, &node)) { return -ENOENT; }
+    if ((node.mode & 0170000) != S_IFLNK) { return 0; }
+    if (depth == 40) { return -ELOOP; }
+    char target[CELL_PATH_MAX], visible[CELL_PATH_MAX];
+    size_t len;
+    if (node.size >= sizeof(target)) { return -ENAMETOOLONG; }
+    if (!vfs_readlink(&node, target, sizeof(target), &len) || !len) { return -ENOENT; }
+    const char *base = path + prefix;
+    size_t parent = kstrlen(base);
+    while (parent && base[parent - 1] != '/') {
+      --parent;
+    }
+    int rc = resolve_from(base, parent, target, len, visible, path, CELL_PATH_MAX);
+    if (rc) { return rc; }
+  }
 }
 
 static int copy_path_at(uint64_t dirfd, uint64_t addr, char *visible, char *out, size_t cap, bool *trailing_slash) {

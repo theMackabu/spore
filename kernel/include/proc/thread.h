@@ -61,7 +61,7 @@ struct thread_wait {
       uint32_t socket_flags;
       int socket_accept_flags;
       bool write;
-      bool socket_msg;
+      bool socket_msg, socket_vector;
       bool socket_servicing;
     };
     struct {

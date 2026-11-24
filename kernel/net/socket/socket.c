@@ -79,7 +79,7 @@ bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto) {
   struct open_file *file = cell_file_at(domain, fd);
   if (file == NULL) { return false; }
   if (file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
-    if (type != NULL) { *type = SOCK_STREAM; }
+    if (type != NULL) { *type = cell_pipe_is_packet(file->unix_rx_pipe) ? 5 : SOCK_STREAM; }
     if (proto != NULL) { *proto = 0; }
     return true;
   }
@@ -393,7 +393,7 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, 
   if (file == NULL) { return -9; }
   if (file->type == OPEN_UNIX_STREAM) {
     if (!file->unix_connected) { return -ENOTCONN; }
-    int64_t got = cell_pipe_recv_user(domain, file->unix_rx_pipe, buf, len, flags & MSG_PEEK);
+    int64_t got = cell_pipe_recv_user(domain, file->unix_rx_pipe, buf, len, flags);
     if (got != -EAGAIN || dontwait || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
     return cell_block_current(frame, (struct thread_wait){.reason = WAIT_PIPE, .target = fd, .buf = buf, .len = len,
                                                          .socket_flags = flags});
