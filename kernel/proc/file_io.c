@@ -7,6 +7,7 @@
 #include "mm/pmm.h"
 #include "mm/table.h"
 #include "proc/fd.h"
+#include "proc/io.h"
 #include "proc/memory.h"
 
 constexpr size_t FILE_IO_CHUNK = 128 * 1024;
@@ -57,10 +58,8 @@ int64_t cell_write_regular(struct domain *domain, struct open_file *file, uint64
   return wrote == 0 && io.len ? -28 : wrote;
 }
 
-int64_t cell_read_generated(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  struct user_address_space *as = cell_domain_as(domain);
+int64_t cell_read_generated(const struct user_address_space *as, uint64_t buf, size_t len, bool random) {
   struct io_buffer io = io_buffer(as, buf, len, VMM_ACCESS_WRITE);
-  bool random = file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM;
   if (random) { random_bytes(io.data, io.len); }
   else { kmemset(io.data, 0, io.len); }
   if (io.direct) { return (int64_t)io.len; }

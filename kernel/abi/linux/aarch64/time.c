@@ -2,11 +2,10 @@
 #include "arch/aarch64/timer.h"
 #include "handlers.h"
 #include "proc/accounting.h"
-#include "lib/mem.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/thread.h"
-#include "lib/random.h"
+#include "proc/io.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -69,22 +68,18 @@ struct timezone32 {
   int32_t tz_dsttime;
 };
 
-int64_t sys_getrandom(uint64_t buf, uint64_t len) {
-  if (!syscall_user_writable(buf, len)) { return -(int64_t)EFAULT; }
-  uint8_t tmp[128];
+int64_t sys_getrandom(uint64_t buf, uint64_t len, uint64_t flags) {
+  enum { NONBLOCK = 1, RANDOM = 2, INSECURE = 4 };
+  if ((flags & ~(uint64_t)(NONBLOCK | RANDOM | INSECURE)) || (flags & (RANDOM | INSECURE)) == (RANDOM | INSECURE)) { return -EINVAL; }
+  if (!syscall_user_writable(buf, len)) { return -EFAULT; }
+  const struct user_address_space *as = syscall_active_as();
   uint64_t done = 0;
   while (done < len) {
-    uint64_t chunk = len - done;
-    if (chunk > sizeof(tmp)) { chunk = sizeof(tmp); }
-    random_bytes(tmp, (size_t)chunk);
-    if (!vmm_copy_to_user(syscall_active_as(), buf + done, tmp, (size_t)chunk)) {
-      kmemset(tmp, 0, sizeof(tmp));
-      return -(int64_t)EFAULT;
-    }
-    done += chunk;
+    int64_t n = cell_read_generated(as, buf + done, len - done, true);
+    if (n < 0) { return done ? (int64_t)done : n; }
+    done += (uint64_t)n;
   }
-  kmemset(tmp, 0, sizeof(tmp));
-  return (int64_t)len;
+  return (int64_t)done;
 }
 
 static bool cpu_clock(uint64_t id) {

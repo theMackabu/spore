@@ -64,9 +64,10 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     return 0;
   case RAMFS_DEV_ZERO:
   case RAMFS_DEV_FULL:
+    return cell_read_generated(cell_domain_as(domain), buf, len, false);
   case RAMFS_DEV_RANDOM:
   case RAMFS_DEV_URANDOM:
-    return cell_read_generated(domain, file, buf, len);
+    return cell_read_generated(cell_domain_as(domain), buf, len, true);
   case RAMFS_DEV_CONSOLE:
   case RAMFS_DEV_TTY: {
     int64_t n = cell_tty_read_to_user(domain, buf, len);

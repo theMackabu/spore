@@ -798,7 +798,7 @@ l_fsync: {
   return vfs_sync_storage() ? 0 : -EIO;
 }
 l_getrandom:
-  return sys_getrandom(a0, a1);
+  return sys_getrandom(a0, a1, a2);
 l_clock_gettime:
   return sys_clock_gettime(a0, a1);
 l_clock_getres:

@@ -12,8 +12,6 @@ struct chacha_rng {
   uint32_t key[8];
   uint64_t counter;
   uint32_t nonce[3];
-  uint8_t buf[CHACHA_BLOCK_BYTES];
-  size_t pos;
   bool seeded;
   bool have_rndr;
 };
@@ -94,7 +92,6 @@ static void absorb_seed(const uint8_t *seed, size_t len) {
   rng.nonce[1] ^= load32(block + 36);
   rng.nonce[2] ^= load32(block + 40);
   rng.counter ^= ((uint64_t)load32(block + 44) << 32) | load32(block + 48);
-  rng.pos = sizeof(rng.buf);
   kmemset(block, 0, sizeof(block));
 }
 
@@ -112,7 +109,6 @@ void random_init(uint64_t seed_hint) {
   rng.nonce[0] = (uint32_t)(aarch64_counter_value() >> 8);
   rng.nonce[1] = (uint32_t)(uintptr_t)&random_init;
   rng.nonce[2] = (uint32_t)(uintptr_t)&random_bytes;
-  rng.pos = sizeof(rng.buf);
   rng.seeded = true;
 
   uint64_t seed_words[8];
@@ -129,21 +125,24 @@ void random_init(uint64_t seed_hint) {
 void random_bytes(void *dst, size_t len) {
   if (!rng.seeded) { random_init(aarch64_counter_value()); }
   uint8_t *out = dst;
-  for (size_t i = 0; i < len; ++i) {
-    if (rng.pos >= sizeof(rng.buf)) {
-      uint64_t rndr;
-      if (rng.have_rndr && aarch64_rndr64(&rndr) && (rng.counter & 0x3fu) == 0) { absorb_seed((const uint8_t *)&rndr, sizeof(rndr)); }
-      chacha_block(rng.buf);
-      rng.pos = 0;
-    }
-    out[i] = rng.buf[rng.pos];
-    rng.buf[rng.pos++] = 0;
-  }
   uint8_t rekey[CHACHA_BLOCK_BYTES];
+  while (len) {
+    uint64_t rndr;
+    if (rng.have_rndr && (rng.counter & 0x3fu) == 0 && aarch64_rndr64(&rndr)) {
+      absorb_seed((const uint8_t *)&rndr, sizeof(rndr));
+    }
+    if (len < CHACHA_BLOCK_BYTES) {
+      chacha_block(rekey);
+      kmemcpy(out, rekey, len);
+      break;
+    }
+    chacha_block(out);
+    out += CHACHA_BLOCK_BYTES;
+    len -= CHACHA_BLOCK_BYTES;
+  }
   chacha_block(rekey);
   for (size_t i = 0; i < 8; ++i) {
     rng.key[i] = load32(rekey + i * 4);
   }
-  rng.pos = sizeof(rng.buf);
   kmemset(rekey, 0, sizeof(rekey));
 }
