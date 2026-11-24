@@ -252,7 +252,7 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
     if (!vmm_is_mapped(as, page)) {
       struct vma grown;
       const struct vma *vma = vma_lookup(vmas, page);
-      if (vma == NULL && cell_grow_down_vma(page, MAP_GROWSDOWN, &grown)) { vma = &grown; }
+      if (vma == NULL && vma_grow_down(vmas, page, MAP_GROWSDOWN, &grown)) { vma = &grown; }
       if (!domain_access_allowed(vma, access)) { return false; }
       if (vma->type == VMA_FILE) {
         if (!fault_file_page(domain, vma, page)) { return false; }
@@ -290,7 +290,7 @@ bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
   uint64_t va = far & ~(uint64_t)(PAGE_SIZE - 1);
   struct vma grown;
   const struct vma *vma = vma_lookup(vmas, va);
-  if (vma == NULL && cell_grow_down_vma(va, MAP_GROWSDOWN, &grown)) { vma = &grown; }
+  if (vma == NULL && vma_grow_down(vmas, va, MAP_GROWSDOWN, &grown)) { vma = &grown; }
   if (vma == NULL || !access_allowed(vma, access)) { return false; }
   if (vmm_user_range_accessible(as, va, 1, access)) { return true; }
   if (vma->type == VMA_FILE) {
@@ -347,12 +347,6 @@ bool cell_prefault_anon_vma(uint64_t start, uint64_t end) {
     note_fault(domain, false);
   }
   return true;
-}
-
-bool cell_grow_down_vma(uint64_t page, uint32_t required_flags, struct vma *out) {
-  struct domain *domain = cell_current_domain_internal();
-  struct vma_list *vmas = cell_domain_vmas(domain);
-  return vmas != NULL && vma_grow_down(vmas, page, required_flags, out);
 }
 
 bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t flags, const struct vfs_node *node,
