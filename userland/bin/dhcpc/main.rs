@@ -8,7 +8,6 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use socket::Socket;
 
 const COOKIE: u32 = 0x63825363;
-const XID: u32 = 0x53504f52;
 const CLIENT_MAC: [u8; 6] = [0x52, 0x54, 0, 0x12, 0x34, 0x56];
 
 #[repr(C)]
@@ -25,6 +24,7 @@ unsafe extern "C" {
     fn net_config_get(config: &mut NetConfig) -> bool;
     fn net_config_set(config: &NetConfig) -> bool;
     fn format_ipv4(ip: u32, buf: *mut c_char, capacity: usize);
+    fn getentropy(buf: *mut c_void, len: usize) -> c_int;
     fn dprintf(fd: c_int, format: *const c_char, ...) -> c_int;
     fn fopen(path: *const c_char, mode: *const c_char) -> *mut c_void;
     fn fprintf(file: *mut c_void, format: *const c_char, ...) -> c_int;
@@ -49,13 +49,13 @@ struct Packet {
 }
 
 impl Packet {
-    fn new(kind: u8, requested: u32, server: u32) -> Self {
+    fn new(xid: u32, kind: u8, requested: u32, server: u32) -> Self {
         let mut packet = Self {
             bytes: [0; 261],
             len: 240,
         };
         packet.bytes[..3].copy_from_slice(&[1, 1, 6]);
-        packet.bytes[4..8].copy_from_slice(&XID.to_be_bytes());
+        packet.bytes[4..8].copy_from_slice(&xid.to_be_bytes());
         packet.bytes[10] = 0x80;
         packet.bytes[28..34].copy_from_slice(&CLIENT_MAC);
         packet.bytes[236..240].copy_from_slice(&COOKIE.to_be_bytes());
@@ -91,56 +91,70 @@ struct Lease {
 }
 
 fn parse(packet: &[u8], xid: u32) -> Option<Lease> {
-    if packet.len() < 240 || packet[0] != 2 || packet[4..8] != xid.to_be_bytes() {
+    let mut options = packet.get(240..)?;
+    if packet[..3] != [2, 1, 6]
+        || packet[4..8] != xid.to_be_bytes()
+        || packet[28..34] != CLIENT_MAC
+        || packet[236..240] != COOKIE.to_be_bytes()
+    {
         return None;
     }
     let mut lease = Lease {
         address: le_ip(&packet[16..20]),
         ..Lease::default()
     };
-    let mut index = 240;
-    while index < packet.len() {
-        let option = packet[index];
-        index += 1;
-        if option == 255 {
-            break;
-        }
-        if option == 0 {
-            continue;
-        }
-        if index >= packet.len() {
-            break;
-        }
-        let size = packet[index] as usize;
-        index += 1;
-        if index + size > packet.len() {
-            break;
-        }
-        let data = &packet[index..index + size];
+    loop {
+        let (&option, rest) = options.split_first()?;
         match option {
-            53 if size >= 1 => lease.kind = data[0],
-            54 | 1 | 3 | 6 if size >= 4 => match option {
-                54 => lease.server = le_ip(data),
-                1 => lease.netmask = le_ip(data),
-                3 => lease.router = le_ip(data),
-                _ => lease.dns = le_ip(data),
-            },
-            _ => {}
+            0 => {
+                options = rest;
+                continue;
+            }
+            255 => break,
+            _ => (),
         }
-        index += size;
+        let (&size, rest) = rest.split_first()?;
+        let (data, next) = rest.split_at_checked(usize::from(size))?;
+        match (option, data) {
+            (53, [kind]) => lease.kind = *kind,
+            (54, [_, _, _, _]) => lease.server = le_ip(data),
+            (1, [_, _, _, _]) => lease.netmask = le_ip(data),
+            (3 | 6, _) if size >= 4 && size % 4 == 0 => {
+                if option == 3 {
+                    lease.router = le_ip(data);
+                } else {
+                    lease.dns = le_ip(data);
+                }
+            }
+            (1 | 3 | 6 | 53 | 54, _) => return None,
+            _ => (),
+        }
+        options = next;
     }
-    (lease.kind != 0 && lease.address != 0).then_some(lease)
+    (lease.kind != 0 && lease.address != 0 && lease.server != 0).then_some(lease)
 }
 
-fn exchange(socket: &Socket, packet: Packet, kind: u8) -> Option<Lease> {
+fn exchange(socket: &Socket, xid: u32, offer: Option<&Lease>) -> Option<Lease> {
+    let (message, reply, request, server) = match offer {
+        Some(lease) => (3, 5, lease.address, lease.server),
+        None => (1, 2, 0, 0),
+    };
+    let packet = Packet::new(xid, message, request, server);
     if !socket.broadcast(67, packet.as_slice()) {
         return None;
     }
     let mut bytes = [0; 600];
+    let deadline = socket::monotonic_ms()?.checked_add(2500)?;
     loop {
-        let data = socket.receive(&mut bytes, 2500)?;
-        if let Some(lease) = parse(data, XID)
-            && lease.kind == kind
+        let remaining = i32::try_from(deadline - socket::monotonic_ms()?).ok()?;
+        if remaining <= 0 {
+            return None;
+        }
+        let data = socket.receive(&mut bytes, remaining)?;
+        if let Some(lease) = parse(data, xid)
+            && lease.kind == reply
+            && (server == 0 || lease.server == server)
+            && (request == 0 || lease.address == request)
         {
             return Some(lease);
         }
@@ -149,8 +163,12 @@ fn exchange(socket: &Socket, packet: Packet, kind: u8) -> Option<Lease> {
 
 fn configure() -> Result<(), &'static CStr> {
     let socket = Socket::bind_broadcast(68).ok_or(c"cannot open DHCP socket")?;
-    let offer = exchange(&socket, Packet::new(1, 0, 0), 2).ok_or(c"no offer")?;
-    let ack = exchange(&socket, Packet::new(3, offer.address, offer.server), 5).ok_or(c"no ack")?;
+    let mut xid = 0u32;
+    if unsafe { getentropy((&raw mut xid).cast(), size_of::<u32>()) } != 0 {
+        return Err(c"cannot create DHCP transaction");
+    }
+    let offer = exchange(&socket, xid, None).ok_or(c"no offer")?;
+    let ack = exchange(&socket, xid, Some(&offer)).ok_or(c"no ack")?;
     let config = NetConfig {
         local_ip: ack.address,
         gateway_ip: if ack.router == 0 {

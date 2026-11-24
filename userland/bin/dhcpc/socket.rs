@@ -50,6 +50,21 @@ unsafe extern "C" {
     fn close(fd: c_int) -> c_int;
 }
 
+#[repr(C)]
+#[derive(Default)]
+struct Timespec {
+    sec: i64,
+    nsec: i64,
+}
+
+pub fn monotonic_ms() -> Option<i64> {
+    unsafe extern "C" {
+        fn clock_gettime(clock: c_int, time: &mut Timespec) -> c_int;
+    }
+    let mut time = Timespec::default();
+    (unsafe { clock_gettime(1, &mut time) } == 0).then(|| time.sec * 1000 + time.nsec / 1_000_000)
+}
+
 pub struct Socket(c_int);
 
 impl Socket {
