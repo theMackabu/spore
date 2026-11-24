@@ -137,13 +137,12 @@ pub fn boot(
     if let Some(image) = image {
         vm.image = image;
     } else {
-        userland()?;
         let (image, root) = if vm.mode == "integration" {
             ("test_image.img", "test_root.ext2")
         } else {
             ("image.img", "root.ext2")
         };
-        if !build.join(image).is_file() || !build.join(root).is_file() {
+        if !build.join(image).is_file() || (vm.root.is_none() && !build.join(root).is_file()) {
             crate::image::system_image(build, vm.mode == "integration")?;
         }
         vm.image = build.join(image).into();
