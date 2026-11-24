@@ -56,6 +56,11 @@ static void wake_waiters(struct open_file *file, unsigned activity) {
   cell_wake_poll_waiters_internal();
 }
 
+void cell_eventfd_signal(struct open_file *file) {
+  if (file->eventfd_value != UINT64_MAX) { ++file->eventfd_value; }
+  wake_waiters(file,CELL_POLLIN);
+}
+
 int64_t cell_eventfd_io(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, bool write,
                         struct trap_frame *frame) {
   if (len < sizeof(uint64_t) || (write && len != sizeof(uint64_t))) { return -EINVAL; }

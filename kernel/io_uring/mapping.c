@@ -1,8 +1,8 @@
-#include "internal.h"
-#include "mm/pmm.h"
-#include "lib/mem.h"
-#include "proc/memory.h"
 #include "abi/linux/shared/usercopy.h"
+#include "internal.h"
+#include "lib/mem.h"
+#include "mm/pmm.h"
+#include "proc/memory.h"
 
 static unsigned pages(uint64_t len) {
   return (len + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -20,6 +20,8 @@ static bool allocate(uint64_t *pa, unsigned n) {
 }
 
 void uring_release(struct uring *r) {
+  uring_drop_pending(r);
+  uring_drop_resources(r);
   if (r->rings) {
     for (unsigned i = 0; i < ring_pages(r); ++i) {
       pmm_free_page(r->rings + i * PAGE_SIZE);
@@ -59,4 +61,3 @@ int64_t uring_map(struct uring *r, uint64_t base, uint64_t size, uint64_t off, u
   }
   return base;
 }
-

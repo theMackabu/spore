@@ -45,7 +45,9 @@ int unix_prepare_rights(struct domain *domain, const int32_t *fds, unsigned coun
   if (!count) { return 0; }
   if (count > UNIX_MAX_RIGHTS) { return -22; }
   for (unsigned i = 0; i < count; ++i) {
-    if (fds[i] < 0 || fds[i] >= MAX_FDS || !cell_file_at(domain, fds[i])) { return -9; }
+    struct open_file *file = cell_file_at(domain, fds[i]);
+    if (!file) { return -9; }
+    if (file->type == OPEN_URING) { return -22; }
   }
   unsigned index = 0;
   while (count > capacities[index]) { ++index; }

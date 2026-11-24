@@ -1,6 +1,6 @@
-#include "internal.h"
 #include "abi/linux/shared/open.h"
 #include "abi/linux/shared/usercopy.h"
+#include "internal.h"
 #include "proc/domain.h"
 
 static uint32_t round_entries(uint32_t n) {
@@ -19,7 +19,7 @@ int64_t sys_io_uring_setup(uint32_t entries, uint64_t addr) {
     return -EFAULT;
   }
   if (!entries || p.reserved[0] || p.reserved[1] || p.reserved[2] ||
-      (p.flags & ~(SETUP_CQSIZE | SETUP_CLAMP | SETUP_NO_SQARRAY))) {
+      (p.flags & ~(SETUP_CQSIZE | SETUP_CLAMP | SETUP_NO_SQARRAY | SETUP_R_DISABLED))) {
     return -EINVAL;
   }
   if (entries > MAX_ENTRIES && !(p.flags & SETUP_CLAMP)) { return -EINVAL; }
@@ -44,7 +44,8 @@ int64_t sys_io_uring_setup(uint32_t entries, uint64_t addr) {
   if (!file) { return -ENOMEM; }
   file->type = OPEN_URING;
   file->flags = LINUX_O_RDWR;
-  file->ring = (struct uring){.entries = sq, .cq_entries = cq, .sq_array_offset = array};
+  file->ring = (struct uring){
+    .entries = sq, .cq_entries = cq, .sq_array_offset = array, .disabled = (p.flags & SETUP_R_DISABLED) != 0};
   int fd = cell_install_fd(cell_current_domain_internal(), file, true);
   if (fd >= 0 && !vmm_copy_to_user(as, addr, &p, sizeof(p))) {
     cell_fd_close(fd);
@@ -57,4 +58,3 @@ struct open_file *uring_file(int fd) {
   struct open_file *file = cell_fd_file(fd);
   return file && file->type == OPEN_URING ? file : NULL;
 }
-

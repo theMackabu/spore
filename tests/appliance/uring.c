@@ -4,7 +4,6 @@
 #endif
 #include <assert.h>
 #include <errno.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <linux/io_uring.h>
 #include <poll.h>
@@ -12,12 +11,14 @@
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
-#include <sys/wait.h>
 #include <sys/time.h>
+#include <sys/uio.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -85,7 +86,9 @@ static void exercise(unsigned flags) {
 
 static volatile sig_atomic_t alarm_seen;
 
-static void on_alarm(int signal) { alarm_seen = signal; }
+static void on_alarm(int signal) {
+  alarm_seen = signal;
+}
 
 static void interrupted_epoll(void) {
   struct sigaction action = {.sa_handler = on_alarm};
@@ -99,7 +102,123 @@ static void interrupted_epoll(void) {
   assert(alarm_seen == SIGALRM && close(ep) == 0);
 }
 
+struct test_ring {
+  int fd;
+  struct io_uring_params p;
+  char *map;
+  size_t bytes;
+  struct io_uring_sqe *sq;
+  unsigned tail, head;
+};
+
+static void test_ring_open(struct test_ring *r) {
+  r->p.flags = IORING_SETUP_NO_SQARRAY;
+  r->fd = syscall(SYS_io_uring_setup, 8, &r->p);
+  assert(r->fd >= 0);
+  r->bytes = r->p.cq_off.cqes + r->p.cq_entries * sizeof(struct io_uring_cqe);
+  r->map = mmap(NULL, r->bytes, 3, MAP_SHARED, r->fd, 0);
+  r->sq = mmap(NULL, r->p.sq_entries * sizeof(*r->sq), 3, MAP_SHARED, r->fd, IORING_OFF_SQES);
+  assert(r->map != MAP_FAILED && r->sq != MAP_FAILED);
+}
+
+static void queue(struct test_ring *r, struct io_uring_sqe e) {
+  r->sq[r->tail++ % r->p.sq_entries] = e;
+  __atomic_store_n((unsigned *)(r->map + r->p.sq_off.tail), r->tail, __ATOMIC_RELEASE);
+}
+
+static struct io_uring_cqe completion(struct test_ring *r) {
+  unsigned *tail = (unsigned *)(r->map + r->p.cq_off.tail);
+  if (r->head == __atomic_load_n(tail, __ATOMIC_ACQUIRE)) {
+    assert(syscall(SYS_io_uring_enter, r->fd, 0, 1, IORING_ENTER_GETEVENTS, NULL, 0) == 0);
+  }
+  assert(r->head != __atomic_load_n(tail, __ATOMIC_ACQUIRE));
+  struct io_uring_cqe *cq = (void *)(r->map + r->p.cq_off.cqes);
+  struct io_uring_cqe e = cq[r->head++ % r->p.cq_entries];
+  __atomic_store_n((unsigned *)(r->map + r->p.cq_off.head), r->head, __ATOMIC_RELEASE);
+  return e;
+}
+
+static int issue(struct test_ring *r, struct io_uring_sqe e) {
+  queue(r, e);
+  assert(syscall(SYS_io_uring_enter, r->fd, 1, 0, 0, NULL, 0) == 1);
+  return completion(r).res;
+}
+
+static void files_and_events(void) {
+  struct test_ring r = {0};
+  test_ring_open(&r);
+  int file = issue(&r, (struct io_uring_sqe){.opcode = IORING_OP_OPENAT,
+                                             .fd = AT_FDCWD,
+                                             .addr = (uintptr_t)"/tmp/ring-io",
+                                             .open_flags = O_CREAT | O_RDWR | O_TRUNC,
+                                             .len = 0600});
+  assert(file >= 0);
+  char text[] = "ring buffers";
+  assert(
+    issue(&r, (struct io_uring_sqe){
+                .opcode = IORING_OP_WRITE, .fd = file, .addr = (uintptr_t)text, .len = sizeof(text)}) == sizeof(text));
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_REGISTER_FILES, &file, 1) == 0);
+  assert(close(file) == 0);
+  int pipefd[2];
+  assert(pipe(pipefd) == 0);
+  char *buf = mmap(NULL, 8192, 3, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  assert(buf != MAP_FAILED);
+  struct iovec v = {.iov_base = buf + 4092, .iov_len = sizeof(text)};
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_REGISTER_BUFFERS, &v, 1) == 0);
+  assert(issue(&r, (struct io_uring_sqe){.opcode = IORING_OP_READ_FIXED,
+                                         .flags = IOSQE_FIXED_FILE,
+                                         .fd = 0,
+                                         .addr = (uintptr_t)v.iov_base,
+                                         .len = sizeof(text)}) == sizeof(text));
+  assert(!memcmp(v.iov_base, text, sizeof(text)));
+  assert(munmap(buf, 8192) == 0);
+  assert(issue(&r, (struct io_uring_sqe){.opcode = IORING_OP_WRITE_FIXED,
+                                         .flags = IOSQE_FIXED_FILE,
+                                         .fd = 0,
+                                         .off = sizeof(text),
+                                         .addr = (uintptr_t)v.iov_base,
+                                         .len = sizeof(text)}) == sizeof(text));
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_UNREGISTER_BUFFERS, NULL, 0) == 0);
+  int installed =
+    issue(&r, (struct io_uring_sqe){.opcode = IORING_OP_FIXED_FD_INSTALL, .flags = IOSQE_FIXED_FILE, .fd = 0});
+  char readback[sizeof(text)] = {0};
+  assert(installed >= 0 && pread(installed, readback, sizeof(text), sizeof(text)) == sizeof(text) &&
+         !memcmp(text, readback, sizeof(text)));
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_UNREGISTER_FILES, NULL, 0) == 0);
+  int event = eventfd(0, EFD_NONBLOCK);
+  assert(event >= 0 && syscall(SYS_io_uring_register, r.fd, IORING_REGISTER_EVENTFD, &event, 1) == 0);
+  char got = 0;
+  queue(&r, (struct io_uring_sqe){
+              .opcode = IORING_OP_READ, .fd = pipefd[0], .addr = (uintptr_t)&got, .len = 1, .user_data = 123});
+  assert(syscall(SYS_io_uring_enter, r.fd, 1, 0, 0, NULL, 0) == 1);
+  assert(close(pipefd[0]) == 0);
+  int reused = eventfd(1, 0);
+  assert(reused == pipefd[0]);
+  assert(write(pipefd[1], "x", 1) == 1);
+  struct io_uring_cqe c = completion(&r);
+  assert(c.user_data == 123 && c.res == 1 && got == 'x');
+  uint64_t notices = 0;
+  assert(read(event, &notices, 8) == 8 && notices == 1);
+  queue(&r, (struct io_uring_sqe){.opcode = IORING_OP_POLL_ADD, .fd = event, .poll_events = POLLIN, .user_data = 456});
+  queue(&r, (struct io_uring_sqe){.opcode = IORING_OP_POLL_REMOVE, .addr = 456, .user_data = 789});
+  assert(syscall(SYS_io_uring_enter, r.fd, 2, 0, 0, NULL, 0) == 2);
+  int canceled = 0, removed = 0;
+  for (int i = 0; i < 2; i++) {
+    c = completion(&r);
+    canceled += c.user_data == 456 && c.res == -ECANCELED;
+    removed += c.user_data == 789 && c.res == 0;
+  }
+  assert(canceled == 1 && removed == 1);
+  struct timespec ts = {.tv_nsec = 15000000};
+  assert(issue(&r, (struct io_uring_sqe){.opcode = IORING_OP_TIMEOUT, .fd = -1, .addr = (uintptr_t)&ts, .len = 1}) ==
+         -ETIME);
+  assert(close(installed) == 0 && close(event) == 0 && close(reused) == 0 && close(pipefd[1]) == 0);
+  assert(close(r.fd) == 0);
+  assert(munmap(r.map, r.bytes) == 0 && munmap(r.sq, r.p.sq_entries * sizeof(*r.sq)) == 0);
+}
+
 int main(void) {
+  files_and_events();
   int status;
   assert(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD);
   const struct timespec delay = {.tv_nsec = 20000000};

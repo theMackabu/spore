@@ -32,6 +32,8 @@ static void remove_waiter(struct thread *thread) {
   if (!set->words[word]) { set->nonempty &= ~(UINT64_C(1) << word); }
 }
 
+bool cell_has_waiters(enum wait_reason reason) { return waiters[reason].nonempty != 0; }
+
 struct thread *cell_next_waiter(enum wait_reason reason, size_t *cursor) {
   const struct wait_set *set = &waiters[reason];
   size_t word = *cursor / 64;
@@ -57,6 +59,7 @@ void cell_clear_wait(struct thread *thread) {
   if (thread->wait.reason == WAIT_FIFO_OPEN) { cell_cancel_fd_reservation(thread->domain, thread->wait.target); }
   if (thread->wait.restore_signal_mask) { thread->signal_mask = thread->wait.saved_signal_mask; }
   struct open_file *file = thread->wait.held_file;
+  if (thread->wait.reason == WAIT_URING) { --file->ring.waiters; }
   if (thread->wait.reason == WAIT_EVENTFD) { --file->eventfd_waiters; }
   if (thread->wait.reason == WAIT_SOCKET) { --file->socket_waiters; }
   struct unix_rights *rights = thread->wait.reason == WAIT_PIPE && thread->wait.socket_msg ? thread->wait.unix_rights : NULL;

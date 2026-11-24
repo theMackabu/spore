@@ -31,6 +31,7 @@ struct user_address_space {
   uint64_t hhdm_offset;
   bool freebsd_abi;
   bool detached_file_pages;
+  bool has_buffer_pins;
   uint64_t resident_pages;
   uint64_t peak_resident_pages;
   uint64_t arg_start;
@@ -63,3 +64,4 @@ void *vmm_direct_user_buffer(const struct user_address_space *as, uint64_t va, s
 bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len);
 bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t src, size_t len);
 void vmm_install_user(const struct user_address_space *as);
+uint64_t vmm_pin_writable(struct user_address_space *as, uint64_t va);

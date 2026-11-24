@@ -31,6 +31,7 @@ fn main() {
             "lib/mem",
             "mm/table",
             "mm/pmm",
+            "mm/pin",
             "mm/pool",
             "mm/page_ring",
             "mm/vma",

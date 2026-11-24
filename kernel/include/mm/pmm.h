@@ -30,3 +30,6 @@ uint64_t pmm_total_pages(void);
 uint64_t pmm_free_pages(void);
 uint64_t pmm_tracked_pages(void);
 struct pmm_stats pmm_get_stats(void);
+bool pmm_pin_page(uint64_t page);
+bool pmm_page_pinned(uint64_t page);
+void pmm_unpin_page(uint64_t page);

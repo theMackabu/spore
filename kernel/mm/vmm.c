@@ -270,7 +270,8 @@ static bool clone_table(struct user_address_space *dst, struct user_address_spac
 
     if (is_leaf_at_level(entry, level)) {
       uint64_t pa = entry & PTE_ADDR_MASK;
-      if ((entry & PTE_SHARED) && mode == VMM_SNAPSHOT) {
+      if (((entry & PTE_SHARED) && mode == VMM_SNAPSHOT) ||
+          (!(entry & PTE_SHARED) && src->has_buffer_pins && pmm_page_pinned(pa))) {
         uint64_t copy = pmm_alloc_page();
         if (copy == 0) { return false; }
         kmemcpy(pt_virt(dst, copy), pt_virt(src, pa), PAGE_SIZE);
@@ -409,6 +410,15 @@ bool vmm_handle_write_fault(struct user_address_space *as, uint64_t va) {
   pmm_free_page(old_pa);
   tlb_flush_va(va);
   return true;
+}
+
+uint64_t vmm_pin_writable(struct user_address_space *as, uint64_t va) {
+  uint64_t *pte=leaf_for_va(as,va);
+  if (!pte || !(*pte & PTE_VALID) || (*pte & (PTE_FILE_CACHE | PTE_COW)) || !is_writable_leaf(*pte)) { return 0; }
+  uint64_t page=*pte & PTE_ADDR_MASK;
+  if (!pmm_pin_page(page)) { return 0; }
+  as->has_buffer_pins=true;
+  return page;
 }
 
 uint64_t vmm_user_to_phys(const struct user_address_space *as, uint64_t va) {

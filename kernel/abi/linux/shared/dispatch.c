@@ -575,7 +575,7 @@ l_rseq:
 l_uring_setup:
   return sys_io_uring_setup(a0, a1);
 l_uring_enter:
-  return sys_io_uring_enter(f, a0, a1, a2, a3, a4, a5, cell_syscall_allowed(SYS_EPOLL_CTL));
+  return sys_io_uring_enter(f, a0, a1, a2, a3, a4, a5);
 l_uring_register:
   return sys_io_uring_register(a0, a1, a2, a3);
 l_enosys:

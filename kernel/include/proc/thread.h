@@ -121,6 +121,7 @@ size_t cell_thread_slot_limit(void);
 void cell_set_current_thread(struct thread *thread);
 bool cell_scheduler_waiting_for_interrupt(void);
 void cell_wait_reset(void);
+bool cell_has_waiters(enum wait_reason reason);
 struct thread *cell_next_waiter(enum wait_reason reason, size_t *cursor);
 void cell_mark_blocked(struct thread *thread);
 void cell_clear_wait(struct thread *thread);

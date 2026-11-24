@@ -4,13 +4,16 @@
 enum {
   SETUP_CQSIZE = 1u << 3,
   SETUP_CLAMP = 1u << 4,
+  SETUP_R_DISABLED = 1u << 6,
   SETUP_NO_SQARRAY = 1u << 16,
   SINGLE_MMAP = 1,
   GETEVENTS = 1,
   OFF_CQ_RING = 0x8000000,
   OFF_SQES = 0x10000000,
-  OP_NOP = 0,
-  OP_EPOLL_CTL = 29,
+#define URING_OP(name, number, syscall) OP_##name = number,
+#include "operations.def"
+#undef URING_OP
+  OP_LAST = OP_PIPE,
   REGISTER_PROBE = 8,
   MAX_ENTRIES = 1024,
   EBADF = 9,

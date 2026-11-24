@@ -127,6 +127,7 @@ static int64_t poll_wait_check(struct thread *thread, bool commit) {
 static void wake_poll_waiters(void) {
   if (poll_waking) { return; }
   poll_waking = true;
+  uring_service_events();
   cell_epoll_sample_terminals();
   size_t cursor = 0;
   struct thread *thread;

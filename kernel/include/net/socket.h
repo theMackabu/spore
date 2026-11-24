@@ -72,3 +72,13 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
                           uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
                           size_t len);
 void cell_net_deliver_icmp(uint32_t src_ip, uint8_t ttl, const void *payload, size_t len);
+
+int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
+                                             uint32_t flags);
+
+int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, uint64_t addr,
+                             uint64_t addrlen, uint32_t flags);
+
+int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listener, int flags);
+
+int tcp_copy_peer_addr_to_domain(struct domain *domain, int accepted_fd, uint64_t addr, uint64_t addrlen);
