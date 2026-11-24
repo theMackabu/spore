@@ -3,7 +3,6 @@
 #include "fs/vfs.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
-#include "proc/accounting.h"
 #include "proc/fd.h"
 
 struct statfs64_aarch64 {
@@ -74,13 +73,9 @@ static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   st->st_size = (int64_t)node->size;
   st->st_blksize = PAGE_SIZE;
   st->st_blocks = (int64_t)allocated_sectors(node);
-  uint64_t now = cell_realtime_seconds();
-  uint64_t atime = node->atime == 0 ? now : node->atime;
-  uint64_t mtime = node->mtime == 0 ? now : node->mtime;
-  uint64_t ctime = node->ctime == 0 ? now : node->ctime;
-  st->st_atime_sec = (int64_t)atime;
-  st->st_mtime_sec = (int64_t)mtime;
-  st->st_ctime_sec = (int64_t)ctime;
+  st->st_atime_sec = (int64_t)node->atime;
+  st->st_mtime_sec = (int64_t)node->mtime;
+  st->st_ctime_sec = (int64_t)node->ctime;
 }
 
 static uint32_t dev_major(uint64_t dev) {
@@ -122,14 +117,9 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
   st->stx_rdev_minor = dev_minor(node->rdev);
   st->stx_dev_major = dev_major(node->dev_id);
   st->stx_dev_minor = dev_minor(node->dev_id);
-  uint64_t now = cell_realtime_seconds();
-  uint64_t atime = node->atime == 0 ? now : node->atime;
-  uint64_t mtime = node->mtime == 0 ? now : node->mtime;
-  uint64_t ctime = node->ctime == 0 ? now : node->ctime;
-  st->stx_atime.tv_sec = (int64_t)atime;
-  st->stx_mtime.tv_sec = (int64_t)mtime;
-  st->stx_ctime.tv_sec = (int64_t)ctime;
-  st->stx_btime.tv_sec = (int64_t)ctime;
+  st->stx_atime.tv_sec = (int64_t)node->atime;
+  st->stx_mtime.tv_sec = (int64_t)node->mtime;
+  st->stx_ctime.tv_sec = (int64_t)node->ctime;
 }
 
 int64_t sys_fstat(uint64_t fd, uint64_t stat_addr) {

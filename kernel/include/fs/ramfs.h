@@ -119,6 +119,7 @@ bool ramfs_create(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
 bool ramfs_mkfifo(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);
 bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size);
+bool ramfs_set_times(struct ramfs *fs, int index, uint64_t atime, uint64_t mtime);
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode);
 bool ramfs_chown_node(struct ramfs *fs, int index, uint32_t uid, uint32_t gid);
 bool ramfs_retain_node(struct ramfs *fs, int index);

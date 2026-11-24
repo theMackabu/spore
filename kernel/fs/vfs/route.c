@@ -122,9 +122,9 @@ void vfs_from_ext2(const struct ext2_node *node, struct vfs_node *out) {
     .gid = node->gid,
     .dev_id = VFS_DEV_EXT2_ROOT,
     .rdev = 0,
-    .atime = node->atime,
-    .ctime = node->ctime,
-    .mtime = node->mtime,
+    .atime = (int32_t)node->atime,
+    .ctime = (int32_t)node->ctime,
+    .mtime = (int32_t)node->mtime,
     .size = node->size,
     .ext2 = *node,
   };

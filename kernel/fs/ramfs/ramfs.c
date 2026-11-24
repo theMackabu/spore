@@ -333,6 +333,15 @@ bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
   return ramfs_refresh_node(fs, index, out);
 }
 
+bool ramfs_set_times(struct ramfs *fs, int index, uint64_t atime, uint64_t mtime) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return false; }
+  node->atime = atime;
+  node->mtime = mtime;
+  node->ctime = ramfs_now_sec;
+  return true;
+}
+
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode) {
   struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
   if (!node) { return false; }

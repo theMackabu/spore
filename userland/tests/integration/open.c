@@ -88,8 +88,28 @@ static int open_flags(void) {
   return ok;
 }
 
+static int inode_times(const char *name) {
+  int fd = open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) { return 0; }
+  struct stat st;
+  struct timespec ts[2] = {{.tv_sec = -12}, {.tv_sec = 0}};
+  int ok = futimens(fd, ts) == 0 && stat(name, &st) == 0 && st.st_atim.tv_sec == -12 && st.st_mtim.tv_sec == 0;
+  ts[0].tv_nsec = UTIME_OMIT;
+  ts[1].tv_sec = 98765;
+  ok = ok && utimensat(AT_FDCWD, name, ts, 0) == 0 && fstat(fd, &st) == 0 &&
+       st.st_mtim.tv_sec == 98765 && st.st_atim.tv_sec == -12;
+  ts[1].tv_nsec = 1000000000;
+  ok = ok && futimens(fd, ts) == -1 && errno == EINVAL;
+  ts[1].tv_nsec = UTIME_NOW;
+  ok = ok && unlink(name) == 0 && futimens(fd, ts) == 0 && fstat(fd, &st) == 0 &&
+       st.st_nlink == 0 && st.st_atim.tv_sec == -12 && st.st_mtim.tv_sec > 98765;
+  close(fd);
+  unlink(name);
+  return ok;
+}
+
 int integration_open_suite(void) {
-  int ok = creation_mask() && deep_directory() && open_flags();
+  int ok = creation_mask() && deep_directory() && open_flags() && inode_times("/inode-times") && inode_times("/tmp/inode-times");
   printf("[spore] pathname, umask and descriptor opens: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }

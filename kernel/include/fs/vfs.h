@@ -118,7 +118,7 @@ bool vfs_link_node(const struct vfs_node *node, const char *new_path);
 bool vfs_link(const char *old_path, const char *new_path);
 bool vfs_symlink(const char *target, const char *link_path);
 bool vfs_readlink(const struct vfs_node *node, char *out, size_t cap, size_t *len_out);
-bool vfs_chmod(const char *path, uint32_t mode);
+int vfs_set_times(const struct vfs_node *node, int64_t atime, int64_t mtime);
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode);
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid);
 bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid);

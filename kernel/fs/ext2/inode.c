@@ -317,3 +317,13 @@ bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
   copy.ctime = ext2_now_sec();
   return ext2_write_inode(fs, &copy);
 }
+
+
+bool ext2_set_times(struct ext2_fs *fs, uint32_t ino, uint32_t atime, uint32_t mtime) {
+  struct ext2_node node;
+  if (!ext2_read_inode(fs, ino, &node)) { return false; }
+  node.atime = atime;
+  node.mtime = mtime;
+  node.ctime = ext2_now_sec();
+  return ext2_write_inode(fs, &node);
+}

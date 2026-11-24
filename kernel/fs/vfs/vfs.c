@@ -199,11 +199,23 @@ bool vfs_symlink(const char *target, const char *link_path) {
   return ok;
 }
 
-bool vfs_chmod(const char *path, uint32_t mode) {
-  struct vfs_node node;
-  if (!vfs_lookup(path, &node) || !vfs_chmod_node(&node, mode)) { return false; }
-  fsnotify_path_event(path, FS_ATTRIB);
-  return true;
+static int32_t ext2_time(int64_t seconds) {
+  if (seconds < INT32_MIN) { return INT32_MIN; }
+  if (seconds > INT32_MAX) { return INT32_MAX; }
+  return (int32_t)seconds;
+}
+
+int vfs_set_times(const struct vfs_node *node, int64_t atime, int64_t mtime) {
+  vfs_update_time_sources();
+  bool ok;
+  if (node->backend == VFS_EXT2) {
+    ok = ext2_set_times(vfs_root_ext2, node->ext2.ino, ext2_time(atime), ext2_time(mtime));
+  } else if (node->backend == VFS_RAMFS) {
+    ok = ramfs_set_times(node->ramfs.fs, node->ramfs.index, atime, mtime);
+  } else { return -30; }
+  if (!ok) { return -5; }
+  vfs_lookup_cache_changed(node);
+  return 0;
 }
 
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode) {

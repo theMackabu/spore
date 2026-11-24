@@ -8,39 +8,79 @@
 #include "proc/fd.h"
 #include "proc/policy.h"
 
-int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, uint64_t flags) {
-  (void)times_addr;
-  if ((flags & ~0x100ull) != 0) { return -(int64_t)EINVAL; }
-  if (path_addr == 0) {
-    int fd_flags = cell_fd_get_flags((int)dirfd);
-    return fd_flags < 0 ? fd_flags : 0;
-  }
-
-  char path[CELL_PATH_MAX];
-  int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
-  if (path_rc != 0) { return path_rc; }
-  if (!cell_fs_path_allowed(path, CELL_FS_WRITE)) { return -(int64_t)EPERM; }
-
+struct attr_target {
   struct vfs_node node;
-  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
-  if (!syscall_node_access_allowed(&node, W_OK)) { return -(int64_t)EACCES; }
+  struct open_file *file;
+  char path[CELL_PATH_MAX];
+};
+
+static int attr_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descriptor, struct attr_target *target) {
+  target->file = NULL;
+  if (flags & ~(uint64_t)(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) { return -EINVAL; }
+  if (descriptor) {
+    if (flags) { return -EINVAL; }
+    struct open_file *file = cell_fd_file(fd);
+    if (!file || (file->flags & LINUX_O_PATH)) { return -EBADF; }
+    if (!cell_fd_stat((int)fd, &target->node)) { return -EBADF; }
+    target->file = file;
+    return 0;
+  }
+  int rc = syscall_lookup_at(fd, addr, flags, CELL_FS_WRITE, &target->node, target->path);
+  if (!rc && !target->path[0]) { target->file = cell_fd_file(fd); }
+  return rc;
+}
+
+static void notify_attr(const struct attr_target *target, uint32_t mask) {
+  if (target->file) { fsnotify_file_event(target->file, mask); }
+  else { fsnotify_path_event(target->path, mask); }
+}
+
+int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, uint64_t flags) {
+  constexpr int64_t NOW = (1 << 30) - 1;
+  constexpr int64_t OMIT = NOW - 1;
+  struct timespec64 times[2] = {{.tv_nsec = NOW}, {.tv_nsec = NOW}};
+  if (times_addr && (!syscall_user_readable(times_addr, sizeof(times)) ||
+      !vmm_copy_from_user(syscall_active_as(), times, times_addr, sizeof(times)))) { return -EFAULT; }
+  for (size_t i = 0; i < 2; ++i) {
+    int64_t ns = times[i].tv_nsec;
+    if (ns != NOW && ns != OMIT && (ns < 0 || ns >= 1000000000)) { return -EINVAL; }
+  }
+  if (times[0].tv_nsec == OMIT && times[1].tv_nsec == OMIT) { return 0; }
+  struct attr_target target;
+  int rc = attr_target(dirfd, path_addr, flags, !path_addr, &target);
+  if (rc) { return rc; }
+  if (cell_current_euid() && cell_current_euid() != target.node.uid) {
+    if (times[0].tv_nsec != NOW || times[1].tv_nsec != NOW) { return -EPERM; }
+    if (!syscall_node_access_allowed(&target.node, W_OK)) { return -EACCES; }
+  }
+  int64_t now = (int64_t)cell_realtime_seconds();
+  int64_t atime = times[0].tv_nsec == OMIT ? (int64_t)target.node.atime : times[0].tv_nsec == NOW ? now : times[0].tv_sec;
+  int64_t mtime = times[1].tv_nsec == OMIT ? (int64_t)target.node.mtime : times[1].tv_nsec == NOW ? now : times[1].tv_sec;
+  rc = vfs_set_times(&target.node, atime, mtime);
+  if (!rc) { notify_attr(&target, times[0].tv_nsec == OMIT ? FS_MODIFY : times[1].tv_nsec == OMIT ? FS_ACCESS : FS_ATTRIB); }
+  return rc;
+}
+
+static int chmod_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descriptor, uint32_t mode) {
+  struct attr_target target;
+  int rc = attr_target(fd, addr, flags, descriptor, &target);
+  if (rc) { return rc; }
+  if ((target.node.mode & S_IFMT) == S_IFLNK) { return -95; }
+  if (cell_current_euid()) {
+    if (cell_current_euid() != target.node.uid) { return -EPERM; }
+    if (!cell_in_group(target.node.gid)) { mode &= ~02000u; }
+  }
+  if (!vfs_chmod_node(&target.node, mode)) { return -EINVAL; }
+  notify_attr(&target, FS_ATTRIB);
   return 0;
 }
 
 int64_t sys_fchmodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_t flags) {
-  if ((flags & ~0x100ull) != 0) { return -(int64_t)EINVAL; }
-  char path[CELL_PATH_MAX];
-  int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
-  if (path_rc != 0) { return path_rc; }
-  return vfs_chmod(path, (uint32_t)mode) ? 0 : -(int64_t)ENOENT;
+  return chmod_target(dirfd, path_addr, flags, false, mode);
 }
 
 int64_t sys_fchmod(uint64_t fd, uint64_t mode) {
-  struct vfs_node node;
-  if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
-  if (!vfs_chmod_node(&node, (uint32_t)mode)) { return -EINVAL; }
-  fsnotify_file_event(cell_fd_file(fd), FS_ATTRIB);
-  return 0;
+  return chmod_target(fd, 0, 0, true, mode);
 }
 
 static bool chown_ids(const struct vfs_node *node, uint64_t uid_arg, uint64_t gid_arg, uint32_t *uid, uint32_t *gid) {
@@ -49,31 +89,24 @@ static bool chown_ids(const struct vfs_node *node, uint64_t uid_arg, uint64_t gi
   return uid_arg <= 0xffffffffull && gid_arg <= 0xffffffffull;
 }
 
-int64_t sys_fchownat(uint64_t dirfd, uint64_t path_addr, uint64_t uid_arg, uint64_t gid_arg, uint64_t flags) {
-  if ((flags & ~AT_SYMLINK_NOFOLLOW) != 0) { return -(int64_t)EINVAL; }
-  if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
-  char path[CELL_PATH_MAX];
-  int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
-  if (path_rc != 0) { return path_rc; }
-  struct vfs_node node;
-  bool nofollow = (flags & AT_SYMLINK_NOFOLLOW) != 0;
-  if (!(nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node))) { return -(int64_t)ENOENT; }
-  uint32_t uid = 0;
-  uint32_t gid = 0;
-  if (!chown_ids(&node, uid_arg, gid_arg, &uid, &gid)) { return -(int64_t)EINVAL; }
-  return vfs_chown(path, uid, gid) ? 0 : -(int64_t)EINVAL;
+static int chown_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descriptor, uint64_t uid_arg, uint64_t gid_arg) {
+  struct attr_target target;
+  int rc = attr_target(fd, addr, flags, descriptor, &target);
+  if (rc) { return rc; }
+  if (cell_current_euid() != 0) { return -EPERM; }
+  uint32_t uid, gid;
+  if (!chown_ids(&target.node, uid_arg, gid_arg, &uid, &gid)) { return -EINVAL; }
+  if (!vfs_chown_node(&target.node, uid, gid)) { return -EINVAL; }
+  notify_attr(&target, FS_ATTRIB);
+  return 0;
 }
 
-int64_t sys_fchown(uint64_t fd, uint64_t uid_arg, uint64_t gid_arg) {
-  if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
-  struct vfs_node node;
-  if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
-  uint32_t uid = 0;
-  uint32_t gid = 0;
-  if (!chown_ids(&node, uid_arg, gid_arg, &uid, &gid)) { return -(int64_t)EINVAL; }
-  if (!vfs_chown_node(&node, uid, gid)) { return -EINVAL; }
-  fsnotify_file_event(cell_fd_file(fd), FS_ATTRIB);
-  return 0;
+int64_t sys_fchownat(uint64_t dirfd, uint64_t path_addr, uint64_t uid, uint64_t gid, uint64_t flags) {
+  return chown_target(dirfd, path_addr, flags, false, uid, gid);
+}
+
+int64_t sys_fchown(uint64_t fd, uint64_t uid, uint64_t gid) {
+  return chown_target(fd, 0, 0, true, uid, gid);
 }
 
 int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
