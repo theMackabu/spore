@@ -4,7 +4,7 @@
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "net/net.h"
-#include "net/rust.h"
+#include "net/packet.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/poll.h"

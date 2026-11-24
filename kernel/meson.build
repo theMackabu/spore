@@ -55,7 +55,7 @@ configure_file(
   output: 'spore_version.h',
   configuration: spore_version_conf)
 
-kernel_rust_root = files('rust/lib.rs')
+kernel_rust_root = files('lib.rs')
 kernel_rust = custom_target('spore-kernel-rust',
   input: kernel_rust_root,
   output: 'libspore_kernel.a',

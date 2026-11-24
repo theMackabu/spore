@@ -1,5 +1,5 @@
 #include "net/net.h"
-#include "net/rust.h"
+#include "packet.h"
 
 #include "proc/accounting.h"
 #include "lib/kprintf.h"

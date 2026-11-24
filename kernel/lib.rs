@@ -1,8 +1,11 @@
 #![no_std]
 
+#[path = "exec/elf.rs"]
 mod elf;
-mod ext2;
-mod net;
+#[path = "net/packet.rs"]
+mod packet;
+#[path = "fs/ext2/records.rs"]
+mod records;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {

@@ -1,5 +1,5 @@
 #include "internal.h"
-#include "rust.h"
+#include "records.h"
 
 enum {
   CHILD_CACHE_ENTRIES = 4096,
