@@ -196,6 +196,15 @@ static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame) {
   return CELL_SWITCHED;
 }
 
+static int64_t read_regular(struct domain *domain, struct open_file *file, uint64_t off, uint64_t buf, uint64_t len) {
+  if (!vfs_refresh(&file->node, &file->node)) { return -5; }
+  uint64_t chunk = bounded_io_len(len);
+  uint64_t got = vfs_read(&file->node, off, file_io_tmp, chunk);
+  if (got == 0) { return 0; }
+  if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)got)) { return -14; }
+  return (int64_t)got;
+}
+
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
@@ -236,12 +245,9 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   }
   if (file->type != OPEN_VFS || file->node.is_dir) { return -22; }
   if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, buf, len, frame); }
-  uint64_t chunk = bounded_io_len(len);
-  uint64_t got = vfs_read(&file->node, file->offset, file_io_tmp, chunk);
-  if (got == 0) { return 0; }
-  if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)got)) { return -14; }
-  file->offset += got;
-  return (int64_t)got;
+  int64_t got = read_regular(domain, file, file->offset, buf, len);
+  if (got > 0) { file->offset += (uint64_t)got; }
+  return got;
 }
 
 int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {
@@ -250,11 +256,7 @@ int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct t
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
   if (file->type != OPEN_VFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
-  uint64_t chunk = bounded_io_len(len);
-  uint64_t got = vfs_read(&file->node, off, file_io_tmp, chunk);
-  if (got == 0) { return 0; }
-  if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)got)) { return -14; }
-  return (int64_t)got;
+  return read_regular(domain, file, off, buf, len);
 }
 
 int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {

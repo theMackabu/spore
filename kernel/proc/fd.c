@@ -263,6 +263,12 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   if (fd < 0) { return -24; }
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
+  if (!vfs_retain_node(node)) {
+    cell_release_open_file(file);
+    return -ENOMEM;
+  }
+  file->type = OPEN_VFS;
+  file->node = *node;
   if ((node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
     bool write_end = (flags & CELL_O_ACCMODE) == CELL_O_WRONLY;
     bool needs_reader = write_end && (flags & CELL_O_NONBLOCK) != 0;
@@ -283,12 +289,8 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
     } else {
       cell_pipe_add_reader((uint8_t)pipe_id);
     }
-  } else {
-    file->type = OPEN_VFS;
   }
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
-  file->node = *node;
-  vfs_retain_node(&file->node);
   cell_copy_open_path(file, path);
   if (file->type == OPEN_VFS && (flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
   domain->fds[fd] = file;

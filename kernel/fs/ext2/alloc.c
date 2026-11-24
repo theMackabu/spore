@@ -183,8 +183,7 @@ static bool ext2plus_free_inode(struct ext2_fs *fs, uint32_t ino) {
   return ext2plus_write_header(fs, &hdr);
 }
 
-bool ext2_free_inode(struct ext2_fs *fs, uint32_t ino) {
-  if (fs->ext2plus && ino >= fs->ext2plus_base_ino) { return ext2plus_free_inode(fs, ino); }
+static bool free_classic_inode(struct ext2_fs *fs, uint32_t ino) {
   if (ino < fs->first_ino || ino > fs->inode_count) { return false; }
   uint32_t index = ino - 1;
   uint32_t group = index / fs->inodes_per_group;
@@ -208,6 +207,12 @@ bool ext2_free_inode(struct ext2_fs *fs, uint32_t ino) {
     (void)ext2_write_super(fs, &sb);
   }
   return true;
+}
+
+bool ext2_free_inode(struct ext2_fs *fs, uint32_t ino) {
+  bool freed = fs->ext2plus && ino >= fs->ext2plus_base_ino ? ext2plus_free_inode(fs, ino) : free_classic_inode(fs, ino);
+  if (freed && fs->inode_freed) { fs->inode_freed(ino); }
+  return freed;
 }
 
 bool ext2_adjust_group_used_dirs(struct ext2_fs *fs, uint32_t ino, int delta) {

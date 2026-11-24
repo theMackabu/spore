@@ -295,6 +295,31 @@ static int removal_errors(const char *base, int test_symlink) {
   return ok;
 }
 
+static int open_unlinked_ext2(void) {
+  const char *path = "/open-unlinked";
+  int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) { return 0; }
+  int second = open(path, O_RDONLY);
+  char byte = 0;
+  struct stat original, replacement;
+  int ok = second >= 0 && write(fd, "A", 1) == 1 && pread(second, &byte, 1, 0) == 1 && byte == 'A';
+  char *mapping = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, fd, 0);
+  ok = ok && mapping != MAP_FAILED && unlink(path) == 0 && fstat(fd, &original) == 0 && !original.st_nlink;
+  int other = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+  ok = ok && other >= 0 && write(other, "B", 1) == 1 && fstat(other, &replacement) == 0 &&
+       replacement.st_ino != original.st_ino && pread(fd, &byte, 1, 0) == 1 && byte == 'A';
+  close(fd);
+  if (second >= 0) { close(second); }
+  if (mapping != MAP_FAILED) {
+    ok = ok && mapping[0] == 'A';
+    munmap(mapping, 4096);
+  }
+  if (other >= 0) { close(other); }
+  unlink(path);
+  printf("[spore] unlinked ext2 file and mapping: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_fs_demo(void) {
   int ok = 1;
   errno = 0;
@@ -336,7 +361,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+  if (!open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }

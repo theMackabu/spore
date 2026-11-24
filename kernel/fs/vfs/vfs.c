@@ -11,10 +11,18 @@ struct ext2_fs *vfs_root_ext2;
 uint64_t vfs_hhdm_offset;
 struct vfs_stats vfs_stat_counters;
 
+static void ext2_inode_freed(uint32_t ino) {
+  struct ext2_node ext = {.ino = ino};
+  struct vfs_node node;
+  vfs_from_ext2(&ext, &node);
+  vfs_page_cache_invalidate(&node);
+}
+
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset) {
   vfs_hhdm_offset = hhdm_offset;
   vfs_root_ramfs = ramfs;
   vfs_root_ext2 = ext2;
+  if (ext2) { ext2->inode_freed = ext2_inode_freed; }
   vfs_page_cache_configure();
   vfs_update_time_sources();
 }
@@ -76,7 +84,6 @@ int vfs_tmpfile(const struct vfs_node *dir, uint16_t mode, uint32_t uid, uint32_
     if (!vfs_root_ext2->write) { return -30; }
     if (!ext2_tmpfile(vfs_root_ext2, mode, uid, gid, linkable, &node)) { return -28; }
     vfs_from_ext2(&node, out);
-    vfs_page_cache_invalidate(out);
     return 0;
   }
   if (dir->backend == VFS_RAMFS && (dir->ramfs.mount == RAMFS_MOUNT_TMP || dir->ramfs.mount == RAMFS_MOUNT_RUN ||
@@ -235,17 +242,14 @@ bool vfs_rename(const char *old_path, const char *new_path) {
   return ok;
 }
 
-void vfs_retain_node(const struct vfs_node *node) {
-  if (node == NULL) { return; }
-  if (node->backend == VFS_EXT2) { ext2_tmpfile_retain(vfs_root_ext2, node->ext2.ino); }
-  if (node->backend == VFS_RAMFS) { (void)ramfs_retain_node(node->ramfs.fs, node->ramfs.index); }
+bool vfs_retain_node(const struct vfs_node *node) {
+  if (node->backend == VFS_EXT2) { return ext2_retain_inode(vfs_root_ext2, node->ext2.ino); }
+  if (node->backend == VFS_RAMFS) { return ramfs_retain_node(node->ramfs.fs, node->ramfs.index); }
+  return true;
 }
 
 void vfs_release_node(const struct vfs_node *node) {
-  if (node == NULL) { return; }
-  if (node->backend == VFS_EXT2 && ext2_tmpfile_release(vfs_root_ext2, node->ext2.ino)) {
-    vfs_page_cache_invalidate(node);
-  }
+  if (node->backend == VFS_EXT2) { ext2_release_inode(vfs_root_ext2, node->ext2.ino); }
   if (node->backend == VFS_RAMFS) { ramfs_release_node(node->ramfs.fs, node->ramfs.index); }
 }
 

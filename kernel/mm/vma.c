@@ -116,12 +116,13 @@ size_t vma_first_ending_after(const struct vma_list *list, uint64_t addr) {
   return lo;
 }
 
-static void retain_mapping(const struct vma *vma) {
-  if (vma->type != VMA_FILE) { return; }
-  vfs_retain_node(&vma->file_node);
+static bool retain_mapping(const struct vma *vma) {
+  if (vma->type != VMA_FILE) { return true; }
+  if (!vfs_retain_node(&vma->file_node)) { return false; }
   if ((vma->flags & MAP_SHARED) && (vma->prot & VMM_USER_WRITE)) {
     vfs_note_shared_writable_mapping(&vma->file_node, true);
   }
+  return true;
 }
 
 static void release_mapping(const struct vma *vma) {
@@ -158,13 +159,14 @@ static void erase_slots(struct vma_list *list, size_t first, size_t end) {
   trim_chunks(list);
 }
 
-static void insert_slot(struct vma_list *list, size_t i, const struct vma *vma) {
+static bool insert_slot(struct vma_list *list, size_t i, const struct vma *vma) {
+  if (!retain_mapping(vma)) { return false; }
   for (size_t j = list->count; j > i; --j) {
     *slot_at(list, j) = *slot_at(list, j - 1);
   }
   *slot_at(list, i) = *vma;
-  retain_mapping(vma);
   ++list->count;
+  return true;
 }
 
 static bool insert_mapping(struct vma_list *list, const struct vma *vma) {
@@ -181,7 +183,10 @@ static bool insert_mapping(struct vma_list *list, const struct vma *vma) {
     next->start = vma->start;
   } else {
     if (!reserve_slots(list, list->count + 1)) { return false; }
-    insert_slot(list, i, vma);
+    if (!insert_slot(list, i, vma)) {
+      trim_chunks(list);
+      return false;
+    }
   }
   return true;
 }
@@ -266,7 +271,7 @@ bool vma_remove(struct vma_list *list, uint64_t start, uint64_t end) {
       if (!reserve_slots(list, list->count + 1)) { return false; }
       struct vma tail = *first;
       tail.start = end;
-      insert_slot(list, i + 1, &tail);
+      if (!insert_slot(list, i + 1, &tail)) { return false; }
     }
     first->end = start;
     ++i;
@@ -380,7 +385,10 @@ bool vma_clone(struct vma_list *dst, const struct vma_list *src) {
   vma_list_init(dst);
   if (!reserve_slots(dst, src->count)) { return false; }
   for (size_t i = 0; i < src->count; ++i) {
-    insert_slot(dst, i, slot_at(src, i));
+    if (!insert_slot(dst, i, slot_at(src, i))) {
+      vma_list_destroy(dst);
+      return false;
+    }
   }
   return true;
 }

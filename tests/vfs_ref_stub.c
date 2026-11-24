@@ -22,9 +22,10 @@ unsigned vfs_ref_stub_shared_write_count(void) {
   return shared_write_count;
 }
 
-void vfs_retain_node(const struct vfs_node *node) {
+bool vfs_retain_node(const struct vfs_node *node) {
   (void)node;
   ++retain_count;
+  return true;
 }
 
 void vfs_release_node(const struct vfs_node *node) {

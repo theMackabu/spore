@@ -546,10 +546,27 @@ static void test_mutations(const char *image_path) {
   assert(ext2_info(&fs, &before));
   assert(ext2_tmpfile(&fs, 0600, 0, 0, true, &anonymous));
   assert(ext2_write_file(&fs, &anonymous, 0, "x", 1) == 1);
-  assert(ext2_tmpfile_release(&fs, anonymous.ino));
+  ext2_release_inode(&fs, anonymous.ino);
   assert(ext2_info(&fs, &after));
   assert(before.inode_count - before.free_inodes == after.inode_count - after.free_inodes);
   assert(before.free_blocks == after.free_blocks);
+
+  struct ext2_node named;
+  assert(ext2_create(&fs, "/open", false, 0600, &named));
+  assert(ext2_retain_inode(&fs, named.ino));
+  assert(ext2_retain_inode(&fs, named.ino));
+  assert(ext2_write_file(&fs, &named, 0, "open", 4) == 4);
+  assert(ext2_info(&fs, &before));
+  assert(ext2_unlink(&fs, "/open"));
+  assert(!ext2_link_inode(&fs, named.ino, "/revived"));
+  assert(ext2_drop_cache(&fs));
+  assert(!ext2_mount_rw(&fs, file_read, file_write, f));
+  ext2_release_inode(&fs, named.ino);
+  assert(ext2_inode(&fs, named.ino, &named) && named.links_count == 0 && named.size == 4);
+  ext2_release_inode(&fs, named.ino);
+  assert(ext2_info(&fs, &after));
+  assert(after.free_blocks == before.free_blocks + 1);
+  assert(after.inode_count - after.free_inodes + 1 == before.inode_count - before.free_inodes);
 
   test_large_file_write(&fs);
   test_relative_symlink_with_dotdot(&fs);

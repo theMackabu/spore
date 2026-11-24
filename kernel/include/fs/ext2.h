@@ -25,15 +25,8 @@ struct __attribute__((aligned(8))) ext2_node {
   uint32_t blocks[15];
 };
 
-struct ext2_tmpfile_ref {
-  uint32_t ino;
-  uint32_t refs;
-  bool linkable;
-};
-
 struct ext2_fs {
-  struct ext2_tmpfile_ref tmpfiles[256];
-  size_t tmpfile_count;
+  void (*inode_freed)(uint32_t ino);
   ext2_read_fn read;
   ext2_write_fn write;
   void *ctx;
@@ -92,8 +85,8 @@ int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off
 bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size);
 bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out);
 bool ext2_tmpfile(struct ext2_fs *fs, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable, struct ext2_node *out);
-void ext2_tmpfile_retain(struct ext2_fs *fs, uint32_t ino);
-bool ext2_tmpfile_release(struct ext2_fs *fs, uint32_t ino);
+bool ext2_retain_inode(struct ext2_fs *fs, uint32_t ino);
+void ext2_release_inode(struct ext2_fs *fs, uint32_t ino);
 bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path);
 bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path);
 bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path);

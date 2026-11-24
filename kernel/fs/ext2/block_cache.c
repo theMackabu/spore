@@ -53,7 +53,7 @@ static bool cache_flush_entry(struct block_cache_entry *entry) {
 }
 
 bool ext2_flush(struct ext2_fs *fs) {
-  bool ok = true;
+  bool ok = ext2_check_refs(fs, false);
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     if (block_cache[i].fs == fs && !cache_flush_entry(&block_cache[i])) { ok = false; }
   }

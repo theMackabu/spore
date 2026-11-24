@@ -423,44 +423,6 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, 
   return true;
 }
 
-static struct ext2_tmpfile_ref *tmpfile_ref(struct ext2_fs *fs, uint32_t ino) {
-  for (size_t i = 0; i < fs->tmpfile_count; ++i) {
-    if (fs->tmpfiles[i].ino == ino) { return &fs->tmpfiles[i]; }
-  }
-  return NULL;
-}
-
-bool ext2_tmpfile(struct ext2_fs *fs, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable, struct ext2_node *out) {
-  uint32_t ino;
-  if (fs->write == NULL || uid > UINT16_MAX || gid > UINT16_MAX ||
-      fs->tmpfile_count == sizeof(fs->tmpfiles) / sizeof(fs->tmpfiles[0]) || !ext2_alloc_inode(fs, &ino)) {
-    return false;
-  }
-  uint32_t now = ext2_now_sec();
-  struct ext2_node node = {
-    .ino = ino, .mode = EXT2_S_IFREG | mode, .uid = uid, .gid = gid, .atime = now, .ctime = now, .mtime = now};
-  if (!ext2_write_inode(fs, &node)) {
-    (void)ext2_free_inode(fs, ino);
-    return false;
-  }
-  fs->tmpfiles[fs->tmpfile_count++] = (struct ext2_tmpfile_ref){.ino = ino, .refs = 1, .linkable = linkable};
-  *out = node;
-  return true;
-}
-
-void ext2_tmpfile_retain(struct ext2_fs *fs, uint32_t ino) {
-  struct ext2_tmpfile_ref *ref = tmpfile_ref(fs, ino);
-  if (ref != NULL) { ++ref->refs; }
-}
-
-bool ext2_tmpfile_release(struct ext2_fs *fs, uint32_t ino) {
-  struct ext2_tmpfile_ref *ref = tmpfile_ref(fs, ino);
-  if (ref == NULL || --ref->refs != 0) { return false; }
-  *ref = fs->tmpfiles[--fs->tmpfile_count];
-  struct ext2_node node;
-  return ext2_read_inode(fs, ino, &node) && node.links_count == 0 && ext2_truncate(fs, &node, 0) && ext2_free_inode(fs, ino);
-}
-
 bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path) {
   struct ext2_node node;
   return ext2_lookup(fs, old_path, &node) && ext2_link_inode(fs, node.ino, new_path);
@@ -479,8 +441,7 @@ bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path) {
       !ext2_is_dir(&parent) || ext2_lookup_child(fs, &parent, new_name, kstrlen(new_name), &existing)) {
     return false;
   }
-  struct ext2_tmpfile_ref *ref = tmpfile_ref(fs, ino);
-  if (node.links_count == UINT16_MAX || (node.links_count == 0 && (ref == NULL || !ref->linkable))) { return false; }
+  if (node.links_count == UINT16_MAX || (node.links_count == 0 && !ext2_inode_linkable(fs, ino))) { return false; }
   ++node.links_count;
   node.ctime = ext2_now_sec();
   if (!ext2_write_inode(fs, &node)) { return false; }
@@ -489,7 +450,7 @@ bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path) {
     (void)ext2_write_inode(fs, &node);
     return false;
   }
-  if (ref != NULL) { ref->linkable = false; }
+  (void)ext2_set_orphan(fs, ino, false, false);
   return true;
 }
 
@@ -587,21 +548,19 @@ int ext2_remove(struct ext2_fs *fs, const char *path) {
     if (rc > 0) { return -EXT2_ENOTEMPTY; }
   }
   if (!remove_dirent(fs, &parent, name, NULL)) { return -EXT2_EIO; }
-  if (!ext2_is_dir(&node) && (node.links_count > 1 || tmpfile_ref(fs, node.ino) != NULL)) {
-    --node.links_count;
-    node.ctime = ext2_now_sec();
-    return ext2_write_inode(fs, &node) ? 0 : -EXT2_EIO;
-  }
-  (void)ext2_truncate(fs, &node, 0);
   if (ext2_is_dir(&node)) {
     if (parent.links_count > 2) { --parent.links_count; }
-    parent.mtime = ext2_now_sec();
-    parent.ctime = parent.mtime;
-    (void)ext2_write_inode(fs, &parent);
-    (void)ext2_adjust_group_used_dirs(fs, node.ino, -1);
+    parent.mtime = parent.ctime = ext2_now_sec();
+    if (!ext2_write_inode(fs, &parent)) { return -EXT2_EIO; }
+    if (node.ino <= fs->inode_count && !ext2_adjust_group_used_dirs(fs, node.ino, -1)) { return -EXT2_EIO; }
+    node.links_count = 0;
+  } else if (node.links_count) {
+    --node.links_count;
   }
-  (void)ext2_free_inode(fs, node.ino);
-  return 0;
+  node.ctime = ext2_now_sec();
+  if (!ext2_write_inode(fs, &node)) { return -EXT2_EIO; }
+  if (node.links_count || ext2_set_orphan(fs, node.ino, true, false)) { return 0; }
+  return ext2_truncate(fs, &node, 0) && ext2_free_inode(fs, node.ino) ? 0 : -EXT2_EIO;
 }
 
 bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path) {
@@ -626,6 +585,7 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
   }
   struct ext2_node existing;
   if (ext2_lookup_child(fs, &new_parent, new_name, kstrlen(new_name), &existing)) {
+    if (existing.ino == node.ino) { return true; }
     if ((ext2_is_dir(&node) && !ext2_is_dir(&existing)) || (!ext2_is_dir(&node) && ext2_is_dir(&existing))) {
       return false;
     }

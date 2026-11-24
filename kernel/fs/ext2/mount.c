@@ -126,7 +126,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   uint32_t supported_incompat = EXT2_INCOMPAT_FILETYPE | EXT2_INCOMPAT_SPORE_EXT2PLUS;
   if ((sb.feature_incompat & ~supported_incompat) != 0) { return false; }
 
-  if (!ext2_drop_cache(fs)) { return false; }
+  if (!ext2_check_refs(fs, true) || !ext2_drop_cache(fs)) { return false; }
   *fs = (struct ext2_fs){
     .read = read, .write = write, .ctx = ctx,
     .block_size = block_size, .inode_size = inode_size, .group_count = groups,
