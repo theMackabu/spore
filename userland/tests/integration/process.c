@@ -1,10 +1,12 @@
 #include "integration.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -314,6 +316,43 @@ int integration_futex_demo(void) {
   printf("[spore] v3b futex timed wait: %s (rc=%ld elapsed=%luus)\n", timeout_ok ? "PASS" : "FAIL", timedout,
          (unsigned long)elapsed);
   printf("[spore] v3b futex wait/wake: %s (woke=%ld)\n", ok ? "PASS" : "FAIL", woke);
+  return ok;
+}
+
+int integration_pty_demo(void) {
+  enum { PTY_BYTES = 8192 };
+  static char initial[PTY_BYTES];
+  static char extra[PTY_BYTES / 2];
+  static char received[PTY_BYTES];
+  for (size_t i = 0; i < sizeof(initial); ++i) { initial[i] = (char)(i * 17u + 3u); }
+  for (size_t i = 0; i < sizeof(extra); ++i) { extra[i] = (char)(i * 29u + 7u); }
+
+  int master = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
+  int ok = master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0;
+  char *path = ok ? ptsname(master) : NULL;
+  int slave = path != NULL ? open(path, O_RDWR | O_NOCTTY | O_NONBLOCK) : -1;
+  ok = ok && slave >= 0;
+  if (ok) {
+    ok = write(master, initial, sizeof(initial)) == (ssize_t)sizeof(initial);
+    errno = 0;
+    ok = ok && write(master, "x", 1) == -1 && errno == EAGAIN;
+    ok = ok && read(slave, received, sizeof(extra)) == (ssize_t)sizeof(extra);
+    ok = ok && memcmp(received, initial, sizeof(extra)) == 0;
+    ok = ok && write(master, extra, sizeof(extra)) == (ssize_t)sizeof(extra);
+    ok = ok && read(slave, received, sizeof(received)) == (ssize_t)sizeof(received);
+    ok = ok && memcmp(received, initial + sizeof(extra), sizeof(extra)) == 0 &&
+         memcmp(received + sizeof(extra), extra, sizeof(extra)) == 0;
+    ok = ok && write(slave, "\n", 1) == 1;
+    char crlf[2] = {0};
+    ok = ok && read(master, crlf, sizeof(crlf)) == (ssize_t)sizeof(crlf) && crlf[0] == '\r' && crlf[1] == '\n';
+  }
+  if (slave >= 0) { close(slave); }
+  if (master >= 0) { close(master); }
+
+  int reopened = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
+  ok = ok && reopened >= 0;
+  if (reopened >= 0) { close(reopened); }
+  printf("[spore] pty wrap/crlf/backpressure/reopen: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 

@@ -75,6 +75,7 @@ int main(void) {
   ok_all = ok_all && ok_v3a;
   int ok_v3b = integration_futex_demo();
   ok_all = ok_all && ok_v3b;
+  ok_all = ok_all && integration_pty_demo();
   int ok_v3c = integration_pthread_demo();
   ok_all = ok_all && ok_v3c;
   int ok_v3e = integration_udp_demo();

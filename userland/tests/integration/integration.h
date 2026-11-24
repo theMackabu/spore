@@ -18,6 +18,7 @@ int integration_proc_self_links(void);
 int integration_stdin_demo(void);
 int integration_thread_demo(void);
 int integration_futex_demo(void);
+int integration_pty_demo(void);
 int integration_pthread_demo(void);
 int integration_udp_demo(void);
 int integration_socket_suite(void);

@@ -9,6 +9,7 @@
 #include "proc/memory.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
+#include "mm/pmm.h"
 
 enum {
   EAGAIN = 11,
@@ -19,6 +20,7 @@ enum {
   ENOENT = 2,
   ENOTTY = 25,
   PTY_BUF_CAP = 8192,
+  PTY_RING_PAGES = PTY_BUF_CAP / PAGE_SIZE,
   TTY_OPOST = 0000001,
   TTY_ONLCR = 0000004,
   TTY_ISIG = 0000001,
@@ -28,7 +30,7 @@ enum {
 };
 
 struct pty_ring {
-  char data[PTY_BUF_CAP];
+  uint64_t pages[PTY_RING_PAGES];
   size_t head;
   size_t len;
 };
@@ -64,20 +66,75 @@ static size_t ring_room(const struct pty_ring *ring) {
   return PTY_BUF_CAP - ring->len;
 }
 
+static char *ring_data(struct pty_ring *ring, size_t index) {
+  return (char *)pmm_phys_to_virt(ring->pages[index / PAGE_SIZE]) + index % PAGE_SIZE;
+}
+
+static size_t ring_chunk(size_t index, size_t limit) {
+  size_t chunk = PTY_BUF_CAP - index;
+  size_t page_room = PAGE_SIZE - index % PAGE_SIZE;
+  if (chunk > page_room) { chunk = page_room; }
+  return chunk < limit ? chunk : limit;
+}
+
+static void ring_release(struct pty_ring *ring) {
+  for (size_t i = 0; i < PTY_RING_PAGES; ++i) {
+    if (ring->pages[i] != 0) { pmm_free_page(ring->pages[i]); }
+  }
+  *ring = (struct pty_ring){};
+}
+
+static bool ring_allocate(struct pty_ring *ring) {
+  for (size_t i = 0; i < PTY_RING_PAGES; ++i) {
+    ring->pages[i] = pmm_alloc_zero_page();
+    if (ring->pages[i] == 0) {
+      ring_release(ring);
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool ring_push(struct pty_ring *ring, char c) {
   if (ring->len >= PTY_BUF_CAP) { return false; }
   size_t index = (ring->head + ring->len) % PTY_BUF_CAP;
-  ring->data[index] = c;
+  *ring_data(ring, index) = c;
   ++ring->len;
   return true;
 }
 
-static bool ring_pop(struct pty_ring *ring, char *out) {
-  if (ring->len == 0) { return false; }
-  *out = ring->data[ring->head];
-  ring->head = (ring->head + 1u) % PTY_BUF_CAP;
-  --ring->len;
-  return true;
+static int64_t ring_read_to_user(struct domain *domain, struct pty_ring *ring, uint64_t buf, uint64_t len) {
+  uint64_t got = 0;
+  while (got < len && ring->len != 0) {
+    size_t chunk = ring_chunk(ring->head, ring->len);
+    if ((uint64_t)chunk > len - got) { chunk = (size_t)(len - got); }
+    size_t user_page_room = PAGE_SIZE - (buf + got) % PAGE_SIZE;
+    if (chunk > user_page_room) { chunk = user_page_room; }
+    if (!vmm_copy_to_user(cell_domain_as(domain), buf + got, ring_data(ring, ring->head), chunk)) {
+      return got == 0 ? -EFAULT : (int64_t)got;
+    }
+    ring->head = (ring->head + chunk) % PTY_BUF_CAP;
+    ring->len -= chunk;
+    got += chunk;
+  }
+  return (int64_t)got;
+}
+
+static int64_t ring_write_from_user(struct domain *domain, struct pty_ring *ring, uint64_t buf, uint64_t len) {
+  uint64_t wrote = 0;
+  while (wrote < len && ring_room(ring) != 0) {
+    size_t index = (ring->head + ring->len) % PTY_BUF_CAP;
+    size_t chunk = ring_chunk(index, ring_room(ring));
+    if ((uint64_t)chunk > len - wrote) { chunk = (size_t)(len - wrote); }
+    size_t user_page_room = PAGE_SIZE - (buf + wrote) % PAGE_SIZE;
+    if (chunk > user_page_room) { chunk = user_page_room; }
+    if (!vmm_copy_from_user(cell_domain_as(domain), ring_data(ring, index), buf + wrote, chunk)) {
+      return wrote == 0 ? -EFAULT : (int64_t)wrote;
+    }
+    ring->len += chunk;
+    wrote += chunk;
+  }
+  return (int64_t)wrote;
 }
 
 static void append_dec(char *dst, size_t cap, size_t *len, unsigned value) {
@@ -146,6 +203,11 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
   }
   if (id < 0) { return -EBUSY; }
   kmemset(&ptys[id], 0, sizeof(ptys[id]));
+  if (!ring_allocate(&ptys[id].to_master) || !ring_allocate(&ptys[id].to_slave)) {
+    ring_release(&ptys[id].to_master);
+    ring_release(&ptys[id].to_slave);
+    return -12;
+  }
   ptys[id].used = true;
   ptys[id].master_refs = 1;
   ptys[id].rows = 38;
@@ -155,7 +217,11 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
   ptys[id].lflag = TTY_ISIG | TTY_ICANON | TTY_ECHO;
   ptys[id].erase = 0x7f;
   int fd = install_pty_fd(domain, id, true, flags, path);
-  if (fd < 0) { kmemset(&ptys[id], 0, sizeof(ptys[id])); }
+  if (fd < 0) {
+    ring_release(&ptys[id].to_master);
+    ring_release(&ptys[id].to_slave);
+    kmemset(&ptys[id], 0, sizeof(ptys[id]));
+  }
   return fd;
 }
 
@@ -187,7 +253,11 @@ void cell_pty_release_file(struct open_file *file) {
   } else if (pty->slave_refs > 0) {
     --pty->slave_refs;
   }
-  if (pty->master_refs == 0 && pty->slave_refs == 0) { kmemset(pty, 0, sizeof(*pty)); }
+  if (pty->master_refs == 0 && pty->slave_refs == 0) {
+    ring_release(&pty->to_master);
+    ring_release(&pty->to_slave);
+    kmemset(pty, 0, sizeof(*pty));
+  }
   pty_notify();
 }
 
@@ -317,15 +387,9 @@ int64_t cell_pty_read_to_domain(struct domain *domain, struct open_file *file, u
   struct pty_ring *ring = file->pty_master ? &pty->to_master : &pty->to_slave;
   uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
   if (ring->len == 0) { return peer_refs == 0 ? 0 : -EAGAIN; }
-  uint64_t got = 0;
-  while (got < len) {
-    char c;
-    if (!ring_pop(ring, &c)) { break; }
-    if (!vmm_copy_to_user(cell_domain_as(domain), buf + got, &c, 1)) { return got == 0 ? -EFAULT : (int64_t)got; }
-    ++got;
-  }
-  if (got != 0) { pty_notify(); }
-  return (int64_t)got;
+  int64_t got = ring_read_to_user(domain, ring, buf, len);
+  if (got > 0) { pty_notify(); }
+  return got;
 }
 
 int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
@@ -336,18 +400,34 @@ int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file
   struct pty_ring *ring = file->pty_master ? &pty->to_slave : &pty->to_master;
   uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
   if (peer_refs == 0) { return -EIO; }
+  if (file->pty_master || (pty->oflag & (TTY_OPOST | TTY_ONLCR)) != (TTY_OPOST | TTY_ONLCR)) {
+    int64_t wrote = ring_write_from_user(domain, ring, buf, len);
+    if (wrote > 0) { pty_notify(); }
+    return wrote == 0 ? -EAGAIN : wrote;
+  }
   uint64_t wrote = 0;
+  char input[256];
   while (wrote < len) {
-    char c;
-    if (!vmm_copy_from_user(cell_domain_as(domain), &c, buf + wrote, 1)) {
+    size_t chunk = (size_t)(len - wrote);
+    if (chunk > sizeof(input)) { chunk = sizeof(input); }
+    size_t page_room = PAGE_SIZE - (buf + wrote) % PAGE_SIZE;
+    if (chunk > page_room) { chunk = page_room; }
+    if (!vmm_copy_from_user(cell_domain_as(domain), input, buf + wrote, chunk)) {
+      if (wrote != 0) { pty_notify(); }
       return wrote == 0 ? -EFAULT : (int64_t)wrote;
     }
-    bool map_newline = !file->pty_master && c == '\n' && (pty->oflag & TTY_OPOST) != 0 && (pty->oflag & TTY_ONLCR) != 0;
-    size_t needed = map_newline ? 2u : 1u;
-    if (ring_room(ring) < needed) { break; }
-    if (map_newline) { (void)ring_push(ring, '\r'); }
-    (void)ring_push(ring, c);
-    ++wrote;
+    size_t used = 0;
+    while (used < chunk) {
+      char c = input[used];
+      bool map_newline = c == '\n' && (pty->oflag & TTY_OPOST) != 0 && (pty->oflag & TTY_ONLCR) != 0;
+      size_t needed = map_newline ? 2u : 1u;
+      if (ring_room(ring) < needed) { break; }
+      if (map_newline) { (void)ring_push(ring, '\r'); }
+      (void)ring_push(ring, c);
+      ++used;
+    }
+    wrote += used;
+    if (used != chunk) { break; }
   }
   if (wrote == 0) { return -EAGAIN; }
   if (wrote != 0) { pty_notify(); }
