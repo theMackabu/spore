@@ -22,6 +22,24 @@ fn run(cmd: &mut Command) -> io::Result<()> {
     }
 }
 
+fn build_image(output: &Path, build: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<()> {
+    let parent = output.parent().unwrap_or(Path::new("."));
+    let mut suffix = 0u32;
+    let temp = loop {
+        let path = parent.join(format!(".spore-image-{}-{suffix}", std::process::id()));
+        match File::create_new(&path) {
+            Ok(_) => break path,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = build(&temp).and_then(|()| fs::rename(&temp, output));
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
 fn create_parents(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -286,7 +304,6 @@ fn build_root(
     }
     fs::write(&seed, block)?;
     chmod(&seed, 0o600)?;
-    remove_if_present(image)?;
     run(Command::new("mke2fs")
         .args([
             "-q",
@@ -367,8 +384,12 @@ fn build_esp(
 fn main() -> ExitCode {
     let args: Vec<PathBuf> = env::args_os().skip(1).map(PathBuf::from).collect();
     let rc = match args.as_slice() {
-        [mode, k, b, c, l, o] if mode == Path::new("esp") => build_esp(k, b, c, l, o),
-        [mode, s, t, m, p, o] if mode == Path::new("rootfs") => build_root(s, t, m, p, o),
+        [mode, k, b, c, l, o] if mode == Path::new("esp") => {
+            build_image(o, |tmp| build_esp(k, b, c, l, tmp))
+        }
+        [mode, s, t, m, p, o] if mode == Path::new("rootfs") => {
+            build_image(o, |tmp| build_root(s, t, m, p, tmp))
+        }
         _ => {
             eprintln!(
                 "usage: spore-image esp KERNEL_ELF BOOT_EFI CONFIG LICENSE OUTPUT\n       spore-image rootfs SOURCE_ROOT STAGE MANIFEST PREBUILT_ROOT OUTPUT"
