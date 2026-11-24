@@ -2,6 +2,7 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io::{self, BufRead, BufReader, Read, Write},
+    os::fd::AsFd,
     path::Path,
     process::{Child, ChildStdout, Command, Stdio},
     thread,
@@ -32,7 +33,8 @@ fn relay_console(serial: ChildStdout) -> io::Result<()> {
             return io::stderr().write_all(&diagnostic);
         }
         if line.windows(marker.len()).any(|w| w == marker) {
-            io::copy(&mut serial, &mut io::stdout().lock())?;
+            let mut output = File::from(io::stdout().as_fd().try_clone_to_owned()?);
+            io::copy(&mut serial, &mut output)?;
             return Ok(());
         }
         diagnostic.extend_from_slice(&line);

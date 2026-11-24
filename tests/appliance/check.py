@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import socket
 import subprocess
 import tempfile
@@ -49,6 +50,26 @@ def contract(d, disk):
     result = d/"boot.json"
     p = subprocess.run([CLI, "run", exe, "--cwd", "/data", "--result", result], stdout=subprocess.DEVNULL, timeout=45)
     assert p.returncode == 125 and json.loads(result.read_text())["kind"] == "boot-error"
+
+
+def repl_prompt():
+    ant = BUILD / "userland/prebuilt/ant"
+    with subprocess.Popen([CLI, "run", ant], stdin=subprocess.PIPE, stdout=subprocess.PIPE) as vm:
+        try:
+            output = bytearray()
+            deadline = time.monotonic() + 30
+            while "❯".encode() not in output:
+                if not select.select([vm.stdout], [], [], max(0, deadline - time.monotonic()))[0]:
+                    raise AssertionError("Ant prompt did not appear before input")
+                chunk = os.read(vm.stdout.fileno(), 4096)
+                if not chunk:
+                    raise AssertionError("Ant exited before displaying its prompt")
+                output.extend(chunk)
+            vm.communicate(b".exit\r", timeout=5)
+            assert vm.returncode == 0
+        finally:
+            if vm.poll() is None:
+                vm.terminate()
 
 
 def service(d, image, ram, revision, operation, disk):
@@ -110,6 +131,7 @@ def main():
         invoke("mke2fs","-q","-F","-t","ext2","-b","4096",disk,"4096")
         if not args.skip_contract:
             contract(d, disk)
+            repl_prompt()
         images = []
         for rev in ("one","two"):
             img=d/(rev+".img")
