@@ -9,6 +9,7 @@
 
 enum {
   RAMFS_MAX_NODES = 512,
+  RAMFS_NAME_BUCKETS = 256,
   RAMFS_NAME_MAX = 255,
   RAMFS_PAGE_SIZE = 4096,
   RAMFS_INITIAL_BACKING_PAGES = 256,
@@ -99,6 +100,9 @@ struct ramfs_mem_node {
   int first_page;
   uint32_t allocated_pages;
   int parent;
+  int hash_next;
+  unsigned children;
+  uint8_t name_len;
   char name[RAMFS_NAME_MAX + 1];
   const void *ro_data;
   uint64_t size;
@@ -110,6 +114,9 @@ struct ramfs_mem_node {
 
 struct ramfs {
   struct ramfs_mem_node nodes[RAMFS_MAX_NODES];
+  int names[RAMFS_NAME_BUCKETS];
+  int first_free;
+  int next_unused;
   uint64_t hhdm_offset;
   uint64_t next_ino;
 };
