@@ -72,6 +72,8 @@ static void test_mapped_file_writes(void) {
   assert(vmm_user_buffer_accessible(&as, 0x1000, 2 * TEST_PAGE_SIZE, VMM_ACCESS_WRITE));
   assert(!dirty_file_page && !vmm_user_range_accessible(&as, 0x1000, 1, VMM_ACCESS_WRITE));
   assert(vmm_copy_to_user(&as, 0x1000, "A", 1) && dirty_file_page == &page);
+  assert(!vmm_direct_user_buffer(&as, 0x1000, 1, VMM_ACCESS_WRITE));
+  assert(!vmm_direct_user_buffer(&as, 0x1000, 1, VMM_ACCESS_READ));
   assert(vmm_clone(&child, &as, VMM_FORK) && vmm_clone(&snapshot, &as, VMM_SNAPSHOT));
   assert(vmm_copy_to_user(&as, 0x2000, "B", 1) && vmm_copy_to_user(&child, 0x1000, "C", 1));
   vmm_file_page_rearm(&page);
@@ -157,6 +159,12 @@ int main(void) {
   assert(vmm_copy_to_user(&as, 0x600ff0, cross_in, sizeof(cross_in)));
   assert(memcmp(&phys[cross_a + 0xff0], cross_in, 16) == 0);
   assert(memcmp(&phys[cross_b], cross_in + 16, sizeof(cross_in) - 16) == 0);
+  assert(!vmm_direct_user_buffer(&as, 0x400ff0, 32, VMM_ACCESS_READ));
+  assert(!vmm_direct_user_buffer(&as, 0x400000, 1, VMM_ACCESS_WRITE));
+  assert(!vmm_direct_user_buffer(&as, 0x401ff0, 32, VMM_ACCESS_READ));
+  char *span = vmm_direct_user_buffer(&as, 0x600ff0, sizeof(cross_in), VMM_ACCESS_WRITE);
+  assert(span && memcmp(span, cross_in, sizeof(cross_in)) == 0);
+  span[20] = cross_in[20] = '!';
   char cross_out[sizeof(cross_in)] = {0};
   assert(vmm_copy_from_user(&as, cross_out, 0x600ff0, sizeof(cross_out)));
   assert(memcmp(cross_out, cross_in, sizeof(cross_in)) == 0);
@@ -184,6 +192,8 @@ int main(void) {
   assert(!vmm_user_range_accessible(&as, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(!vmm_user_range_accessible(&child, 0x500000, 1, VMM_ACCESS_WRITE));
 
+  assert(!vmm_direct_user_buffer(&child, 0x500000, 1, VMM_ACCESS_READ));
+  assert(!vmm_direct_user_buffer(&child, 0x500000, 1, VMM_ACCESS_WRITE));
   char cow_buf[8] = {0};
   assert(vmm_copy_from_user(&child, cow_buf, 0x500000, 7));
   assert(strcmp(cow_buf, "parent") == 0);

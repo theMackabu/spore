@@ -546,6 +546,29 @@ bool vmm_user_buffer_accessible(const struct user_address_space *as, uint64_t va
   return user_range_accessible(as, va, len, access, true);
 }
 
+void *vmm_direct_user_buffer(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access) {
+  if (!len || va >= USER_VA_LIMIT || len > USER_VA_LIMIT - va || access == VMM_ACCESS_EXEC) { return NULL; }
+  uint64_t first_pa = 0;
+  uint64_t page = va / PAGE_SIZE;
+  uint64_t limit = (va + len - 1) / PAGE_SIZE + 1;
+  uint64_t expected = 0;
+  while (page < limit) {
+    const uint64_t *ptes = leaf_for_va(as, page * PAGE_SIZE);
+    if (!ptes) { return NULL; }
+    size_t count = 512 - page % 512;
+    if (count > limit - page) { count = limit - page; }
+    for (size_t i = 0; i < count; ++i) {
+      uint64_t entry = ptes[i], pa = entry & PTE_ADDR_MASK;
+      if ((entry & (PTE_VALID | PTE_COW | PTE_FILE_CACHE)) != PTE_VALID ||
+          !pa || !user_entry_allows(entry, access) || (first_pa && pa != expected)) { return NULL; }
+      if (!first_pa) { first_pa = pa; }
+      expected = pa + PAGE_SIZE;
+    }
+    page += count;
+  }
+  return (void *)(uintptr_t)(as->hhdm_offset + first_pa + va % PAGE_SIZE);
+}
+
 bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len) {
   if (len == 0) { return true; }
   uint64_t end;

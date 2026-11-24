@@ -7,6 +7,7 @@ kernel_sources += files(
   'epoll.c',
   'fd.c',
   'fdtable.c',
+  'file_io.c',
   'flock.c',
   'futex.c',
   'info.c',
