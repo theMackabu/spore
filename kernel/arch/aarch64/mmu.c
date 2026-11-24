@@ -3,6 +3,13 @@
 #include "arch/aarch64/smp.h"
 #include "mm/vmm.h"
 
+void aarch64_publish_table(uint64_t *slot, uint64_t descriptor) {
+#if !__STDC_HOSTED__
+  __asm__ volatile("dsb ishst" ::: "memory");
+#endif
+  *slot = descriptor;
+}
+
 void aarch64_tlb_flush_all(void) {
 #if defined(__STDC_HOSTED__) && __STDC_HOSTED__
   return;

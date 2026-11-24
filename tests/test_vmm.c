@@ -97,7 +97,28 @@ static void test_mapped_file_writes(void) {
   dirty_file_page = NULL;
 }
 
+static void test_empty_page_tables(void) {
+  uint64_t first = next_pa;
+  struct user_address_space as;
+  assert(vmm_user_init(&as, (uintptr_t)phys));
+  uint16_t empty[TEST_PAGE_COUNT];
+  memcpy(empty, refs, sizeof(empty));
+  uint64_t va = (1ull << 39) + 4096;
+  assert(vmm_alloc_page(&as, va, VMM_USER_READ));
+  assert(vmm_alloc_page(&as, va + 4096, VMM_USER_READ));
+  vmm_unmap_range(&as, va, va + 4096);
+  assert(!vmm_is_mapped(&as, va) && vmm_is_mapped(&as, va + 4096));
+  vmm_unmap_range(&as, va + 4096, va + 8192);
+  assert(as.resident_pages == 0 && memcmp(refs, empty, sizeof(empty)) == 0);
+  next_pa = sizeof(phys) - 3 * TEST_PAGE_SIZE;
+  assert(!vmm_alloc_page(&as, 4ull << 39, VMM_USER_READ));
+  assert(memcmp(refs, empty, sizeof(empty)) == 0);
+  vmm_destroy(&as);
+  next_pa = first;
+}
+
 int main(void) {
+  test_empty_page_tables();
   test_mapped_file_writes();
   struct user_address_space as;
   assert(vmm_user_init(&as, (uint64_t)(uintptr_t)phys));
@@ -199,8 +220,7 @@ int main(void) {
   assert(vmm_mapped_pages_in_range(&as, 0x600000, boundary + TEST_PAGE_SIZE) == 2);
   assert(vmm_is_mapped(&as, boundary) && !vmm_is_mapped(&as, distant));
   uint64_t dest = (1ull << 30) + 0x1ff000;
-  assert(vmm_alloc_page(&as, dest, VMM_USER_READ));
-  vmm_unmap_range(&as, dest, dest + TEST_PAGE_SIZE);
+  assert(vmm_alloc_page(&as, dest - TEST_PAGE_SIZE, VMM_USER_READ));
   uint64_t available = next_pa;
   next_pa = sizeof(phys);
   assert(!vmm_move_range(&as, 0x400000, dest, 2 * TEST_PAGE_SIZE));

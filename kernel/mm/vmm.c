@@ -106,19 +106,6 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   return true;
 }
 
-static bool ensure_table(struct user_address_space *as, uint64_t *table, size_t index, uint64_t **next) {
-  uint64_t entry = table[index];
-  if ((entry & PTE_VALID) == 0) {
-    uint64_t pa = pmm_alloc_zero_page();
-    if (pa == 0) { return false; }
-    table[index] = pa | PTE_VALID | PTE_TABLE;
-    entry = table[index];
-  }
-  if ((entry & PTE_TABLE) == 0) { return false; }
-  *next = pt_virt(as, entry & PTE_ADDR_MASK);
-  return true;
-}
-
 static uint64_t with_protection(uint64_t entry, uint32_t flags) {
   bool trap_write = (entry & PTE_COW) || ((entry & PTE_FILE_CACHE) && (entry & PTE_AP_MASK) != PTE_AP_USER_RW);
   entry &= ~(PTE_AP_MASK | PTE_UXN | PTE_WRITE_ALLOWED);
@@ -132,17 +119,28 @@ static uint64_t with_protection(uint64_t entry, uint32_t flags) {
 }
 
 static uint64_t *ensure_leaf(struct user_address_space *as, uint64_t va) {
-  uint64_t *l0 = pt_virt(as, as->root_pa);
-  uint64_t *l1;
-  uint64_t *l2;
-  uint64_t *l3;
-
-  if (!ensure_table(as, l0, pt_index(va, 39), &l1) || !ensure_table(as, l1, pt_index(va, 30), &l2) ||
-      !ensure_table(as, l2, pt_index(va, 21), &l3)) {
-    return NULL;
+  uint64_t *table = pt_virt(as, as->root_pa);
+  uint64_t *first_missing = NULL;
+  uint64_t allocated[3];
+  size_t count = 0;
+  for (unsigned shift = 39; shift > 12; shift -= 9) {
+    uint64_t *slot = &table[pt_index(va, shift)];
+    uint64_t entry = *slot;
+    if (!(entry & PTE_VALID)) {
+      uint64_t pa = pmm_alloc_zero_page();
+      if (!pa) {
+        while (count) { pmm_free_page(allocated[--count]); }
+        return NULL;
+      }
+      allocated[count++] = pa;
+      entry = pa | PTE_VALID | PTE_TABLE;
+      if (!first_missing) { first_missing = slot; }
+      else { *slot = entry; }
+    } else if (!(entry & PTE_TABLE)) { return NULL; }
+    table = pt_virt(as, entry & PTE_ADDR_MASK);
   }
-
-  return &l3[pt_index(va, 12)];
+  if (first_missing) { aarch64_publish_table(first_missing, allocated[0] | PTE_VALID | PTE_TABLE); }
+  return &table[pt_index(va, 12)];
 }
 
 static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags,
@@ -263,7 +261,8 @@ bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, e
   return ok;
 }
 
-static void destroy_table(struct user_address_space *as, uint64_t table_pa, unsigned level) {
+static size_t destroy_table(struct user_address_space *as, uint64_t table_pa, unsigned level) {
+  size_t leaves = 0;
   uint64_t *table = pt_virt(as, table_pa);
   for (size_t i = 0; i < 512; ++i) {
     uint64_t entry = table[i];
@@ -272,11 +271,13 @@ static void destroy_table(struct user_address_space *as, uint64_t table_pa, unsi
     if (is_leaf_at_level(entry, level)) {
       forget_file_writer(&table[i]);
       pmm_free_page(pa);
+      ++leaves;
     } else {
-      destroy_table(as, pa, level + 1);
+      leaves += destroy_table(as, pa, level + 1);
     }
   }
   pmm_free_page(table_pa);
+  return leaves;
 }
 
 void vmm_destroy(struct user_address_space *as) {
@@ -386,29 +387,90 @@ bool vmm_move_range(struct user_address_space *as, uint64_t from, uint64_t to, u
   uint64_t moved = transfer_pages(as, from, to, bytes);
   if (moved == bytes) { return true; }
   (void)transfer_pages(as, to, from, moved);
+  vmm_unmap_range(as, to, to + bytes);
   return false;
 }
 
-void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end) {
-  struct leaf_range range = leaf_range(start, end);
-  while (next_leaf_range(as, &range, 64)) {
+struct retired_tables {
+  uint64_t pages[64];
+  size_t count;
+};
+
+static void reclaim_tables(struct user_address_space *as, struct retired_tables *retired) {
+  if (!retired->count) { return; }
+  aarch64_tlb_flush_all();
+  while (retired->count) {
+    uint64_t tagged = retired->pages[--retired->count];
+    as->resident_pages -= destroy_table(as, tagged & PTE_ADDR_MASK, tagged & 3);
+  }
+}
+
+static void unmap_leaves(struct user_address_space *as, uint64_t *table, uint64_t start, uint64_t end) {
+  while (start < end) {
+    size_t count = (end - start) / PAGE_SIZE;
+    if (count > 64) { count = 64; }
+    uint64_t *ptes = table + pt_index(start, 12);
     uint64_t removed = 0;
-    for (size_t i = 0; i < range.count; ++i) {
-      if (!(range.ptes[i] & PTE_VALID)) { continue; }
-      forget_file_writer(&range.ptes[i]);
-      range.ptes[i] &= ~PTE_VALID;
+    for (size_t i = 0; i < count; ++i) {
+      if (!(ptes[i] & PTE_VALID)) { continue; }
+      forget_file_writer(&ptes[i]);
+      ptes[i] &= ~PTE_VALID;
       removed |= UINT64_C(1) << i;
     }
-    aarch64_tlb_flush_pages(range.va, removed);
+    aarch64_tlb_flush_pages(start, removed);
     as->resident_pages -= (unsigned)__builtin_popcountll(removed);
     while (removed) {
       size_t i = (size_t)__builtin_ctzll(removed);
-      uint64_t pa = range.ptes[i] & PTE_ADDR_MASK;
-      range.ptes[i] = 0;
-      pmm_free_page(pa);
+      pmm_free_page(ptes[i] & PTE_ADDR_MASK);
+      ptes[i] = 0;
       removed &= removed - 1;
     }
+    start += count * PAGE_SIZE;
   }
+}
+
+static bool table_empty(const uint64_t *table) {
+  for (size_t i = 0; i < 512; ++i) {
+    if (table[i] & PTE_VALID) { return false; }
+  }
+  return true;
+}
+
+static void unmap_tables(struct user_address_space *as, uint64_t *table, unsigned level, uint64_t start,
+                         uint64_t end, struct retired_tables *retired) {
+  unsigned shift = 39 - level * 9;
+  uint64_t span = UINT64_C(1) << shift;
+  while (start < end) {
+    uint64_t base = start & ~(span - 1);
+    uint64_t limit = base + span < end ? base + span : end;
+    uint64_t *slot = &table[pt_index(start, shift)];
+    if ((*slot & (PTE_VALID | PTE_TABLE)) == (PTE_VALID | PTE_TABLE)) {
+      uint64_t pa = *slot & PTE_ADDR_MASK;
+      bool whole = start == base && limit - start == span;
+      if (!whole) {
+        uint64_t *child = pt_virt(as, pa);
+        if (level == 2) { unmap_leaves(as, child, start, limit); }
+        else { unmap_tables(as, child, level + 1, start, limit, retired); }
+        whole = table_empty(child);
+      }
+      if (whole) {
+        *slot = 0;
+        retired->pages[retired->count++] = pa | (level + 1);
+        if (retired->count == sizeof(retired->pages) / sizeof(*retired->pages)) { reclaim_tables(as, retired); }
+      }
+    }
+    start = limit;
+  }
+}
+
+void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end) {
+  if (end > USER_VA_LIMIT) { end = USER_VA_LIMIT; }
+  if (start >= end) { return; }
+  struct retired_tables retired = {0};
+  start &= ~(uint64_t)(PAGE_SIZE - 1);
+  end = (end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+  unmap_tables(as, pt_virt(as, as->root_pa), 0, start, end, &retired);
+  reclaim_tables(as, &retired);
 }
 
 void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t end, uint32_t flags) {
