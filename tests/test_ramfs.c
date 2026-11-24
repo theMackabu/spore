@@ -31,7 +31,7 @@ int main(void) {
 
   struct ramfs_node root;
   assert(ramfs_lookup_node(&fs, "/", &root) && root.is_dir);
-  struct ramfs_dirent ent;
+  struct vfs_dirent ent;
   const char *dirs[] = {"dev", "proc", "sys", "tmp", "run", "sbin"};
   for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); ++d) {
     uint64_t cursor = 0;
@@ -108,7 +108,7 @@ int main(void) {
   memset(buf, 0, sizeof(buf));
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 4);
   assert(strcmp(buf, "keep") == 0);
-  struct ramfs_dirent next_ent;
+  struct vfs_dirent next_ent;
   uint64_t dir_cursor = 0;
   size_t dir_count = 0;
   while (ramfs_next_dirent(&fs, dir_index, &dir_cursor, &next_ent)) {

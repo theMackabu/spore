@@ -31,19 +31,6 @@ bool vfs_paths_share_ramfs(const char *a, const char *b) {
          (path_is_mount(a, "/run") && path_is_mount(b, "/run"));
 }
 
-static uint8_t ext2_dirent_type(uint8_t type) {
-  switch (type) {
-    case 1: return VFS_DT_REG;
-    case 2: return VFS_DT_DIR;
-    case 3: return VFS_DT_CHR;
-    case 4: return VFS_DT_BLK;
-    case 5: return VFS_DT_FIFO;
-    case 6: return VFS_DT_SOCK;
-    case 7: return VFS_DT_LNK;
-    default: return VFS_DT_UNKNOWN;
-  }
-}
-
 static uint64_t make_rdev(uint64_t major, uint64_t minor) {
   return (major << 8) | minor;
 }
@@ -204,27 +191,12 @@ bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
   return false;
 }
 
-bool vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
+int vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
   ++vfs_stat_counters.next_dirent_count;
-  if (cursor == NULL) { return false; }
-  if (dir->backend == VFS_EXT2) {
-    struct ext2_dirent ent;
-    if (!ext2_next_dirent(vfs_root_ext2, &dir->ext2, cursor, &ent)) { return false; }
-    *out = (struct vfs_dirent){.ino = ent.ino, .type = ext2_dirent_type(ent.type)};
-    kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
-    return true;
-  }
-  if (dir->backend == VFS_RAMFS) {
-    struct ramfs_dirent ent;
-    if (ramfs_next_dirent(dir->ramfs.fs, dir->ramfs.index, cursor, &ent)) {
-      *out = (struct vfs_dirent){.ino = ent.ino, .type = ent.type};
-      kmemcpy(out->name, ent.name, kstrlen(ent.name) + 1);
-      return true;
-    }
-    return vfs_proc_next_dirent(dir, cursor, out);
-  }
-  if (dir->backend == VFS_PROC) { return vfs_proc_next_dirent(dir, cursor, out); }
-  return false;
+  if (cursor == NULL) { return 0; }
+  if (dir->backend == VFS_EXT2) { return ext2_next_dirent(vfs_root_ext2, &dir->ext2, cursor, out); }
+  if (dir->backend == VFS_RAMFS && ramfs_next_dirent(dir->ramfs.fs, dir->ramfs.index, cursor, out)) { return 1; }
+  return vfs_proc_next_dirent(dir, cursor, out);
 }
 
 bool vfs_fs_info(struct vfs_fs_info *out) {

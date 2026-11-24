@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fs/dirent.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -57,12 +59,6 @@ struct ext2_fs {
   struct ext2_node ext2plus_store;
 };
 
-struct ext2_dirent {
-  uint32_t ino;
-  uint8_t type;
-  char name[EXT2_NAME_MAX + 1];
-};
-
 struct ext2_info {
   uint32_t block_size;
   uint32_t block_count;
@@ -109,8 +105,7 @@ static inline bool ext2_unlink(struct ext2_fs *fs, const char *path) {
   return ext2_remove(fs, path) == 0;
 }
 bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path);
-bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out);
-bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out);
+int ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool ext2_is_dir(const struct ext2_node *node);
 bool ext2_is_regular(const struct ext2_node *node);
 bool ext2_is_symlink(const struct ext2_node *node);

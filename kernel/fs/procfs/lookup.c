@@ -124,10 +124,10 @@ static bool proc_fd_link_node(int pid, int fd, struct vfs_node *out) {
   return true;
 }
 
-static void utoa_dec(uint64_t value, char *dst, size_t cap) {
+static size_t utoa_dec(uint64_t value, char *dst, size_t cap) {
   char tmp[32];
   size_t n = 0;
-  if (cap == 0) { return; }
+  if (cap == 0) { return 0; }
   if (value == 0) { tmp[n++] = '0'; }
   while (value != 0 && n < sizeof(tmp)) {
     tmp[n++] = (char)('0' + (value % 10));
@@ -138,6 +138,7 @@ static void utoa_dec(uint64_t value, char *dst, size_t cap) {
     dst[out++] = tmp[--n];
   }
   dst[out] = '\0';
+  return out;
 }
 
 static size_t append_text(char *dst, size_t cap, size_t len, const char *text) {
@@ -319,9 +320,9 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
       if (*cursor >= VFS_PROC_FD_MAX) { return false; }
       for (int fd = (int)*cursor; fd < (int)VFS_PROC_FD_MAX; ++fd) {
         if (cell_fd_get_fd_flags(fd) < 0) { continue; }
-        *out = (struct vfs_dirent){.ino = 150000u + (uint64_t)dir->proc.pid * 64u + (uint64_t)fd,
-                                   .type = VFS_DT_LNK};
-        utoa_dec((uint64_t)fd, out->name, sizeof(out->name));
+        out->ino = 150000u + (uint64_t)dir->proc.pid * 64u + (uint64_t)fd;
+        out->type = VFS_DT_LNK;
+        out->name_len = (uint8_t)utoa_dec((uint64_t)fd, out->name, sizeof(out->name));
         *cursor = (uint64_t)fd + 1;
         return true;
       }
@@ -330,23 +331,24 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
     if (dir->proc.pid < 0) {
       if (*cursor != 0) { return false; }
       int pid = -dir->proc.pid;
-      *out = (struct vfs_dirent){.ino = 130000u + (uint64_t)pid, .type = VFS_DT_DIR};
-      utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
+      out->ino = 130000u + (uint64_t)pid;
+      out->type = VFS_DT_DIR;
+      out->name_len = (uint8_t)utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
       *cursor = 1;
       return true;
     }
     static const struct {
       const char *name;
       uint8_t type;
-    } entries[] = {{"stat", VFS_DT_REG},     {"status", VFS_DT_REG}, {"cmdline", VFS_DT_REG},
-                   {"statm", VFS_DT_REG},    {"comm", VFS_DT_REG},   {"mounts", VFS_DT_REG},
-                   {"mountinfo", VFS_DT_REG}, {"cwd", VFS_DT_LNK},    {"exe", VFS_DT_LNK},
-                   {"fd", VFS_DT_DIR},       {"task", VFS_DT_DIR}};
+    } entries[] = {{"stat", VFS_DT_REG}, {"status", VFS_DT_REG}, {"cmdline", VFS_DT_REG},   {"statm", VFS_DT_REG},
+                   {"comm", VFS_DT_REG}, {"mounts", VFS_DT_REG}, {"mountinfo", VFS_DT_REG}, {"cwd", VFS_DT_LNK},
+                   {"exe", VFS_DT_LNK},  {"fd", VFS_DT_DIR},     {"task", VFS_DT_DIR}};
     if (!dir->is_dir || *cursor >= sizeof(entries) / sizeof(entries[0])) { return false; }
     const size_t index = (size_t)*cursor;
-    *out = (struct vfs_dirent){.ino = dir->ino + index + 1,
-                               .type = entries[index].type};
-    kmemcpy(out->name, entries[index].name, kstrlen(entries[index].name) + 1);
+    out->ino = dir->ino + index + 1;
+    out->type = entries[index].type;
+    out->name_len = (uint8_t)kstrlen(entries[index].name);
+    kmemcpy(out->name, entries[index].name, (size_t)out->name_len + 1);
     ++*cursor;
     return true;
   }
@@ -355,8 +357,9 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
     for (size_t slot = (size_t)(*cursor - RAMFS_MAX_NODES); slot < cell_domain_capacity(); ++slot) {
       struct domain *domain = cell_domain_slot(slot);
       if (domain == NULL || !domain->used) { continue; }
-      *out = (struct vfs_dirent){.ino = 100000u + (uint64_t)domain->id, .type = VFS_DT_DIR};
-      utoa_dec((uint64_t)domain->id, out->name, sizeof(out->name));
+      out->ino = 100000u + (uint64_t)domain->id;
+      out->type = VFS_DT_DIR;
+      out->name_len = (uint8_t)utoa_dec((uint64_t)domain->id, out->name, sizeof(out->name));
       *cursor = RAMFS_MAX_NODES + slot + 1;
       return true;
     }

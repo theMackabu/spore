@@ -476,8 +476,9 @@ int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
   uint64_t cursor = cell_fd_dir_offset((int)fd);
   for (;;) {
     struct vfs_dirent ent;
-    if (!vfs_next_dirent(&dir, &cursor, &ent)) { break; }
-    size_t name_len = kstrlen(ent.name);
+    int next = vfs_next_dirent(&dir, &cursor, &ent);
+    if (next <= 0) { return written ? (int64_t)written : next; }
+    size_t name_len = ent.name_len;
     uint16_t reclen = dirent_reclen(name_len);
     if (written + reclen > len) {
       if (written == 0) { return -(int64_t)EINVAL; }

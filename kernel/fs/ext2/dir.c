@@ -88,33 +88,35 @@ static int visit_dir(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *
   return 0;
 }
 
+static uint8_t ext2_dirent_type(uint8_t type) {
+  switch (type) {
+    case 1: return VFS_DT_REG;
+    case 2: return VFS_DT_DIR;
+    case 3: return VFS_DT_CHR;
+    case 4: return VFS_DT_BLK;
+    case 5: return VFS_DT_FIFO;
+    case 6: return VFS_DT_SOCK;
+    case 7: return VFS_DT_LNK;
+    default: return VFS_DT_UNKNOWN;
+  }
+}
+
 static bool copy_dirent(void *ctx, uint32_t ino, uint8_t type, const char *name, uint8_t len) {
-  struct ext2_dirent *out = ctx;
+  struct vfs_dirent *out = ctx;
   if (out != NULL) {
     kmemcpy(out->name, name, len);
     out->name[len] = '\0';
     out->ino = ino;
-    out->type = type;
+    out->type = ext2_dirent_type(type);
+    out->name_len = len;
   }
   return true;
 }
 
-static int read_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
+int ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
   ++ext2_stat_counters.dir_iter_count;
-  return visit_dir(fs, dir, cursor, copy_dirent, out);
-}
-
-bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
   uint64_t start = 0;
-  return read_next_dirent(fs, dir, cursor != NULL ? cursor : &start, out) == 1;
-}
-
-bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out) {
-  uint64_t cursor = 0;
-  for (size_t i = 0; ext2_next_dirent(fs, dir, &cursor, out); ++i) {
-    if (i == index) { return true; }
-  }
-  return false;
+  return visit_dir(fs, dir, cursor != NULL ? cursor : &start, copy_dirent, out);
 }
 
 static bool name_equals(const char *a, size_t a_len, const char *b) {
@@ -755,7 +757,7 @@ int ext2_remove(struct ext2_fs *fs, const char *path) {
   }
   if (ext2_is_dir(&node)) {
     uint64_t cursor = 0;
-    int rc = read_next_dirent(fs, &node, &cursor, NULL);
+    int rc = ext2_next_dirent(fs, &node, &cursor, NULL);
     if (rc < 0) { return rc; }
     if (rc > 0) { return -EXT2_ENOTEMPTY; }
   }

@@ -260,8 +260,9 @@ static void test_ext2plus_dynamic_inodes(void) {
   assert(!ext2_lookup(&fs, "/.spore-inodes", &hidden));
   struct ext2_node root;
   assert(ext2_lookup(&fs, "/", &root));
-  struct ext2_dirent hidden_ent;
-  for (size_t i = 0; ext2_dirent(&fs, &root, i, &hidden_ent); ++i) {
+  struct vfs_dirent hidden_ent;
+  uint64_t cursor = 0;
+  while (ext2_next_dirent(&fs, &root, &cursor, &hidden_ent) == 1) {
     assert(strcmp(hidden_ent.name, ".spore-inodes") != 0);
   }
 
@@ -385,6 +386,9 @@ static void test_malformed_directory_is_not_empty(void) {
   const uint8_t invalid[2] = {7, 0};
   assert(file_read(f, first_rec_len, original, sizeof(original)));
   assert(file_write(f, first_rec_len, invalid, sizeof(invalid)));
+  uint64_t cursor = 0;
+  struct vfs_dirent ent;
+  assert(ext2_next_dirent(&fs, &dir, &cursor, &ent) == -EIO);
   assert(ext2_remove(&fs, "/keep") == -EIO);
   assert(ext2_drop_cache(&fs));
   assert(file_write(f, first_rec_len, original, sizeof(original)));
@@ -605,8 +609,9 @@ int main(int argc, char **argv) {
   assert(ext2_is_dir(&bin));
   bool saw_sh = false;
   bool saw_df = false;
-  struct ext2_dirent ent;
-  for (size_t i = 0; ext2_dirent(&fs, &bin, i, &ent); ++i) {
+  struct vfs_dirent ent;
+  uint64_t cursor = 0;
+  while (ext2_next_dirent(&fs, &bin, &cursor, &ent) == 1) {
     if (strcmp(ent.name, "sh") == 0) { saw_sh = true; }
     if (strcmp(ent.name, "df") == 0) { saw_df = true; }
   }

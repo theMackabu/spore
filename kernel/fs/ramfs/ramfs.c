@@ -662,7 +662,7 @@ bool ramfs_lookup_node(const struct ramfs *fs_const, const char *path, struct ra
   return ramfs_refresh_node(fs, index, out);
 }
 
-bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct ramfs_dirent *out) {
+bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct vfs_dirent *out) {
   if (cursor == NULL || dir_index < 0 || dir_index >= RAMFS_MAX_NODES || !fs->nodes[dir_index].used ||
       !fs->nodes[dir_index].is_dir) {
     return false;
@@ -672,7 +672,9 @@ bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, 
   for (size_t i = first; i < RAMFS_MAX_NODES; ++i) {
     if (!fs->nodes[i].used || fs->nodes[i].parent != dir_index || (int)i == dir_index) { continue; }
     const struct ramfs_mem_node *node = &fs->nodes[inode_index(fs, (int)i)];
-    out->name = fs->nodes[i].name;
+    const char *name = fs->nodes[i].name;
+    out->name_len = (uint8_t)kstrlen(name);
+    kmemcpy(out->name, name, (size_t)out->name_len + 1);
     out->ino = node->ino;
     out->type = (uint8_t)((node->mode & 0170000u) >> 12);
     *cursor = i + 1;
