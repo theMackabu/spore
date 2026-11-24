@@ -4,6 +4,7 @@ mod fixtures;
 mod modes;
 mod runner {
     pub mod harness;
+    pub mod serial;
 }
 use std::{
     env,

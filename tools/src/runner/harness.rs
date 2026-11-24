@@ -1,3 +1,4 @@
+use super::serial::SerialWindow;
 use crate::{fixtures, modes};
 use std::ffi::OsString;
 use std::fs::File;
@@ -65,43 +66,6 @@ impl Write for SerialInput {
     }
 }
 
-pub fn find_shell_prompt(data: &[u8]) -> Option<usize> {
-    for (i, window) in data.windows(2).enumerate() {
-        if window != b"$ " && window != b"# " {
-            continue;
-        }
-        let start = data[..i]
-            .iter()
-            .rposition(|&c| matches!(c, b'\r' | b'\n'))
-            .map_or(0, |j| j + 1);
-        let line = &data[start..i];
-        if line.ends_with(b" ")
-            || line
-                .iter()
-                .position(|&c| c == b'@')
-                .is_some_and(|j| line[j + 1..].contains(&b':'))
-            || find(
-                &data[if i > 160 { i - 160 } else { start }..i],
-                b"spore.local",
-            )
-            .is_some()
-        {
-            return Some(start);
-        }
-    }
-    None
-}
-fn find(buf: &[u8], s: &[u8]) -> Option<usize> {
-    buf.windows(s.len()).position(|w| w == s)
-}
-fn append(buf: &mut Vec<u8>, data: &[u8], cap: usize) {
-    let drop = (buf.len() + data.len()).saturating_sub(cap);
-    if drop > 0 {
-        buf.drain(..drop);
-    }
-    buf.extend_from_slice(data);
-}
-
 const MARKERS: &[(&[u8], &str)] = &[
     (b"UEFI firmware", "edk2 first banner"),
     (b"BdsDxe: starting", "edk2 starts boot option"),
@@ -109,6 +73,17 @@ const MARKERS: &[(&[u8], &str)] = &[
     (b"[kernel] booted", "kernel first log"),
     (b"[kernel] entering EL0", "enter EL0"),
     (b"$ ", "shell prompt"),
+];
+
+const INTEGRATION_CHECKS: &[(&[u8], &str)] = &[
+    (
+        b"[spore] integration regression: PASS",
+        "guest did not report a passing integration run",
+    ),
+    (
+        b"[spore] stdin demo: blocking read resume: PASS",
+        "guest did not resume its blocked stdin reader",
+    ),
 ];
 
 pub fn run(argv: Vec<OsString>, mode: &str, timings: bool) -> i32 {
@@ -150,8 +125,9 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
     let mut check = modes::ShellCheck::new();
     let mut bench = modes::Bench::default();
     let mut rng = modes::Rng::default();
-    let mut buf = Vec::new();
-    let mut startup = Vec::new();
+    let mut buf = SerialWindow::new(262143);
+    let mut startup = SerialWindow::new(32768);
+    let mut passed = [false; 2];
     let mut handed_off = false;
     let mut sized = false;
     let mut answered = false;
@@ -203,12 +179,21 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
                 let data = &chunk[..n];
                 let now = Instant::now();
                 check.last_output = now;
-                append(&mut buf, data, 262143);
+                if !plain || !sized || timings {
+                    buf.push(data);
+                }
+                if mode == "integration" {
+                    for (seen, (marker, _)) in passed.iter_mut().zip(INTEGRATION_CHECKS) {
+                        if !*seen {
+                            *seen = buf.find_new(marker).is_some();
+                        }
+                    }
+                }
                 if timings {
                     let t = start.elapsed().as_secs_f64();
                     first.get_or_insert(t);
                     for (i, (needle, _)) in MARKERS.iter().enumerate() {
-                        if milestones[i].is_none() && find(&buf, needle).is_some() {
+                        if milestones[i].is_none() && buf.find_new(needle).is_some() {
                             milestones[i] = Some(t);
                         }
                     }
@@ -230,18 +215,19 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
                     if handed_off {
                         out.write_all(data)?;
                     } else {
-                        append(&mut startup, data, 32768);
-                        if let Some(i) = find(&startup, b"[kernel] Limine handoff")
-                            .or_else(|| find_shell_prompt(&startup))
+                        startup.push(data);
+                        if let Some(i) = startup
+                            .find_new(b"[kernel] Limine handoff")
+                            .or_else(|| startup.prompt())
                         {
-                            out.write_all(&startup[i..])?;
+                            out.write_all(&startup.bytes()[i..])?;
                             startup.clear();
                             handed_off = true;
                         }
                     }
                     out.flush()?;
                 }
-                if !sized && find_shell_prompt(&buf).is_some() {
+                if !sized && buf.prompt().is_some() {
                     terminal.send_size(&mut input)?;
                     sized = true;
                 }
@@ -251,11 +237,11 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
                 if shell && !check.output(&mut input, &mut buf)? {
                     break 1;
                 }
-                if matches!(mode, "bench" | "rng") && find_shell_prompt(&buf).is_some() {
+                if matches!(mode, "bench" | "rng") && buf.prompt().is_some() {
                     if mode == "bench" {
                         bench.prompt(&mut input)?;
                     } else {
-                        rng.prompt(&mut input, &buf)?;
+                        rng.prompt(&mut input, buf.bytes())?;
                     }
                     buf.clear();
                 }
@@ -269,26 +255,17 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
         }
     };
     if !handed_off && (plain || shell) {
-        io::stdout().write_all(&startup)?;
+        io::stdout().write_all(startup.bytes())?;
     }
     if filtered {
-        modes::print_guest_checks(&buf);
+        modes::print_guest_checks(buf.bytes());
     }
     if mode == "rng" && !rng.sample.is_empty() {
         println!("[rng] {}", rng.sample);
     }
     if code == 0 && mode == "integration" {
-        for (marker, message) in [
-            (
-                b"[spore] integration regression: PASS" as &[u8],
-                "guest did not report a passing integration run",
-            ),
-            (
-                b"[spore] stdin demo: blocking read resume: PASS",
-                "guest did not resume its blocked stdin reader",
-            ),
-        ] {
-            if find(&buf, marker).is_none() {
+        for (seen, (_, message)) in passed.iter().zip(INTEGRATION_CHECKS) {
+            if !seen {
                 eprintln!("spore-run: {message}");
                 return Ok(1);
             }

@@ -1,4 +1,4 @@
-use crate::runner::harness::find_shell_prompt;
+use crate::runner::serial::SerialWindow;
 use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -29,8 +29,10 @@ pub fn print_guest_checks(buf: &[u8]) {
     }
 }
 
-pub fn answer_guest_stdin(input: &mut impl Write, buf: &[u8]) -> io::Result<bool> {
-    let ready = contains(buf, b"[spore] stdin demo: child blocking on read(0)");
+pub fn answer_guest_stdin(input: &mut impl Write, buf: &SerialWindow) -> io::Result<bool> {
+    let ready = buf
+        .find_new(b"[spore] stdin demo: child blocking on read(0)")
+        .is_some();
     if ready {
         input.write_all(b"z\n")?;
     }
@@ -148,22 +150,24 @@ impl ShellCheck {
             last_output: Instant::now(),
         }
     }
-    pub fn output(&mut self, input: &mut impl Write, buf: &mut Vec<u8>) -> io::Result<bool> {
-        if contains(buf, b"__SPORE_SHELL_CHECK_FAIL_") {
+    pub fn output(&mut self, input: &mut impl Write, buf: &mut SerialWindow) -> io::Result<bool> {
+        if buf.find_new(b"__SPORE_SHELL_CHECK_FAIL_").is_some() {
             return Ok(false);
         }
         let response = match self.script {
-            Script::Pico if contains(buf, b"GNU nano") => Some("from pico\x0f\r\x18".to_owned()),
-            Script::PicoPaste if contains(buf, b"GNU nano") => {
+            Script::Pico if buf.find_new(b"GNU nano").is_some() => {
+                Some("from pico\x0f\r\x18".to_owned())
+            }
+            Script::PicoPaste if buf.find_new(b"GNU nano").is_some() => {
                 Some(numbered("", "pico-paste", 32, "\r", "\x0f\r\x18"))
             }
-            Script::NanoPaste if contains(buf, b"GNU nano") => {
+            Script::NanoPaste if buf.find_new(b"GNU nano").is_some() => {
                 Some(numbered("", "nano-paste", 32, "\r", "\x0f\r\x18"))
             }
-            Script::EditMotd if contains(buf, b"ed-ready>") => {
+            Script::EditMotd if buf.find_new(b"ed-ready>").is_some() => {
                 Some("1d\na\nshell-check motd\n.\nw\nq\n".to_owned())
             }
-            Script::EditPaste if contains(buf, b"ed-ready>") => {
+            Script::EditPaste if buf.find_new(b"ed-ready>").is_some() => {
                 Some(numbered("a\n", "edit-paste", 64, "\n", ".\nw\nq\n"))
             }
             _ => None,
@@ -177,10 +181,7 @@ impl ShellCheck {
             self.script = Script::None;
             buf.clear();
         }
-        if let Some(cmd) = COMMANDS
-            .get(self.sent)
-            .filter(|_| find_shell_prompt(buf).is_some())
-        {
+        if let Some(cmd) = COMMANDS.get(self.sent).filter(|_| buf.prompt().is_some()) {
             if matches!(self.script, Script::AntFirst | Script::AntSecond) {
                 return Ok(false);
             }
@@ -206,11 +207,11 @@ impl ShellCheck {
         }
         Ok(true)
     }
-    pub fn idle(&mut self, input: &mut impl Write, buf: &mut Vec<u8>) -> io::Result<()> {
+    pub fn idle(&mut self, input: &mut impl Write, buf: &mut SerialWindow) -> io::Result<()> {
         if matches!(self.script, Script::AntFirst | Script::AntSecond)
-            && contains(buf, "❯".as_bytes())
+            && contains(buf.bytes(), "❯".as_bytes())
             && self.last_output.elapsed() > Duration::from_millis(300)
-            && (self.script == Script::AntFirst || contains(buf, b"press Ctrl+C again"))
+            && (self.script == Script::AntFirst || contains(buf.bytes(), b"press Ctrl+C again"))
         {
             input.write_all(b"\x03")?;
             self.script = if self.script == Script::AntFirst {
