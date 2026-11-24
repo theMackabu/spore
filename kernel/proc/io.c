@@ -1,5 +1,6 @@
 #include "abi/linux/aarch64/open.h"
 #include "proc/io.h"
+#include "fs/notify.h"
 
 #include "arch/aarch64/regs.h"
 #include "lib/mem.h"
@@ -210,10 +211,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   struct open_file *file = cell_file_at(domain, fd);
   if (file == NULL) { return -9; }
   if (file->type == OPEN_EVENTFD) { return cell_eventfd_io(domain, file, buf, len, false, frame); }
-  if (file->type == OPEN_INOTIFY) {
-    if ((file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EAGAIN; }
-    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_INOTIFY, .target = fd});
-  }
+  if (file->type == OPEN_INOTIFY) { return inotify_read(domain, file, buf, len, frame); }
   if (file->type == OPEN_PIPE) {
     int64_t got = cell_pipe_read_to_domain(domain, file, buf, len);
     if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }

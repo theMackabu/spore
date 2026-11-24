@@ -1,4 +1,5 @@
 #include "handlers.h"
+#include "fs/notify.h"
 #include "drivers/pl011.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
@@ -160,6 +161,12 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     return cell_pty_open_peer(file, (uint32_t)arg);
   }
   if (req == FIONREAD || req == TIOCOUTQ) {
+    struct open_file *instance = fd_file(fd);
+    if (req == FIONREAD && instance && instance->type == OPEN_INOTIFY) {
+      int bytes = (int)inotify_bytes(instance);
+      return syscall_user_writable(arg, sizeof(bytes)) && vmm_copy_to_user(syscall_active_as(), arg, &bytes, sizeof(bytes))
+               ? 0 : -EFAULT;
+    }
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
     struct open_file *file = fd_file(fd);

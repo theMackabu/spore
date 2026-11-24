@@ -1,6 +1,7 @@
 #include "message_layout.h"
 #include "arch/aarch64/regs.h"
 #include "handlers.h"
+#include "fs/notify.h"
 #include "proc/fd.h"
 #include "proc/io.h"
 #include "proc/limits.h"
@@ -79,17 +80,19 @@ int64_t sys_readv(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t 
 }
 
 int64_t sys_inotify_init1(uint64_t flags) {
-  return cell_fd_inotify_init1((int)flags);
+  return inotify_open((int)flags);
 }
 
 int64_t sys_inotify_add_watch(uint64_t fd, uint64_t path_addr, uint64_t mask) {
   char path[CELL_PATH_MAX];
   if (!syscall_copy_resolved_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
   struct vfs_node node;
-  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
-  return cell_fd_inotify_add_watch((int)fd, path, (uint32_t)mask);
+  bool exists = mask & FS_DONT_FOLLOW ? vfs_lstat(path, &node) : vfs_lookup(path, &node);
+  if (!exists) { return -ENOENT; }
+  if (!syscall_node_access_allowed(&node, 4)) { return -13; }
+  return inotify_add((int)fd, &node, (uint32_t)mask);
 }
 
 int64_t sys_inotify_rm_watch(uint64_t fd, uint64_t wd) {
-  return cell_fd_inotify_rm_watch((int)fd, (int)wd);
+  return inotify_remove((int)fd, (int)wd);
 }

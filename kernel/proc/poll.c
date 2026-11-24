@@ -1,6 +1,7 @@
 #include "abi/linux/aarch64/layout.h"
 #include "proc/poll.h"
 #include "poll_internal.h"
+#include "fs/notify.h"
 #include "net/net.h"
 #include "proc/signal.h"
 
@@ -41,6 +42,8 @@ int cell_file_poll_events(struct open_file *file, int events) {
       revents |= CELL_POLLIN;
     } else if (file->type == OPEN_EPOLL) {
       if (file->epoll_ready_head) { revents |= CELL_POLLIN; }
+    } else if (file->type == OPEN_INOTIFY) {
+      if (inotify_bytes(file)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_EVENTFD) {
       if (file->eventfd_value != 0) { revents |= CELL_POLLIN; }
     }

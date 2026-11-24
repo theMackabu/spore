@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 struct domain;
+struct inotify_state;
 struct trap_frame;
 struct tcp_fragment;
 struct pipe_obj;
@@ -155,7 +156,7 @@ struct open_file {
       uint16_t eventfd_waiters;
       bool eventfd_semaphore;
     };
-    uint64_t inotify_pa;
+    struct inotify_state *inotify;
   };
 };
 
@@ -175,9 +176,6 @@ void cell_copy_open_path(struct open_file *file, const char *path);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
-int cell_fd_inotify_init1(int flags);
-int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask);
-int cell_fd_inotify_rm_watch(int fd, int wd);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);
 struct open_file *cell_fd_file(uint64_t fd);
