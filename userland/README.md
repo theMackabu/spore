@@ -28,7 +28,7 @@ upstream musl release.
 `prebuilt/packages.json` pins each archive URL and SHA-256 and lists the files
 to extract. The image manifest sets their guest paths and shared-library links. The first build downloads the
 archives. Subsequent builds reuse verified copies from `.cache/packages/`,
-including after `make clean`.
+including when starting from an empty build directory.
 
 The build also downloads target headers and static libraries. Spore's patched
 curl and trustd link against mbedTLS 4. The patched apk-tools (spm) links
@@ -68,11 +68,11 @@ and bake to `/home/spore/demos`.
 6. Run:
 
 ```sh
-make build
-make run
+make
+./build/spore boot --snapshot
 ```
 
-Use `make test` for host tests and `make run-tests` for the scripted regression
+Use `./build/spore test host` for host tests and `./build/spore test guest` for the scripted regression
 image.
 
 Commands should return `0` on success, `1` for ordinary runtime failure, and
@@ -95,5 +95,5 @@ Interactive boot stays lean. The old boot-time gauntlet lives in
 `userland/tests/integration` and runs through:
 
 ```sh
-make run-tests
+./build/spore test guest
 ```

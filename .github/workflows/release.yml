@@ -270,8 +270,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          meson compile -C build image.img test_image.img spore-run
-          meson test -C build --print-errorlogs
+          meson compile -C build cli
+          ./build/spore build
+          ./build/spore build --tests
+          ./build/spore test host
 
       - name: Refresh userland build cache
         if: steps.release_gate.outputs.should_release == 'true'
@@ -305,8 +307,8 @@ jobs:
           cp build/root.ext2 "dist/spore-$version-root.ext2"
           cp build/test_image.img "dist/spore-$version-test-image.img"
           cp build/test_root.ext2 "dist/spore-$version-test-root.ext2"
-          cp build/tools/spore-run "dist/spore-$version-spore-run-linux-x86_64"
-          chmod +x "dist/spore-$version-spore-run-linux-x86_64"
+          tar -C build -czf "dist/spore-$version-cli-linux-x86_64.tar.gz" \
+            spore kernel/kernel-boot.elf boot/BOOTAA64.EFI boot/LIMINE-LICENSE
           (cd dist && sha256sum * > SHA256SUMS)
 
       - name: Create tag and GitHub release

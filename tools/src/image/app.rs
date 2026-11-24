@@ -164,12 +164,10 @@ fn string(out: &mut impl Write, s: &str) -> io::Result<()> {
     out.write_all(&[0])
 }
 
-pub fn build(args: &[PathBuf]) -> io::Result<()> {
-    let [kernel, efi, license, output, program, opts @ ..] = args else {
-        return Err(bad(
-            "app KERNEL EFI LICENSE OUTPUT PROGRAM [options] [-- ARGS...]",
-        ));
-    };
+pub fn build(artifacts: &Path, output: &Path, program: &Path, opts: &[PathBuf]) -> io::Result<()> {
+    let kernel = artifacts.join("kernel/kernel-boot.elf");
+    let efi = artifacts.join("boot/BOOTAA64.EFI");
+    let license = artifacts.join("boot/LIMINE-LICENSE");
     let mut pkg = Package {
         files: BTreeMap::new(),
         dirs: BTreeSet::new(),
@@ -301,7 +299,7 @@ pub fn build(args: &[PathBuf]) -> io::Result<()> {
                     net[0], net[1], net[2], net[3]
                 ),
             )?;
-            build_esp(kernel, efi, &config, license, image, Some(&bundle))
+            build_esp(&kernel, &efi, &config, &license, image, Some(&bundle))
         })();
         let cleanup = fs::remove_dir_all(stage);
         result.and(cleanup)

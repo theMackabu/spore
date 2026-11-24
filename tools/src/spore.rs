@@ -1,5 +1,7 @@
 mod app_network;
+mod image;
 mod runner;
+mod system;
 
 use std::{
     env,
@@ -7,14 +9,19 @@ use std::{
     fs, io,
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
-    process::{Command, ExitCode},
+    process::ExitCode,
 };
 
 const HELP: &str = "\
 Usage:
-  spore build ELF -o IMAGE [image options] [-- ARG...]
-  spore run ELF [image options] [VM options] [-- ARG...]
-  spore boot IMAGE [VM options]
+  spore boot [--snapshot | --reset] [--root EXT2] [VM options]
+  spore boot SYSTEM_IMAGE --root EXT2 [--snapshot] [VM options]
+  spore build [--tests]               Build the full system or integration image
+  spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
+  spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
+  spore boot APP_IMAGE [VM options]
+  spore test [host|guest|shell|appliance|rng]
+  spore bench [guest|inodes|appliance]
 
 Image options:
   --exec PATH        Guest executable path (default /app/server)
@@ -26,9 +33,14 @@ Image options:
   --ip IP --netmask MASK --gateway IP --dns IP
 
 VM options:
-  --memory SIZE      Guest memory (default 128M)
-  --smp N            Virtual CPUs (default 1)
-  --forward H:G      Forward a localhost TCP port to a guest port
+  --memory SIZE      Guest memory (app 128M, full system 8G)
+  --smp N            Virtual CPUs (app 1, full system 4)
+  --qemu PATH        QEMU executable (also configurable with QEMU)
+  --accel ACCEL      QEMU accelerator
+  --cpu MODEL        QEMU CPU model
+  --vars FD          Firmware variable store
+  --timings          Print full-system boot timings
+  -p PORT, --forward HOST:GUEST    Forward TCP on localhost (repeatable)
   --data EXT2        Mount a writable disk at /data
   --result JSON      Write workload status and timing
   --boot-timeout S   Seconds to wait for app entry (default 30)";
@@ -36,7 +48,9 @@ VM options:
 struct Workspace(PathBuf);
 impl Workspace {
     fn new() -> io::Result<Self> {
-        let base = env::temp_dir();
+        Self::at(&env::temp_dir())
+    }
+    fn at(base: &Path) -> io::Result<Self> {
         for n in 0u32.. {
             let path = base.join(format!("spore-{}-{n}", std::process::id()));
             match fs::DirBuilder::new().mode(0o700).create(&path) {
@@ -64,6 +78,37 @@ fn positive<T: std::str::FromStr + Default + PartialEq>(
         .ok_or_else(|| io::Error::other(format!("invalid {label}: {}", v.to_string_lossy())))
 }
 
+fn qemu_default() -> OsString {
+    env::var_os("QEMU").unwrap_or_else(|| {
+        let brew = "/opt/homebrew/bin/qemu-system-aarch64";
+        if cfg!(target_os = "macos") && Path::new(brew).exists() {
+            brew.into()
+        } else {
+            "qemu-system-aarch64".into()
+        }
+    })
+}
+
+fn vm_config(mode: &str) -> runner::qemu::Config {
+    runner::qemu::Config {
+        mode: mode.into(),
+        image: OsString::new(),
+        root: None,
+        vars: None,
+        control: None,
+        report: None,
+        forwards: vec![],
+        timeout: 30,
+        qemu: qemu_default(),
+        accel: None,
+        cpu: None,
+        mem: if mode == "app" { "128M" } else { "8G" }.into(),
+        smp: if mode == "app" { "1" } else { "4" }.into(),
+        timings: false,
+        snap: false,
+    }
+}
+
 fn execute() -> io::Result<i32> {
     let mut args = env::args_os().skip(1);
     let Some(action) = args.next() else {
@@ -76,8 +121,13 @@ fn execute() -> io::Result<i32> {
     }
     let build = action == "build";
     let boot = action == "boot";
-    if !build && !boot && action != "run" {
-        return Err(io::Error::other("expected build, run, or boot"));
+    if action == "_image" {
+        image::generate(&args.map(PathBuf::from).collect::<Vec<_>>())?;
+        return Ok(0);
+    }
+    let check = action == "test" || action == "bench";
+    if !build && !boot && !check && action != "run" {
+        return Err(io::Error::other("expected boot, run, build, test or bench"));
     }
     let mut program = None;
     let mut output = None;
@@ -86,39 +136,48 @@ fn execute() -> io::Result<i32> {
     let artifacts = exe
         .parent()
         .ok_or_else(|| io::Error::other("missing executable directory"))?;
-    let qemu = env::var_os("QEMU").unwrap_or_else(|| {
-        let brew = "/opt/homebrew/bin/qemu-system-aarch64";
-        if cfg!(target_os = "macos") && Path::new(brew).exists() {
-            brew.into()
-        } else {
-            "qemu-system-aarch64".into()
+    if check {
+        let suite = args.next();
+        if suite.as_deref().is_some_and(|s| s == "-h" || s == "--help") {
+            println!("{HELP}");
+            return Ok(0);
         }
-    });
-    let mut vm = runner::qemu::Config {
-        mode: "app".into(),
-        image: OsString::new(),
-        root: None,
-        vars: None,
-        control: None,
-        report: None,
-        forwards: vec![],
-        timeout: 30,
-        qemu,
-        accel: None,
-        cpu: None,
-        mem: "128M".into(),
-        smp: "1".into(),
-        timings: false,
-        snap: false,
-    };
+        if args.next().is_some() {
+            return Err(io::Error::other("expected a single suite name"));
+        }
+        return system::check(artifacts, action == "bench", suite.as_deref());
+    }
+    let mut vm = vm_config("app");
+    let mut memory = None;
+    let mut cpus = None;
+    let mut root = None;
+    let mut reset = false;
+    let mut tests = false;
+    let mut app_options = false;
     while let Some(key) = args.next() {
         if key == "-h" || key == "--help" {
             println!("{HELP}");
             return Ok(0);
         }
+        if build && key == "--tests" {
+            tests = true;
+            continue;
+        }
+        if boot && key == "--reset" {
+            reset = true;
+            continue;
+        }
+        if boot && key == "--snapshot" {
+            vm.snap = true;
+            continue;
+        }
+        if !build && key == "--timings" {
+            vm.timings = true;
+            continue;
+        }
         if key == "--" && !boot {
-            pack.push(key);
-            pack.extend(args);
+            pack.push(PathBuf::from(key));
+            pack.extend(args.map(PathBuf::from));
             break;
         }
         if !key.as_encoded_bytes().starts_with(b"-") {
@@ -132,25 +191,33 @@ fn execute() -> io::Result<i32> {
         let value = args.next().ok_or_else(|| {
             io::Error::other(format!("missing value for {}", key.to_string_lossy()))
         })?;
+        if matches!(key.to_str(), Some("--boot-timeout" | "--result" | "--data")) {
+            app_options = true;
+        }
         match key.to_str() {
             Some("-o" | "--output") if build => output = Some(PathBuf::from(value)),
             Some(
                 "--exec" | "--argv0" | "--cwd" | "--env" | "--file" | "--lib-dir" | "--ip"
                 | "--gateway" | "--dns" | "--netmask",
-            ) if !boot => pack.extend([key, value]),
-            Some("--memory") if !build => vm.mem = value,
+            ) if !boot => pack.extend([PathBuf::from(key), PathBuf::from(value)]),
+            Some("--memory") if !build => memory = Some(value),
+            Some("--root") if boot => root = Some(value),
+            Some("--accel") if !build => vm.accel = Some(value),
+            Some("--cpu") if !build => vm.cpu = Some(value),
+            Some("--vars") if !build => vm.vars = Some(value),
+            Some("--qemu") if !build => vm.qemu = value,
             Some("--smp") if !build => {
                 positive::<u32>(&value, "CPU count")?;
-                vm.smp = value;
+                cpus = Some(value);
             }
             Some("--boot-timeout") if !build => vm.timeout = positive(&value, "boot timeout")?,
             Some("--result") if !build => vm.report = Some(value),
             Some("--data") if !build => vm.root = Some(value),
-            Some("--forward") if !build => {
-                let (h, g) = value
+            Some("-p" | "--forward") if !build => {
+                let ports = value
                     .to_str()
-                    .and_then(|s| s.split_once(':'))
-                    .ok_or_else(|| io::Error::other("expected HOST:GUEST port pair"))?;
+                    .ok_or_else(|| io::Error::other("expected PORT or HOST:GUEST"))?;
+                let (h, g) = ports.split_once(':').unwrap_or((ports, ports));
                 vm.forwards.push((
                     positive(h.as_ref(), "host port")?,
                     positive(g.as_ref(), "guest port")?,
@@ -164,6 +231,44 @@ fn execute() -> io::Result<i32> {
             }
         }
     }
+    let system = boot && (program.is_none() || root.is_some());
+    if system {
+        vm.mem = "8G".into();
+        vm.smp = "4".into();
+    }
+    if let Some(memory) = memory {
+        vm.mem = memory;
+    }
+    if let Some(cpus) = cpus {
+        vm.smp = cpus;
+    }
+    if system {
+        if app_options {
+            return Err(io::Error::other(
+                "--data, --result and --boot-timeout require an app",
+            ));
+        }
+        vm.mode = "plain".into();
+        vm.root = root;
+        return system::boot(artifacts, vm, program, reset);
+    }
+    if reset || vm.snap || vm.timings {
+        return Err(io::Error::other(
+            "--reset, --snapshot and --timings require full-system boot",
+        ));
+    }
+    if build && program.is_none() && pack.is_empty() && output.is_none() {
+        system::compile(
+            artifacts,
+            Path::new(if tests { "test_image.img" } else { "image.img" }),
+        )?;
+        return Ok(0);
+    }
+    if tests {
+        return Err(io::Error::other(
+            "--tests builds the integration system image",
+        ));
+    }
     let input = program.ok_or_else(|| io::Error::other("missing ELF or image path"))?;
     let tmp = Workspace::new()?;
     let image = if boot {
@@ -174,17 +279,11 @@ fn execute() -> io::Result<i32> {
         } else {
             tmp.0.join("app.img")
         };
-        let status = Command::new(artifacts.join("tools/spore-image"))
-            .arg("app")
-            .arg(artifacts.join("kernel/kernel-boot.elf"))
-            .arg(artifacts.join("boot/BOOTAA64.EFI"))
-            .arg(artifacts.join("boot/LIMINE-LICENSE"))
-            .arg(&image)
-            .arg(input)
-            .args(pack)
-            .status()?;
-        if !status.success() {
-            return Ok(status.code().unwrap_or(1));
+        let result = system::program(artifacts, &input)
+            .and_then(|program| image::app::build(artifacts, &image, &program, &pack));
+        if let Err(e) = result {
+            eprintln!("spore: {e}");
+            return Ok(1);
         }
         image
     };
@@ -193,7 +292,8 @@ fn execute() -> io::Result<i32> {
     }
     vm.image = image.into_os_string();
     vm.control = Some(tmp.0.join("control").into_os_string());
-    vm.vars = Some(tmp.0.join("vars.fd").into_os_string());
+    vm.vars
+        .get_or_insert_with(|| tmp.0.join("vars.fd").into_os_string());
     runner::qemu::run(vm)
 }
 

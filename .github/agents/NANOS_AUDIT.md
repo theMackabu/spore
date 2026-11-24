@@ -23,9 +23,9 @@ Implemented safe wins:
 - PMM allocation counters are exposed through `/proc/meminfo`.
 - Unsupported syscall and ioctl probes are counted per process without kernel
   log spam.
-- `spore-run --mode bench` and `make benchmark` provide reproducible startup and
+- `spore bench guest` provides reproducible startup and
   filesystem timing canaries.
-- `spore-run --mode rng` and `make rng-smoke` compare `/dev/urandom` samples
+- `spore test rng` compares `/dev/urandom` samples
   across temporary-root boots.
 - `/proc/fsstats` exposes VFS lookup/page-cache and ext2 directory/block-cache
   counters.
@@ -52,9 +52,8 @@ Implemented safe wins:
 Current verification:
 
 - `meson test -C build --print-errorlogs`
-- `meson compile -C build test_image.img spore-run`
-- `make run-tests`
-- `make run-shell-check`
+- `./build/spore test guest`
+- `./build/spore test shell`
 
 ## Exec and ELF Loading
 

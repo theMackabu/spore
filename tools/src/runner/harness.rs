@@ -1,5 +1,5 @@
+use super::modes;
 use super::serial::SerialWindow;
-use super::{fixtures, modes};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
@@ -86,16 +86,31 @@ const INTEGRATION_CHECKS: &[(&[u8], &str)] = &[
     ),
 ];
 
-pub fn run(argv: Vec<OsString>, mode: &str, timings: bool) -> i32 {
-    match run_inner(&argv, mode, timings) {
-        Ok(code) => code,
-        Err(e) => {
-            eprintln!("spore-run: {e}");
-            1
-        }
+pub fn run(argv: &[OsString], mode: &str, timings: bool) -> io::Result<i32> {
+    let mut first = String::new();
+    let status = run_inner(argv, mode, timings, &mut first)?;
+    if mode != "rng" || status != 0 {
+        return Ok(status);
     }
+    let mut second = String::new();
+    let status = run_inner(argv, mode, timings, &mut second)?;
+    if status == 0 {
+        if first == second {
+            return Err(io::Error::other(
+                "repeated /dev/urandom sample across boots",
+            ));
+        }
+        println!("rng: PASS samples differ across boots");
+    }
+    Ok(status)
 }
-fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32> {
+
+fn run_inner(
+    argv: &[OsString],
+    mode: &str,
+    mut timings: bool,
+    sample: &mut String,
+) -> io::Result<i32> {
     let (mut serial, writer) = io::pipe()?;
     let child = Command::new(&argv[0])
         .args(&argv[1..])
@@ -120,7 +135,6 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
     } else {
         None
     };
-    fixtures::start(mode)?;
     let mut check = modes::ShellCheck::new();
     let mut bench = modes::Bench::default();
     let mut rng = modes::Rng::default();
@@ -259,19 +273,23 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
     if filtered {
         modes::print_guest_checks(buf.bytes());
     }
-    if mode == "rng" && !rng.sample.is_empty() {
+    if mode == "rng" && code == 0 {
+        if rng.sample.is_empty() {
+            return Err(io::Error::other("missing /dev/urandom sample"));
+        }
+        *sample = rng.sample.clone();
         println!("[rng] {}", rng.sample);
     }
     if code == 0 && mode == "integration" {
         for (seen, (_, message)) in passed.iter().zip(INTEGRATION_CHECKS) {
             if !seen {
-                eprintln!("spore-run: {message}");
+                eprintln!("spore: {message}");
                 return Ok(1);
             }
         }
     }
     if code == 0 && shell && !check.completed() {
-        eprintln!("spore-run: guest exited before the shell check reached shutdown");
+        eprintln!("spore: guest exited before the shell check reached shutdown");
         return Ok(1);
     }
     Ok(code)

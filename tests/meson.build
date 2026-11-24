@@ -58,7 +58,7 @@ test_ext2 = executable('test_ext2', 'test_ext2.c',
   include_directories: test_include,
   native: true)
 
-test('ext2', test_ext2, args: [meson.project_build_root() / 'root.ext2'])
+test('ext2', test_ext2, args: [system_root_disk])
 
 bench_ext2_inodes = executable('bench_ext2_inodes', 'bench_ext2_inodes.c',
   link_with: [host_ext2, host_mem],
@@ -151,3 +151,10 @@ test_page_cache = executable('test_page_cache', 'test_page_cache.c',
   native: true)
 
 test('page-cache', test_page_cache)
+
+foreach suite : ['check-appliance', 'measure-appliance']
+  run_target(suite,
+    command: [python, files('appliance/check.py'), suite == 'measure-appliance' ? ['--sweep'] : []],
+    depends: [spore_cli, kernel_boot_elf, boot_efi, ant_prebuilt],
+    env: {'BUILD_DIR': meson.project_build_root()})
+endforeach

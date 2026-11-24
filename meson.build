@@ -23,7 +23,7 @@ spore_build_date = run_command('date', '+%a %b %d %Y', check: true).stdout().str
 spore_uts_version = spore_sysname + ' Kernel Version ' + spore_release + ': ' + spore_build_date + ';'
 
 subdir('userland')
-subdir('tools')
+runner_terminal = static_library('runner-terminal', 'tools/src/runner/terminal.c', native: true)
 subdir('boot')
 subdir('kernel')
 spore_cli = executable('spore', 'tools/src/spore.rs',
@@ -31,7 +31,7 @@ spore_cli = executable('spore', 'tools/src/spore.rs',
   override_options: ['rust_std=2024'],
   link_with: runner_terminal,
   install: false)
-alias_target('appliance-cli', spore_cli, kernel_boot_elf, boot_efi, spore_image)
+alias_target('cli', spore_cli, kernel_boot_elf, boot_efi)
 fs = import('fs')
 foreach variant : [
   ['image', 'root', 'userland/image.manifest', userland_image_targets],
@@ -47,14 +47,17 @@ foreach variant : [
   root_disk = custom_target(variant[1] + '.ext2',
     input: [files(variant[2]), manifest_data],
     output: variant[1] + '.ext2',
-    command: [spore_image, 'rootfs', meson.project_source_root(),
+    command: [spore_cli, '_image', 'rootfs', meson.project_source_root(),
       meson.project_build_root() / (variant[0] + '_root'), '@INPUT0@',
       meson.project_build_root(), '@OUTPUT@'],
     depends: variant[3])
+  if variant[1] == 'root'
+    system_root_disk = root_disk
+  endif
   custom_target(variant[0] + '.img',
     input: [kernel_boot_elf, boot_efi, limine_data],
     output: variant[0] + '.img',
-    command: [spore_image, 'esp', '@INPUT@', '@OUTPUT@'],
+    command: [spore_cli, '_image', 'esp', '@INPUT@', '@OUTPUT@'],
     depends: root_disk,
     build_by_default: variant[0] == 'image')
 endforeach

@@ -10,9 +10,13 @@ foreach line : packages.split('\n')
   foreach member : members
     outputs += member.split('/')[-1]
   endforeach
-  userland_image_targets += custom_target('userland-' + outputs[0],
+  package = custom_target('userland-' + outputs[0],
     output: outputs,
     command: [python, files('unpack.py'), cache_dir, fields[0], fields[1], meson.current_build_dir(), members])
+  userland_image_targets += package
+  if outputs.contains('ant')
+    ant_prebuilt = package
+  endif
 endforeach
 
 sdks = {}

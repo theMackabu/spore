@@ -1,14 +1,11 @@
-#[path = "image/app.rs"]
-mod app;
-mod app_network;
-use std::env;
+pub mod app;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions, Permissions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Command, Stdio};
 
 const BLOCK_SIZE: usize = 4096;
 const MIB: u64 = 1024 * 1024;
@@ -393,28 +390,14 @@ fn build_esp(
     }
     Ok(())
 }
-fn main() -> ExitCode {
-    let args: Vec<PathBuf> = env::args_os().skip(1).map(PathBuf::from).collect();
-    let rc = match args.as_slice() {
-        [mode, rest @ ..] if mode == Path::new("app") => app::build(rest),
+pub fn generate(args: &[PathBuf]) -> io::Result<()> {
+    match args {
         [mode, k, b, c, l, o] if mode == Path::new("esp") => {
             build_image(o, |tmp| build_esp(k, b, c, l, tmp, None))
         }
         [mode, s, t, m, p, o] if mode == Path::new("rootfs") => {
             build_image(o, |tmp| build_root(s, t, m, p, tmp))
         }
-        _ => {
-            eprintln!(
-                "usage: spore-image app KERNEL_ELF BOOT_EFI LICENSE OUTPUT ELF [OPTIONS] [-- ARGS...]\n       spore-image esp KERNEL_ELF BOOT_EFI CONFIG LICENSE OUTPUT\n       spore-image rootfs SOURCE_ROOT STAGE MANIFEST PREBUILT_ROOT OUTPUT"
-            );
-            return ExitCode::from(2);
-        }
-    };
-    match rc {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("spore-image: {e}");
-            ExitCode::FAILURE
-        }
+        _ => Err(io::Error::other("invalid Meson image generation arguments")),
     }
 }

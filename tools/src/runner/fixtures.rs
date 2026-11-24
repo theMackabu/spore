@@ -32,7 +32,7 @@ fn start_http() -> io::Result<()> {
     Ok(())
 }
 
-pub fn start(mode: &str) -> io::Result<()> {
+pub fn start(mode: &str, forwards_http: bool) -> io::Result<()> {
     if matches!(mode, "integration" | "shell") {
         start_udp()
             .map_err(|e| io::Error::new(e.kind(), format!("UDP fixture on 127.0.0.1:5555: {e}")))?;
@@ -44,7 +44,9 @@ pub fn start(mode: &str) -> io::Result<()> {
     }
     if matches!(mode, "plain" | "filter") {
         let _ = start_udp();
-        let _ = start_http();
+        if !forwards_http {
+            let _ = start_http();
+        }
     }
     Ok(())
 }

@@ -116,7 +116,7 @@ pub fn run(
         .join()
         .map_err(|_| io::Error::other("console relay failed"))??;
     report(result_path, kind, value, entry)?;
-    eprintln!("spore-run: {kind} {value}");
+    eprintln!("spore: {kind} {value}");
     Ok(match kind {
         "exit" => value,
         "signal" | "host-signal" => 128 + value,
