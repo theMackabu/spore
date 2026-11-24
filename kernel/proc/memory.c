@@ -14,6 +14,7 @@ enum {
   EIO = 5,
   ENOMEM = 12,
   EACCES = 13,
+  EINVAL = 22,
 };
 
 static struct object_pool process_mms;
@@ -395,6 +396,26 @@ int cell_sync_shared_vmas(uint64_t start, uint64_t end, bool durable) {
     covered = vma->end;
   }
   return durable && disk && !vfs_sync() ? -EIO : 0;
+}
+
+int cell_discard_vma_pages(uint64_t start, uint64_t end, bool lazy_free) {
+  struct domain *domain = cell_current_domain_internal();
+  struct vma_list *vmas = cell_domain_vmas(domain);
+  struct user_address_space *as = cell_domain_as(domain);
+  if (!vmas || !as) { return -ENOMEM; }
+  for (size_t i = vma_first_ending_after(vmas, start); start < end; ++i) {
+    const struct vma *vma = vma_at(vmas, i);
+    if (!vma || vma->start > start) { return -ENOMEM; }
+    bool shared = (vma->flags & MAP_SHARED) != 0;
+    if (lazy_free && (shared || vma->type == VMA_FILE)) { return -EINVAL; }
+    uint64_t next = end < vma->end ? end : vma->end;
+    if (!shared || vma->type == VMA_FILE) {
+      if (!flush_shared_file_vma_range(as, vma, start, next)) { return -EIO; }
+      vmm_unmap_range(as, start, next);
+    }
+    start = next;
+  }
+  return 0;
 }
 
 int cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {

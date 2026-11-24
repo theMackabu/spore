@@ -74,7 +74,7 @@ static int shared_anon_mmap_fork_regression(void) {
 
   pid_t child = ok ? fork() : -1;
   if (child == 0) {
-    int child_ok = map[0] == 'P';
+    int child_ok = madvise(map, 4096, MADV_DONTNEED) == 0 && map[0] == 'P';
     map[1] = child_ok ? 'C' : 'X';
     _exit(child_ok ? 0 : 1);
   }
@@ -275,6 +275,22 @@ static int mmap_fixed_noreplace_regression(void) {
   return ok;
 }
 
+static int mapping_ranges(void) {
+  constexpr size_t page = 4096;
+  char *p = mmap(NULL, 3 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (p == MAP_FAILED) { return 0; }
+  p[0] = 'A';
+  int ok = munmap(p + 1, page) == -1 && errno == EINVAL &&
+           mprotect(p + 1, page, PROT_READ) == -1 && errno == EINVAL &&
+           madvise(p + 1, page, MADV_DONTNEED) == -1 && errno == EINVAL && p[0] == 'A';
+  ok = ok && munmap(p + page, page) == 0 && mprotect(p, 3 * page, PROT_READ) == -1 && errno == ENOMEM &&
+       msync(p, 3 * page, MS_SYNC) == -1 && errno == ENOMEM;
+  ok = ok && madvise(p, page, MADV_DONTNEED) == 0 && p[0] == 0;
+  munmap(p, 3 * page);
+  printf("[spore] mapping ranges and discard: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int grow_file_mapping(void) {
   constexpr size_t page = 4096;
   int fd = open("/tmp/remap-file", O_CREAT | O_RDWR | O_TRUNC, 0600);
@@ -337,6 +353,6 @@ static int mmap_noreserve_regression(void) {
 int integration_memory_suite(void) {
   return sparse_shared_file("/spore-sparse") && sparse_shared_file("/tmp/spore-sparse") && shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
-         file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && grow_file_mapping() && mmap_past_reservation(false) &&
+         file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mapping_ranges() && grow_file_mapping() && mmap_past_reservation(false) &&
          mmap_past_reservation(true);
 }

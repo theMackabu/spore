@@ -166,10 +166,11 @@ int64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
 }
 
 int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
-  if (advice == MADV_DONTNEED || advice == MADV_FREE) {
-    vmm_unmap_range(syscall_active_as(), align_down(addr, PAGE_SIZE), align_up(addr + len, PAGE_SIZE));
-  }
-  return 0;
+  if (addr & (PAGE_SIZE - 1)) { return -EINVAL; }
+  if (!len) { return 0; }
+  if (addr >= USER_VA_LIMIT || len > USER_VA_LIMIT - addr) { return -EINVAL; }
+  if (advice != MADV_DONTNEED && advice != MADV_FREE) { return 0; }
+  return cell_discard_vma_pages(addr, align_up(addr + len, PAGE_SIZE), advice == MADV_FREE);
 }
 
 static bool ranges_overlap(uint64_t a_start, uint64_t a_end, uint64_t b_start, uint64_t b_end) {

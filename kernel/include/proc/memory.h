@@ -47,6 +47,7 @@ bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t fla
                        uint64_t file_start, uint64_t file_offset, uint64_t file_size, bool shared_may_write);
 bool cell_remove_vma(uint64_t start, uint64_t end);
 int cell_sync_shared_vmas(uint64_t start, uint64_t end, bool durable);
+int cell_discard_vma_pages(uint64_t start, uint64_t end, bool lazy_free);
 int cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot);
 size_t cell_resident_pages(uint64_t start, uint64_t end);
 bool cell_memory_accounting(const struct domain *domain, struct cell_memory_accounting *out);
