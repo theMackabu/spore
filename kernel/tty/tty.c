@@ -356,7 +356,7 @@ static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
   if (signal == 0) { return; }
   int pgrp = cell_tty_foreground_pgrp();
   if (pgrp <= 0) { return; }
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used || domain->zombie || domain->pgrp_id != pgrp) { continue; }
     cell_signal_domain(domain, signal, frame);
@@ -368,7 +368,7 @@ void cell_wake_stdin(struct trap_frame *frame) {
   tty_deliver_pending_signal_to_foreground(frame);
   cell_wake_poll_waiters_internal();
   cell_wake_epoll_waiters_internal();
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_STDIN) { continue; }
     int64_t n = cell_tty_read_to_user(thread->domain, thread->wait.buf, thread->wait.len);

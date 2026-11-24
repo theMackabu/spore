@@ -23,7 +23,7 @@ struct robust_list_head64 {
 
 int cell_futex_wake_domain(struct domain *domain, uint64_t uaddr, uint32_t count) {
   int woke = 0;
-  for (size_t i = 0; i < cell_thread_capacity() && (uint32_t)woke < count; ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit && (uint32_t)woke < count; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain && thread->state == THREAD_BLOCKED &&
         thread->wait.reason == WAIT_FUTEX && thread->wait.futex_addr == uaddr) {

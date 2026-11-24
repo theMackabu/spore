@@ -79,7 +79,7 @@ static char domain_proc_state_char(const struct domain *domain) {
 
 static const char *domain_wait_text(const struct domain *domain) {
   if (domain == NULL || domain->zombie) { return "-"; }
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain && thread->state == THREAD_BLOCKED) {
       return wait_reason_text(thread->wait.reason);
@@ -94,7 +94,7 @@ static size_t procinfo_text(char *dst, size_t cap) {
                   "pid ppid state wait vsz_pages rss_pages minflt majflt cpu_ticks age_ticks budget_remaining "
                   "budget_max unsupported_syscalls last_unsupported_syscall unsupported_ioctls last_unsupported_ioctl "
                   "name exec_path cwd cmdline\n");
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
     struct cell_memory_accounting mem = {0};

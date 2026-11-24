@@ -57,7 +57,7 @@ struct domain {
 };
 
 bool cell_domain_reset(size_t capacity);
-size_t cell_domain_capacity(void);
+size_t cell_domain_slot_limit(void);
 uint32_t cell_domain_last_id(void);
 void cell_copy_domain_metadata(struct domain *dst, const struct domain *src);
 void cell_destroy_domain(struct domain *domain);

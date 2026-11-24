@@ -206,7 +206,7 @@ bool cell_pipe_release_file(struct open_file *file) {
 static void wake_pipe_waiters(void) {
   if (pipe_waking) { return; }
   pipe_waking = true;
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_PIPE ||
         thread->domain == NULL) {

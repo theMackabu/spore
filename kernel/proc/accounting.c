@@ -25,7 +25,7 @@ enum {
 
 static uint64_t runnable_thread_count(void) {
   uint64_t count = 0;
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain != NULL && thread->state == THREAD_RUNNABLE) { ++count; }
   }

@@ -29,7 +29,7 @@ static struct domain *current_domain(void) {
 }
 
 static bool domain_has_running_thread(const struct domain *domain) {
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain && thread->running_cpu >= 0) { return true; }
   }
@@ -109,7 +109,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   domain->term_signal = 0;
   domain->zombie = true;
   cell_close_all_fds(domain);
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
       cell_clear_wait(thread);
@@ -266,7 +266,7 @@ int cell_set_tid_address_current(uint64_t clear_child_tid) {
 }
 
 static struct domain *find_waitable_child(int parent_id, int pid) {
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain != NULL && domain->used && domain->zombie && domain->parent_id == parent_id &&
         (pid <= 0 || domain->id == pid)) {
@@ -277,7 +277,7 @@ static struct domain *find_waitable_child(int parent_id, int pid) {
 }
 
 static bool has_child(int parent_id, int pid) {
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
     struct domain *domain = cell_domain_slot(i);
     if (domain != NULL && domain->used && domain->parent_id == parent_id && (pid <= 0 || domain->id == pid)) {
       return true;
@@ -329,7 +329,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
 
   struct process_mm *new_mm = cell_mm_from_owned(as, vmas);
   if (new_mm == NULL) { return false; }
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
       cell_clear_wait(thread);

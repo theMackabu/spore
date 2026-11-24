@@ -94,7 +94,7 @@ static void wake_flock_waiters(void) {
   waking = true;
   do {
     rescan = false;
-    for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+    for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
       struct thread *thread = cell_thread_slot(i);
       if (thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_FLOCK) { continue; }
       struct open_file *file = thread->wait.flock_file;

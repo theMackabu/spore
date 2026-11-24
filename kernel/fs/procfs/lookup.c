@@ -354,7 +354,7 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
   }
   if (dir->backend == VFS_RAMFS && dir->ramfs.mount == RAMFS_MOUNT_PROC && str_eq(dir->ramfs.name, "proc")) {
     if (*cursor < RAMFS_MAX_NODES) { return false; }
-    for (size_t slot = (size_t)(*cursor - RAMFS_MAX_NODES); slot < cell_domain_capacity(); ++slot) {
+    for (size_t slot = (size_t)(*cursor - RAMFS_MAX_NODES), limit = cell_domain_slot_limit(); slot < limit; ++slot) {
       struct domain *domain = cell_domain_slot(slot);
       if (domain == NULL || !domain->used) { continue; }
       out->ino = 100000u + (uint64_t)domain->id;

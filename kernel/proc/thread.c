@@ -50,10 +50,6 @@ int cell_current_tid(void) {
   return thread == NULL ? 0 : thread->tid;
 }
 
-size_t cell_thread_capacity(void) {
-  return thread_capacity;
-}
-
 struct domain *cell_current_domain_internal(void) {
   struct thread *current_thread = cell_current_thread_internal();
   return current_thread == NULL ? NULL : current_thread->domain;
@@ -76,13 +72,6 @@ bool cell_scheduler_waiting_for_interrupt(void) {
 
 struct thread *cell_thread_slot(size_t index) {
   return index < thread_capacity ? &threads[index] : NULL;
-}
-
-size_t cell_thread_index(const struct thread *thread) {
-  if (thread == NULL || threads == NULL || thread < threads || thread >= threads + thread_capacity) {
-    return thread_capacity;
-  }
-  return (size_t)(thread - threads);
 }
 
 struct thread *cell_alloc_thread(struct domain *domain) {
@@ -116,7 +105,7 @@ void cell_release_thread(struct thread *thread) {
 }
 
 struct thread *cell_thread_for_domain(const struct domain *domain) {
-  for (size_t i = 0; i < thread_capacity; ++i) {
+  for (size_t i = 0; i < thread_slot_limit; ++i) {
     if (threads[i].state != THREAD_UNUSED && threads[i].domain == domain) { return &threads[i]; }
   }
   return NULL;
@@ -124,7 +113,7 @@ struct thread *cell_thread_for_domain(const struct domain *domain) {
 
 size_t cell_runnable_or_blocked_threads_in_domain(const struct domain *domain) {
   size_t count = 0;
-  for (size_t i = 0; i < thread_capacity; ++i) {
+  for (size_t i = 0; i < thread_slot_limit; ++i) {
     if (threads[i].domain == domain && (threads[i].state == THREAD_RUNNABLE || threads[i].state == THREAD_BLOCKED)) {
       ++count;
     }
@@ -133,7 +122,7 @@ size_t cell_runnable_or_blocked_threads_in_domain(const struct domain *domain) {
 }
 
 void cell_wake_vfork_parent_of(int child_id) {
-  for (size_t i = 0; i < thread_capacity; ++i) {
+  for (size_t i = 0; i < thread_slot_limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL) { continue; }
     if (thread->state == THREAD_BLOCKED && thread->wait.reason == WAIT_VFORK && thread->wait.target == child_id) {
@@ -149,7 +138,7 @@ int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame) {
 }
 
 static void wake_timer_waiters(uint64_t scheduler_ticks) {
-  for (size_t i = 0; i < thread_capacity; ++i) {
+  for (size_t i = 0; i < thread_slot_limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread->state != THREAD_BLOCKED || !thread->wait.has_deadline || scheduler_ticks < thread->wait.deadline_tick) {
       continue;
@@ -177,7 +166,7 @@ static void restore_thread(struct thread *thread, struct trap_frame *frame) {
 
 static void cleanup_reaped_current_domain(struct domain *old_domain, struct thread *next) {
   if (old_domain == NULL || old_domain == next->domain || !old_domain->zombie || old_domain->parent_id != 0) { return; }
-  for (size_t i = 0; i < thread_capacity; ++i) {
+  for (size_t i = 0; i < thread_slot_limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == old_domain && thread->running_cpu >= 0) { return; }
   }
@@ -187,49 +176,35 @@ static void cleanup_reaped_current_domain(struct domain *old_domain, struct thre
 void cell_schedule(struct trap_frame *frame) {
   uint32_t cpu = smp_current_cpu();
   struct thread *current_thread = cell_current_thread_internal();
-  struct domain *old_domain = cell_current_domain_internal();
-  cell_save_current(frame);
-  size_t start = current_thread == NULL ? 0 : cell_thread_index(current_thread) + 1;
+  struct domain *old_domain = current_thread == NULL ? NULL : current_thread->domain;
+  size_t start = current_thread == NULL ? 0 : (size_t)(current_thread - threads) + 1;
+  bool saved = false;
   for (;;) {
-    if (current_thread != NULL && current_thread->state == THREAD_RUNNABLE) {
-      for (size_t n = 0; n < thread_capacity; ++n) {
-        struct thread *candidate = cell_thread_slot((start + n) % thread_capacity);
-        if (candidate != NULL && candidate->state == THREAD_RUNNABLE &&
-            (candidate->running_cpu < 0 || candidate->running_cpu == (int)cpu)) {
-          if (current_thread != NULL && current_thread != candidate && current_thread->running_cpu == (int)cpu) {
-            current_thread->running_cpu = -1;
-          }
-          smp_set_current_thread_slot(cpu, candidate);
-          candidate->running_cpu = (int)cpu;
-          cleanup_reaped_current_domain(old_domain, candidate);
-          restore_thread(candidate, frame);
-          return;
-        }
+    bool pending = false;
+    size_t slot = start;
+    for (size_t n = 0; n < thread_slot_limit; ++n) {
+      if (slot >= thread_slot_limit) { slot = 0; }
+      struct thread *candidate = &threads[slot++];
+      if (candidate->state == THREAD_BLOCKED) { pending = true; }
+      if (candidate->state != THREAD_RUNNABLE) { continue; }
+      if (candidate->running_cpu >= 0 && candidate->running_cpu != (int)cpu) {
+        pending = true;
+        continue;
       }
+      if (candidate == current_thread && candidate->running_cpu == (int)cpu && !saved) { return; }
+      if (!saved) { cell_save_current(frame); }
+      if (current_thread != NULL && current_thread->running_cpu == (int)cpu) { current_thread->running_cpu = -1; }
+      smp_set_current_thread_slot(cpu, candidate);
+      candidate->running_cpu = (int)cpu;
+      cleanup_reaped_current_domain(old_domain, candidate);
+      restore_thread(candidate, frame);
+      return;
     }
-    for (size_t n = 0; n < thread_capacity; ++n) {
-      struct thread *candidate = cell_thread_slot((start + n) % thread_capacity);
-      if (candidate != NULL && candidate->state == THREAD_RUNNABLE && candidate->running_cpu < 0) {
-        if (current_thread != NULL && current_thread->running_cpu == (int)cpu) { current_thread->running_cpu = -1; }
-        smp_set_current_thread_slot(cpu, candidate);
-        candidate->running_cpu = (int)cpu;
-        cleanup_reaped_current_domain(old_domain, candidate);
-        restore_thread(candidate, frame);
-        return;
-      }
+    if (!pending) { break; }
+    if (!saved) {
+      cell_save_current(frame);
+      saved = true;
     }
-
-    bool has_blocked = false;
-    bool has_running_elsewhere = false;
-    for (size_t i = 0; i < thread_capacity; ++i) {
-      struct thread *thread = cell_thread_slot(i);
-      if (thread != NULL && thread->state == THREAD_BLOCKED) { has_blocked = true; }
-      if (thread != NULL && thread->state == THREAD_RUNNABLE && thread->running_cpu >= 0 &&
-          thread->running_cpu != (int)cpu) {
-        has_running_elsewhere = true;
-      }
-    }
-    if (!has_blocked && !has_running_elsewhere) { break; }
     smp_set_scheduler_waiting(cpu, true);
     smp_kernel_unlock();
     smp_wait_for_irq();

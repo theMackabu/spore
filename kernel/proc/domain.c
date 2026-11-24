@@ -18,6 +18,7 @@ enum {
 
 static struct domain *domains;
 static size_t domain_capacity;
+static size_t domain_slot_limit;
 static int next_domain_id = 1;
 
 bool cell_domain_reset(size_t capacity) {
@@ -29,12 +30,13 @@ bool cell_domain_reset(size_t capacity) {
   } else {
     kmemset(domains, 0, domain_capacity * sizeof(*domains));
   }
+  domain_slot_limit = 0;
   next_domain_id = 1;
   return true;
 }
 
-size_t cell_domain_capacity(void) {
-  return domain_capacity;
+size_t cell_domain_slot_limit(void) {
+  return domain_slot_limit;
 }
 
 struct domain *cell_domain_slot(size_t index) {
@@ -46,7 +48,7 @@ uint32_t cell_domain_last_id(void) {
 }
 
 struct domain *cell_find_domain(int id) {
-  for (size_t i = 0; i < domain_capacity; ++i) {
+  for (size_t i = 0; i < domain_slot_limit; ++i) {
     if (domains[i].used && domains[i].id == id) { return &domains[i]; }
   }
   return NULL;
@@ -56,24 +58,15 @@ struct domain *cell_alloc_domain(void) {
   for (size_t i = 0; i < domain_capacity; ++i) {
     if (!domains[i].used) {
       kmemset(&domains[i], 0, sizeof(domains[i]));
+      if (i == domain_slot_limit) { ++domain_slot_limit; }
       domains[i].used = true;
-      domains[i].refcount = 0;
       domains[i].id = next_domain_id++;
       domains[i].pgrp_id = domains[i].id;
       domains[i].session_id = domains[i].id;
-      domains[i].uid = 0;
-      domains[i].euid = 0;
-      domains[i].gid = 0;
-      domains[i].egid = 0;
       domains[i].start_ticks = cell_uptime_ticks();
       copy_cstr(domains[i].name, sizeof(domains[i].name), "?");
-      copy_cstr(domains[i].exec_path, sizeof(domains[i].exec_path), "");
-      copy_cstr(domains[i].argv0, sizeof(domains[i].argv0), "");
-      copy_cstr(domains[i].cmdline, sizeof(domains[i].cmdline), "");
       domains[i].cwd[0] = '/';
-      domains[i].cwd[1] = '\0';
       domains[i].chroot[0] = '/';
-      domains[i].chroot[1] = '\0';
       return &domains[i];
     }
   }
@@ -107,14 +100,14 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
 void cell_destroy_domain(struct domain *domain) {
   int reparent_to = (domain != NULL && domain->id != 1 && cell_find_domain(1) != NULL) ? 1 : 0;
   if (domain != NULL) {
-    for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+    for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
       struct domain *child = cell_domain_slot(i);
       if (child == NULL || !child->used || child->parent_id != domain->id) { continue; }
       child->parent_id = reparent_to;
       if (child->zombie && reparent_to != 0) { cell_wake_parent_of(child); }
     }
   }
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) {
       cell_clear_wait(thread);

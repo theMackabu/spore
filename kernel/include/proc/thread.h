@@ -93,11 +93,9 @@ struct thread {
 };
 
 bool cell_thread_reset(size_t capacity);
-size_t cell_thread_capacity(void);
 size_t cell_thread_slot_limit(void);
 void cell_set_current_thread(struct thread *thread);
 bool cell_scheduler_waiting_for_interrupt(void);
-size_t cell_thread_index(const struct thread *thread);
 void cell_clear_wait(struct thread *thread);
 void cell_resume_wait(struct thread *thread);
 void cell_finish_wait(struct thread *thread, int64_t result);

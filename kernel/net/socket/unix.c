@@ -125,7 +125,7 @@ static struct open_file *unix_file_for_fd(struct domain *domain, int fd) {
 }
 
 static struct open_file *unix_listener_for_path(const char *path) {
-  for (size_t d = 0; d < cell_domain_capacity(); ++d) {
+  for (size_t d = 0, limit = cell_domain_slot_limit(); d < limit; ++d) {
     struct domain *domain = cell_domain_slot(d);
     if (domain == NULL || !domain->used) { continue; }
     for (size_t fd = 0; fd < MAX_FDS; ++fd) {

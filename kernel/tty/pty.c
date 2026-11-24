@@ -437,7 +437,7 @@ int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file
 static void wake_pty_waiters(void) {
   if (pty_waking) { return; }
   pty_waking = true;
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_PTY ||
         thread->domain == NULL) {

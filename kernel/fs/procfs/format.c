@@ -96,7 +96,7 @@ size_t proc_loadavg_text(char *dst, size_t cap) {
   uint64_t total = 0;
   uint64_t avg[3] = {0, 0, 0};
   cell_loadavg_scaled(avg);
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->domain == NULL) { continue; }
     ++total;
@@ -308,7 +308,7 @@ size_t proc_stat_text(char *dst, size_t cap) {
   }
   uint64_t running = 0;
   uint64_t blocked = 0;
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->state == THREAD_RUNNABLE) {
       ++running;

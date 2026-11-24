@@ -405,6 +405,7 @@ static int64_t dispatch(struct trap_frame *f) {
   goto l_unknown;
 
 l_sched_yield:
+  trap_set_result(f, 0);
   cell_schedule(f);
   return SYSCALL_SWITCHED;
 l_read:

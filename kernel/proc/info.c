@@ -7,7 +7,7 @@ enum thread_state cell_domain_state(const struct domain *domain) {
   if (domain == NULL) { return THREAD_UNUSED; }
   if (domain->zombie) { return THREAD_ZOMBIE; }
   bool blocked = false;
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->domain != domain || thread->state == THREAD_UNUSED) { continue; }
     if (thread->state == THREAD_RUNNABLE) { return THREAD_RUNNABLE; }
@@ -54,7 +54,7 @@ bool cell_proc_info_for_pid(int pid, struct proc_info *out) {
 
 size_t cell_proc_info(struct proc_info *out, size_t max) {
   size_t count = 0;
-  for (size_t i = 0; i < cell_domain_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
     const struct domain *domain = cell_domain_slot(i);
     if (domain == NULL || !domain->used) { continue; }
     if (count < max && out != NULL) { fill_proc_info(domain, &out[count]); }
