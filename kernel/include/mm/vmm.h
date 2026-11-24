@@ -42,7 +42,7 @@ bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, e
 void vmm_destroy(struct user_address_space *as);
 bool vmm_handle_cow_fault(struct user_address_space *as, uint64_t va);
 bool vmm_is_mapped(const struct user_address_space *as, uint64_t va);
-bool vmm_move_page(struct user_address_space *as, uint64_t old_va, uint64_t new_va);
+bool vmm_move_range(struct user_address_space *as, uint64_t from, uint64_t to, uint64_t bytes);
 void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end);
 void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t end, uint32_t flags);
 size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t start, uint64_t end);

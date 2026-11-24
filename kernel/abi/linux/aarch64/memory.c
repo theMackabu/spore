@@ -173,13 +173,6 @@ static bool add_mremap_vma(uint64_t start, uint64_t end, const struct vma *old_v
   return cell_add_vma_typed(start, end, old_vma->prot, old_vma->flags, old_vma->type);
 }
 
-static bool move_mapped_pages(uint64_t old_start, uint64_t old_len, uint64_t new_start) {
-  for (uint64_t off = 0; off < old_len; off += PAGE_SIZE) {
-    if (!vmm_move_page(syscall_active_as(), old_start + off, new_start + off)) { return false; }
-  }
-  return true;
-}
-
 int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64_t flags, uint64_t new_addr) {
   if ((old_addr & (PAGE_SIZE - 1)) != 0 || (flags & ~(uint64_t)(MREMAP_MAYMOVE | MREMAP_FIXED)) != 0 || new_len == 0 ||
       ((flags & MREMAP_FIXED) != 0 && (flags & MREMAP_MAYMOVE) == 0)) {
@@ -231,11 +224,37 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   if (!cell_map_resize_allowed(old_addr, old_end, new_start, new_end, (flags & MREMAP_FIXED) != 0)) {
     return -(int64_t)ENOMEM;
   }
-  if ((flags & MREMAP_FIXED) != 0) { (void)cell_remove_vma(new_start, new_end); }
+  if ((flags & MREMAP_FIXED) && !cell_remove_vma(new_start, new_end)) { return -ENOMEM; }
   if (cell_vma_overlaps(new_start, new_end)) { return -(int64_t)ENOMEM; }
-  if (!move_mapped_pages(old_addr, old_size < new_size ? old_size : new_size, new_start)) { return -(int64_t)ENOMEM; }
-  (void)cell_remove_vma(old_addr, old_end);
-  if (!add_mremap_vma(new_start, new_end, &old_vma, new_start, new_size)) { return -(int64_t)ENOMEM; }
+  uint64_t file_start = new_start;
+  uint64_t file_size = new_size;
+  if (old_vma.type == VMA_FILE) {
+    if (old_addr >= old_vma.file_start) {
+      uint64_t delta = old_addr - old_vma.file_start;
+      if (!checked_add(old_vma.file_offset, delta, &old_vma.file_offset)) { return -EINVAL; }
+      if (!(old_vma.flags & (MAP_PRIVATE | MAP_SHARED))) {
+        uint64_t left = delta < old_vma.file_size ? old_vma.file_size - delta : 0;
+        if (left < file_size) { file_size = left; }
+      }
+    } else {
+      uint64_t prefix = old_vma.file_start - old_addr;
+      if (prefix > new_size) { prefix = new_size; }
+      file_start += prefix;
+      file_size = old_vma.file_size < new_size - prefix ? old_vma.file_size : new_size - prefix;
+    }
+  }
+  if (!add_mremap_vma(new_start, new_end, &old_vma, file_start, file_size)) { return -ENOMEM; }
+  uint64_t bytes = old_size < new_size ? old_size : new_size;
+  struct user_address_space *as = syscall_active_as();
+  if (!vmm_move_range(as, old_addr, new_start, bytes)) {
+    (void)cell_remove_vma(new_start, new_end);
+    return -ENOMEM;
+  }
+  if (!cell_remove_vma(old_addr, old_end)) {
+    (void)vmm_move_range(as, new_start, old_addr, bytes);
+    (void)cell_remove_vma(new_start, new_end);
+    return -ENOMEM;
+  }
   if ((flags & MREMAP_FIXED) == 0) { syscall_active_as()->mmap_base = new_end; }
   return (int64_t)new_start;
 }

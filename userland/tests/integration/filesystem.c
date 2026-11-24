@@ -311,6 +311,13 @@ static int open_unlinked_ext2(void) {
   close(fd);
   if (second >= 0) { close(second); }
   if (mapping != MAP_FAILED) {
+    char *target = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (target != MAP_FAILED) {
+      char *moved = mremap(mapping, 4096, 4096, MREMAP_MAYMOVE | MREMAP_FIXED, target);
+      if (moved != MAP_FAILED) { mapping = moved; }
+      else { munmap(target, 4096); }
+      ok = ok && moved == target;
+    } else { ok = 0; }
     ok = ok && mapping[0] == 'A';
     munmap(mapping, 4096);
   }

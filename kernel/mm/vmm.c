@@ -51,7 +51,7 @@ static uint64_t *walk_to_leaf(const struct user_address_space *as, uint64_t va, 
 
 static uint64_t *leaf_for_va(const struct user_address_space *as, uint64_t va) {
   unsigned shift;
-  return walk_to_leaf(as, va, &shift);
+  return va < USER_VA_LIMIT ? walk_to_leaf(as, va, &shift) : NULL;
 }
 
 struct leaf_range {
@@ -63,9 +63,9 @@ struct leaf_range {
 };
 
 static struct leaf_range leaf_range(uint64_t start, uint64_t end) {
-  uint64_t first = start / PAGE_SIZE;
-  uint64_t pages = end > start ? 1 + (end - 1 - start) / PAGE_SIZE : 0;
-  return (struct leaf_range){.next_page = first, .limit = first + pages};
+  if (end > USER_VA_LIMIT) { end = USER_VA_LIMIT; }
+  if (start >= end) { return (struct leaf_range){0}; }
+  return (struct leaf_range){.next_page = start / PAGE_SIZE, .limit = (end - 1) / PAGE_SIZE + 1};
 }
 
 static bool next_leaf_range(const struct user_address_space *as, struct leaf_range *range, size_t max_pages) {
@@ -127,8 +127,7 @@ static uint64_t with_protection(uint64_t entry, uint32_t flags) {
   return entry;
 }
 
-static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags,
-                          uint64_t permissions) {
+static uint64_t *ensure_leaf(struct user_address_space *as, uint64_t va) {
   uint64_t *l0 = pt_virt(as, as->root_pa);
   uint64_t *l1;
   uint64_t *l2;
@@ -136,13 +135,19 @@ static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t p
 
   if (!ensure_table(as, l0, pt_index(va, 39), &l1) || !ensure_table(as, l1, pt_index(va, 30), &l2) ||
       !ensure_table(as, l2, pt_index(va, 21), &l3)) {
-    return false;
+    return NULL;
   }
 
+  return &l3[pt_index(va, 12)];
+}
+
+static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags,
+                          uint64_t permissions) {
+  if (va >= USER_VA_LIMIT || va % PAGE_SIZE || !pa || pa % PAGE_SIZE) { return false; }
+  uint64_t *pte = ensure_leaf(as, va);
+  if (pte == NULL || (*pte & PTE_VALID)) { return false; }
   uint64_t entry = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER | PTE_PXN | permissions;
   if (flags & VMM_MAP_SHARED) { entry |= PTE_SHARED; }
-  uint64_t *pte = &l3[pt_index(va, 12)];
-  if (*pte & PTE_VALID) { return false; }
   *pte = with_protection(entry, flags);
   ++as->resident_pages;
   if (as->resident_pages > as->peak_resident_pages) { as->peak_resident_pages = as->resident_pages; }
@@ -314,26 +319,35 @@ bool vmm_is_mapped(const struct user_address_space *as, uint64_t va) {
   return pte != NULL && (*pte & PTE_VALID) != 0;
 }
 
-bool vmm_move_page(struct user_address_space *as, uint64_t old_va, uint64_t new_va) {
-  uint64_t *old_pte = leaf_for_va(as, old_va);
-  if (old_pte == NULL || (*old_pte & PTE_VALID) == 0) { return true; }
-
-  uint64_t *l0 = pt_virt(as, as->root_pa);
-  uint64_t *l1;
-  uint64_t *l2;
-  uint64_t *l3;
-  if (!ensure_table(as, l0, pt_index(new_va, 39), &l1) || !ensure_table(as, l1, pt_index(new_va, 30), &l2) ||
-      !ensure_table(as, l2, pt_index(new_va, 21), &l3)) {
-    return false;
+static uint64_t transfer_pages(struct user_address_space *as, uint64_t from, uint64_t to, uint64_t bytes) {
+  struct leaf_range range = leaf_range(from, from + bytes);
+  while (next_leaf_range(as, &range, 64)) {
+    uint64_t dest = to + (range.va - from);
+    uint64_t moved = 0;
+    size_t i = 0;
+    for (; i < range.count; ++i) {
+      if (!(range.ptes[i] & PTE_VALID)) { continue; }
+      uint64_t *pte = ensure_leaf(as, dest + i * PAGE_SIZE);
+      if (!pte || (*pte & PTE_VALID)) { break; }
+      *pte = range.ptes[i];
+      range.ptes[i] = 0;
+      moved |= UINT64_C(1) << i;
+    }
+    aarch64_tlb_flush_pages(range.va, moved);
+    aarch64_tlb_flush_pages(dest, moved);
+    if (i != range.count) { return range.va - from + i * PAGE_SIZE; }
   }
+  return bytes;
+}
 
-  uint64_t *new_pte = &l3[pt_index(new_va, 12)];
-  if ((*new_pte & PTE_VALID) != 0) { return false; }
-  *new_pte = *old_pte;
-  *old_pte = 0;
-  aarch64_tlb_flush_va(old_va);
-  aarch64_tlb_flush_va(new_va);
-  return true;
+bool vmm_move_range(struct user_address_space *as, uint64_t from, uint64_t to, uint64_t bytes) {
+  if ((from | to | bytes) % PAGE_SIZE || from >= USER_VA_LIMIT || to >= USER_VA_LIMIT ||
+      bytes > USER_VA_LIMIT - from || bytes > USER_VA_LIMIT - to ||
+      (from < to + bytes && to < from + bytes) || vmm_mapped_pages_in_range(as, to, to + bytes)) { return false; }
+  uint64_t moved = transfer_pages(as, from, to, bytes);
+  if (moved == bytes) { return true; }
+  (void)transfer_pages(as, to, from, moved);
+  return false;
 }
 
 void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end) {

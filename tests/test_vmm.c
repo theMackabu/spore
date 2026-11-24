@@ -152,6 +152,18 @@ int main(void) {
   vmm_unmap_range(&as, 0x601000, boundary);
   assert(vmm_mapped_pages_in_range(&as, 0x600000, boundary + TEST_PAGE_SIZE) == 2);
   assert(vmm_is_mapped(&as, boundary) && !vmm_is_mapped(&as, distant));
+  uint64_t dest = (1ull << 30) + 0x1ff000;
+  assert(vmm_alloc_page(&as, dest, VMM_USER_READ));
+  vmm_unmap_range(&as, dest, dest + TEST_PAGE_SIZE);
+  uint64_t available = next_pa;
+  next_pa = sizeof(phys);
+  assert(!vmm_move_range(&as, 0x400000, dest, 2 * TEST_PAGE_SIZE));
+  assert(vmm_user_to_phys(&as, 0x400000) == ro_pa && vmm_user_to_phys(&as, 0x401000) == rw_pa);
+  assert(!vmm_is_mapped(&as, dest));
+  next_pa = available;
+  assert(vmm_move_range(&as, 0x400000, dest, 2 * TEST_PAGE_SIZE));
+  assert(vmm_user_to_phys(&as, dest) == ro_pa && vmm_user_to_phys(&as, dest + TEST_PAGE_SIZE) == rw_pa);
+  assert(!vmm_is_mapped(&as, 0x400000) && !vmm_is_mapped(&as, 0x401000));
   uint16_t before[TEST_PAGE_COUNT];
   memcpy(before, refs, sizeof(before));
   next_pa = sizeof(phys) - 2 * TEST_PAGE_SIZE;
