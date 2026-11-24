@@ -28,12 +28,16 @@ enum {
   O_EXCL = 0200,
   O_TRUNC = 01000,
   O_DIRECTORY = 040000,
+  O_NOFOLLOW = 0100000,
   O_TMPFILE_BIT = 020000000,
   O_CLOEXEC = 02000000,
   MFD_CLOEXEC = 1,
   MFD_ALLOW_SEALING = 2,
   S_IFMT = 0170000,
   S_IFIFO = 0010000,
+  S_IFLNK = 0120000,
+  S_IFREG = 0100000,
+  ELOOP = 40,
   EXDEV = 18,
   ENOENT = 2,
   EPERM = 1,
@@ -147,16 +151,13 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
   int64_t rc = syscall_read_path_at(dirfd, path_addr, &name);
   if (rc) { return rc; }
   const char *path = name.resolved;
-  uint64_t access = 0;
-  if ((flags & LINUX_O_ACCMODE) == LINUX_O_WRONLY) {
-    access = W_OK;
-  } else if ((flags & LINUX_O_ACCMODE) == LINUX_O_RDWR) {
-    access = R_OK | W_OK;
-  } else {
-    access = R_OK;
-  }
-  if ((flags & O_TRUNC) != 0) { access |= W_OK; }
-  if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(access))) { return -(int64_t)EPERM; }
+  bool path_only = flags & LINUX_O_PATH;
+  if (path_only) { flags &= LINUX_O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC; }
+  uint64_t access = linux_open_readable(flags) ? R_OK : 0;
+  if (linux_open_writable(flags) || (flags & O_TRUNC)) { access |= W_OK; }
+  uint8_t rights = syscall_fs_rights_from_access(access);
+  if (flags & (O_CREAT | O_TMPFILE_BIT)) { rights |= CELL_FS_WRITE; }
+  if (!cell_fs_path_allowed(path, rights)) { return -EPERM; }
   if ((flags & O_TMPFILE_BIT) != 0) {
     if ((flags & (O_CREAT | O_DIRECTORY)) != O_DIRECTORY ||
         ((flags & LINUX_O_ACCMODE) != LINUX_O_RDWR && (flags & LINUX_O_ACCMODE) != LINUX_O_WRONLY)) {
@@ -177,33 +178,47 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
     vfs_release_node(&tmp);
     return fd;
   }
-  int proc_fd = -1;
-  if (proc_self_fd_number(path, &proc_fd)) {
-    int dup = cell_fd_dup(proc_fd, 0);
-    if (dup < 0) { return dup; }
-    if ((flags & O_CLOEXEC) != 0) {
-      int rc = cell_fd_set_fd_flags(dup, 1);
-      if (rc < 0) {
-        (void)cell_fd_close(dup);
-        return rc;
-      }
-    }
-    return dup;
-  }
+  bool exclusive = (flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL);
+  bool nofollow = (flags & O_NOFOLLOW) && !name.trailing_slash;
+  bool directory = (flags & O_DIRECTORY) || name.trailing_slash;
+  if ((flags & (O_DIRECTORY | O_CREAT)) == (O_DIRECTORY | O_CREAT)) { return -EINVAL; }
+  int proc_fd;
   struct vfs_node node;
-  bool exists = vfs_lookup(path, &node);
-  if (exists && (flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) { return -(int64_t)EEXIST; }
-  if (!exists) {
-    uint16_t create_mode = cell_creation_mode(mode);
-    if ((flags & O_CREAT) == 0 || !vfs_create(path, create_mode, &node)) { return -(int64_t)ENOENT; }
-    (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
-    (void)vfs_lookup(path, &node);
-  } else if (!syscall_node_access_allowed(&node, access)) {
-    return -(int64_t)EACCES;
+  bool exists;
+  if (!nofollow && proc_self_fd_number(path, &proc_fd)) {
+    struct open_file *target = cell_file_at(cell_current_domain_internal(), proc_fd);
+    if (!target) { return -ENOENT; }
+    if (exclusive) { return -EEXIST; }
+    if (directory && !cell_fd_is_dir(proc_fd)) { return -ENOTDIR; }
+    if (target->type != OPEN_VFS) {
+      if (path_only) { return -6; }
+      int fd = cell_fd_dup(proc_fd, 0);
+      if (fd >= 0 && (flags & O_CLOEXEC)) { cell_fd_set_fd_flags(fd, 1); }
+      return fd;
+    }
+    if (!cell_fd_stat(proc_fd, &node)) { return -ENOENT; }
+    exists = true;
+    copy_cstr(name.visible, sizeof(name.visible), target->path);
+  } else {
+    exists = (nofollow || exclusive) ? vfs_lstat(path, &node) : vfs_lookup(path, &node);
   }
-  if ((flags & O_TRUNC) != 0 && !node.is_dir) {
-    if (vfs_truncate(&node, 0)) { fsnotify_path_event(path, FS_MODIFY); }
-    (void)vfs_lookup(path, &node);
+  if (!exists) {
+    if (!(flags & O_CREAT)) { return -ENOENT; }
+    if (directory) { return -EISDIR; }
+    if (!vfs_create(path, cell_creation_mode(mode), &node)) { return -ENOENT; }
+    (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
+    if (!vfs_refresh(&node, &node)) { return -EIO; }
+  } else {
+    if (exclusive) { return -EEXIST; }
+    if (nofollow && !path_only && (node.mode & S_IFMT) == S_IFLNK) { return -ELOOP; }
+    if (directory && !node.is_dir) { return -ENOTDIR; }
+    if (node.is_dir && ((flags & (O_CREAT | O_TRUNC)) || linux_open_writable(flags))) { return -EISDIR; }
+    if (!syscall_node_access_allowed(&node, access)) { return -EACCES; }
+    if ((flags & O_TRUNC) && (node.mode & S_IFMT) == S_IFREG && node.device == RAMFS_DEV_NONE) {
+      if (vfs_truncate_sealed(&node, 0)) { return -EPERM; }
+      if (!vfs_truncate(&node, 0) || !vfs_refresh(&node, &node)) { return -EIO; }
+      fsnotify_path_event(path, FS_MODIFY);
+    }
   }
   return cell_fd_open_node(&node, (uint32_t)flags, name.visible, path);
 }
@@ -610,15 +625,17 @@ int64_t sys_symlinkat(uint64_t target_addr, uint64_t new_dirfd, uint64_t link_pa
 }
 
 int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf, uint64_t len) {
-  char path[CELL_PATH_MAX];
+  if (!path_addr) { return -EFAULT; }
+  if (!len) { return -EINVAL; }
+  struct vfs_node node;
+  int rc = lookup_at(dirfd, path_addr, AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW, 0, &node);
+  if (rc) { return rc; }
   char target[CELL_PATH_MAX];
-  size_t target_len = 0;
-  int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
-  if (path_rc != 0) { return path_rc; }
-  if (len == 0 || !syscall_user_writable(buf, len)) { return -(int64_t)EFAULT; }
-  if (!vfs_readlink(path, target, sizeof(target), &target_len)) { return -(int64_t)EINVAL; }
-  if (target_len > len) { target_len = (size_t)len; }
-  return vmm_copy_to_user(syscall_active_as(), buf, target, target_len) ? (int64_t)target_len : -(int64_t)EFAULT;
+  size_t target_len;
+  if (!vfs_readlink(&node, target, sizeof(target), &target_len)) { return -EINVAL; }
+  if (target_len > len) { target_len = len; }
+  if (!syscall_user_writable(buf, target_len)) { return -EFAULT; }
+  return vmm_copy_to_user(syscall_active_as(), buf, target, target_len) ? (int64_t)target_len : -EFAULT;
 }
 
 int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, uint64_t flags) {

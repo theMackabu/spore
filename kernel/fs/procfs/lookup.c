@@ -178,18 +178,17 @@ static size_t fd_link_target(int fd, char *out, size_t cap) {
   return len;
 }
 
-bool vfs_proc_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
-  struct vfs_node node;
-  if (!vfs_proc_lookup(path, false, &node) || (node.mode & 0170000u) != 0120000u) { return false; }
+bool vfs_proc_readlink(const struct vfs_node *node, char *out, size_t cap, size_t *len_out) {
+  if (!vfs_proc_node_live(node) || (node->mode & 0170000u) != 0120000u) { return false; }
   char buf[CELL_PATH_MAX];
   const char *target = buf;
   size_t len;
-  if (node.device == RAMFS_DEV_PROC_SELF) {
-    len = self_target(node.proc.pid, node.proc.tid, buf, sizeof(buf));
-  } else if (node.device == RAMFS_DEV_PROC_PID_FD) {
-    len = fd_link_target(node.proc.fd, buf, sizeof(buf));
+  if (node->device == RAMFS_DEV_PROC_SELF) {
+    len = self_target(node->proc.pid, node->proc.tid, buf, sizeof(buf));
+  } else if (node->device == RAMFS_DEV_PROC_PID_FD) {
+    len = fd_link_target(node->proc.fd, buf, sizeof(buf));
   } else {
-    target = process_link(cell_find_domain(node.proc.pid), node.device);
+    target = process_link(cell_find_domain(node->proc.pid), node->device);
     len = kstrlen(target);
   }
   if (len_out != NULL) { *len_out = len; }

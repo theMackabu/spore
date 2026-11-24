@@ -255,58 +255,6 @@ static int fifo_without_reader(void) {
   return ok;
 }
 
-static int deep_directory(void) {
-  char path[128] = "/deep-dir-check", cwd[128];
-  size_t base = strlen(path), len = base;
-  if (mkdir(path, 0700)) { return 0; }
-  int ok = 1;
-  for (int i = 0; ok && i < 24; ++i) {
-    memcpy(path + len, "/d", 3);
-    if (mkdir(path, 0700)) { path[len] = 0; ok = 0; break; }
-    len += 2;
-  }
-  int fd = open(path, O_RDONLY | O_DIRECTORY);
-  struct stat st;
-  ok = ok && fd >= 0 && fstatat(fd, "", &st, AT_EMPTY_PATH) == 0 && S_ISDIR(st.st_mode) &&
-       fstatat(fd, "", &st, 0) == -1 && errno == ENOENT;
-  if (fd >= 0) { close(fd); }
-  if (ok) {
-    pid_t child = fork();
-    if (!child) {
-      _exit(chdir(path) == 0 && syscall(SYS_getcwd, cwd, len) == -1 && errno == ERANGE &&
-            syscall(SYS_getcwd, cwd, sizeof(cwd)) == (long)len + 1 && !strcmp(cwd, path) &&
-            chdir("../.././d") == 0 && syscall(SYS_getcwd, cwd, sizeof(cwd)) == (long)len - 1 ? 0 : 1);
-    }
-    int status;
-    ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
-  }
-  while (len > base) {
-    if (rmdir(path)) { ok = 0; }
-    len -= 2; path[len] = 0;
-  }
-  return rmdir(path) == 0 && ok;
-}
-
-static int creation_mask(void) {
-  mode_t saved = umask(0077);
-  pid_t child = fork();
-  if (child == 0) {
-    struct stat st;
-    int ok = umask(0027) == 0077;
-    int fd = open("/tmp/masked", O_CREAT | O_EXCL | O_RDWR, 0666);
-    ok = ok && fd >= 0 && fstat(fd, &st) == 0 && (st.st_mode & 0777) == 0640;
-    if (fd >= 0) { close(fd); unlink("/tmp/masked"); }
-    _exit(ok ? 0 : 1);
-  }
-  int status;
-  int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
-  struct stat st;
-  int fd = open("/", O_TMPFILE | O_RDWR, 0777);
-  ok = ok && fd >= 0 && fstat(fd, &st) == 0 && (st.st_mode & 0777) == 0700;
-  if (fd >= 0) { close(fd); }
-  return umask(saved) == 0077 && ok;
-}
-
 static int disk_fifo(void) {
   const char *name = "/spore-fifo", *link_name = "/spore-fifo-link";
   if (mkfifo(name, 0600) || link(name, link_name)) { return 0; }
@@ -528,7 +476,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !creation_mask() || !deep_directory() || !disk_fifo() || !pathname_page_boundary() ||
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !integration_open_suite() || !disk_fifo() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }
@@ -536,71 +484,5 @@ int integration_fs_demo(void) {
   if (chdir("/") != 0) { ok = 0; }
   (void)syscall(35, AT_FDCWD, "/tmp/spore-demo-d", 0x200);
   printf("[spore] v2d fs/cwd demo: %s\n", ok ? "PASS" : "FAIL");
-  return ok;
-}
-
-int integration_tmpfile(const char *directory) {
-  int dir = open(directory, O_RDONLY | O_DIRECTORY);
-  int fd = -1, named = -1, ok = 0;
-  struct stat st, published;
-  char procfd[64], data[4];
-  const char *name = "spore-tmpfile-check";
-  if (dir < 0) { goto done; }
-  fd = openat(dir, ".", O_TMPFILE | O_RDONLY, 0600);
-  if (fd >= 0 || errno != EINVAL) { goto done; }
-  fd = openat(dir, ".", O_TMPFILE | O_RDWR | O_CLOEXEC, 0640);
-  if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || (st.st_mode & 0777) != 0640 || st.st_nlink ||
-      !(fcntl(fd, F_GETFD) & FD_CLOEXEC) || write(fd, "data", 4) != 4) {
-    goto done;
-  }
-  snprintf(procfd, sizeof(procfd), "/proc/self/fd/%d", fd);
-  if (linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) ||
-      linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) == 0 || errno != EEXIST) {
-    goto done;
-  }
-  named = openat(dir, name, O_RDWR);
-  if (named < 0 || fstat(named, &published) || published.st_ino != st.st_ino || published.st_dev != st.st_dev ||
-      published.st_nlink != 1 || read(named, data, 4) != 4 || memcmp(data, "data", 4)) {
-    goto done;
-  }
-  if (linkat(AT_FDCWD, procfd, AT_FDCWD, !strcmp(directory, "/") ? "/tmp/spore-cross-link" : "/spore-cross-link",
-             AT_SYMLINK_FOLLOW) == 0 ||
-      errno != EXDEV) {
-    goto done;
-  }
-  if (geteuid() == 0) {
-    if (linkat(fd, "", dir, "spore-tmpfile-alias", AT_EMPTY_PATH) || fstat(named, &published) ||
-        published.st_nlink != 2 || unlinkat(dir, "spore-tmpfile-alias", 0)) {
-      goto done;
-    }
-  }
-  if (unlinkat(dir, name, 0) || fstat(named, &published) || published.st_nlink || lseek(named, 0, SEEK_SET) ||
-      read(named, data, 4) != 4 || memcmp(data, "data", 4)) {
-    goto done;
-  }
-
-  if (linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) == 0 || errno != ENOENT) { goto done; }
-  void *mapping = mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, fd, 0);
-  if (mapping == MAP_FAILED) { goto done; }
-  close(fd);
-  close(named);
-  fd = named = -1;
-  int readable = memcmp(mapping, "data", 4) == 0;
-  munmap(mapping, 4096);
-  if (!readable) { goto done; }
-
-  fd = openat(dir, ".", O_WRONLY | O_TMPFILE | O_EXCL, 0600);
-  if (fd < 0) { goto done; }
-  snprintf(procfd, sizeof(procfd), "/proc/self/fd/%d", fd);
-  ok = linkat(AT_FDCWD, procfd, dir, name, AT_SYMLINK_FOLLOW) == -1 && errno == ENOENT;
-done:
-  printf("[spore] O_TMPFILE %s ... %s\n", directory, ok ? "ok" : "FAIL");
-  if (fd >= 0) { close(fd); }
-  if (named >= 0) { close(named); }
-  if (dir >= 0) {
-    unlinkat(dir, "spore-tmpfile-alias", 0);
-    unlinkat(dir, name, 0);
-    close(dir);
-  }
   return ok;
 }

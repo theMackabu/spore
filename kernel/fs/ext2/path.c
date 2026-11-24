@@ -3,7 +3,7 @@
 
 constexpr unsigned SYMLINK_LIMIT = 40;
 
-static bool ext2_readlink_node(struct ext2_fs *fs, const struct ext2_node *node, char *out, size_t cap,
+bool ext2_readlink_node(struct ext2_fs *fs, const struct ext2_node *node, char *out, size_t cap,
                                size_t *len_out) {
   if (!ext2_is_symlink(node) || cap == 0) { return false; }
   uint32_t len = node->size;

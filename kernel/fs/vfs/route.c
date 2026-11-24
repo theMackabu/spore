@@ -183,11 +183,9 @@ bool vfs_lstat(const char *path, struct vfs_node *out) {
   return true;
 }
 
-bool vfs_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
-  if (vfs_path_uses_ramfs(path)) { return vfs_proc_readlink(path, out, cap, len_out); }
-  if (vfs_root_ext2 != NULL) {
-    return ext2_readlink(vfs_root_ext2, path, out, cap, len_out);
-  }
+bool vfs_readlink(const struct vfs_node *node, char *out, size_t cap, size_t *len_out) {
+  if (node->backend == VFS_PROC) { return vfs_proc_readlink(node, out, cap, len_out); }
+  if (node->backend == VFS_EXT2) { return ext2_readlink_node(vfs_root_ext2, &node->ext2, out, cap, len_out); }
   return false;
 }
 

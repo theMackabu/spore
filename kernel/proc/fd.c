@@ -210,7 +210,7 @@ int cell_fd_get_flags(int fd) {
 
 int cell_fd_set_flags(int fd, int flags) {
   struct domain *domain = cell_current_domain_internal();
-  if (cell_file_at(domain, fd) == NULL) { return -9; }
+  if (!cell_file_at(domain, fd) || (cell_file_at(domain, fd)->flags & LINUX_O_PATH)) { return -9; }
   uint32_t mutable = (uint32_t)(CELL_O_NONBLOCK | CELL_O_APPEND);
   uint32_t keep = cell_file_at(domain, fd)->flags & ~mutable;
   uint32_t status = (uint32_t)flags & mutable;
@@ -309,7 +309,7 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
 int cell_fd_get_dir_node(int fd, struct vfs_node *out, uint64_t *cursor) {
   struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_file_at(domain, fd);
-  if (file == NULL) { return -9; }
+  if (!file || (file->flags & LINUX_O_PATH)) { return -9; }
   if (file->type != OPEN_VFS || !file->node.is_dir) { return -20; }
   *out = file->node;
   *cursor = file->offset;

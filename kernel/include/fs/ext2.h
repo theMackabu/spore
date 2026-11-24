@@ -96,6 +96,7 @@ void ext2_release_inode(struct ext2_fs *fs, uint32_t ino);
 bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path);
 bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path);
 bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path);
+bool ext2_readlink_node(struct ext2_fs *fs, const struct ext2_node *node, char *out, size_t cap, size_t *len_out);
 bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out);
 bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t mode);
 bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t uid, uint32_t gid);
