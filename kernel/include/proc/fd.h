@@ -117,7 +117,7 @@ struct open_file {
       uint8_t tcp_ooo_slot;
       uint8_t tcp_syn_retries;
       uint8_t tcp_keepalive_probes;
-      uint8_t tcp_remote_window_scale;
+      uint8_t tcp_remote_window_scale, tcp_local_window_scale;
       bool tcp_fin;
       bool tcp_fin_sent;
       bool tcp_fin_pending;

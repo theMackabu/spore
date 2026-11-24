@@ -7,6 +7,7 @@
 struct net_tcp_options {
   uint16_t mss;
   uint8_t window_scale;
+  bool has_window_scale;
 };
 
 struct net_rx_header {

@@ -14,9 +14,30 @@ static bool link_up = true;
 static bool auto_ack;
 
 uint64_t cell_uptime_ticks(void) { return ticks; }
-uint32_t socket_effective_buffer(const struct open_file *, bool) { return UINT16_MAX; }
+uint32_t socket_effective_buffer(const struct open_file *, bool receive) { return receive ? 90000 : UINT16_MAX; }
 uint8_t socket_effective_ttl(const struct open_file *) { return 64; }
-uint16_t tcp_window(const struct open_file *) { return UINT16_MAX; }
+static size_t syn_options_size;
+static uint16_t syn_window;
+bool net_tcp_send_segment_options_ttl_tos(uint16_t, uint32_t, uint16_t, uint8_t, uint8_t, uint32_t, uint32_t,
+                                          uint16_t window, uint8_t, const void *, size_t, const void *, size_t len) {
+  syn_window = window;
+  syn_options_size = len;
+  return true;
+}
+
+static void test_window_negotiation(void) {
+  struct open_file peer = {0};
+  tcp_apply_syn_options(&peer, 4096, NULL, 0);
+  assert(peer.tcp_remote_mss == 536 && tcp_window(&peer) == UINT16_MAX);
+  assert(tcp_send_syn(&peer, 10, true) && syn_window == UINT16_MAX && syn_options_size == 4);
+  uint8_t options[] = {2, 4, 1, 128, 3, 3, 0};
+  tcp_apply_syn_options(&peer, 8192, options, sizeof(options));
+  assert(peer.tcp_remote_mss == 384 && tcp_window(&peer) == 22500);
+  assert(tcp_send_syn(&peer, 20, true) && syn_window == UINT16_MAX && syn_options_size == 8);
+  options[6] = 3;
+  tcp_apply_syn_options(&peer, 8192, options, sizeof(options));
+  assert(peer.tcp_remote_window == 8192 && peer.tcp_remote_window_scale == 3);
+}
 
 bool net_tcp_send_segment_ttl_tos(uint16_t, uint32_t, uint16_t, uint8_t, uint8_t,
                                   uint32_t seq, uint32_t, uint16_t, uint8_t, const void *payload,
@@ -40,6 +61,7 @@ static int fill(void *source, uint8_t *dst, size_t len) {
 static int64_t send_text(const char *s) { return tcp_write_stream(&sender, strlen(s), fill, &s); }
 
 int main(void) {
+  test_window_negotiation();
   alignas(PAGE_SIZE) static uint8_t backing[32 * PAGE_SIZE];
   struct spore_memmap_entry memory = {.base = 0x100000, .length = sizeof(backing), .type = SPORE_MEMMAP_USABLE};
   pmm_init((uintptr_t)backing - memory.base, &memory, 1);

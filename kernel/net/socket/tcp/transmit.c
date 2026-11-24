@@ -3,7 +3,7 @@
 #include "net/net.h"
 #include "proc/accounting.h"
 
-enum { DATA_FLAGS = 0x08 | 0x10, MAX_DATA_RETRIES = 8, ETIMEDOUT = 110 };
+enum { MAX_DATA_RETRIES = 8, ETIMEDOUT = 110 };
 
 struct tcp_segment {
   struct tcp_segment *next;
@@ -79,7 +79,7 @@ bool tcp_send_would_block(const struct open_file *file) {
 static bool send_segment(struct open_file *file, const struct tcp_segment *seg) {
   return net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                       socket_effective_ttl(file), (uint8_t)file->ip_tos, seg->seq, file->tcp_ack,
-                                      tcp_window(file), DATA_FLAGS, seg->data + seg->offset, seg->len);
+                                      tcp_window(file), TCP_PSH | TCP_ACK, seg->data + seg->offset, seg->len);
 }
 
 static int64_t write_segment(struct open_file *file, uint64_t len, tcp_copy_payload copy, void *source) {

@@ -213,6 +213,7 @@ pub unsafe extern "C" fn spore_net_decode_ethernet(
 pub struct TcpOptions {
     mss: u16,
     window_scale: u8,
+    has_window_scale: bool,
 }
 
 #[unsafe(no_mangle)]
@@ -236,14 +237,17 @@ pub unsafe extern "C" fn spore_net_decode_tcp_options(data: *const u8, len: usiz
             break;
         };
         match (kind, value) {
-            (2, [a, b]) if mss.is_none() => mss = Some(u16::from_be_bytes([*a, *b]).max(536)),
+            (2, [a, b]) if mss.is_none() => {
+                mss = core::num::NonZeroU16::new(u16::from_be_bytes([*a, *b])).map(|n| n.get())
+            }
             (3, [s]) if scale.is_none() => scale = Some((*s).min(14)),
             _ => (),
         }
         options = &options[len as usize..];
     }
     TcpOptions {
-        mss: mss.unwrap_or(1460),
+        mss: mss.unwrap_or(536),
         window_scale: scale.unwrap_or(0),
+        has_window_scale: scale.is_some(),
     }
 }

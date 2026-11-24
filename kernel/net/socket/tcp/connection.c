@@ -4,7 +4,6 @@
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "net/net.h"
-#include "net/packet.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
@@ -21,19 +20,11 @@ enum {
   TCP_OOO_ENTRIES = 8,
   TCP_OOO_PAYLOAD_CAP = 1460,
   TCP_OOO_STATE_PAGES = (TCP_OOO_ENTRIES + 1) / 2,
-  TCP_RCV_WINDOW_SCALE = 2,
-  TCP_DEFAULT_REMOTE_WINDOW = 65535,
-  TCP_DEFAULT_MSS = 1460,
   TCP_SYN_MAX_RETRIES = 5,
   TCP_TICKS_PER_SECOND = 100,
   TCP_DEFAULT_KEEPIDLE_SEC = 7200,
   TCP_DEFAULT_KEEPINTVL_SEC = 75,
   TCP_DEFAULT_KEEPCNT = 9,
-  TCP_FIN = 0x01,
-  TCP_SYN = 0x02,
-  TCP_RST = 0x04,
-  TCP_PSH = 0x08,
-  TCP_ACK = 0x10,
 };
 
 struct tcp_ooo_state {
@@ -142,28 +133,6 @@ static void tcp_free_ooo(struct open_file *file) {
   file->tcp_ooo = NULL;
 }
 
-uint16_t tcp_window(const struct open_file *file) {
-  uint32_t limit = socket_effective_buffer(file, true);
-  uint32_t room = file->tcp_rx_len >= limit ? 0 : limit - file->tcp_rx_len;
-  uint32_t scaled = room >> TCP_RCV_WINDOW_SCALE;
-  return scaled > UINT16_MAX ? UINT16_MAX : (uint16_t)scaled;
-}
-
-static uint16_t tcp_syn_window(const struct open_file *file) {
-  uint32_t limit = socket_effective_buffer(file, true);
-  uint32_t room = file->tcp_rx_len >= limit ? 0 : limit - file->tcp_rx_len;
-  return room > UINT16_MAX ? UINT16_MAX : (uint16_t)room;
-}
-
-static bool tcp_send_syn(struct open_file *file, uint32_t seq) {
-  uint8_t options[8] = {
-    2, 4, 0x05, 0xb4, 1, 3, 3, TCP_RCV_WINDOW_SCALE,
-  };
-  return net_tcp_send_segment_options_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
-                                              socket_effective_ttl(file), (uint8_t)file->ip_tos, seq, 0,
-                                              tcp_syn_window(file), TCP_SYN, NULL, 0, options, sizeof(options));
-}
-
 static int tcp_send_fin_once(struct open_file *file) {
   if (file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
   if (file->tcp_error != 0) { return -(int)file->tcp_error; }
@@ -199,11 +168,6 @@ static bool seq_after(uint32_t a, uint32_t b) {
   return (int32_t)(a - b) > 0;
 }
 
-static uint32_t tcp_scaled_window(uint16_t window, uint8_t scale) {
-  if (scale >= 16) { return UINT32_MAX; }
-  return (uint32_t)window << scale;
-}
-
 static uint64_t tcp_keepalive_ticks(uint32_t seconds) {
   return seconds == 0 ? 0 : (uint64_t)seconds * TCP_TICKS_PER_SECOND;
 }
@@ -221,11 +185,6 @@ static void tcp_init_keepalive(struct open_file *file, uint64_t now_ticks) {
   file->tcp_keepintvl = TCP_DEFAULT_KEEPINTVL_SEC;
   file->tcp_keepcnt = TCP_DEFAULT_KEEPCNT;
   tcp_note_activity(file, now_ticks);
-}
-
-static void tcp_update_remote_window(struct open_file *file, uint16_t window) {
-  if (file == NULL) { return; }
-  file->tcp_remote_window = tcp_scaled_window(window, file->tcp_remote_window_scale);
 }
 
 static bool tcp_ack_after_sent(const struct open_file *file, uint32_t ack) {
@@ -382,9 +341,6 @@ bool tcp_recv_waitall_pending(const struct open_file *file, uint64_t want, uint3
 }
 
 void tcp_init_socket(struct open_file *file) {
-  file->tcp_remote_window = TCP_DEFAULT_REMOTE_WINDOW;
-  file->tcp_remote_window_scale = 0;
-  file->tcp_remote_mss = TCP_DEFAULT_MSS;
   tcp_init_rto(file);
   tcp_init_keepalive(file, cell_uptime_ticks());
 }
@@ -581,9 +537,6 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
     }
     file->tcp_seq = tcp_initial_seq(domain, fd);
     file->tcp_ack = 0;
-    file->tcp_remote_window = TCP_DEFAULT_REMOTE_WINDOW;
-    file->tcp_remote_window_scale = 0;
-    file->tcp_remote_mss = TCP_DEFAULT_MSS;
     tcp_init_rto(file);
     file->tcp_error = 0;
     file->tcp_fin = false;
@@ -599,7 +552,7 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
     file->tcp_state = TCP_SYN_SENT;
     uint32_t syn_seq = file->tcp_seq;
     file->tcp_seq += 1;
-    if (!tcp_send_syn(file, syn_seq)) {
+    if (!tcp_send_syn(file, syn_seq, false)) {
       file->tcp_state = TCP_CLOSED;
       return -EIO;
     }
@@ -730,19 +683,14 @@ static void tcp_deliver_syn_to_listener(uint32_t src_ip, uint16_t src_port, uint
   server->tcp_remote_port = src_port;
   server->tcp_seq = tcp_initial_seq(NULL, 0);
   server->tcp_ack = seq + 1;
-  struct net_tcp_options decoded = spore_net_decode_tcp_options(options, options_len);
-  server->tcp_remote_window_scale = decoded.window_scale;
-  server->tcp_remote_mss = decoded.mss;
-  tcp_update_remote_window(server, window);
+  tcp_apply_syn_options(server, window, options, options_len);
   tcp_init_rto(server);
   tcp_note_activity(server, cell_uptime_ticks());
   server->tcp_state = TCP_SYN_RECEIVED;
   uint32_t syn_seq = server->tcp_seq;
   server->tcp_seq += 1;
   tcp_pending[pending_slot] = (struct tcp_pending_conn){.used = true, .listener = listener, .server_end = server};
-  if (!net_tcp_send_segment_ttl_tos(server->tcp_local_port, server->tcp_remote_ip, server->tcp_remote_port,
-                                    socket_effective_ttl(server), (uint8_t)server->ip_tos, syn_seq, server->tcp_ack,
-                                    tcp_syn_window(server), TCP_SYN | TCP_ACK, NULL, 0)) {
+  if (!tcp_send_syn(server, syn_seq, true)) {
     cell_release_open_file(server);
     tcp_pending[pending_slot] = (struct tcp_pending_conn){0};
   }
@@ -770,10 +718,7 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
                                 const void *options, size_t options_len, const void *payload, size_t len) {
   if (file->tcp_state == TCP_SYN_SENT && (flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK) && ack == file->tcp_seq) {
     if (file->tcp_syn_retries == 0) { tcp_note_rtt_sample(file, file->tcp_syn_sent_tick, cell_uptime_ticks()); }
-    struct net_tcp_options decoded = spore_net_decode_tcp_options(options, options_len);
-    file->tcp_remote_window_scale = decoded.window_scale;
-    file->tcp_remote_mss = decoded.mss;
-    tcp_update_remote_window(file, window);
+    tcp_apply_syn_options(file, window, options, options_len);
     file->tcp_ack = seq + 1;
     file->tcp_state = TCP_ESTABLISHED;
     file->tcp_syn_retries = 0;
@@ -785,7 +730,7 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
     return true;
   }
   if (file->tcp_state == TCP_SYN_RECEIVED && (flags & TCP_ACK) != 0 && ack == file->tcp_seq) {
-    tcp_update_remote_window(file, window);
+    file->tcp_remote_window = (uint32_t)window << file->tcp_remote_window_scale;
     file->tcp_state = TCP_ESTABLISHED;
     tcp_note_activity(file, cell_uptime_ticks());
     cell_socket_wake_file(file);
@@ -816,7 +761,7 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
     return true;
   }
   tcp_note_activity(file, cell_uptime_ticks());
-  tcp_update_remote_window(file, window);
+  file->tcp_remote_window = (uint32_t)window << file->tcp_remote_window_scale;
   if ((flags & TCP_ACK) != 0) { tcp_tx_ack(file, ack); }
   uint32_t packet_fin_seq = seq + (uint32_t)len;
   if (len != 0) {
@@ -935,7 +880,7 @@ static void tcp_timer_file(struct open_file *file, uint64_t now_ticks) {
       return;
     }
     uint32_t syn_seq = file->tcp_seq - 1;
-    if (!tcp_send_syn(file, syn_seq)) {
+    if (!tcp_send_syn(file, syn_seq, false)) {
       file->tcp_error = EIO;
       file->tcp_state = TCP_CLOSED;
       file->tcp_retransmit_deadline_tick = 0;

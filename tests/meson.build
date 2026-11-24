@@ -130,7 +130,9 @@ test('net', test_net)
 
 test_tcp_tx = executable('test_tcp_transmit', tcp_tx_sources + pmm_sources, 'test_tcp_transmit.c',
   link_with: host_mem,
-  include_directories: test_include,
+  link_args: host_kernel_rust.full_path(),
+  link_depends: host_kernel_rust,
+  include_directories: test_include + [include_directories('../kernel')],
   native: true)
 
 test('tcp-transmit', test_tcp_tx)
