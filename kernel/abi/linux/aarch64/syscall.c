@@ -656,17 +656,10 @@ l_close:
 l_close_range: {
   const uint64_t close_range_unshare = 1u << 1;
   const uint64_t close_range_cloexec = 1u << 2;
-  if (a0 > a1) { return -(int64_t)EINVAL; }
+  if ((unsigned)a0 > (unsigned)a1) { return -(int64_t)EINVAL; }
   if ((a2 & ~(close_range_unshare | close_range_cloexec)) != 0) { return -(int64_t)EINVAL; }
   if ((a2 & close_range_unshare) != 0) { return -(int64_t)EOPNOTSUPP; }
-  uint64_t last = a1 >= MAX_FDS ? MAX_FDS - 1 : a1;
-  for (uint64_t fd = a0; fd <= last; ++fd) {
-    if ((a2 & close_range_cloexec) != 0) {
-      if (cell_fd_get_fd_flags((int)fd) >= 0) { (void)cell_fd_set_fd_flags((int)fd, FD_CLOEXEC); }
-    } else {
-      (void)cell_fd_close((int)fd);
-    }
-  }
+  cell_close_fd_range((unsigned)a0, (unsigned)a1, (a2 & close_range_cloexec) != 0);
   return 0;
 }
 l_pipe2:

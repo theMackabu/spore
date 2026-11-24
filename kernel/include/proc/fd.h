@@ -172,6 +172,7 @@ void cell_close_exec_fds(struct domain *domain);
 int cell_next_open_fd(struct domain *domain, unsigned start);
 void cell_retain_open_file(struct open_file *file);
 void cell_release_open_file(struct open_file *file);
+void cell_close_fd_range(unsigned first, unsigned last, bool cloexec);
 void cell_close_all_fds(struct domain *domain);
 bool cell_init_stdio(struct domain *domain);
 bool cell_copy_fd_table(struct domain *dst, const struct domain *src);
