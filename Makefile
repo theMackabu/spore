@@ -13,9 +13,16 @@ RUN_CMD = cd "$(CURDIR)" && $(RUN_QEMU) --mode plain --vars "$(EDK2_VARS)" --ima
 
 .DEFAULT_GOAL := all
 
-.PHONY: all setup build image test-image runner run-root reset-disk test-run-root test run-reset run run-tests run-shell-check benchmark bench-inodes rng-smoke kill format fetch clean
+.PHONY: cli test-appliance bench-appliance all setup build image test-image runner run-root reset-disk test-run-root test run-reset run run-tests run-shell-check benchmark bench-inodes rng-smoke kill format fetch clean
 
-all: image test-image runner
+all: image test-image runner cli
+
+cli: setup
+	$(NINJA) -C "$(BUILD_DIR)" appliance-cli
+
+test-appliance bench-appliance: cli
+	$(NINJA) -C "$(BUILD_DIR)" userland/prebuilt/ant
+	BUILD_DIR="$(abspath $(BUILD_DIR))" python3 tests/appliance/check.py $(if $(filter bench-appliance,$@),--sweep,)
 
 setup:
 	@test -f "$(BUILD_DIR)/build.ninja" || $(MESON) setup "$(BUILD_DIR)" --cross-file cross/aarch64-elf.ini
