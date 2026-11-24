@@ -453,6 +453,21 @@ static void test_relative_symlink_with_dotdot(struct ext2_fs *fs) {
   assert(resolved.size == sizeof(payload) - 1);
 }
 
+static void test_full_length_names(struct ext2_fs *fs) {
+  char path[1 + EXT2_NAME_MAX + 1] = "/";
+  memset(path + 1, 'a', EXT2_NAME_MAX);
+  struct ext2_node a, b, found;
+  assert(ext2_create(fs, path, false, 0644, &a));
+  path[EXT2_NAME_MAX] = 'b';
+  assert(ext2_create(fs, path, false, 0644, &b) && b.ino != a.ino);
+  assert(ext2_lookup(fs, path, &found) && found.ino == b.ino);
+  assert(ext2_drop_cache(fs));
+  path[EXT2_NAME_MAX] = 'a';
+  assert(ext2_lookup(fs, path, &found) && found.ino == a.ino);
+  path[EXT2_NAME_MAX] = 'b';
+  assert(ext2_lookup(fs, path, &found) && found.ino == b.ino);
+}
+
 static void test_mutations(const char *image_path) {
   char tmp_path[256];
   snprintf(tmp_path, sizeof(tmp_path), "/tmp/spore-ext2-test-%ld.img", (long)getpid());
@@ -474,6 +489,7 @@ static void test_mutations(const char *image_path) {
 
   test_large_file_write(&fs);
   test_relative_symlink_with_dotdot(&fs);
+  test_full_length_names(&fs);
 
   assert(ext2_create(&fs, "/empty-dir", true, 0755, NULL));
   assert(ext2_unlink(&fs, "/empty-dir"));

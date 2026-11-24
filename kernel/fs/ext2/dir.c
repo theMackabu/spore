@@ -8,13 +8,12 @@ enum {
 };
 
 struct child_cache_entry {
-  bool valid;
   struct ext2_fs *fs;
   uint32_t parent_ino;
   uint32_t ino;
-  uint32_t name_len;
-  char name[EXT2_NAME_MAX + 1];
   uint16_t next;
+  uint8_t name_len;
+  char name[EXT2_NAME_MAX];
 };
 
 struct cached_inode {
@@ -151,12 +150,12 @@ static void child_cache_erase(struct child_cache_entry *entry) {
     slot = &child_cache[*slot - 1].next;
   }
   if (*slot) { *slot = entry->next; }
-  entry->valid = false;
+  entry->fs = NULL;
 }
 
 void ext2_dir_drop_cache(struct ext2_fs *fs) {
   for (size_t i = 0; i < CHILD_CACHE_ENTRIES; ++i) {
-    if (child_cache[i].valid && child_cache[i].fs == fs) { child_cache_erase(&child_cache[i]); }
+    if (child_cache[i].fs == fs) { child_cache_erase(&child_cache[i]); }
     if (inode_cache[i].fs == fs) { inode_cache[i].fs = NULL; }
   }
   for (size_t i = 0; i < CHILD_PARENT_CACHE_ENTRIES; ++i) {
@@ -202,14 +201,13 @@ static void child_cache_store(struct ext2_fs *fs, uint32_t parent_ino, const cha
   struct child_cache_entry *entry = child_cache_find(fs, parent_ino, name, len);
   if (entry == NULL) {
     entry = &child_cache[child_next_slot++ % CHILD_CACHE_ENTRIES];
-    if (entry->valid) {
+    if (entry->fs != NULL) {
       child_parent_cache_set(entry->fs, entry->parent_ino, false);
       child_cache_erase(entry);
     }
-    entry->valid = true;
     entry->fs = fs;
     entry->parent_ino = parent_ino;
-    entry->name_len = (uint32_t)len;
+    entry->name_len = (uint8_t)len;
     kmemcpy(entry->name, name, len);
     uint32_t bucket = child_name_bucket(parent_ino, name, len);
     entry->next = child_buckets[bucket];
@@ -515,7 +513,7 @@ static bool ext2_lookup_inner(struct ext2_fs *fs, const char *path, struct ext2_
       return ext2_lookup_inner(fs, combined, out, follow_final, depth + 1);
     }
     cur = next;
-    if (!append_path_component(parent_path, sizeof(parent_path), start, len)) { return false; }
+    if (!final && !append_path_component(parent_path, sizeof(parent_path), start, len)) { return false; }
   }
   *out = cur;
   return true;
