@@ -197,6 +197,35 @@ static int growdown_mmap_regression(void) {
   return ok;
 }
 
+static int file_mapping_access(void) {
+  size_t page = 4096;
+  const char *path = "/tmp/mmap-access";
+  int writer = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+  int reader = open(path, O_RDONLY);
+  int ok = writer >= 0 && reader >= 0 && write(writer, "F", 1) == 1;
+  char *original = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (original != MAP_FAILED) {
+    original[0] = 'A';
+    void *replacement = mmap(original, page, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, reader, 0);
+    ok = ok && replacement == MAP_FAILED && errno == EACCES && original[0] == 'A';
+    replacement = mmap(original, page, PROT_READ, MAP_FIXED | MAP_PRIVATE, writer, 0);
+    ok = ok && replacement == MAP_FAILED && errno == EACCES && original[0] == 'A';
+    char *copy = mmap(original, page, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE, reader, 0);
+    if (copy == original) {
+      ok = ok && copy[0] == 'F';
+      copy[0] = 'C';
+      char data;
+      ok = ok && pread(reader, &data, 1, 0) == 1 && data == 'F';
+    } else { ok = 0; }
+    munmap(original, page);
+  } else { ok = 0; }
+  if (reader >= 0) { close(reader); }
+  if (writer >= 0) { close(writer); }
+  unlink(path);
+  printf("[spore] file mapping access: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int mmap_fixed_noreplace_regression(void) {
   char *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   int ok = map != MAP_FAILED;
@@ -250,6 +279,6 @@ static int mmap_noreserve_regression(void) {
 int integration_memory_suite(void) {
   return shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
-         mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mmap_past_reservation(false) &&
+         file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mmap_past_reservation(false) &&
          mmap_past_reservation(true);
 }

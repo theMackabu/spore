@@ -32,6 +32,13 @@ enum {
   EEXIST = 17,
   EINVAL = 22,
   EPERM = 1,
+  EBADF = 9,
+  EACCES = 13,
+  ENODEV = 19,
+  O_ACCMODE = 3,
+  O_RDONLY = 0,
+  O_RDWR = 2,
+  O_PATH = 010000000,
 };
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
@@ -64,7 +71,7 @@ static bool find_free_mmap_range(uint64_t len, uint64_t *base_out) {
 
 int64_t sys_brk(uint64_t requested) {
   struct user_address_space *as = syscall_active_as();
-  if (requested == 0 || requested < as->brk_base) { return (int64_t)as->brk_current; }
+  if (requested < as->brk_base || requested > USER_VA_LIMIT || requested == 0) { return (int64_t)as->brk_current; }
   uint64_t old_end = align_up(as->brk_current, PAGE_SIZE);
   uint64_t new_end = align_up(requested, PAGE_SIZE);
   if (new_end < requested) { return (int64_t)as->brk_current; }
@@ -86,19 +93,36 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   bool anon = (flags & MAP_ANONYMOUS) != 0;
   bool private = (flags & MAP_PRIVATE) != 0;
   bool shared = (flags & MAP_SHARED) != 0;
-  if (len == 0 || private == shared || (!anon && (int64_t)fd < 0)) { return -(int64_t)EINVAL; }
+  if (!len || private == shared || (off & (PAGE_SIZE - 1))) { return -EINVAL; }
   bool fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
+  if (fixed && (addr & (PAGE_SIZE - 1))) { return -EINVAL; }
+  if (len > USER_VA_LIMIT) { return -ENOMEM; }
   uint64_t size = align_up(len, PAGE_SIZE);
-  if (size < len) { return -(int64_t)EINVAL; }
   uint64_t base = align_down(addr, PAGE_SIZE);
-  uint64_t end;
-  if (!checked_add(base, size, &end)) { return -(int64_t)EINVAL; }
-  bool automatic = !fixed && (addr == 0 || end > USER_VA_LIMIT || cell_vma_overlaps(base, end));
+  bool fits = base <= USER_VA_LIMIT - size;
+  if (fixed && !fits) { return -ENOMEM; }
+  uint64_t end = fits ? base + size : 0;
+  bool automatic = !fixed && (addr == 0 || !fits || cell_vma_overlaps(base, end));
   if (automatic) {
     if (!find_free_mmap_range(size, &base)) { return -(int64_t)ENOMEM; }
     end = base + size;
   }
   if ((flags & MAP_FIXED_NOREPLACE) != 0 && cell_vma_overlaps(base, end)) { return -(int64_t)EEXIST; }
+  struct vfs_node node;
+  if (!anon) {
+    struct domain *domain = cell_current_domain_internal();
+    if (!domain || fd >= MAX_FDS || !domain->fds[fd]) { return -EBADF; }
+    struct open_file *file = domain->fds[fd];
+    uint32_t access = file->flags & O_ACCMODE;
+    if (file->flags & O_PATH) { return -EBADF; }
+    if (access != O_RDONLY && access != O_RDWR) { return -EACCES; }
+    if (shared && (prot & PROT_WRITE) && access != O_RDWR) { return -EACCES; }
+    if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir ||
+        (file->node.backend != VFS_EXT2 && file->node.backend != VFS_RAMFS)) { return -ENODEV; }
+    if (!vfs_refresh(&file->node, &node)) { return -ENODEV; }
+    if (off > UINT64_MAX - size) { return -EINVAL; }
+    if (shared && (prot & PROT_WRITE) && vfs_shared_writable_mmap_sealed(&node)) { return -EPERM; }
+  }
   if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }
   if ((flags & MAP_FIXED) != 0 && !cell_remove_vma(base, end)) { return -(int64_t)ENOMEM; }
   if (anon) {
@@ -109,11 +133,6 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
       return -(int64_t)ENOMEM;
     }
   } else {
-    struct vfs_node node;
-    if (!cell_fd_stat((int)fd, &node) || node.is_dir || node.device != RAMFS_DEV_NONE) { return -(int64_t)EINVAL; }
-    if (shared && (prot_to_vmm(prot) & VMM_USER_WRITE) != 0 && vfs_shared_writable_mmap_sealed(&node)) {
-      return -(int64_t)EPERM;
-    }
     if (!cell_add_file_vma(base, end, prot_to_vmm(prot), (uint32_t)flags, &node, base, off, len)) {
       return -(int64_t)ENOMEM;
     }
