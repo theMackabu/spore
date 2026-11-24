@@ -26,6 +26,17 @@ static int read_wait_mask(uint64_t addr, uint64_t size, uint64_t *mask) {
            ? 0 : -EFAULT;
 }
 
+static int read_timeout(uint64_t addr, uint64_t *ticks) {
+  *ticks = 0;
+  if (!addr) { return 0; }
+  struct timespec64 timeout;
+  if (!syscall_user_readable(addr, sizeof(timeout)) ||
+      !vmm_copy_from_user(syscall_active_as(), &timeout, addr, sizeof(timeout))) { return -EFAULT; }
+  if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 || timeout.tv_nsec >= 1000000000) { return -EINVAL; }
+  if (timeout.tv_sec || timeout.tv_nsec) { *ticks = timespec_to_scheduler_ticks(&timeout); }
+  return 0;
+}
+
 int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
                   uint64_t sigsetsize) {
   if (nfds > cell_current_domain_internal()->nofile_soft) { return -(int64_t)EINVAL; }
@@ -35,36 +46,20 @@ int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_
     return -(int64_t)EFAULT;
   }
 
-  struct timespec64 timeout = {.tv_sec = 0, .tv_nsec = 0};
-  bool has_timeout = timeout_addr != 0;
-  uint64_t timeout_ticks = 0;
-  if (has_timeout) {
-    if (!syscall_user_readable(timeout_addr, sizeof(timeout)) ||
-        !vmm_copy_from_user(syscall_active_as(), &timeout, timeout_addr, sizeof(timeout))) {
-      return -(int64_t)EFAULT;
-    }
-    if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 || timeout.tv_nsec >= 1000000000) { return -(int64_t)EINVAL; }
-    if (timeout.tv_sec != 0 || timeout.tv_nsec != 0) { timeout_ticks = timespec_to_scheduler_ticks(&timeout); }
-  }
+  uint64_t timeout_ticks;
+  int rc = read_timeout(timeout_addr, &timeout_ticks);
+  if (rc) { return rc; }
   uint64_t mask;
-  int rc = read_wait_mask(sigmask, sigsetsize, &mask);
+  rc = read_wait_mask(sigmask, sigsetsize, &mask);
   if (rc < 0) { return rc; }
-  return cell_ppoll_current(fds, nfds, has_timeout, timeout_ticks, sigmask ? &mask : NULL, frame);
+  return cell_ppoll_current(fds, nfds, timeout_addr != 0, timeout_ticks, sigmask ? &mask : NULL, frame);
 }
 
 int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds,
                      uint64_t timeout_addr, uint64_t sigmask_data) {
-  struct timespec64 timeout = {.tv_sec = 0, .tv_nsec = 0};
-  bool has_timeout = timeout_addr != 0;
-  uint64_t timeout_ticks = 0;
-  if (has_timeout) {
-    if (!syscall_user_readable(timeout_addr, sizeof(timeout)) ||
-        !vmm_copy_from_user(syscall_active_as(), &timeout, timeout_addr, sizeof(timeout))) {
-      return -(int64_t)EFAULT;
-    }
-    if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 || timeout.tv_nsec >= 1000000000) { return -(int64_t)EINVAL; }
-    if (timeout.tv_sec != 0 || timeout.tv_nsec != 0) { timeout_ticks = timespec_to_scheduler_ticks(&timeout); }
-  }
+  uint64_t timeout_ticks;
+  int rc = read_timeout(timeout_addr, &timeout_ticks);
+  if (rc) { return rc; }
   struct pselect6_sigmask64 signal_data = {0};
   if (sigmask_data != 0 &&
       (!syscall_user_readable(sigmask_data, sizeof(signal_data)) ||
@@ -72,9 +67,9 @@ int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, 
     return -(int64_t)EFAULT;
   }
   uint64_t mask;
-  int rc = read_wait_mask(signal_data.sigmask, signal_data.sigsetsize, &mask);
+  rc = read_wait_mask(signal_data.sigmask, signal_data.sigsetsize, &mask);
   if (rc < 0) { return rc; }
-  return cell_pselect6_current(nfds, readfds, writefds, exceptfds, has_timeout, timeout_ticks,
+  return cell_pselect6_current(nfds, readfds, writefds, exceptfds, timeout_addr != 0, timeout_ticks,
                                signal_data.sigmask ? &mask : NULL, frame);
 }
 

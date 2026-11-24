@@ -30,43 +30,27 @@ int64_t sys_pwrite64(uint64_t fd, uint64_t buf, uint64_t len, uint64_t off) {
   return cell_fd_positioned_io((int)fd, buf, len, (int64_t)off, true);
 }
 
-int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt) {
+int64_t sys_vector_io(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt, bool write) {
   if (iovcnt > MAX_IOVCNT) { return -(int64_t)EINVAL; }
   uint64_t iov_bytes = iovcnt * sizeof(struct iovec64);
   if (!syscall_user_readable(iov, iov_bytes)) {
     return -(int64_t)EFAULT;
   }
 
-  if (cell_fd_is_datagram((int)fd)) { return cell_fd_dgram_writev((int)fd, iov, (int32_t)iovcnt); }
+  if (cell_fd_is_datagram((int)fd)) {
+    return write ? cell_fd_dgram_writev((int)fd, iov, (int32_t)iovcnt)
+                 : cell_fd_dgram_readv((int)fd, iov, (int32_t)iovcnt, frame);
+  }
   int64_t total = 0;
   for (uint64_t i = 0; i < iovcnt; ++i) {
     struct iovec64 v;
     if (!vmm_copy_from_user(syscall_active_as(), &v, iov + i * sizeof(v), sizeof(v))) { return -(int64_t)EFAULT; }
-    int64_t wrote = sys_write(total == 0 ? frame : NULL, fd, v.base, v.len);
-    if (wrote == CELL_SWITCHED) { return wrote; }
-    if (wrote < 0) { return total == 0 ? wrote : total; }
-    total += wrote;
-    if ((uint64_t)wrote != v.len) { break; }
-  }
-  return total;
-}
-
-int64_t sys_readv(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt) {
-  if (iovcnt > MAX_IOVCNT) { return -(int64_t)EINVAL; }
-  uint64_t iov_bytes = iovcnt * sizeof(struct iovec64);
-  if (!syscall_user_readable(iov, iov_bytes)) {
-    return -(int64_t)EFAULT;
-  }
-  if (cell_fd_is_datagram((int)fd)) { return cell_fd_dgram_readv((int)fd, iov, (int32_t)iovcnt, frame); }
-  int64_t total = 0;
-  for (uint64_t i = 0; i < iovcnt; ++i) {
-    struct iovec64 v;
-    if (!vmm_copy_from_user(syscall_active_as(), &v, iov + i * sizeof(v), sizeof(v))) { return -(int64_t)EFAULT; }
-    int64_t got = sys_read(total == 0 ? frame : NULL, fd, v.base, v.len);
-    if (got == CELL_SWITCHED) { return got; }
-    if (got < 0) { return total == 0 ? got : total; }
-    total += got;
-    if ((uint64_t)got != v.len) { break; }
+    struct trap_frame *wait = total == 0 ? frame : NULL;
+    int64_t count = write ? sys_write(wait, fd, v.base, v.len) : sys_read(wait, fd, v.base, v.len);
+    if (count == CELL_SWITCHED) { return count; }
+    if (count < 0) { return total == 0 ? count : total; }
+    total += count;
+    if ((uint64_t)count != v.len) { break; }
   }
   return total;
 }

@@ -248,9 +248,9 @@ l_read:
 l_write:
   return sys_write(f, a0, a1, a2);
 l_readv:
-  return sys_readv(f, a0, a1, a2);
+  return sys_vector_io(f, a0, a1, a2, false);
 l_writev:
-  return sys_writev(f, a0, a1, a2);
+  return sys_vector_io(f, a0, a1, a2, true);
 l_pread64:
   return sys_pread64(a0, a1, a2, a3);
 l_pwrite64:
@@ -274,7 +274,7 @@ l_inotify_add_watch:
 l_inotify_rm_watch:
   return sys_inotify_rm_watch(a0, a1);
 l_nanosleep:
-  return sys_nanosleep(f, a0, a1);
+  return sys_clock_nanosleep(f, 1, 0, a0, a1);
 l_clock_nanosleep:
   return sys_clock_nanosleep(f, a0, a1, a2, a3);
 l_exit:
@@ -419,7 +419,7 @@ l_bind:
 l_listen:
   return sys_listen(a0, a1);
 l_accept:
-  return sys_accept(f, a0, a1, a2);
+  return sys_accept4(f, a0, a1, a2, 0);
 l_accept4:
   return sys_accept4(f, a0, a1, a2, a3);
 l_connect:
@@ -433,9 +433,9 @@ l_sendmsg:
 l_recvmsg:
   return sys_recvmsg(f, a0, a1, a2);
 l_getsockname:
-  return sys_getsockname(a0, a1, a2);
+  return sys_socket_name(a0, a1, a2, false);
 l_getpeername:
-  return sys_getpeername(a0, a1, a2);
+  return sys_socket_name(a0, a1, a2, true);
 l_setsockopt:
   return sys_setsockopt(a0, a1, a2, a3, a4);
 l_getsockopt:

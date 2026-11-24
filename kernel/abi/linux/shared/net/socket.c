@@ -139,12 +139,6 @@ int64_t sys_listen(uint64_t fd, uint64_t backlog) {
   return rc < 0 ? (int64_t)rc : 0;
 }
 
-int64_t sys_accept(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64_t addrlen) {
-  int rc = cell_fd_tcp_accept((int)fd, addr, addrlen, 0, frame);
-  if (rc == -EBADF) { rc = cell_fd_unix_accept((int)fd, 0, frame); }
-  return rc == CELL_SWITCHED ? CELL_SWITCHED : (int64_t)rc;
-}
-
 int64_t sys_accept4(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64_t addrlen, uint64_t flags) {
   if ((flags & ~(uint64_t)(O_NONBLOCK | O_CLOEXEC)) != 0) { return -(int64_t)EINVAL; }
   int rc = cell_fd_tcp_accept((int)fd, addr, addrlen, (int)flags, frame);
@@ -160,11 +154,10 @@ int64_t sys_sendto(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t
     if (tcp == -(int64_t)EPIPE && (flags & MSG_NOSIGNAL) == 0 && frame != NULL && cell_signal_current(SIGPIPE, frame)) {
       return CELL_SWITCHED;
     }
-    if (tcp != -EBADF && tcp != -9) { return tcp; }
+    if (tcp != -EBADF) { return tcp; }
     int64_t udp = cell_fd_udp_send((int)fd, 0, 0, buf, len);
     if (udp != -EBADF) { return udp; }
-    int64_t rc = cell_fd_write((int)fd, buf, len, frame);
-    return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
+    return cell_fd_write((int)fd, buf, len, frame);
   }
   uint32_t ip = 0;
   uint16_t port = 0;
@@ -183,30 +176,16 @@ int64_t sys_recvfrom(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64
   return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
 }
 
-int64_t sys_getsockname(uint64_t fd, uint64_t addr, uint64_t addrlen) {
+int64_t sys_socket_name(uint64_t fd, uint64_t addr, uint64_t addrlen, bool peer) {
   if (addr == 0 || addrlen == 0 || !syscall_user_writable(addrlen, sizeof(uint32_t))) { return -(int64_t)EFAULT; }
   uint32_t len = sizeof(struct sockaddr_in64);
   (void)vmm_copy_to_user(syscall_active_as(), addrlen, &len, sizeof(len));
   if (!syscall_user_writable(addr, sizeof(struct sockaddr_in64))) { return -(int64_t)EFAULT; }
   uint32_t ip = 0;
   uint16_t port = 0;
-  if (!cell_fd_socket_local_addr((int)fd, &ip, &port)) { return -(int64_t)EBADF; }
-  struct sockaddr_in64 sa = {
-    .sin_family = AF_INET,
-    .sin_port = __builtin_bswap16(port),
-    .sin_addr = ip,
-  };
-  return vmm_copy_to_user(syscall_active_as(), addr, &sa, sizeof(sa)) ? 0 : -(int64_t)EFAULT;
-}
-
-int64_t sys_getpeername(uint64_t fd, uint64_t addr, uint64_t addrlen) {
-  if (addr == 0 || addrlen == 0 || !syscall_user_writable(addrlen, sizeof(uint32_t))) { return -(int64_t)EFAULT; }
-  uint32_t len = sizeof(struct sockaddr_in64);
-  (void)vmm_copy_to_user(syscall_active_as(), addrlen, &len, sizeof(len));
-  if (!syscall_user_writable(addr, sizeof(struct sockaddr_in64))) { return -(int64_t)EFAULT; }
-  uint32_t ip = 0;
-  uint16_t port = 0;
-  if (!cell_fd_socket_peer_addr((int)fd, &ip, &port)) { return -(int64_t)ENOTCONN; }
+  if (peer) {
+    if (!cell_fd_socket_peer_addr((int)fd, &ip, &port)) { return -ENOTCONN; }
+  } else if (!cell_fd_socket_local_addr((int)fd, &ip, &port)) { return -EBADF; }
   struct sockaddr_in64 sa = {
     .sin_family = AF_INET,
     .sin_port = __builtin_bswap16(port),

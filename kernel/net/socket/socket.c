@@ -1,3 +1,4 @@
+#include "abi/linux/shared/socket_options.h"
 #include "internal.h"
 
 #include "proc/accounting.h"
@@ -13,28 +14,6 @@ enum {
   SOL_SOCKET = 1,
   SOCK_STREAM = 1,
   SOCK_DGRAM = 2,
-  IPPROTO_IP = 0,
-  SO_REUSEADDR = 2,
-  SO_DONTROUTE = 5,
-  SO_BROADCAST = 6,
-  SO_SNDBUF = 7,
-  SO_RCVBUF = 8,
-  SO_KEEPALIVE = 9,
-  SO_REUSEPORT = 15,
-  SO_RCVLOWAT = 18,
-  SO_SNDLOWAT = 19,
-  IP_TOS = 1,
-  IP_TTL = 2,
-  IP_RECVTTL = 12,
-  IP_MTU_DISCOVER = 10,
-  IP_BIND_ADDRESS_NO_PORT = 24,
-  TCP_NODELAY = 1,
-  TCP_KEEPIDLE = 4,
-  TCP_KEEPINTVL = 5,
-  TCP_KEEPCNT = 6,
-  TCP_USER_TIMEOUT = 18,
-  TCP_FASTOPEN = 23,
-  TCP_FASTOPEN_CONNECT = 30,
   ENOPROTOOPT = 92,
   DEFAULT_SOCKET_BUFFER = 262144,
   TCP_SEND_BUFFER_CAP = CELL_TCP_TX_CAP * CELL_TCP_TX_QUEUE_CAP,

@@ -62,12 +62,7 @@ struct termios64 {
 _Static_assert(sizeof(struct termios64) == 36, "linux arm64 TCGETS termios ABI size");
 
 struct termios2_64 {
-  uint32_t c_iflag;
-  uint32_t c_oflag;
-  uint32_t c_cflag;
-  uint32_t c_lflag;
-  uint8_t c_line;
-  uint8_t c_cc[NCCS];
+  struct termios64 base;
   uint32_t c_ispeed;
   uint32_t c_ospeed;
 };
@@ -282,70 +277,22 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     }
     return cell_fd_set_fd_flags((int)fd, flags);
   }
-  if (req == TCGETS) {
+  if (req == TCGETS || req == TCGETS2) {
     int64_t tty = require_tty_fd(fd);
-    if (tty != 0) { return tty; }
-    struct open_file *file = fd_file(fd);
-    struct termios64 tio;
-    fill_termios(file, &tio);
-    return syscall_user_writable(arg, sizeof(tio)) && vmm_copy_to_user(syscall_active_as(), arg, &tio, sizeof(tio))
-             ? 0
-             : -(int64_t)EFAULT;
+    if (tty) { return tty; }
+    struct termios2_64 tio = {.c_ispeed = 38400, .c_ospeed = 38400};
+    fill_termios(fd_file(fd), &tio.base);
+    size_t size = req == TCGETS2 ? sizeof(tio) : sizeof(tio.base);
+    return syscall_user_writable(arg, size) && vmm_copy_to_user(syscall_active_as(), arg, &tio, size) ? 0 : -EFAULT;
   }
-  if (req == TCGETS2) {
+  bool extended = req == TCSETS2 || req == TCSETSW2 || req == TCSETSF2;
+  if (extended || req == TCSETS || req == TCSETSW || req == TCSETSF) {
     int64_t tty = require_tty_fd(fd);
-    if (tty != 0) { return tty; }
-    struct open_file *file = fd_file(fd);
-    struct termios64 base;
-    fill_termios(file, &base);
-    struct termios2_64 tio = {
-      .c_iflag = base.c_iflag,
-      .c_oflag = base.c_oflag,
-      .c_cflag = base.c_cflag,
-      .c_lflag = base.c_lflag,
-      .c_line = base.c_line,
-      .c_cc = {0},
-      .c_ispeed = 38400,
-      .c_ospeed = 38400,
-    };
-    for (uint32_t i = 0; i < NCCS; ++i) {
-      tio.c_cc[i] = base.c_cc[i];
-    }
-    return syscall_user_writable(arg, sizeof(tio)) && vmm_copy_to_user(syscall_active_as(), arg, &tio, sizeof(tio))
-             ? 0
-             : -(int64_t)EFAULT;
-  }
-  if (req == TCSETS || req == TCSETSW || req == TCSETSF) {
-    int64_t tty = require_tty_fd(fd);
-    if (tty != 0) { return tty; }
-    struct termios64 tio;
-    if (!syscall_user_readable(arg, sizeof(tio)) || !vmm_copy_from_user(syscall_active_as(), &tio, arg, sizeof(tio))) {
-      return -(int64_t)EFAULT;
-    }
-    struct open_file *file = fd_file(fd);
-    apply_termios(file, &tio);
-    return 0;
-  }
-  if (req == TCSETS2 || req == TCSETSW2 || req == TCSETSF2) {
-    int64_t tty = require_tty_fd(fd);
-    if (tty != 0) { return tty; }
-    struct termios2_64 tio2;
-    if (!syscall_user_readable(arg, sizeof(tio2)) ||
-        !vmm_copy_from_user(syscall_active_as(), &tio2, arg, sizeof(tio2))) {
-      return -(int64_t)EFAULT;
-    }
-    struct termios64 tio = {
-      .c_iflag = tio2.c_iflag,
-      .c_oflag = tio2.c_oflag,
-      .c_cflag = tio2.c_cflag,
-      .c_lflag = tio2.c_lflag,
-      .c_line = tio2.c_line,
-      .c_cc = {0},
-    };
-    for (uint32_t i = 0; i < NCCS; ++i) {
-      tio.c_cc[i] = tio2.c_cc[i];
-    }
-    apply_termios(fd_file(fd), &tio);
+    if (tty) { return tty; }
+    struct termios2_64 tio;
+    size_t size = extended ? sizeof(tio) : sizeof(tio.base);
+    if (!syscall_user_readable(arg, size) || !vmm_copy_from_user(syscall_active_as(), &tio, arg, size)) { return -EFAULT; }
+    apply_termios(fd_file(fd), &tio.base);
     return 0;
   }
   cell_note_unsupported_ioctl(req);

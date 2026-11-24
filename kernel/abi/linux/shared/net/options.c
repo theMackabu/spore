@@ -1,45 +1,11 @@
+#include "abi/linux/shared/socket_options.h"
 #include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
 #include "socket_abi.h"
 #include "abi/linux/shared/layout.h"
 #include "net/socket.h"
 
-enum {
-  IPPROTO_IP = 0,
-  SO_TYPE = 3,
-  SO_REUSEADDR = 2,
-  SO_ERROR = 4,
-  SO_DONTROUTE = 5,
-  SO_BROADCAST = 6,
-  SO_SNDBUF = 7,
-  SO_RCVBUF = 8,
-  SO_KEEPALIVE = 9,
-  SO_LINGER = 13,
-  SO_REUSEPORT = 15,
-  SO_PEERCRED = 17,
-  SO_RCVLOWAT = 18,
-  SO_SNDLOWAT = 19,
-  SO_RCVTIMEO_OLD = 20,
-  SO_SNDTIMEO_OLD = 21,
-  SO_ACCEPTCONN = 30,
-  SO_PROTOCOL = 38,
-  SO_DOMAIN = 39,
-  SO_RCVTIMEO_NEW = 66,
-  SO_SNDTIMEO_NEW = 67,
-  IP_TOS = 1,
-  IP_TTL = 2,
-  IP_RECVTTL = 12,
-  IP_MTU_DISCOVER = 10,
-  IP_BIND_ADDRESS_NO_PORT = 24,
-  TCP_NODELAY = 1,
-  TCP_KEEPIDLE = 4,
-  TCP_KEEPINTVL = 5,
-  TCP_KEEPCNT = 6,
-  TCP_USER_TIMEOUT = 18,
-  TCP_FASTOPEN = 23,
-  TCP_FASTOPEN_CONNECT = 30,
-  ENOPROTOOPT = 92,
-};
+constexpr int ENOPROTOOPT = 92;
 
 struct ucred64 {
   int32_t pid;
@@ -211,12 +177,19 @@ static int socket_copy_timeout_to_user(uint64_t optval, uint64_t optlen_addr, ui
            : -EFAULT;
 }
 
+static int set_int_option(uint64_t fd, uint64_t level, uint64_t optname, uint64_t optval, uint64_t optlen) {
+  int32_t value;
+  int rc = socket_option_int(optval, optlen, &value);
+  if (rc < 0) { return rc; }
+  rc = cell_fd_socket_set_int_option((int)fd, (int)level, (int)optname, value);
+  return rc < 0 ? rc : 0;
+}
+
 int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t optval, uint64_t optlen) {
   int32_t type = 0;
   int32_t proto = 0;
   if (!cell_fd_socket_info((int)fd, &type, &proto)) { return -(int64_t)EBADF; }
 
-  int32_t value = 0;
   if (level == SOL_SOCKET) {
     switch (optname) {
     case SO_REUSEADDR:
@@ -227,10 +200,7 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     case SO_RCVLOWAT:
     case SO_SNDBUF:
     case SO_RCVBUF: {
-      int rc = socket_option_int(optval, optlen, &value);
-      if (rc < 0) { return rc; }
-      rc = cell_fd_socket_set_int_option((int)fd, (int)level, (int)optname, value);
-      return rc < 0 ? (int64_t)rc : 0;
+      return set_int_option(fd, level, optname, optval, optlen);
     }
     case SO_LINGER: {
       if (optlen < sizeof(struct linger64) || !socket_option_readable(optval, sizeof(struct linger64))) {
@@ -266,10 +236,7 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     case TCP_USER_TIMEOUT:
     case TCP_FASTOPEN:
     case TCP_FASTOPEN_CONNECT: {
-      int rc = socket_option_int(optval, optlen, &value);
-      if (rc < 0) { return rc; }
-      rc = cell_fd_socket_set_int_option((int)fd, (int)level, (int)optname, value);
-      return rc < 0 ? (int64_t)rc : 0;
+      return set_int_option(fd, level, optname, optval, optlen);
     }
     default:
       return -(int64_t)ENOPROTOOPT;
@@ -283,10 +250,7 @@ int64_t sys_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     case IP_RECVTTL:
     case IP_MTU_DISCOVER:
     case IP_BIND_ADDRESS_NO_PORT: {
-      int rc = socket_option_int(optval, optlen, &value);
-      if (rc < 0) { return rc; }
-      rc = cell_fd_socket_set_int_option((int)fd, (int)level, (int)optname, value);
-      return rc < 0 ? (int64_t)rc : 0;
+      return set_int_option(fd, level, optname, optval, optlen);
     }
     default:
       return -(int64_t)ENOPROTOOPT;
