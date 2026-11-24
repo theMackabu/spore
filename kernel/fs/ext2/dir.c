@@ -380,15 +380,11 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
     uint32_t bi = step == 0 ? blocks - 1 : step - 1;
     uint32_t disk_block = 0;
     if (!ext2_file_block(fs, dir, bi, &disk_block) || disk_block == 0 || !ext2_read_block(fs, disk_block, block)) { continue; }
-    uint32_t off = 0;
-    while (off + 8 <= fs->block_size) {
-      uint16_t rec_len = (uint16_t)block[off + 4] | ((uint16_t)block[off + 5] << 8);
-      uint32_t old_ino = (uint32_t)block[off] | ((uint32_t)block[off + 1] << 8) | ((uint32_t)block[off + 2] << 16) |
-                         ((uint32_t)block[off + 3] << 24);
-      uint8_t old_name_len = block[off + 6];
-      if (rec_len < 8 || off + rec_len > fs->block_size) { break; }
-      uint16_t used = old_ino == 0 ? 0 : rec_len_for(old_name_len);
-      if (rec_len >= used + need) {
+    struct spore_ext2_dir_slot slot;
+    if (spore_ext2_find_dir_slot(block, fs->block_size, need, &slot)) {
+      uint32_t off = slot.offset;
+      uint16_t rec_len = slot.rec_len;
+      uint16_t used = slot.used;
         if (used == 0) {
           write_dir_record(block + off, ino, rec_len, name_len, type, name);
         } else {
@@ -402,8 +398,6 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
         bool ok = ext2_write_block(fs, disk_block, block) && ext2_write_inode(fs, dir);
         if (ok) { child_cache_store(fs, dir->ino, name, name_len, ino); }
         return ok;
-      }
-      off += rec_len;
     }
   }
 
@@ -429,21 +423,15 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
   for (uint32_t bi = 0; bi < blocks; ++bi) {
     uint32_t disk_block = 0;
     if (!ext2_file_block(fs, dir, bi, &disk_block) || disk_block == 0 || !ext2_read_block(fs, disk_block, block)) { continue; }
-    uint32_t off = 0;
-    uint32_t prev_off = UINT32_MAX;
-    while (off + 8 <= fs->block_size) {
-      uint32_t ino = (uint32_t)block[off] | ((uint32_t)block[off + 1] << 8) | ((uint32_t)block[off + 2] << 16) |
-                     ((uint32_t)block[off + 3] << 24);
-      uint16_t rec_len = (uint16_t)block[off + 4] | ((uint16_t)block[off + 5] << 8);
-      uint8_t name_len = block[off + 6];
-      if (rec_len < 8 || off + rec_len > fs->block_size) { break; }
-      if (ino != 0 && name_equals((const char *)block + off + 8, name_len, name)) {
-        if (ino_out != NULL) { *ino_out = ino; }
-        if (prev_off != UINT32_MAX) {
-          uint16_t prev_rec_len = (uint16_t)block[prev_off + 4] | ((uint16_t)block[prev_off + 5] << 8);
-          uint16_t merged = (uint16_t)(prev_rec_len + rec_len);
-          block[prev_off + 4] = (uint8_t)merged;
-          block[prev_off + 5] = (uint8_t)(merged >> 8);
+    struct spore_ext2_dir_match match;
+    if (spore_ext2_find_dir_name(block, fs->block_size, (const uint8_t *)name, kstrlen(name), &match)) {
+        uint32_t off = match.offset;
+        if (ino_out != NULL) { *ino_out = match.ino; }
+        if (match.prev_offset != UINT32_MAX) {
+          uint16_t prev_rec_len = (uint16_t)block[match.prev_offset + 4] | ((uint16_t)block[match.prev_offset + 5] << 8);
+          uint16_t merged = (uint16_t)(prev_rec_len + match.rec_len);
+          block[match.prev_offset + 4] = (uint8_t)merged;
+          block[match.prev_offset + 5] = (uint8_t)(merged >> 8);
         } else {
           block[off] = block[off + 1] = block[off + 2] = block[off + 3] = 0;
         }
@@ -453,9 +441,6 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
         bool ok = ext2_write_block(fs, disk_block, block) && ext2_write_inode(fs, dir);
         if (ok) { ext2_dir_cache_remove_name(fs, dir->ino, name); }
         return ok;
-      }
-      prev_off = off;
-      off += rec_len;
     }
   }
   return false;
