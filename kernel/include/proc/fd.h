@@ -16,7 +16,7 @@ enum open_file_type {
   OPEN_NONE,
   OPEN_STDIN,
   OPEN_STDOUT,
-  OPEN_RAMFS,
+  OPEN_VFS,
   OPEN_SOCKET,
   OPEN_PIPE,
   OPEN_UNIX_STREAM,

@@ -50,13 +50,13 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
   if (file->type == OPEN_PTY && cell_pty_file_hup(file)) { revents |= CELL_POLLHUP; }
   if ((events & CELL_POLLIN) != 0) {
     if (file->type == OPEN_STDIN ||
-        (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE))) {
+        (file->type == OPEN_VFS && (file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE))) {
       if (cell_tty_stdin_readable()) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_PIPE) {
       if (cell_pipe_file_readable(file)) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_PTY) {
       if (cell_pty_file_readable(file)) { revents |= CELL_POLLIN; }
-    } else if (file->type == OPEN_RAMFS) {
+    } else if (file->type == OPEN_VFS) {
       revents |= CELL_POLLIN;
     } else if (file->type == OPEN_EPOLL) {
       for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP; ++i) {
@@ -73,7 +73,7 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
   }
 
   if ((events & CELL_POLLOUT) != 0) {
-    if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_RAMFS || file->type == OPEN_EPOLL ||
+    if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_VFS || file->type == OPEN_EPOLL ||
         (file->type == OPEN_EVENTFD && file->eventfd_value < UINT64_MAX - 1)) {
       revents |= CELL_POLLOUT;
     } else if (file->type == OPEN_PIPE) {

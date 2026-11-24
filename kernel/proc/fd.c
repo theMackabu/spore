@@ -98,7 +98,7 @@ void cell_release_open_file(struct open_file *file) {
     } else if (file->type == OPEN_PTY) {
       cell_pty_release_file(file);
     }
-    if (file->type == OPEN_RAMFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
+    if (file->type == OPEN_VFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
     pool_free(&open_files, file);
   }
 }
@@ -284,13 +284,13 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
       cell_pipe_add_reader((uint8_t)pipe_id);
     }
   } else {
-    file->type = OPEN_RAMFS;
+    file->type = OPEN_VFS;
   }
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   file->node = *node;
   vfs_retain_node(&file->node);
   cell_copy_open_path(file, path);
-  if (file->type == OPEN_RAMFS && (flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
+  if (file->type == OPEN_VFS && (flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
   domain->fds[fd] = file;
   domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
   if (file->type == OPEN_PIPE) { cell_pipe_notify(); }
@@ -406,7 +406,7 @@ int cell_fd_add_seals(int fd, uint32_t seals) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
-  if (file->type != OPEN_RAMFS || file->node.device != RAMFS_DEV_NONE) { return -22; }
+  if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE) { return -22; }
   return vfs_add_seals(&file->node, seals);
 }
 
@@ -414,7 +414,7 @@ int cell_fd_get_seals(int fd) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
-  if (file->type != OPEN_RAMFS || file->node.device != RAMFS_DEV_NONE) { return -22; }
+  if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE) { return -22; }
   return vfs_get_seals(&file->node);
 }
 
@@ -432,7 +432,7 @@ int cell_fd_is_tty(int fd) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
   if (file->type == OPEN_STDIN || file->type == OPEN_STDOUT) { return 1; }
-  if (file->type == OPEN_RAMFS && (file->node.device == RAMFS_DEV_CONSOLE || file->node.device == RAMFS_DEV_TTY)) {
+  if (file->type == OPEN_VFS && (file->node.device == RAMFS_DEV_CONSOLE || file->node.device == RAMFS_DEV_TTY)) {
     return 1;
   }
   if (file->type == OPEN_PTY) { return 1; }
@@ -501,7 +501,7 @@ int cell_fd_get_dir_node(int fd, struct vfs_node *out, uint64_t *cursor) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
-  if (file->type != OPEN_RAMFS || !file->node.is_dir) { return -20; }
+  if (file->type != OPEN_VFS || !file->node.is_dir) { return -20; }
   *out = file->node;
   *cursor = file->offset;
   return 0;

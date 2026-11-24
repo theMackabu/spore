@@ -65,39 +65,6 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
   case RAMFS_DEV_PTMX:
   case RAMFS_DEV_PTS:
     return -EINVAL;
-  case RAMFS_DEV_PROCINFO:
-  case RAMFS_DEV_MEMINFO:
-  case RAMFS_DEV_CPUINFO:
-  case RAMFS_DEV_UPTIME:
-  case RAMFS_DEV_LOADAVG:
-  case RAMFS_DEV_MOUNTS:
-  case RAMFS_DEV_STAT:
-  case RAMFS_DEV_NET_DEV:
-  case RAMFS_DEV_KMSG:
-  case RAMFS_DEV_FILESYSTEMS:
-  case RAMFS_DEV_PARTITIONS:
-  case RAMFS_DEV_DEVICES:
-  case RAMFS_DEV_FSSTATS:
-  case RAMFS_DEV_PROC_PID_STAT:
-  case RAMFS_DEV_PROC_PID_STATUS:
-  case RAMFS_DEV_PROC_PID_CMDLINE:
-  case RAMFS_DEV_PROC_PID_STATM:
-  case RAMFS_DEV_PROC_PID_COMM:
-  case RAMFS_DEV_PROC_PID_MOUNTINFO:
-  case RAMFS_DEV_PROC_PID_MOUNTS:
-  case RAMFS_DEV_PROC_PID_CWD:
-  case RAMFS_DEV_PROC_PID_EXE:
-  case RAMFS_DEV_PROC_PID_FD:
-  case RAMFS_DEV_FS_ROOT:
-  case RAMFS_DEV_FS_BOOT:
-  case RAMFS_DEV_FS_RAM0:
-  case RAMFS_DEV_FS_TMP:
-  case RAMFS_DEV_SYS_CPU_POSSIBLE:
-  case RAMFS_DEV_SYS_CPU_PRESENT:
-  case RAMFS_DEV_SYS_CPU_ONLINE:
-  case RAMFS_DEV_SYS_CPU_CORE_ONLINE:
-  case RAMFS_DEV_BLK_BOOT:
-    return -22;
   case RAMFS_DEV_BLK_ROOT: {
     uint64_t chunk = bounded_io_len(len);
     if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
@@ -105,10 +72,9 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
     file->offset += chunk;
     return (int64_t)chunk;
   }
-  case RAMFS_DEV_NONE:
-    break;
+  default:
+    return -EINVAL;
   }
-  return -22;
 }
 
 static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame);
@@ -149,38 +115,6 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_PTMX:
   case RAMFS_DEV_PTS:
     return -EINVAL;
-  case RAMFS_DEV_PROCINFO:
-  case RAMFS_DEV_MEMINFO:
-  case RAMFS_DEV_CPUINFO:
-  case RAMFS_DEV_UPTIME:
-  case RAMFS_DEV_LOADAVG:
-  case RAMFS_DEV_MOUNTS:
-  case RAMFS_DEV_STAT:
-  case RAMFS_DEV_NET_DEV:
-  case RAMFS_DEV_KMSG:
-  case RAMFS_DEV_FILESYSTEMS:
-  case RAMFS_DEV_PARTITIONS:
-  case RAMFS_DEV_DEVICES:
-  case RAMFS_DEV_FSSTATS:
-  case RAMFS_DEV_PROC_PID_STAT:
-  case RAMFS_DEV_PROC_PID_STATUS:
-  case RAMFS_DEV_PROC_PID_CMDLINE:
-  case RAMFS_DEV_PROC_PID_STATM:
-  case RAMFS_DEV_PROC_PID_COMM:
-  case RAMFS_DEV_PROC_PID_MOUNTINFO:
-  case RAMFS_DEV_PROC_PID_MOUNTS:
-  case RAMFS_DEV_PROC_PID_CWD:
-  case RAMFS_DEV_PROC_PID_EXE:
-  case RAMFS_DEV_PROC_PID_FD:
-  case RAMFS_DEV_FS_ROOT:
-  case RAMFS_DEV_FS_BOOT:
-  case RAMFS_DEV_FS_RAM0:
-  case RAMFS_DEV_FS_TMP:
-  case RAMFS_DEV_SYS_CPU_POSSIBLE:
-  case RAMFS_DEV_SYS_CPU_PRESENT:
-  case RAMFS_DEV_SYS_CPU_ONLINE:
-  case RAMFS_DEV_SYS_CPU_CORE_ONLINE:
-    return cell_procfs_read_device(file, domain, buf, len);
   case RAMFS_DEV_BLK_ROOT: {
     uint64_t chunk = bounded_io_len(len);
     if (!virtio_blk_read(file->offset, file_io_tmp, (uint32_t)chunk)) { return -5; }
@@ -195,10 +129,9 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     file->offset += chunk;
     return (int64_t)chunk;
   }
-  case RAMFS_DEV_NONE:
-    break;
+  default:
+    return cell_procfs_read_device(file, domain, buf, len);
   }
-  return -22;
 }
 
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
@@ -231,7 +164,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
     return cell_block_current_on_pipe(fd, buf, len, true, frame);
   }
   if (file->type != OPEN_STDOUT && file->type != OPEN_STDIN) {
-    if (file->type != OPEN_RAMFS ||
+    if (file->type != OPEN_VFS ||
         ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR)) {
       return -22;
     }
@@ -301,7 +234,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     if (frame == NULL) { return 0; }
     return cell_block_current(frame, (struct thread_wait){.reason = WAIT_STDIN, .target = -1, .buf = buf, .len = len});
   }
-  if (file->type != OPEN_RAMFS || file->node.is_dir) { return -22; }
+  if (file->type != OPEN_VFS || file->node.is_dir) { return -22; }
   if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, buf, len, frame); }
   uint64_t chunk = bounded_io_len(len);
   uint64_t got = vfs_read(&file->node, file->offset, file_io_tmp, chunk);
@@ -316,7 +249,7 @@ int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct t
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
-  if (file->type != OPEN_RAMFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
+  if (file->type != OPEN_VFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
   uint64_t chunk = bounded_io_len(len);
   uint64_t got = vfs_read(&file->node, off, file_io_tmp, chunk);
   if (got == 0) { return 0; }
@@ -330,7 +263,7 @@ int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct 
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
   if (len == 0) { return 0; }
-  if (file->type != OPEN_RAMFS ||
+  if (file->type != OPEN_VFS ||
       ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR) ||
       file->node.device != RAMFS_DEV_NONE) {
     return -22;
