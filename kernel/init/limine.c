@@ -3,6 +3,14 @@
 #include "limine.h"
 #include "lib/mem.h"
 
+#if defined(__riscv)
+constexpr uint64_t PAGING_MODE = LIMINE_PAGING_MODE_RISCV_SV39;
+#elif defined(__x86_64__)
+constexpr uint64_t PAGING_MODE = LIMINE_PAGING_MODE_X86_64_4LVL;
+#else
+constexpr uint64_t PAGING_MODE = LIMINE_PAGING_MODE_AARCH64_4LVL;
+#endif
+
 #define REQUEST __attribute__((used, section(".limine_requests")))
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -14,9 +22,9 @@ REQUEST static volatile struct limine_module_request modules = {.id = LIMINE_MOD
 REQUEST static volatile struct limine_date_at_boot_request date = {.id = LIMINE_DATE_AT_BOOT_REQUEST_ID};
 REQUEST static volatile struct limine_paging_mode_request paging = {
   .id = LIMINE_PAGING_MODE_REQUEST_ID,
-  .mode = LIMINE_PAGING_MODE_AARCH64_4LVL,
-  .max_mode = LIMINE_PAGING_MODE_AARCH64_4LVL,
-  .min_mode = LIMINE_PAGING_MODE_AARCH64_4LVL,
+  .mode = PAGING_MODE,
+  .max_mode = PAGING_MODE,
+  .min_mode = PAGING_MODE,
 };
 __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t requests_end[] = LIMINE_REQUESTS_END_MARKER;
@@ -27,7 +35,7 @@ const struct spore_boot_info *limine_boot_info(void) {
   static struct spore_boot_module files[64];
   if (!LIMINE_BASE_REVISION_SUPPORTED(base_revision) || !hhdm.response || !memory.response ||
       !mp.response || mp.response->cpu_count == 0 || !paging.response ||
-      paging.response->mode != LIMINE_PAGING_MODE_AARCH64_4LVL) { return NULL; }
+      paging.response->mode != PAGING_MODE) { return NULL; }
 
   boot.hhdm_offset = hhdm.response->offset;
   boot.mp = mp.response;

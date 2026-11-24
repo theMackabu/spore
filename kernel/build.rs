@@ -14,7 +14,12 @@ fn limine(out: &Path) {
     };
     let cache = Path::new("../.cache/packages");
     release
-        .extract(cache, out, &["limine-binary/BOOTAA64.EFI".into()])
+        .extract(
+            cache,
+            out,
+            &["BOOTAA64.EFI", "BOOTX64.EFI", "BOOTRISCV64.EFI"]
+                .map(|name| format!("limine-binary/{name}").into()),
+        )
         .unwrap();
     protocol
         .extract(
@@ -25,10 +30,74 @@ fn limine(out: &Path) {
         .unwrap();
 }
 
+fn build_port(arch: &str, flags: &[&str], out: &Path) {
+    let target = format!("{arch}-unknown-none-elf");
+    let mut compiler = cc::Build::new();
+    compiler
+        .compiler("clang")
+        .target(&target)
+        .cargo_metadata(false)
+        .no_default_flags(true)
+        .flag(format!("--target={target}"))
+        .std("c23")
+        .flags(["-Os", "-ffreestanding", "-fno-stack-protector", "-fno-pic"])
+        .flags(flags.iter().copied())
+        .include("include")
+        .include("../.cache/limine")
+        .include("arch/bringup")
+        .files(["init/limine.c", "init/event.c", "mm/pmm.c", "lib/mem.c"])
+        .files(files(Path::new("arch/bringup"), &["c", "S"]))
+        .include(".")
+        .files(files(&Path::new("arch").join(arch), &["c", "S"]))
+        .out_dir(out.join(arch));
+    if arch == "riscv64" {
+        compiler.file("drivers/virtio_console.c");
+    }
+    let objects = compiler.compile_intermediates();
+    let rust = out.join(arch).join("libkernel.a");
+    let target = if arch == "riscv64" {
+        "riscv64gc-unknown-none-elf"
+    } else {
+        "x86_64-unknown-none"
+    };
+    rust_archive(Path::new("lib.rs"), &rust, Some(target));
+    run(Command::new("ld.lld")
+        .args([
+            "-static",
+            "-z",
+            "max-page-size=4096",
+            "-T",
+            "arch/bringup/linker.ld",
+        ])
+        .arg("--gc-sections")
+        .args(objects)
+        .arg(rust)
+        .arg("-o")
+        .arg(out.join(format!("{arch}.elf"))));
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=.");
     let out = output_dir();
     limine(&out);
+    for (arch, flags) in [
+        (
+            "x86_64",
+            &["-mcmodel=kernel", "-mno-red-zone", "-mgeneral-regs-only"][..],
+        ),
+        (
+            "riscv64",
+            &[
+                "-march=rv64gc",
+                "-mabi=lp64d",
+                "-mcmodel=medany",
+                "-mno-relax",
+            ][..],
+        ),
+    ] {
+        std::fs::create_dir_all(out.join(arch)).unwrap();
+        build_port(arch, flags, &out);
+    }
     let mut clang = cc::Build::new();
     clang
         .compiler("clang")
@@ -48,7 +117,23 @@ fn main() {
         clang.define("SPORE_USERLAND", None);
     }
     let objects = clang
-        .files(files(Path::new("."), &["c", "S"]))
+        .files(
+            [
+                "arch/aarch64",
+                "abi",
+                "drivers",
+                "exec",
+                "fs",
+                "init",
+                "lib",
+                "mm",
+                "net",
+                "proc",
+                "tty",
+            ]
+            .into_iter()
+            .flat_map(|dir| files(Path::new(dir), &["c", "S"])),
+        )
         .compile_intermediates();
     let rust = out.join("libkernel.a");
     rust_archive(

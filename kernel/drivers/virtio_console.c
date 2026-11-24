@@ -1,6 +1,11 @@
 #include "drivers/virtio_console.h"
 
+#if defined(__riscv)
+static inline void io_barrier(void) { __asm__ volatile("fence iorw, iorw" ::: "memory"); }
+#else
 #include "arch/aarch64/platform.h"
+#define io_barrier aarch64_io_barrier
+#endif
 #include "lib/mem.h"
 #include "mm/pmm.h"
 
@@ -79,7 +84,7 @@ static volatile struct virtq_used *used;
 static uint8_t *tx_buf;
 
 static volatile uint32_t *reg32(uint64_t offset) {
-  return (volatile uint32_t *)(uintptr_t)(hhdm + mmio_base + offset);
+  return (volatile uint32_t *)(uintptr_t)(mmio_base + offset);
 }
 
 static uint32_t read32(uint64_t offset) {
@@ -88,7 +93,7 @@ static uint32_t read32(uint64_t offset) {
 
 static void write32(uint64_t offset, uint32_t value) {
   *reg32(offset) = value;
-  aarch64_io_barrier();
+  io_barrier();
 }
 
 static void set_status(uint32_t bits) {
@@ -110,13 +115,13 @@ static void write_pa_pair(uint64_t low_reg, uint64_t pa) {
   write32(low_reg + 4, (uint32_t)(pa >> 32));
 }
 
-bool virtio_console_init(uint64_t hhdm_offset) {
+bool virtio_console_init_at(uint64_t hhdm_offset, uintptr_t base, unsigned slots, unsigned stride) {
   hhdm = hhdm_offset;
   console_ready = false;
   mmio_base = 0;
 
-  for (uint32_t i = 0; i < VIRTIO_MMIO_SLOTS; ++i) {
-    mmio_base = VIRTIO_MMIO_BASE + (uint64_t)i * VIRTIO_MMIO_SLOT_SIZE;
+  for (uint32_t i = 0; i < slots; ++i) {
+    mmio_base = base + (uint64_t)i * stride;
     if (read32(VIRTIO_MMIO_MAGIC) == VIRTIO_MAGIC && read32(VIRTIO_MMIO_VERSION) == 2 &&
         read32(VIRTIO_MMIO_DEVICE_ID) == VIRTIO_DEVICE_CONSOLE) {
       break;
@@ -162,6 +167,10 @@ bool virtio_console_init(uint64_t hhdm_offset) {
   return true;
 }
 
+bool virtio_console_init(uint64_t hhdm_offset) {
+  return virtio_console_init_at(hhdm_offset, hhdm_offset + VIRTIO_MMIO_BASE, VIRTIO_MMIO_SLOTS, VIRTIO_MMIO_SLOT_SIZE);
+}
+
 bool virtio_console_ready(void) {
   return console_ready;
 }
@@ -174,13 +183,13 @@ void virtio_console_write(const uint8_t *data, size_t len) {
   desc[0].flags = 0;
   desc[0].next = 0;
   avail->ring[tx_avail_idx % QUEUE_SIZE] = 0;
-  aarch64_io_barrier();
+  io_barrier();
   avail->idx = (uint16_t)(tx_avail_idx + 1u);
   tx_avail_idx = avail->idx;
   write32(VIRTIO_MMIO_QUEUE_NOTIFY, TX_QUEUE);
 
   for (uint32_t spin = 0; spin < 100000; ++spin) {
-    aarch64_io_barrier();
+    io_barrier();
     if (used->idx != tx_used_idx) {
       tx_used_idx = used->idx;
       return;

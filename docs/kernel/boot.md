@@ -4,7 +4,7 @@ EFI images use Limine to pass a memory map, CPU topology and boot modules to Spo
 For a [direct app launch](../host/direct-boot.md), QEMU loads the kernel and payload into RAM.
 Both paths enter the kernel at EL1 and initialize the [page allocator](../memory/pages.md),
 [CPUs](cpus.md) and [devices](devices.md).
-[Limine handoff](../../kernel/arch/aarch64/limine_boot.c) · [Kernel entry](../../kernel/init/main.c)
+[Limine handoff](../../kernel/init/limine.c) · [Kernel entry](../../kernel/init/main.c)
 
 ```mermaid
 flowchart LR

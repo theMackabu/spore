@@ -2,6 +2,12 @@
 
 #include <stdint.h>
 
+#if __has_builtin(__builtin_memcpy_inline)
+#define copy_fixed __builtin_memcpy_inline
+#else
+#define copy_fixed __builtin_memcpy
+#endif
+
 typedef uint64_t word_t __attribute__((may_alias));
 
 void *kmemset(void *dst, int value, size_t len) {
@@ -28,13 +34,13 @@ void *kmemcpy(void *dst, const void *src, size_t len) {
   uint8_t *d = dst;
   const uint8_t *s = src;
   while (len >= 32) {
-    __builtin_memcpy(d, s, 32);
+    copy_fixed(d, s, 32);
     d += 32;
     s += 32;
     len -= 32;
   }
   while (len >= sizeof(word_t)) {
-    __builtin_memcpy(d, s, sizeof(word_t));
+    copy_fixed(d, s, sizeof(word_t));
     d += sizeof(word_t);
     s += sizeof(word_t);
     len -= sizeof(word_t);
@@ -60,8 +66,8 @@ int kmemcmp(const void *a, const void *b, size_t len) {
   const uint8_t *bb = b;
   while (len >= sizeof(word_t)) {
     word_t x, y;
-    __builtin_memcpy(&x, aa, sizeof(x));
-    __builtin_memcpy(&y, bb, sizeof(y));
+    copy_fixed(&x, aa, sizeof(x));
+    copy_fixed(&y, bb, sizeof(y));
     if (x != y) { len = sizeof(word_t); break; }
     aa += sizeof(word_t);
     bb += sizeof(word_t);

@@ -45,6 +45,8 @@ pub fn rust_archive(src: &Path, dest: &Path, target: Option<&str>) {
         cmd.args(["--target", target]);
         if target == "aarch64-unknown-none-softfloat" {
             cmd.args(["-Crelocation-model=static", "-Ccode-model=small"]);
+        } else if target.ends_with("-none") || target.ends_with("-none-elf") {
+            cmd.arg("-Crelocation-model=static");
         } else {
             cmd.arg("-Crelocation-model=pic");
         }
