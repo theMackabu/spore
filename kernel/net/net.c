@@ -82,10 +82,6 @@ static void store_be16(uint8_t *p, uint16_t v) {
   p[1] = (uint8_t)v;
 }
 
-static uint32_t load_be32(const uint8_t *p) {
-  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-}
-
 static void store_be32(uint8_t *p, uint32_t v) {
   p[0] = (uint8_t)(v >> 24);
   p[1] = (uint8_t)(v >> 16);
@@ -98,10 +94,6 @@ static void store_ip(uint8_t *p, uint32_t ip) {
   p[1] = (uint8_t)(ip >> 8);
   p[2] = (uint8_t)(ip >> 16);
   p[3] = (uint8_t)(ip >> 24);
-}
-
-static uint32_t load_ip(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
 static uint32_t checksum_sum(uint32_t sum, const void *data, size_t len) {
@@ -502,12 +494,10 @@ bool net_icmp_send_echo(uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, 
   return send_ipv4_ttl_tos(NET_IP_ICMP, ttl, tos, dst_ip, packet, packet_len);
 }
 
-static void handle_arp(const uint8_t *arp, size_t len) {
-  if (len < 28 || load_be16(arp) != 1 || load_be16(arp + 2) != ETH_TYPE_IPV4 || arp[4] != 6 || arp[5] != 4) { return; }
-  uint16_t op = load_be16(arp + 6);
+static void handle_arp(const struct net_rx_header *h, const uint8_t *arp) {
+  uint16_t op = h->arp_operation;
   const uint8_t *sender_mac = arp + 8;
-  uint32_t sender_ip = load_ip(arp + 14);
-  uint32_t target_ip = load_ip(arp + 24);
+  uint32_t sender_ip = h->src_ip, target_ip = h->dst_ip;
   if (target_ip != local_ip || is_invalid_wire_source(sender_ip)) { return; }
   arp_cache_put(sender_ip, sender_mac);
   if (sender_ip == gateway_ip) {
@@ -518,107 +508,49 @@ static void handle_arp(const uint8_t *arp, size_t len) {
   if (op == ARP_REQUEST && target_ip == local_ip) { send_arp(ARP_REPLY, sender_mac, sender_ip, sender_mac); }
 }
 
-static void handle_icmp(uint32_t src_ip, uint8_t ttl, const uint8_t *icmp, size_t len) {
-  if (len < ICMP_HEADER_LEN || checksum(icmp, len) != 0) { return; }
-  if (icmp[0] == ICMP_ECHO_REQUEST) {
+static void handle_icmp(const struct net_rx_header *h, const uint8_t *icmp) {
+  size_t len = h->transport_len;
+  if (h->icmp_type == ICMP_ECHO_REQUEST) {
     uint8_t reply[ICMP_HEADER_LEN + 1472];
     if (len > sizeof(reply)) { return; }
     kmemcpy(reply, icmp, len);
     reply[0] = ICMP_ECHO_REPLY;
     store_be16(reply + 2, 0);
     store_be16(reply + 2, checksum(reply, len));
-    (void)send_ipv4(NET_IP_ICMP, src_ip, reply, len);
-  } else if (icmp[0] == ICMP_ECHO_REPLY) {
-    cell_net_deliver_icmp(src_ip, ttl, icmp, len);
-  } else if (icmp[0] == ICMP_DEST_UNREACH && icmp[1] == ICMP_CODE_PORT_UNREACH) {
-    const uint8_t *quoted_ip = icmp + ICMP_HEADER_LEN;
-    size_t quoted_len = len - ICMP_HEADER_LEN;
-    if (quoted_len < IPV4_HEADER_LEN || (quoted_ip[0] >> 4) != 4) { return; }
-    size_t quoted_ihl = (size_t)(quoted_ip[0] & 0xf) * 4;
-    if (quoted_ihl < IPV4_HEADER_LEN || quoted_len < quoted_ihl + UDP_HEADER_LEN) { return; }
-    if (checksum(quoted_ip, quoted_ihl) != 0) { return; }
-    uint32_t original_src_ip = load_ip(quoted_ip + 12);
-    if (original_src_ip != local_ip) { return; }
-    uint32_t original_dst_ip = load_ip(quoted_ip + 16);
-    const uint8_t *quoted_l4 = quoted_ip + quoted_ihl;
-    uint16_t original_src_port = load_be16(quoted_l4);
-    uint16_t original_dst_port = load_be16(quoted_l4 + 2);
-    if (quoted_ip[9] == NET_IP_UDP) {
-      (void)cell_net_deliver_udp_error(original_dst_ip, original_dst_port, original_src_port, NET_ECONNREFUSED);
-    } else if (quoted_ip[9] == NET_IP_TCP) {
-      (void)cell_net_deliver_tcp_error(original_dst_ip, original_dst_port, original_src_port, NET_ECONNREFUSED);
+    (void)send_ipv4(NET_IP_ICMP, h->src_ip, reply, len);
+  } else if (h->icmp_type == ICMP_ECHO_REPLY) {
+    cell_net_deliver_icmp(h->src_ip, h->ttl, icmp, len);
+  } else if (h->quoted_src == local_ip) {
+    if (h->quoted_protocol == NET_IP_UDP) {
+      (void)cell_net_deliver_udp_error(h->quoted_dst, h->dst_port, h->src_port, NET_ECONNREFUSED);
+    } else if (h->quoted_protocol == NET_IP_TCP) {
+      (void)cell_net_deliver_tcp_error(h->quoted_dst, h->dst_port, h->src_port, NET_ECONNREFUSED);
     }
   }
 }
 
-static void handle_udp(uint32_t src_ip, uint32_t dst_ip, const uint8_t *original_ip, size_t original_ihl,
-                       const uint8_t *udp, size_t len) {
-  if (len < UDP_HEADER_LEN) { return; }
-  uint16_t src_port = load_be16(udp);
-  uint16_t dst_port = load_be16(udp + 2);
-  uint16_t udp_len = load_be16(udp + 4);
-  if (udp_len < UDP_HEADER_LEN || udp_len > len) { return; }
-  if (dst_port == 0) { return; }
-  uint16_t sum = load_be16(udp + 6);
-  if (sum != 0 && udp_checksum(src_ip, dst_ip, udp, udp_len) != 0) { return; }
-  if (!cell_net_deliver_udp(src_ip, original_ip[8], src_port, dst_port, udp + UDP_HEADER_LEN, udp_len - UDP_HEADER_LEN) &&
-      dst_ip == local_ip) {
-    send_icmp_port_unreachable(src_ip, original_ip, original_ihl, udp, udp_len);
-  }
-}
-
-static void handle_tcp(uint32_t src_ip, uint32_t dst_ip, const uint8_t *tcp, size_t len) {
-  if (len < TCP_HEADER_LEN) { return; }
-  if (tcp_checksum(src_ip, dst_ip, tcp, len) != 0) { return; }
-  size_t offset = (size_t)(tcp[12] >> 4) * 4;
-  if (offset < TCP_HEADER_LEN || offset > len) { return; }
-  uint8_t flags = tcp[13];
-  if ((flags & TCP_FLAG_SYN) != 0 && (flags & (TCP_FLAG_FIN | TCP_FLAG_RST)) != 0) { return; }
-  if ((flags & TCP_FLAG_FIN) != 0 && (flags & TCP_FLAG_RST) != 0) { return; }
-  uint16_t src_port = load_be16(tcp);
-  uint16_t dst_port = load_be16(tcp + 2);
-  if (src_port == 0 || dst_port == 0) { return; }
-  uint32_t seq = load_be32(tcp + 4);
-  uint32_t ack = load_be32(tcp + 8);
-  uint16_t window = load_be16(tcp + 14);
-  cell_net_deliver_tcp(src_ip, src_port, dst_port, seq, ack, window, flags, tcp + TCP_HEADER_LEN,
-                       offset - TCP_HEADER_LEN, tcp + offset, len - offset);
-}
-
-static void handle_ipv4(const uint8_t *ip, size_t len) {
-  if (len < IPV4_HEADER_LEN || (ip[0] >> 4) != 4) { return; }
-  size_t ihl = (size_t)(ip[0] & 0xf) * 4;
-  if (ihl < IPV4_HEADER_LEN || ihl > len) { return; }
-  uint16_t total = load_be16(ip + 2);
-  if (total < ihl || total > len || checksum(ip, ihl) != 0) { return; }
-  if (ip[8] == 0) { return; }
-  uint16_t fragment = load_be16(ip + 6);
-  if ((fragment & (IPV4_FLAG_RESERVED | IPV4_FLAG_MORE_FRAGMENTS | IPV4_FRAGMENT_OFFSET_MASK)) != 0) { return; }
-  uint32_t dst_ip = load_ip(ip + 16);
-  if (dst_ip != local_ip && dst_ip != 0xffffffffu && !is_broadcast(dst_ip)) { return; }
-  uint32_t src_ip = load_ip(ip + 12);
-  if (is_invalid_wire_source(src_ip)) { return; }
-  const uint8_t *payload = ip + ihl;
-  size_t payload_len = total - ihl;
-  if (ip[9] == NET_IP_ICMP) {
-    if (dst_ip != local_ip) { return; }
-    handle_icmp(src_ip, ip[8], payload, payload_len);
-  } else if (ip[9] == NET_IP_TCP) {
-    if (dst_ip != local_ip) { return; }
-    handle_tcp(src_ip, dst_ip, payload, payload_len);
-  } else if (ip[9] == NET_IP_UDP) {
-    handle_udp(src_ip, dst_ip, ip, ihl, payload, payload_len);
-  }
-}
-
 void net_receive_ethernet(const uint8_t *frame, size_t len) {
-  struct net_rx_header decoded;
-  if (len < ETH_HEADER_LEN || !mac_is_for_us(frame) || !spore_net_decode_ethernet(frame, len, &decoded)) { return; }
-  uint16_t type = decoded.eth_type;
-  if (type == ETH_TYPE_ARP) {
-    handle_arp(frame + ETH_HEADER_LEN, len - ETH_HEADER_LEN);
-  } else if (type == ETH_TYPE_IPV4) {
-    handle_ipv4(frame + ETH_HEADER_LEN, len - ETH_HEADER_LEN);
+  struct net_rx_header h;
+  if (len < ETH_HEADER_LEN || !mac_is_for_us(frame) || !spore_net_decode_ethernet(frame, len, &h)) { return; }
+  const uint8_t *ip = frame + ETH_HEADER_LEN;
+  if (h.eth_type == ETH_TYPE_ARP) {
+    handle_arp(&h, ip);
+    return;
+  }
+  if (is_invalid_wire_source(h.src_ip)) { return; }
+  const uint8_t *segment = ip + h.ip_header_len;
+  if (h.ip_protocol == NET_IP_UDP) {
+    if (h.dst_ip != local_ip && h.dst_ip != 0xffffffffu && !is_broadcast(h.dst_ip)) { return; }
+    if (!cell_net_deliver_udp(h.src_ip, h.ttl, h.src_port, h.dst_port, segment + UDP_HEADER_LEN,
+                              h.transport_len - UDP_HEADER_LEN) && h.dst_ip == local_ip) {
+      send_icmp_port_unreachable(h.src_ip, ip, h.ip_header_len, segment, h.transport_len);
+    }
+  } else if (h.dst_ip == local_ip && h.ip_protocol == NET_IP_ICMP) {
+    handle_icmp(&h, segment);
+  } else if (h.dst_ip == local_ip && h.ip_protocol == NET_IP_TCP) {
+    size_t header_len = TCP_HEADER_LEN + h.tcp_options_len;
+    cell_net_deliver_tcp(h.src_ip, h.src_port, h.dst_port, h.sequence, h.acknowledgement, h.window, h.tcp_flags,
+                         segment + TCP_HEADER_LEN, h.tcp_options_len, segment + header_len, h.transport_len - header_len);
   }
 }
 

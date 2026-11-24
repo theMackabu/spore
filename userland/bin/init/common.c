@@ -114,22 +114,6 @@ void sync_kernel_log(bool boot_snapshot) {
   seen = have;
 }
 
-int parse_seconds(const char *s) {
-  char *end = NULL;
-  long value = strtol(s, &end, 10);
-  if (end != NULL && *end == 's') { ++end; }
-  if (end == s || (end != NULL && *end != '\0') || value < 0 || value > 86400) { return 0; }
-  return (int)value;
-}
-
-void list_add_words(struct string_list *list, const char *value) {
-  char copy[256];
-  copy_text(copy, sizeof(copy), value);
-  for (char *p = strtok(copy, " \t"); p != NULL && list->count < DEP_CAP; p = strtok(NULL, " \t")) {
-    copy_text(list->items[list->count++], sizeof(list->items[0]), p);
-  }
-}
-
 bool list_has(const struct string_list *list, const char *name) {
   for (int i = 0; i < list->count; ++i) {
     if (streq(list->items[i], name)) { return true; }

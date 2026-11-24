@@ -1,11 +1,6 @@
 #include "mycelium.h"
 
-extern int mycelium_parse_unit_line(void *unit, char *section, size_t section_cap, const char *line);
-void set_key(struct unit *unit, const char *section, const char *key, const char *value);
-
-void mycelium_unit_apply_key(void *unit, const char *section, const char *key, const char *value) {
-  set_key(unit, section, key, value);
-}
+extern void mycelium_parse_line(struct unit_config *config, uint8_t *section, const char *line, size_t len);
 
 struct unit *unit_by_name(const char *name) {
   for (size_t i = 0; i < UNIT_CAP; ++i) {
@@ -29,18 +24,18 @@ struct unit *alloc_unit(const char *name) {
       memset(&units[i], 0, sizeof(units[i]));
       units[i].used = true;
       copy_text(units[i].name, sizeof(units[i].name), name);
-      units[i].type = UNIT_SERVICE;
-      units[i].service_type = SERVICE_SIMPLE;
+      units[i].config.type = UNIT_SERVICE;
+      units[i].config.service_type = SERVICE_SIMPLE;
       units[i].state = STATE_INACTIVE;
-      units[i].restart = RESTART_NO;
+      units[i].config.restart = RESTART_NO;
       units[i].journal_fd = -1;
-      units[i].restart_sec = 1;
-      units[i].timeout_stop_sec = 3;
-      units[i].start_limit_interval = 10;
-      units[i].start_limit_burst = 3;
-      units[i].on_calendar_minute = -1;
-      copy_text(units[i].standard_output, sizeof(units[i].standard_output), "journal");
-      copy_text(units[i].standard_error, sizeof(units[i].standard_error), "journal");
+      units[i].config.restart_sec = 1;
+      units[i].config.timeout_stop_sec = 3;
+      units[i].config.start_limit_interval = 10;
+      units[i].config.start_limit_burst = 3;
+      units[i].config.on_calendar_minute = -1;
+      copy_text(units[i].config.standard_output, sizeof(units[i].config.standard_output), "journal");
+      copy_text(units[i].config.standard_error, sizeof(units[i].config.standard_error), "journal");
       return &units[i];
     }
   }
@@ -49,127 +44,17 @@ struct unit *alloc_unit(const char *name) {
 
 void infer_unit_type(struct unit *unit) {
   if (ends_with(unit->name, ".target")) {
-    unit->type = UNIT_TARGET;
+    unit->config.type = UNIT_TARGET;
   } else if (ends_with(unit->name, ".timer")) {
-    unit->type = UNIT_TIMER;
+    unit->config.type = UNIT_TIMER;
   } else if (ends_with(unit->name, ".path")) {
-    unit->type = UNIT_PATH;
+    unit->config.type = UNIT_PATH;
   } else if (ends_with(unit->name, ".socket")) {
-    unit->type = UNIT_SOCKET;
+    unit->config.type = UNIT_SOCKET;
   } else if (ends_with(unit->name, ".mount")) {
-    unit->type = UNIT_MOUNT;
+    unit->config.type = UNIT_MOUNT;
   } else {
-    unit->type = UNIT_SERVICE;
-  }
-}
-
-void set_key(struct unit *unit, const char *section, const char *key, const char *value) {
-  if (streq(section, "Unit")) {
-    if (streq(key, "Description")) {
-      copy_text(unit->description, sizeof(unit->description), value);
-    } else if (streq(key, "Requires")) {
-      list_add_words(&unit->requires_units, value);
-    } else if (streq(key, "Wants")) {
-      list_add_words(&unit->wants, value);
-    } else if (streq(key, "Requisite")) {
-      list_add_words(&unit->requisite, value);
-    } else if (streq(key, "BindsTo")) {
-      list_add_words(&unit->binds_to, value);
-    } else if (streq(key, "PartOf")) {
-      list_add_words(&unit->part_of, value);
-    } else if (streq(key, "Conflicts")) {
-      list_add_words(&unit->conflicts, value);
-    } else if (streq(key, "After")) {
-      list_add_words(&unit->after, value);
-    } else if (streq(key, "Before")) {
-      list_add_words(&unit->before, value);
-    }
-  } else if (streq(section, "Service")) {
-    if (streq(key, "Type")) {
-      if (streq(value, "oneshot")) {
-        unit->service_type = SERVICE_ONESHOT;
-      } else if (streq(value, "forking")) {
-        unit->service_type = SERVICE_FORKING;
-      } else if (streq(value, "notify")) {
-        unit->service_type = SERVICE_NOTIFY;
-      } else if (streq(value, "idle")) {
-        unit->service_type = SERVICE_IDLE;
-      } else {
-        unit->service_type = SERVICE_SIMPLE;
-      }
-    } else if (streq(key, "ExecStart")) {
-      copy_text(unit->exec_start, sizeof(unit->exec_start), value);
-    } else if (streq(key, "ExecStartPre")) {
-      copy_text(unit->exec_start_pre, sizeof(unit->exec_start_pre), value);
-    } else if (streq(key, "ExecStartPost")) {
-      copy_text(unit->exec_start_post, sizeof(unit->exec_start_post), value);
-    } else if (streq(key, "ExecStop")) {
-      copy_text(unit->exec_stop, sizeof(unit->exec_stop), value);
-    } else if (streq(key, "ExecReload")) {
-      copy_text(unit->exec_reload, sizeof(unit->exec_reload), value);
-    } else if (streq(key, "Restart")) {
-      if (streq(value, "on-success")) {
-        unit->restart = RESTART_ON_SUCCESS;
-      } else if (streq(value, "on-failure")) {
-        unit->restart = RESTART_ON_FAILURE;
-      } else if (streq(value, "on-abnormal")) {
-        unit->restart = RESTART_ON_ABNORMAL;
-      } else if (streq(value, "on-watchdog")) {
-        unit->restart = RESTART_ON_WATCHDOG;
-      } else if (streq(value, "always")) {
-        unit->restart = RESTART_ALWAYS;
-      } else {
-        unit->restart = RESTART_NO;
-      }
-    } else if (streq(key, "RestartSec")) {
-      unit->restart_sec = parse_seconds(value);
-    } else if (streq(key, "RestartImmediately")) {
-      unit->restart_immediately = streq(value, "yes") || streq(value, "true") || streq(value, "1");
-    } else if (streq(key, "StartLimitIntervalSec")) {
-      unit->start_limit_interval = parse_seconds(value);
-    } else if (streq(key, "StartLimitBurst")) {
-      unit->start_limit_burst = atoi(value);
-    } else if (streq(key, "WatchdogSec")) {
-      unit->watchdog_sec = parse_seconds(value);
-    } else if (streq(key, "TimeoutStopSec")) {
-      unit->timeout_stop_sec = parse_seconds(value);
-    } else if (streq(key, "Capability")) {
-      copy_text(unit->capability, sizeof(unit->capability), value);
-    } else if (streq(key, "CPUBudget")) {
-      unit->cpu_budget_ticks = (uint64_t)parse_seconds(value);
-    } else if (streq(key, "MemoryPages")) {
-      unit->memory_pages = strtoull(value, NULL, 10);
-    } else if (streq(key, "User")) {
-      copy_text(unit->user, sizeof(unit->user), value);
-    } else if (streq(key, "StandardOutput")) {
-      copy_text(unit->standard_output, sizeof(unit->standard_output), value);
-    } else if (streq(key, "StandardError")) {
-      copy_text(unit->standard_error, sizeof(unit->standard_error), value);
-    }
-  } else if (streq(section, "Timer")) {
-    unit->type = UNIT_TIMER;
-    if (streq(key, "OnBootSec")) {
-      unit->on_boot_sec = parse_seconds(value);
-    } else if (streq(key, "OnUnitActiveSec")) {
-      unit->on_unit_active_sec = parse_seconds(value);
-    } else if (streq(key, "OnUnitInactiveSec")) {
-      unit->on_unit_inactive_sec = parse_seconds(value);
-    } else if (streq(key, "OnCalendar")) {
-      if (strchr(value, ':') != NULL) {
-        const char *colon = strchr(value, ':');
-        unit->on_calendar_minute = atoi(colon + 1);
-      } else {
-        unit->on_calendar_minute = atoi(value);
-      }
-    } else if (streq(key, "Persistent")) {
-      unit->persistent = streq(value, "yes") || streq(value, "true");
-    } else if (streq(key, "Unit")) {
-      copy_text(unit->unit_to_activate, sizeof(unit->unit_to_activate), value);
-    }
-  } else if (streq(section, "Install")) {
-    if (streq(key, "WantedBy") || streq(key, "RequiredBy")) {
-      copy_text(unit->wanted_by, sizeof(unit->wanted_by), value);
-    }
+    unit->config.type = UNIT_SERVICE;
   }
 }
 
@@ -182,10 +67,10 @@ bool parse_unit_file(const char *path, const char *name) {
     return false;
   }
   infer_unit_type(unit);
-  char section[32] = "Unit";
+  uint8_t section = 0;
   char line[512];
   while (fgets(line, sizeof(line), f) != NULL) {
-    (void)mycelium_parse_unit_line(unit, section, sizeof(section), line);
+    mycelium_parse_line(&unit->config, &section, line, strlen(line));
   }
   fclose(f);
   return true;
@@ -194,12 +79,12 @@ bool parse_unit_file(const char *path, const char *name) {
 void parse_builtin_console(void) {
   struct unit *console = alloc_unit("console.service");
   if (console == NULL) { return; }
-  copy_text(console->description, sizeof(console->description), "interactive console shell");
-  copy_text(console->exec_start, sizeof(console->exec_start), "/bin/msh");
-  copy_text(console->user, sizeof(console->user), "spore");
-  copy_text(console->standard_output, sizeof(console->standard_output), "console");
-  copy_text(console->standard_error, sizeof(console->standard_error), "console");
-  console->restart = RESTART_ALWAYS;
+  copy_text(console->config.description, sizeof(console->config.description), "interactive console shell");
+  copy_text(console->config.exec_start, sizeof(console->config.exec_start), "/bin/msh");
+  copy_text(console->config.user, sizeof(console->config.user), "spore");
+  copy_text(console->config.standard_output, sizeof(console->config.standard_output), "console");
+  copy_text(console->config.standard_error, sizeof(console->config.standard_error), "console");
+  console->config.restart = RESTART_ALWAYS;
 }
 
 void load_units(void) {
@@ -256,7 +141,7 @@ void journal_append(struct unit *unit, const char *fmt, ...) {
   unit->log_mem[unit->log_len] = '\0';
 
   system_log_append(line);
-  if (unit->type == UNIT_TIMER || strstr(unit->name, "cron") != NULL) { append_log_file("/var/log/cron", line); }
+  if (unit->config.type == UNIT_TIMER || strstr(unit->name, "cron") != NULL) { append_log_file("/var/log/cron", line); }
 
   char path[128];
   snprintf(path, sizeof(path), "/var/log/%s.log", unit->name);

@@ -1,88 +1,206 @@
-#[repr(C)]
-pub struct SporeElfHeader { pub kind: u16, pub phentsize: u16, pub phnum: u16, pub entry: u64, pub phoff: u64 }
-#[repr(C)]
-pub struct SporeElfProgram { pub kind: u32, pub flags: u32, pub offset: u64, pub vaddr: u64, pub filesz: u64, pub memsz: u64, pub align: u64 }
-#[repr(C)]
-pub struct SporeElfLoaded { pub entry: u64, pub load_base: u64, pub phdr: u64, pub brk_base: u64, pub phent: u16, pub phnum: u16 }
-type Read = unsafe extern "C" fn(*mut core::ffi::c_void, u64, *mut u8, usize) -> bool;
-type Map = unsafe extern "C" fn(*mut core::ffi::c_void, *const SporeElfProgram, u64, u64, u64) -> bool;
+use core::ffi::c_void;
 
-fn u16_at(b: &[u8], n: usize) -> u16 { u16::from_le_bytes([b[n], b[n + 1]]) }
-fn u32_at(b: &[u8], n: usize) -> u32 { u32::from_le_bytes([b[n], b[n + 1], b[n + 2], b[n + 3]]) }
-fn u64_at(b: &[u8], n: usize) -> u64 { u64::from_le_bytes([b[n], b[n + 1], b[n + 2], b[n + 3], b[n + 4], b[n + 5], b[n + 6], b[n + 7]]) }
+const EHDR: usize = 64;
+const PHDR: usize = 56;
+const ET_EXEC: u16 = 2;
+const ET_DYN: u16 = 3;
+const EM_AARCH64: u16 = 183;
+const PT_LOAD: u32 = 1;
+const PT_INTERP: u32 = 3;
+const PAGE: u64 = 4096;
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_elf_parse_header(data: *const u8, len: usize, image_size: u64, out: *mut SporeElfHeader) -> bool {
-    if data.is_null() || out.is_null() || len < 64 || image_size < 64 { return false; }
-    let b = unsafe { core::slice::from_raw_parts(data, len) };
-    if b[0..4] != [0x7f, b'E', b'L', b'F'] || b[4] != 2 || b[5] != 1 || !(u16_at(b, 16) == 2 || u16_at(b, 16) == 3) || u16_at(b, 18) != 183 || u16_at(b, 54) != 56 { return false; }
-    let phoff = u64_at(b, 32); let phnum = u16_at(b, 56) as u64;
-    if phoff > image_size || phnum > (image_size - phoff) / 56 { return false; }
-    unsafe { *out = SporeElfHeader { kind: u16_at(b, 16), phentsize: 56, phnum: phnum as u16, entry: u64_at(b, 24), phoff }; }
-    true
+type Read = unsafe extern "C" fn(*mut c_void, u64, *mut u8, usize) -> bool;
+type Map = unsafe extern "C" fn(*mut c_void, &Segment, u64, u64, u64) -> bool;
+
+struct Reader {
+    read: Read,
+    ctx: *mut c_void,
+    size: u64,
 }
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_elf_parse_program(data: *const u8, len: usize, out: *mut SporeElfProgram) -> bool {
-    if data.is_null() || out.is_null() || len < 56 { return false; }
-    let b = unsafe { core::slice::from_raw_parts(data, len) };
-    unsafe { *out = SporeElfProgram { kind: u32_at(b, 0), flags: u32_at(b, 4), offset: u64_at(b, 8), vaddr: u64_at(b, 16), filesz: u64_at(b, 32), memsz: u64_at(b, 40), align: u64_at(b, 48) }; }
-    true
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_elf_interp_valid(data: *const u8, len: usize) -> bool {
-    !data.is_null() && len != 0 && unsafe { *data.add(len - 1) } == 0
-}
-
-fn bounds(off: u64, len: u64, size: u64) -> bool { off <= size && len <= size - off }
-fn read_header(read: Read, ctx: *mut core::ffi::c_void, size: u64) -> Option<SporeElfHeader> {
-    let mut bytes = [0u8; 64];
-    if size < 64 || !unsafe { read(ctx, 0, bytes.as_mut_ptr(), 64) } { return None; }
-    let mut header = SporeElfHeader { kind: 0, phentsize: 0, phnum: 0, entry: 0, phoff: 0 };
-    if !unsafe { spore_elf_parse_header(bytes.as_ptr(), bytes.len(), size, &mut header) } { return None; }
-    Some(header)
-}
-fn read_program(read: Read, ctx: *mut core::ffi::c_void, off: u64, size: u64) -> Option<SporeElfProgram> {
-    let mut bytes = [0u8; 56]; let mut program = SporeElfProgram { kind: 0, flags: 0, offset: 0, vaddr: 0, filesz: 0, memsz: 0, align: 0 };
-    if !bounds(off, 56, size) || !unsafe { read(ctx, off, bytes.as_mut_ptr(), 56) } || !unsafe { spore_elf_parse_program(bytes.as_ptr(), 56, &mut program) } { return None; }
-    Some(program)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_elf_load(read: Option<Read>, ctx: *mut core::ffi::c_void, size: u64, load_base: u64, map: Option<Map>, map_ctx: *mut core::ffi::c_void, out: *mut SporeElfLoaded) -> bool {
-    let (read, map) = match (read, map) { (Some(read), Some(map)) if !out.is_null() => (read, map), _ => return false };
-    let header = match read_header(read, ctx, size) { Some(header) => header, None => return false };
-    let base = if header.kind == 3 { load_base } else { 0 }; let mut high = 0; let mut phdr = 0;
-    let phend = match header.phoff.checked_add(header.phnum as u64 * 56) { Some(value) => value, None => return false };
-    for index in 0..header.phnum as u64 {
-        let program = match read_program(read, ctx, header.phoff + index * 56, size) { Some(program) => program, None => return false };
-        if program.kind != 1 { continue; }
-        if program.memsz < program.filesz || !bounds(program.offset, program.filesz, size) || (program.align > 4096 && program.vaddr % program.align != program.offset % program.align) { return false; }
-        let segment = match base.checked_add(program.vaddr) { Some(value) => value, None => return false };
-        let segment_end = match segment.checked_add(program.memsz) { Some(value) => value, None => return false };
-        let end = match segment_end.checked_add(4095) { Some(value) => value & !4095, None => return false };
-        if !unsafe { map(map_ctx, &program, segment, segment & !4095, end) } { return false; }
-        if segment_end > high { high = segment_end; }
-        let file_end = match program.offset.checked_add(program.filesz) { Some(value) => value, None => return false };
-        if header.phoff >= program.offset && phend <= file_end { phdr = segment + header.phoff - program.offset; }
-    }
-    if high == 0 { return false; }
-    let brk = match high.checked_add(4095) { Some(value) => value & !4095, None => return false };
-    let entry = match base.checked_add(header.entry) { Some(value) => value, None => return false };
-    unsafe { *out = SporeElfLoaded { entry, load_base: base, phdr, brk_base: brk, phent: 56, phnum: header.phnum }; }
-    true
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_elf_find_interp(read: Option<Read>, ctx: *mut core::ffi::c_void, size: u64, out: *mut u8, cap: usize) -> bool {
-    let read = match read { Some(read) if !out.is_null() && cap != 0 => read, _ => return false };
-    let header = match read_header(read, ctx, size) { Some(header) => header, None => return false };
-    for index in 0..header.phnum as u64 {
-        let program = match read_program(read, ctx, header.phoff + index * 56, size) { Some(program) => program, None => return false };
-        if program.kind == 3 {
-            return program.filesz != 0 && (program.filesz as usize) < cap && bounds(program.offset, program.filesz, size) && unsafe { read(ctx, program.offset, out, program.filesz as usize) } && unsafe { *out.add(program.filesz as usize - 1) == 0 };
+impl Reader {
+    fn read_at(&self, offset: u64, dst: &mut [u8]) -> Option<()> {
+        if offset.checked_add(dst.len() as u64)? > self.size {
+            return None;
         }
+        unsafe { (self.read)(self.ctx, offset, dst.as_mut_ptr(), dst.len()) }.then_some(())
+    }
+    fn bytes<const N: usize>(&self, offset: u64) -> Option<[u8; N]> {
+        let mut bytes = [0; N];
+        self.read_at(offset, &mut bytes)?;
+        Some(bytes)
+    }
+}
+
+fn le16(b: &[u8], i: usize) -> u16 {
+    u16::from_le_bytes(b[i..i + 2].try_into().unwrap())
+}
+fn le32(b: &[u8], i: usize) -> u32 {
+    u32::from_le_bytes(b[i..i + 4].try_into().unwrap())
+}
+fn le64(b: &[u8], i: usize) -> u64 {
+    u64::from_le_bytes(b[i..i + 8].try_into().unwrap())
+}
+
+struct Header {
+    kind: u16,
+    entry: u64,
+    table: u64,
+    count: u16,
+}
+impl Header {
+    fn read(r: &Reader) -> Option<Self> {
+        let b = r.bytes::<EHDR>(0)?;
+        let kind = le16(&b, 16);
+        if &b[..6] != b"\x7fELF\x02\x01"
+            || !matches!(kind, ET_EXEC | ET_DYN)
+            || le16(&b, 18) != EM_AARCH64
+            || usize::from(le16(&b, 54)) != PHDR
+        {
+            return None;
+        }
+        let header = Self {
+            kind,
+            entry: le64(&b, 24),
+            table: le64(&b, 32),
+            count: le16(&b, 56),
+        };
+        (header.table_end()? <= r.size).then_some(header)
+    }
+    fn table_end(&self) -> Option<u64> {
+        self.table.checked_add(u64::from(self.count) * PHDR as u64)
+    }
+    fn segments<'a>(&'a self, r: &'a Reader) -> impl Iterator<Item = Option<Segment>> + 'a {
+        (0..u64::from(self.count)).map(|i| {
+            let b = r.bytes::<PHDR>(self.table + i * PHDR as u64)?;
+            Some(Segment {
+                kind: le32(&b, 0),
+                flags: le32(&b, 4),
+                offset: le64(&b, 8),
+                vaddr: le64(&b, 16),
+                filesz: le64(&b, 32),
+                memsz: le64(&b, 40),
+                align: le64(&b, 48),
+            })
+        })
+    }
+}
+
+#[repr(C)]
+pub struct Segment {
+    kind: u32,
+    flags: u32,
+    offset: u64,
+    vaddr: u64,
+    filesz: u64,
+    memsz: u64,
+    align: u64,
+}
+#[repr(C)]
+pub struct Loaded {
+    entry: u64,
+    load_base: u64,
+    phdr: u64,
+    brk_base: u64,
+    phent: u16,
+    phnum: u16,
+}
+
+fn load(
+    reader: &Reader,
+    load_base: u64,
+    mut map: impl FnMut(&Segment, u64, u64, u64) -> bool,
+) -> Option<Loaded> {
+    let h = Header::read(reader)?;
+    let base = if h.kind == ET_DYN { load_base } else { 0 };
+    let mut out = Loaded {
+        entry: base.checked_add(h.entry)?,
+        load_base: base,
+        phdr: 0,
+        brk_base: 0,
+        phent: PHDR as u16,
+        phnum: h.count,
+    };
+    let table_end = h.table_end()?;
+    for segment in h.segments(reader) {
+        let p = segment?;
+        if p.kind != PT_LOAD {
+            continue;
+        }
+        let file_end = p.offset.checked_add(p.filesz)?;
+        if p.memsz < p.filesz
+            || file_end > reader.size
+            || (p.align > PAGE && p.vaddr % p.align != p.offset % p.align)
+        {
+            return None;
+        }
+        let addr = base.checked_add(p.vaddr)?;
+        let end = addr.checked_add(p.memsz)?.checked_add(PAGE - 1)? & !(PAGE - 1);
+        if !map(&p, addr, addr & !(PAGE - 1), end) {
+            return None;
+        }
+        out.brk_base = out.brk_base.max(end);
+        if h.table >= p.offset && table_end <= file_end {
+            out.phdr = addr.checked_add(h.table - p.offset)?;
+        }
+    }
+    (out.brk_base != 0).then_some(out)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spore_elf_load(
+    read: Option<Read>,
+    ctx: *mut c_void,
+    size: u64,
+    base: u64,
+    map: Option<Map>,
+    map_ctx: *mut c_void,
+    out: *mut Loaded,
+) -> bool {
+    let (Some(read), Some(map)) = (read, map) else {
+        return false;
+    };
+    if out.is_null() {
+        return false;
+    }
+    let r = Reader { read, ctx, size };
+    match load(&r, base, |p, a, s, e| unsafe { map(map_ctx, p, a, s, e) }) {
+        Some(value) => {
+            unsafe { out.write(value) };
+            true
+        }
+        None => false,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spore_elf_find_interp(
+    read: Option<Read>,
+    ctx: *mut c_void,
+    size: u64,
+    out: *mut u8,
+    cap: usize,
+) -> bool {
+    let Some(read) = read else { return false };
+    if out.is_null() || cap == 0 {
+        return false;
+    }
+    let reader = Reader { read, ctx, size };
+    let Some(header) = Header::read(&reader) else {
+        return false;
+    };
+    for segment in header.segments(&reader) {
+        let Some(p) = segment else { return false };
+        if p.kind != PT_INTERP {
+            continue;
+        }
+        if p.filesz == 0
+            || p.filesz >= cap as u64
+            || p.offset.checked_add(p.filesz).is_none_or(|end| end > size)
+        {
+            return false;
+        }
+        let count = p.filesz as usize;
+        return unsafe { read(ctx, p.offset, out, count) && out.add(count - 1).read() == 0 };
     }
     false
 }

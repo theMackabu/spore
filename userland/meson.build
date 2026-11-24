@@ -1,4 +1,10 @@
 userland_musl_cc = find_program('aarch64-unknown-linux-musl-gcc')
+guest_rust_target = '--target=aarch64-unknown-linux-musl'
+userland_rustc = [rustc, rust_args, guest_rust_target, '-C', 'linker=' + userland_musl_cc.full_path(),
+  '-C', 'opt-level=s', '-C', 'lto=fat', '-C', 'codegen-units=1', '-C', 'strip=symbols',
+  '-C', 'link-arg=-Wl,-z,max-page-size=4096']
+userland_rust_archive = [rustc, rust_archive_args, guest_rust_target, '-C', 'relocation-model=pic']
+userland_rust_panic = files('lib/spore/panic.rs')
 userland_include_arg = '-I' + meson.current_source_dir() / 'lib/spore'
 
 userland_compiler = [userland_musl_cc, '-std=c23', '-D_GNU_SOURCE', '-s', userland_include_arg]

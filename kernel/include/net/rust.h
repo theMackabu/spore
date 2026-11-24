@@ -7,7 +7,6 @@
 struct net_tcp_options {
   uint16_t mss;
   uint8_t window_scale;
-  uint8_t has_mss;
 };
 
 struct net_rx_header {
@@ -25,7 +24,12 @@ struct net_rx_header {
   uint16_t window;
   uint8_t tcp_flags;
   uint8_t tcp_options_len;
+  uint16_t arp_operation;
+  uint8_t icmp_type;
+  uint8_t quoted_protocol;
+  uint32_t quoted_src;
+  uint32_t quoted_dst;
 };
 
 bool spore_net_decode_ethernet(const uint8_t *frame, size_t len, struct net_rx_header *out);
-bool spore_net_decode_tcp_options(const uint8_t *options, size_t len, struct net_tcp_options *out);
+struct net_tcp_options spore_net_decode_tcp_options(const uint8_t *options, size_t len);

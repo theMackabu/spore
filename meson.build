@@ -1,11 +1,17 @@
-project('spore', 'c', default_options: [
+project('spore', 'c', 'rust', meson_version: '>=1.10.0', default_options: [
   'buildtype=debugoptimized',
   'c_std=c23',
+  'rust_std=2024',
+  'build.rust_std=2024',
   'build.c_std=c23',
   'warning_level=3',
   'b_asneeded=false',
   'b_pie=false',
 ], version: '0.7.0')
+
+rustc = find_program('rustc', native: true)
+rust_args = ['--edition=2024', '-C', 'panic=abort']
+rust_archive_args = rust_args + ['--crate-type=staticlib', '-C', 'opt-level=2', '-C', 'codegen-units=1', '-C', 'lto=fat']
 
 spore_sysname = 'Spore'
 spore_nodename = 'spore.local'

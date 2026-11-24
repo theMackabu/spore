@@ -25,7 +25,6 @@ enum {
   TCP_RCV_WINDOW_SCALE = 2,
   TCP_DEFAULT_REMOTE_WINDOW = 65535,
   TCP_DEFAULT_MSS = 1460,
-  TCP_MIN_MSS = 536,
   TCP_SEND_STACK_CHUNK = 1460,
   TCP_INITIAL_RTO_TICKS = 100,
   TCP_MIN_RTO_TICKS = 10,
@@ -423,13 +422,6 @@ static bool seq_after(uint32_t a, uint32_t b) {
 
 static bool seq_before_or_equal(uint32_t a, uint32_t b) {
   return !seq_after(a, b);
-}
-
-static struct net_tcp_options tcp_decode_options(const void *options, size_t len) {
-  struct net_tcp_options decoded = {.mss = TCP_DEFAULT_MSS};
-  if (!spore_net_decode_tcp_options(options, len, &decoded)) { return decoded; }
-  if (decoded.has_mss && decoded.mss < TCP_MIN_MSS) { decoded.mss = TCP_MIN_MSS; }
-  return decoded;
 }
 
 static uint32_t tcp_scaled_window(uint16_t window, uint8_t scale) {
@@ -1189,7 +1181,7 @@ static void tcp_deliver_syn_to_listener(uint32_t src_ip, uint16_t src_port, uint
   server->tcp_remote_port = src_port;
   server->tcp_seq = tcp_initial_seq(NULL, 0);
   server->tcp_ack = seq + 1;
-  struct net_tcp_options decoded = tcp_decode_options(options, options_len);
+  struct net_tcp_options decoded = spore_net_decode_tcp_options(options, options_len);
   server->tcp_remote_window_scale = decoded.window_scale;
   server->tcp_remote_mss = decoded.mss;
   tcp_update_remote_window(server, window);
@@ -1229,7 +1221,7 @@ static bool tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
                                 const void *options, size_t options_len, const void *payload, size_t len) {
   if (file->tcp_state == TCP_SYN_SENT && (flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK) && ack == file->tcp_seq) {
     if (file->tcp_syn_retries == 0) { tcp_note_rtt_sample(file, file->tcp_syn_sent_tick, cell_uptime_ticks()); }
-    struct net_tcp_options decoded = tcp_decode_options(options, options_len);
+    struct net_tcp_options decoded = spore_net_decode_tcp_options(options, options_len);
     file->tcp_remote_window_scale = decoded.window_scale;
     file->tcp_remote_mss = decoded.mss;
     tcp_update_remote_window(file, window);

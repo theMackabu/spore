@@ -186,10 +186,10 @@ void boot_run_login_banner(void) {
 void announce_unit_started(struct unit *unit) {
   if (!boot_status_enabled || unit == NULL || unit->boot_reported) { return; }
   unit->boot_reported = true;
-  if (unit->type == UNIT_TARGET) {
+  if (unit->config.type == UNIT_TARGET) {
     boot_statusf("Reached target %s.", unit->name);
-  } else if (unit->description[0] != '\0') {
-    boot_statusf("Started %s.", unit->description);
+  } else if (unit->config.description[0] != '\0') {
+    boot_statusf("Started %s.", unit->config.description);
   } else {
     boot_statusf("Started %s.", unit->name);
   }

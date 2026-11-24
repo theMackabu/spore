@@ -1,329 +1,275 @@
 use std::env;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::ffi::{OsStr, OsString};
+use std::fs::{self, File, OpenOptions, Permissions};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, ExitCode, Stdio};
 
-const EXT2_FEATURE_INCOMPAT_OFFSET: u64 = 1120;
-const EXT2_INCOMPAT_SPORE_EXT2PLUS: u32 = 0x8000_0000;
-const ROOT_BLOCK_SIZE: u64 = 4096;
-const ROOT_STATIC_INODES: u64 = 8192;
-const ROOT_BLOCKS: u64 = 10 * 1024 * 1024 * 1024 / ROOT_BLOCK_SIZE;
+const BLOCK_SIZE: usize = 4096;
+const MIB: u64 = 1024 * 1024;
 
-fn die<T>(r: io::Result<T>, path: &str) -> T {
-    r.unwrap_or_else(|e| panic!("{path}: {e}"))
+fn run(cmd: &mut Command) -> io::Result<()> {
+    let status = cmd.status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "{:?} exited with {status}",
+            cmd.get_program()
+        )))
+    }
 }
-fn text(path: &Path, data: &str, mode: u32) {
+
+fn create_parents(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {
-        die(fs::create_dir_all(parent), "mkdir");
+        fs::create_dir_all(parent)?;
     }
-    die(fs::write(path, data), &path.display().to_string());
-    die(
-        fs::set_permissions(path, fs::Permissions::from_mode(mode)),
-        "chmod",
-    );
+    Ok(())
 }
-fn run(args: &[String], quiet: bool) {
-    let mut c = Command::new(&args[0]);
-    c.args(&args[1..]);
-    if quiet {
-        c.stdout(Stdio::null()).stderr(Stdio::null());
-    }
-    let status = die(c.status(), &args[0]);
-    if !status.success() {
-        panic!("command failed");
-    }
+fn chmod(path: &Path, mode: u32) -> io::Result<()> {
+    fs::set_permissions(path, Permissions::from_mode(mode))
 }
-fn command_output(args: &[&str]) -> String {
-    let out = die(Command::new(args[0]).args(&args[1..]).output(), args[0]);
-    if !out.status.success() {
-        panic!("command failed");
-    }
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
+    create_parents(dst)?;
+    let mut input =
+        File::open(src).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", src.display())))?;
+    io::copy(&mut input, &mut File::create(dst)?)?;
+    Ok(())
 }
-fn copy_file(src: &Path, dst: &Path) {
-    if let Some(p) = dst.parent() {
-        die(fs::create_dir_all(p), "mkdir");
-    }
-    die(fs::copy(src, dst), "copy");
-}
-fn copy_tree(src: &Path, dst: &Path) {
-    let meta = die(fs::symlink_metadata(src), "lstat");
-    if meta.file_type().is_symlink() {
-        let _ = fs::remove_file(dst);
-        die(symlink(die(fs::read_link(src), "readlink"), dst), "symlink");
-        return;
-    }
-    if !meta.is_dir() {
-        copy_file(src, dst);
-        return;
-    }
-    die(fs::create_dir_all(dst), "mkdir");
-    for e in die(fs::read_dir(src), "opendir") {
-        let e = die(e, "readdir");
-        copy_tree(&e.path(), &dst.join(e.file_name()));
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
     }
 }
-fn is_dir(path: &Path) -> bool {
-    die(fs::symlink_metadata(path), "lstat").is_dir()
+fn put_link(target: &Path, dst: &Path) -> io::Result<()> {
+    create_parents(dst)?;
+    remove_if_present(dst)?;
+    symlink(target, dst)
 }
-fn executable(dst: &str) -> bool {
-    [
-        "/bin/",
-        "/sbin/",
-        "/usr/bin/",
-        "/usr/sbin/",
-        "/usr/local/bin/",
-        "/usr/libexec/",
-        "/libexec/",
-        "/lib/mycelium/",
-        "/home/spore/demos/",
-        "/etc/update-motd.d/",
-    ]
-    .iter()
-    .any(|p| dst.starts_with(p))
-}
-fn root_path(root: &Path, target: &str) -> PathBuf {
-    root.join(target.strip_prefix('/').unwrap_or(target))
-}
-fn copy_into(src: &Path, root: &Path, target: &str) {
-    let out = root_path(root, target);
-    if is_dir(src) {
-        copy_tree(src, &out);
-    } else {
-        copy_file(src, &out);
-        die(
-            fs::set_permissions(
-                out,
-                fs::Permissions::from_mode(if executable(target) { 0o755 } else { 0o644 }),
-            ),
-            "chmod",
-        );
+fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
+    let kind = fs::symlink_metadata(src)?.file_type();
+    if kind.is_symlink() {
+        return put_link(&fs::read_link(src)?, dst);
     }
+    if !kind.is_dir() {
+        return copy_file(src, dst);
+    }
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        copy_tree(&entry.path(), &dst.join(entry.file_name()))?;
+    }
+    Ok(())
 }
-fn link_into(target: &str, root: &Path, link: &str) {
-    let out = root_path(root, link);
-    if let Some(p) = out.parent() {
-        die(fs::create_dir_all(p), "mkdir")
-    };
-    let _ = fs::remove_file(&out);
-    die(symlink(target, &out), "symlink");
+fn image_path(root: &Path, path: &Path) -> io::Result<PathBuf> {
+    if !path.is_absolute() || path.components().any(|p| p == Component::ParentDir) {
+        return Err(io::Error::other(format!(
+            "invalid image path {}",
+            path.display()
+        )));
+    }
+    Ok(root.join(path.strip_prefix("/").unwrap()))
 }
-fn debugfs(image: &Path, script: &Path) {
-    run(
-        &[
-            "debugfs".into(),
-            "-w".into(),
-            "-f".into(),
-            script.display().to_string(),
-            image.display().to_string(),
-        ],
-        true,
-    );
-}
-fn write_debugfs(image: &Path, script: &str) {
-    let p = PathBuf::from(format!("{}.debugfs", image.display()));
-    text(&p, script, 0o644);
-    debugfs(image, &p);
-    let _ = fs::remove_file(p);
-}
-fn chown_commands(out: &mut String, host: &Path, image: &str, uid: u32, gid: u32) {
-    if image
-        .bytes()
-        .any(|c| matches!(c, b' ' | b'\n' | b'\r' | b'\t'))
+fn stage_manifest(root: &Path, manifest: &Path, source: &Path, prebuilt: &Path) -> io::Result<()> {
+    let executable = [
+        "bin",
+        "sbin",
+        "usr/bin",
+        "usr/sbin",
+        "usr/local/bin",
+        "usr/libexec",
+        "libexec",
+        "lib/mycelium",
+        "home/spore/demos",
+        "etc/update-motd.d",
+    ];
+    for (i, line) in BufReader::new(File::open(manifest)?)
+        .split(b'\n')
+        .enumerate()
     {
-        panic!("debugfs path contains whitespace");
+        let line = line?;
+        let parts: Vec<_> = line
+            .split(u8::is_ascii_whitespace)
+            .filter(|v| !v.is_empty())
+            .collect();
+        match parts.as_slice() {
+            [] => (),
+            [comment, ..] if comment.starts_with(b"#") => (),
+            [b"dir", dst] => {
+                fs::create_dir_all(image_path(root, OsStr::from_bytes(dst).as_ref())?)?
+            }
+            [b"symlink", target, dst] => put_link(
+                OsStr::from_bytes(target).as_ref(),
+                &image_path(root, OsStr::from_bytes(dst).as_ref())?,
+            )?,
+            [src, dst] if *src != b"symlink" => {
+                let src = Path::new(OsStr::from_bytes(src));
+                let rel = Path::new(OsStr::from_bytes(dst));
+                let generated = prebuilt.join(src);
+                let src = if generated.exists() {
+                    generated
+                } else {
+                    source.join(src)
+                };
+                let dst = image_path(root, rel)?;
+                if fs::symlink_metadata(&src)?.is_dir() {
+                    copy_tree(&src, &dst)?;
+                } else {
+                    copy_file(&src, &dst)?;
+                    let is_exe = executable
+                        .iter()
+                        .any(|p| rel.strip_prefix("/").unwrap().starts_with(p));
+                    chmod(&dst, if is_exe { 0o755 } else { 0o644 })?;
+                }
+            }
+            _ => {
+                return Err(io::Error::other(format!(
+                    "{}:{}: bad manifest line",
+                    manifest.display(),
+                    i + 1
+                )));
+            }
+        }
     }
-    out.push_str(&format!(
-        "set_inode_field {image} uid {uid}\nset_inode_field {image} gid {gid}\n"
-    ));
-    if !die(fs::symlink_metadata(host), "lstat").is_dir() {
-        return;
+    Ok(())
+}
+fn gcc_file(name: &str) -> io::Result<PathBuf> {
+    let output = Command::new("aarch64-unknown-linux-musl-gcc")
+        .arg(format!("-print-file-name={name}"))
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "musl GCC could not locate {name}"
+        )));
     }
-    for e in die(fs::read_dir(host), "opendir") {
-        let e = die(e, "readdir");
-        let n = e.file_name().into_string().unwrap();
-        let child = if image == "/" {
-            format!("/{n}")
-        } else {
-            format!("{image}/{n}")
-        };
-        chown_commands(out, &e.path(), &child, uid, gid);
-    }
+    Ok(PathBuf::from(OsString::from_vec(
+        output.stdout.trim_ascii_end().to_vec(),
+    )))
 }
-fn chown_tree(image: &Path, root: &Path, image_path: &str, uid: u32, gid: u32) {
-    let host = root_path(root, image_path);
-    if !host.exists() {
-        return;
-    };
-    let mut s = String::new();
-    chown_commands(&mut s, &host, image_path, uid, gid);
-    let p = PathBuf::from(format!("{}.chown.debugfs", image.display()));
-    text(&p, &s, 0o644);
-    debugfs(image, &p);
-    let _ = fs::remove_file(p);
-}
-fn set_ext2plus(image: &Path) {
-    let mut f = die(
-        OpenOptions::new().read(true).write(true).open(image),
-        "open",
-    );
-    die(
-        f.seek(SeekFrom::Start(EXT2_FEATURE_INCOMPAT_OFFSET)),
-        "seek",
-    );
-    let mut b = [0; 4];
-    die(f.read_exact(&mut b), "read");
-    let n = u32::from_le_bytes(b) | EXT2_INCOMPAT_SPORE_EXT2PLUS;
-    die(
-        f.seek(SeekFrom::Start(EXT2_FEATURE_INCOMPAT_OFFSET)),
-        "seek",
-    );
-    die(f.write_all(&n.to_le_bytes()), "write");
-}
-fn musl(root: &Path) {
-    let lib = root.join("lib");
-    die(fs::create_dir_all(&lib), "mkdir");
-    let ld = command_output(&[
-        "aarch64-unknown-linux-musl-gcc",
-        "-print-file-name=ld-musl-aarch64.so.1",
-    ]);
-    let libc = command_output(&["aarch64-unknown-linux-musl-gcc", "-print-file-name=libc.so"]);
-    copy_file(Path::new(&libc), &lib.join("libc.so"));
-    die(
-        fs::set_permissions(lib.join("libc.so"), fs::Permissions::from_mode(0o755)),
-        "chmod",
-    );
-    let a = die(fs::metadata(&ld), "stat");
-    let b = die(fs::metadata(&libc), "stat");
-    if a.dev() == b.dev() && a.ino() == b.ino() {
-        link_into("libc.so", root, "/lib/ld-musl-aarch64.so.1")
+fn install_musl(root: &Path) -> io::Result<()> {
+    let libc = gcc_file("libc.so")?;
+    let ld = gcc_file("ld-musl-aarch64.so.1")?;
+    let dest = root.join("lib/libc.so");
+    copy_file(&libc, &dest)?;
+    chmod(&dest, 0o755)?;
+    let a = fs::metadata(&ld)?;
+    let b = fs::metadata(&libc)?;
+    let dest = root.join("lib/ld-musl-aarch64.so.1");
+    if (a.dev(), a.ino()) == (b.dev(), b.ino()) {
+        put_link(Path::new("libc.so"), &dest)?;
     } else {
-        copy_file(Path::new(&ld), &lib.join("ld-musl-aarch64.so.1"));
-        die(
-            fs::set_permissions(
-                lib.join("ld-musl-aarch64.so.1"),
-                fs::Permissions::from_mode(0o755),
-            ),
-            "chmod",
-        )
+        copy_file(&ld, &dest)?;
+        chmod(&dest, 0o755)?;
     }
-}
-fn musl_devel(root: &Path) {
-    let inc = root.join("usr/include");
-    let lib = root.join("usr/lib");
-    die(fs::create_dir_all(&inc), "mkdir");
-    die(fs::create_dir_all(&lib), "mkdir");
-    let gcc = command_output(&["aarch64-unknown-linux-musl-gcc", "-print-file-name=include"]);
-    let src = die(
-        fs::canonicalize(
-            Path::new(&gcc).join("../../../../../aarch64-unknown-linux-musl/sys-include"),
-        ),
-        "realpath musl include",
-    );
-    copy_tree(&src, &inc);
-    for n in ["crt1.o", "crti.o", "crtn.o", "Scrt1.o", "rcrt1.o"] {
-        let s = command_output(&[
-            "aarch64-unknown-linux-musl-gcc",
-            &format!("-print-file-name={n}"),
-        ]);
-        if Path::new(&s).exists() {
-            copy_file(Path::new(&s), &lib.join(n));
-            die(
-                fs::set_permissions(lib.join(n), fs::Permissions::from_mode(0o644)),
-                "chmod",
-            )
+    let headers = gcc_file("include")?
+        .join("../../../../../aarch64-unknown-linux-musl/sys-include")
+        .canonicalize()?;
+    copy_tree(&headers, &root.join("usr/include"))?;
+    for obj in ["crt1.o", "crti.o", "crtn.o", "Scrt1.o", "rcrt1.o"] {
+        let src = gcc_file(obj)?;
+        if src.exists() {
+            let dst = root.join("usr/lib").join(obj);
+            copy_file(&src, &dst)?;
+            chmod(&dst, 0o644)?;
         }
     }
-    link_into("/lib/libc.so", root, "/usr/lib/libc.so");
+    put_link(Path::new("/lib/libc.so"), &root.join("usr/lib/libc.so"))
 }
-fn accounts(root: &Path) {
-    for d in ["root", "home/spore", "root/.ssh", "home/spore/.ssh"] {
-        die(fs::create_dir_all(root.join(d)), "mkdir");
+fn accounts(root: &Path) -> io::Result<()> {
+    for dir in ["root/.ssh", "home/spore/.ssh"] {
+        let path = root.join(dir);
+        fs::create_dir_all(&path)?;
+        chmod(&path, 0o700)?;
     }
-    die(
-        fs::set_permissions(root.join("root/.ssh"), fs::Permissions::from_mode(0o700)),
-        "chmod",
-    );
-    die(
-        fs::set_permissions(
-            root.join("home/spore/.ssh"),
-            fs::Permissions::from_mode(0o700),
+    for (path, mode, contents) in [
+        (
+            "etc/passwd",
+            0o644,
+            "root:x:0:0:root:/root:/bin/msh\nspore:x:1000:1000:spore:/home/spore:/bin/msh\n",
         ),
-        "chmod",
-    );
-    text(
-        &root_path(root, "/etc/passwd"),
-        "root:x:0:0:root:/root:/bin/msh\nspore:x:1000:1000:spore:/home/spore:/bin/msh\n",
-        0o644,
-    );
-    text(
-        &root_path(root, "/etc/group"),
-        "root:x:0:\nspore:x:1000:\nsudo:x:27:spore\n",
-        0o644,
-    );
-    text(
-        &root_path(root, "/etc/shadow"),
-        "root:!:0:0:99999:7:::\nspore::0:0:99999:7:::\n",
-        0o600,
-    );
-    text(
-        &root_path(root, "/etc/sudoers"),
-        "Defaults !use_pty\nroot ALL=(ALL) ALL\nspore ALL=(ALL) NOPASSWD: ALL\n",
-        0o440,
-    );
-    text(
-        &root_path(root, "/root/.profile"),
-        "# root login profile for msh\n",
-        0o644,
-    );
-    text(
-        &root_path(root, "/root/.mshrc"),
-        "# interactive root msh startup\n",
-        0o644,
-    );
-    text(
-        &root_path(root, "/home/spore/.profile"),
-        "# spore login profile for msh\n",
-        0o644,
-    );
-    text(
-        &root_path(root, "/home/spore/.mshrc"),
-        "# interactive spore msh startup\n",
-        0o644,
-    );
+        (
+            "etc/group",
+            0o644,
+            "root:x:0:\nspore:x:1000:\nsudo:x:27:spore\n",
+        ),
+        (
+            "etc/shadow",
+            0o600,
+            "root:!:0:0:99999:7:::\nspore::0:0:99999:7:::\n",
+        ),
+        (
+            "etc/sudoers",
+            0o440,
+            "Defaults !use_pty\nroot ALL=(ALL) ALL\nspore ALL=(ALL) NOPASSWD: ALL\n",
+        ),
+        ("root/.profile", 0o644, "# root login profile for msh\n"),
+        ("root/.mshrc", 0o644, "# interactive root msh startup\n"),
+        (
+            "home/spore/.profile",
+            0o644,
+            "# spore login profile for msh\n",
+        ),
+        (
+            "home/spore/.mshrc",
+            0o644,
+            "# interactive spore msh startup\n",
+        ),
+    ] {
+        let path = root.join(path);
+        fs::write(&path, contents)?;
+        chmod(&path, mode)?;
+    }
+    Ok(())
 }
-fn build_rootfs(source: &Path, stage: &Path, manifest: &Path, prebuilt: &Path, out: &Path) {
-    let _ = fs::remove_dir_all(stage);
+fn write_owners(script: &mut impl Write, root: &Path, rel: &Path) -> io::Result<()> {
+    let mut name = Vec::from(b"/".as_slice());
+    name.extend_from_slice(rel.as_os_str().as_bytes());
+    if name.iter().any(u8::is_ascii_whitespace) {
+        return Err(io::Error::other("debugfs path contains whitespace"));
+    }
+    let owner = if rel.starts_with("home/spore") {
+        1000
+    } else {
+        0
+    };
+    for field in ["uid", "gid"] {
+        script.write_all(b"set_inode_field ")?;
+        script.write_all(&name)?;
+        writeln!(script, " {field} {owner}")?;
+    }
+    let path = root.join(rel);
+    if fs::symlink_metadata(&path)?.is_dir() {
+        for entry in fs::read_dir(path)? {
+            write_owners(script, root, &rel.join(entry?.file_name()))?;
+        }
+    }
+    Ok(())
+}
+fn build_root(
+    source: &Path,
+    stage: &Path,
+    manifest: &Path,
+    prebuilt: &Path,
+    image: &Path,
+) -> io::Result<()> {
+    match fs::remove_dir_all(stage) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => (),
+    }
     let root = stage.join("rootfs");
-    die(fs::create_dir_all(&root), "mkdir");
-    for line in die(fs::read_to_string(manifest), "manifest").lines() {
-        let v: Vec<_> = line.split_whitespace().collect();
-        if v.is_empty() || v[0].starts_with('#') {
-            continue;
-        }
-        if v[0] == "dir" {
-            die(fs::create_dir_all(root_path(&root, v[1])), "mkdir");
-            continue;
-        }
-        if v[0] == "symlink" {
-            link_into(v[1], &root, v[2]);
-            continue;
-        }
-        let p = prebuilt.join(v[0]);
-        let fallback = source.join(v[0]);
-        copy_into(if p.exists() { &p } else { &fallback }, &root, v[1]);
+    fs::create_dir_all(&root)?;
+    stage_manifest(&root, manifest, source, prebuilt)?;
+    for dir in ["dev", "etc", "proc", "sys", "tmp"] {
+        fs::create_dir_all(root.join(dir))?;
     }
-    for d in ["dev", "etc", "proc", "sys", "tmp"] {
-        die(fs::create_dir_all(root.join(d)), "mkdir");
-    }
-    musl(&root);
-    musl_devel(&root);
-    accounts(&root);
+    install_musl(&root)?;
+    accounts(&root)?;
     let seed = root.join(".spore-inodes");
-    let mut b = vec![0u8; 4096];
-    for (i, v) in [
+    let mut block = [0u8; BLOCK_SIZE];
+    let fields = [
         0x4e495053u32,
         1,
         64,
@@ -334,119 +280,107 @@ fn build_rootfs(source: &Path, stage: &Path, manifest: &Path, prebuilt: &Path, o
         u32::MAX,
         0,
         256,
-        0,
-    ]
-    .iter()
-    .enumerate()
-    {
-        b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes())
+    ];
+    for (word, value) in block.chunks_exact_mut(4).zip(fields) {
+        word.copy_from_slice(&value.to_le_bytes());
     }
-    die(fs::write(&seed, b), "seed");
-    die(
-        fs::set_permissions(&seed, fs::Permissions::from_mode(0o600)),
-        "chmod",
-    );
-    let _ = fs::remove_file(out);
-    run(
-        &[
-            "mke2fs".into(),
-            "-q".into(),
-            "-t".into(),
-            "ext2".into(),
-            "-b".into(),
-            "4096".into(),
-            "-N".into(),
-            ROOT_STATIC_INODES.to_string(),
-            "-O".into(),
-            "^resize_inode".into(),
-            "-E".into(),
-            "assume_storage_prezeroed=1".into(),
-            "-d".into(),
-            root.display().to_string(),
-            out.display().to_string(),
-            ROOT_BLOCKS.to_string(),
-        ],
-        false,
-    );
-    chown_tree(out, &root, "/", 0, 0);
-    chown_tree(out, &root, "/home/spore", 1000, 1000);
-    for n in ["sudo", "su", "passwd"] {
-        if root.join("bin").join(n).exists() {
-            write_debugfs(out,&format!("set_inode_field /bin/{n} uid 0\nset_inode_field /bin/{n} gid 0\nset_inode_field /bin/{n} mode 0104755\n"))
+    fs::write(&seed, block)?;
+    chmod(&seed, 0o600)?;
+    remove_if_present(image)?;
+    run(Command::new("mke2fs")
+        .args([
+            "-q",
+            "-t",
+            "ext2",
+            "-b",
+            "4096",
+            "-N",
+            "8192",
+            "-O",
+            "^resize_inode",
+            "-E",
+            "assume_storage_prezeroed=1",
+            "-d",
+        ])
+        .arg(&root)
+        .arg(image)
+        .arg((10 * 1024 * MIB / BLOCK_SIZE as u64).to_string()))?;
+    let commands = stage.join("ownership.debugfs");
+    {
+        let mut script = BufWriter::new(File::create(&commands)?);
+        write_owners(&mut script, &root, Path::new(""))?;
+        for bin in ["sudo", "su", "passwd"] {
+            if root.join("bin").join(bin).exists() {
+                writeln!(script, "set_inode_field /bin/{bin} mode 0104755")?;
+            }
+        }
+        script.flush()?;
+    }
+    let rc = run(Command::new("debugfs")
+        .args(["-w", "-f"])
+        .arg(&commands)
+        .arg(image)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null()));
+    fs::remove_file(commands)?;
+    rc?;
+    let mut disk = OpenOptions::new().read(true).write(true).open(image)?;
+    let incompat = SeekFrom::Start(1024 + 96);
+    disk.seek(incompat)?;
+    let mut flags = [0; 4];
+    disk.read_exact(&mut flags)?;
+    disk.seek(incompat)?;
+    disk.write_all(&(u32::from_le_bytes(flags) | 0x8000_0000).to_le_bytes())
+}
+fn build_esp(
+    kernel: &Path,
+    boot: &Path,
+    config: &Path,
+    license: &Path,
+    image: &Path,
+) -> io::Result<()> {
+    let payload = fs::metadata(kernel)?.len()
+        + fs::metadata(boot)?.len()
+        + fs::metadata(config)?.len()
+        + fs::metadata(license)?.len();
+    let mib = (payload * 2 + 2 * MIB).div_ceil(MIB).max(9);
+    File::create(image)?.set_len(mib * MIB)?;
+    run(Command::new("mkfs.fat")
+        .args(["-F", "16"])
+        .arg(image)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null()))?;
+    run(Command::new("mmd")
+        .arg("-i")
+        .arg(image)
+        .args(["::/EFI", "::/EFI/BOOT", "::/boot"]))?;
+    for (src, dst) in [
+        (boot, "::/EFI/BOOT/BOOTAA64.EFI"),
+        (kernel, "::/boot/kernel.elf"),
+        (config, "::/limine.conf"),
+        (license, "::/EFI/BOOT/LICENSE"),
+    ] {
+        run(Command::new("mcopy").arg("-i").arg(image).arg(src).arg(dst))?;
+    }
+    Ok(())
+}
+fn main() -> ExitCode {
+    let args: Vec<PathBuf> = env::args_os().skip(1).map(PathBuf::from).collect();
+    let rc = match args.as_slice() {
+        [mode, k, b, c, l, o] if mode == Path::new("esp") => build_esp(k, b, c, l, o),
+        [mode, s, t, m, p, o] if mode == Path::new("rootfs") => build_root(s, t, m, p, o),
+        _ => {
+            eprintln!(
+                "usage: spore-image esp KERNEL_ELF BOOT_EFI CONFIG LICENSE OUTPUT\n       spore-image rootfs SOURCE_ROOT STAGE MANIFEST PREBUILT_ROOT OUTPUT"
+            );
+            return ExitCode::from(2);
+        }
+    };
+    match rc {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("spore-image: {e}");
+            ExitCode::FAILURE
         }
     }
-    write_debugfs(out,"set_inode_field /etc/shadow uid 0\nset_inode_field /etc/shadow gid 0\nset_inode_field /etc/sudoers uid 0\nset_inode_field /etc/sudoers gid 0\n");
-    set_ext2plus(out);
-}
-fn esp(kernel: &Path, boot: &Path, config: &Path, license: &Path, out: &Path) {
-    let payload = die(fs::metadata(boot), "stat").len()
-        + die(fs::metadata(kernel), "stat").len()
-        + die(fs::metadata(config), "stat").len()
-        + die(fs::metadata(license), "stat").len();
-    let size =
-        ((payload * 2 + 2 * 1024 * 1024 + 1024 * 1024 - 1) / (1024 * 1024)).max(9) * 1024 * 1024;
-    let f = die(File::create(out), "create");
-    die(f.set_len(size), "truncate");
-    run(
-        &[
-            "mkfs.fat".into(),
-            "-F".into(),
-            "16".into(),
-            out.display().to_string(),
-        ],
-        true,
-    );
-    run(
-        &[
-            "mmd".into(),
-            "-i".into(),
-            out.display().to_string(),
-            "::/EFI".into(),
-            "::/EFI/BOOT".into(),
-            "::/boot".into(),
-        ],
-        false,
-    );
-    for (s, d) in [
-        (boot, "/EFI/BOOT/BOOTAA64.EFI"),
-        (kernel, "/boot/kernel.elf"),
-        (config, "/limine.conf"),
-        (license, "/EFI/BOOT/LICENSE"),
-    ] {
-        run(
-            &[
-                "mcopy".into(),
-                "-i".into(),
-                out.display().to_string(),
-                s.display().to_string(),
-                format!("::{d}"),
-            ],
-            false,
-        )
-    }
-}
-fn main() {
-    let a: Vec<String> = env::args().collect();
-    if a.len() == 7 && a[1] == "esp" {
-        esp(
-            Path::new(&a[2]),
-            Path::new(&a[3]),
-            Path::new(&a[4]),
-            Path::new(&a[5]),
-            Path::new(&a[6]),
-        );
-        return;
-    }
-    if a.len() == 7 && a[1] == "rootfs" {
-        build_rootfs(
-            Path::new(&a[2]),
-            Path::new(&a[3]),
-            Path::new(&a[4]),
-            Path::new(&a[5]),
-            Path::new(&a[6]),
-        );
-        return;
-    }
-    eprintln!("usage: spore-image esp KERNEL_ELF BOOT_EFI CONFIG LICENSE OUTPUT_IMAGE\n       spore-image rootfs SOURCE_ROOT STAGE_DIR MANIFEST PREBUILT_ROOT OUTPUT_ROOT");
-    std::process::exit(2)
 }

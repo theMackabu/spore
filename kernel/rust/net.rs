@@ -1,141 +1,203 @@
 #[repr(C)]
-pub struct NetTcpOptions {
-    pub mss: u16,
-    pub window_scale: u8,
-    pub has_mss: u8,
+#[derive(Default)]
+pub struct RxHeader {
+    eth_type: u16,
+    ip_protocol: u8,
+    ttl: u8,
+    ip_header_len: u16,
+    transport_len: u16,
+    src_ip: u32,
+    dst_ip: u32,
+    src_port: u16,
+    dst_port: u16,
+    sequence: u32,
+    acknowledgement: u32,
+    window: u16,
+    tcp_flags: u8,
+    tcp_options_len: u8,
+    arp_operation: u16,
+    icmp_type: u8,
+    quoted_protocol: u8,
+    quoted_src: u32,
+    quoted_dst: u32,
+}
+
+fn be16(data: &[u8], at: usize) -> u16 {
+    u16::from_be_bytes([data[at], data[at + 1]])
+}
+fn octets(data: &[u8], at: usize) -> [u8; 4] {
+    [data[at], data[at + 1], data[at + 2], data[at + 3]]
+}
+fn checksum_valid(mut sum: u32, data: &[u8]) -> bool {
+    let mut words = data.chunks_exact(2);
+    for w in &mut words {
+        sum += u16::from_be_bytes([w[0], w[1]]) as u32;
+    }
+    if let [last] = words.remainder() {
+        sum += (*last as u32) << 8;
+    }
+    while sum > 0xffff {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    sum == 0xffff
+}
+
+fn ip_header(data: &[u8]) -> Option<&[u8]> {
+    if data.len() < 20 || data[0] >> 4 != 4 {
+        return None;
+    }
+    let header = data.get(..(data[0] & 15) as usize * 4)?;
+    (header.len() >= 20 && checksum_valid(0, header)).then_some(header)
+}
+
+fn decode_frame(frame: &[u8]) -> Option<RxHeader> {
+    let data = frame.get(14..)?;
+    let mut h = RxHeader {
+        eth_type: be16(frame, 12),
+        ..Default::default()
+    };
+    match h.eth_type {
+        0x0806 => {
+            if data.len() < 28 || data[..6] != [0, 1, 8, 0, 6, 4] {
+                return None;
+            }
+            h.arp_operation = be16(data, 6);
+            h.src_ip = u32::from_le_bytes(octets(data, 14));
+            h.dst_ip = u32::from_le_bytes(octets(data, 24));
+            return Some(h);
+        }
+        0x0800 => (),
+        _ => return None,
+    }
+    let ip = ip_header(data)?;
+    let segment = data.get(ip.len()..be16(ip, 2) as usize)?;
+    if ip[8] == 0 || be16(ip, 6) & 0xbfff != 0 {
+        return None;
+    }
+    h.ip_protocol = ip[9];
+    h.ttl = ip[8];
+    h.ip_header_len = ip.len() as u16;
+    h.transport_len = segment.len() as u16;
+    h.src_ip = u32::from_le_bytes(octets(ip, 12));
+    h.dst_ip = u32::from_le_bytes(octets(ip, 16));
+    let pseudo = [12, 14, 16, 18]
+        .iter()
+        .map(|&i| u32::from(be16(ip, i)))
+        .sum::<u32>()
+        + u32::from(h.ip_protocol);
+    match h.ip_protocol {
+        1 => {
+            if segment.len() < 8 || !checksum_valid(0, segment) {
+                return None;
+            }
+            h.icmp_type = segment[0];
+            if segment[..2] == [3, 3] {
+                let quote = &segment[8..];
+                let nested = ip_header(quote)?;
+                let ports = quote.get(nested.len()..nested.len() + 8)?;
+                h.quoted_protocol = nested[9];
+                h.quoted_src = u32::from_le_bytes(octets(nested, 12));
+                h.quoted_dst = u32::from_le_bytes(octets(nested, 16));
+                h.src_port = be16(ports, 0);
+                h.dst_port = be16(ports, 2);
+            }
+        }
+        6 => {
+            if segment.len() < 20 || !checksum_valid(pseudo + segment.len() as u32, segment) {
+                return None;
+            }
+            let header_len = (segment[12] >> 4) as usize * 4;
+            if !(20..=segment.len()).contains(&header_len) {
+                return None;
+            }
+            let flags = segment[13];
+            if (flags & 7).count_ones() > 1 {
+                return None;
+            }
+            h.src_port = be16(segment, 0);
+            h.dst_port = be16(segment, 2);
+            if h.src_port == 0 || h.dst_port == 0 {
+                return None;
+            }
+            h.sequence = u32::from_be_bytes(octets(segment, 4));
+            h.acknowledgement = u32::from_be_bytes(octets(segment, 8));
+            h.window = be16(segment, 14);
+            h.tcp_flags = flags;
+            h.tcp_options_len = (header_len - 20) as u8;
+        }
+        17 => {
+            if segment.len() < 8 {
+                return None;
+            }
+            let udp = segment.get(..be16(segment, 4) as usize)?;
+            if udp.len() < 8
+                || (be16(udp, 6) != 0 && !checksum_valid(pseudo + udp.len() as u32, udp))
+            {
+                return None;
+            }
+            h.src_port = be16(udp, 0);
+            h.dst_port = be16(udp, 2);
+            h.transport_len = udp.len() as u16;
+            if h.dst_port == 0 {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    Some(h)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spore_net_decode_ethernet(
+    frame: *const u8,
+    len: usize,
+    out: *mut RxHeader,
+) -> bool {
+    if frame.is_null() || out.is_null() {
+        return false;
+    }
+    let Some(header) = decode_frame(unsafe { core::slice::from_raw_parts(frame, len) }) else {
+        return false;
+    };
+    unsafe { out.write(header) };
+    true
 }
 
 #[repr(C)]
-pub struct NetRxHeader {
-    pub eth_type: u16,
-    pub ip_protocol: u8,
-    pub ttl: u8,
-    pub ip_header_len: u16,
-    pub transport_len: u16,
-    pub src_ip: u32,
-    pub dst_ip: u32,
-    pub src_port: u16,
-    pub dst_port: u16,
-    pub sequence: u32,
-    pub acknowledgement: u32,
-    pub window: u16,
-    pub tcp_flags: u8,
-    pub tcp_options_len: u8,
-}
-
-fn be16(bytes: &[u8]) -> u16 {
-    u16::from_be_bytes([bytes[0], bytes[1]])
-}
-
-fn checksum(bytes: &[u8]) -> u16 {
-    let mut sum = 0u32;
-    let mut chunks = bytes.chunks_exact(2);
-    for word in &mut chunks {
-        sum += be16(word) as u32;
-    }
-    if let Some(&byte) = chunks.remainder().first() {
-        sum += (byte as u32) << 8;
-    }
-    while sum >> 16 != 0 {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
-    !(sum as u16)
+pub struct TcpOptions {
+    mss: u16,
+    window_scale: u8,
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_net_decode_ethernet(frame: *const u8, len: usize, out: *mut NetRxHeader) -> bool {
-    if frame.is_null() || out.is_null() || len < 14 {
-        return false;
-    }
-    let frame = unsafe { core::slice::from_raw_parts(frame, len) };
-    let mut decoded = NetRxHeader { eth_type: be16(&frame[12..14]), ip_protocol: 0, ttl: 0, ip_header_len: 0,
-        transport_len: 0, src_ip: 0, dst_ip: 0, src_port: 0, dst_port: 0, sequence: 0, acknowledgement: 0,
-        window: 0, tcp_flags: 0, tcp_options_len: 0 };
-    let valid = match decoded.eth_type {
-        0x0806 => frame.len() >= 42 && be16(&frame[14..16]) == 1 && be16(&frame[16..18]) == 0x0800 &&
-                  frame[18] == 6 && frame[19] == 4,
-        0x0800 => {
-            let ip = &frame[14..];
-            if ip.len() < 20 || ip[0] >> 4 != 4 {
-                return false;
-            }
-            let ihl = ((ip[0] & 15) as usize) * 4;
-            if ihl < 20 || ihl > ip.len() || checksum(&ip[..ihl]) != 0 {
-                return false;
-            }
-            let total = be16(&ip[2..4]) as usize;
-            if total < ihl || total > ip.len() || ip[8] == 0 || be16(&ip[6..8]) & 0xbfff != 0 {
-                return false;
-            }
-            let payload = &ip[ihl..total];
-            decoded.ip_protocol = ip[9];
-            decoded.ttl = ip[8];
-            decoded.ip_header_len = ihl as u16;
-            decoded.transport_len = payload.len() as u16;
-            decoded.src_ip = u32::from_le_bytes([ip[12], ip[13], ip[14], ip[15]]);
-            decoded.dst_ip = u32::from_le_bytes([ip[16], ip[17], ip[18], ip[19]]);
-            match ip[9] {
-                1 => payload.len() >= 8 && checksum(payload) == 0,
-                6 => {
-                    if payload.len() < 20 || be16(&payload[0..2]) == 0 || be16(&payload[2..4]) == 0 {
-                        return false;
-                    }
-                    let offset = ((payload[12] >> 4) as usize) * 4;
-                    decoded.src_port = be16(&payload[0..2]);
-                    decoded.dst_port = be16(&payload[2..4]);
-                    decoded.sequence = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
-                    decoded.acknowledgement = u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
-                    decoded.window = be16(&payload[14..16]);
-                    decoded.tcp_flags = payload[13];
-                    decoded.tcp_options_len = (offset - 20) as u8;
-                    offset >= 20 && offset <= payload.len() &&
-                        (payload[13] & 3 != 3) && !(payload[13] & 2 != 0 && payload[13] & 5 != 0)
-                }
-                17 => payload.len() >= 8 && be16(&payload[0..2]) != 0 && be16(&payload[2..4]) != 0 &&
-                      (be16(&payload[4..6]) as usize) >= 8 && (be16(&payload[4..6]) as usize) <= payload.len(),
-                _ => true,
-            }
-        }
-        _ => false,
+pub unsafe extern "C" fn spore_net_decode_tcp_options(data: *const u8, len: usize) -> TcpOptions {
+    let mut options = if data.is_null() {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(data, len) }
     };
-    if valid { unsafe { *out = decoded; } }
-    valid
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_net_decode_tcp_options(
-    options: *const u8,
-    len: usize,
-    out: *mut NetTcpOptions,
-) -> bool {
-    if out.is_null() || (options.is_null() && len != 0) || len > 40 {
-        return false;
-    }
-    let options = if len == 0 { &[] } else { unsafe { core::slice::from_raw_parts(options, len) } };
-    let mut decoded = NetTcpOptions { mss: 1460, window_scale: 0, has_mss: 0 };
-    let mut index = 0;
-    while index < options.len() {
-        match options[index] {
-            0 => break,
-            1 => index += 1,
-            kind => {
-                if index + 1 >= options.len() {
-                    return false;
-                }
-                let size = options[index + 1] as usize;
-                if size < 2 || index + size > options.len() {
-                    return false;
-                }
-                if kind == 2 && size == 4 {
-                    decoded.mss = be16(&options[index + 2..index + 4]);
-                    decoded.has_mss = 1;
-                } else if kind == 3 && size == 3 {
-                    decoded.window_scale = options[index + 2].min(14);
-                }
-                index += size;
-            }
+    let (mut mss, mut scale) = (None, None);
+    while let Some((&kind, tail)) = options.split_first() {
+        if kind == 0 {
+            break;
         }
+        if kind == 1 {
+            options = tail;
+            continue;
+        }
+        let Some(&len) = tail.first() else { break };
+        let Some(value) = options.get(2..len as usize) else {
+            break;
+        };
+        match (kind, value) {
+            (2, [a, b]) if mss.is_none() => mss = Some(u16::from_be_bytes([*a, *b]).max(536)),
+            (3, [s]) if scale.is_none() => scale = Some((*s).min(14)),
+            _ => (),
+        }
+        options = &options[len as usize..];
     }
-    unsafe { *out = decoded; }
-    true
+    TcpOptions {
+        mss: mss.unwrap_or(1460),
+        window_scale: scale.unwrap_or(0),
+    }
 }

@@ -36,8 +36,8 @@ void write_unit_status(char *out, size_t cap, struct unit *unit) {
                     unit->pid > 0 ? "; pid " : "", unit->pid > 0 ? "running" : "");
   } else {
     append_response(out, cap, "%s: %s (%s)%s%d%s%s\n", unit->name, state_name(unit->state),
-                    unit->pid > 0 ? "running" : type_name(unit->type), unit->pid > 0 ? " since boot; pid " : "",
-                    (int)unit->pid, unit->capability[0] ? "; cap=" : "", unit->capability);
+                    unit->pid > 0 ? "running" : type_name(unit->config.type), unit->pid > 0 ? " since boot; pid " : "",
+                    (int)unit->pid, unit->config.capability[0] ? "; cap=" : "", unit->config.capability);
   }
 }
 
@@ -45,7 +45,7 @@ void list_units(char *out, size_t cap) {
   for (size_t i = 0; i < UNIT_CAP; ++i) {
     if (!units[i].used) { continue; }
     append_response(out, cap, "%-22s %-8s %s\n", units[i].name, state_name(units[i].state),
-                    units[i].pid > 0 ? "running" : type_name(units[i].type));
+                    units[i].pid > 0 ? "running" : type_name(units[i].config.type));
   }
 }
 
@@ -53,12 +53,12 @@ void list_timers(char *out, size_t cap) {
   time_t now = time(NULL);
   for (size_t i = 0; i < UNIT_CAP; ++i) {
     struct unit *unit = &units[i];
-    if (!unit->used || unit->type != UNIT_TIMER) { continue; }
+    if (!unit->used || unit->config.type != UNIT_TIMER) { continue; }
     if (unit->next_fire > now) {
       append_response(out, cap, "%-16s +%lds     %s\n", unit->name, (long)(unit->next_fire - now),
-                      unit->unit_to_activate);
+                      unit->config.unit_to_activate);
     } else {
-      append_response(out, cap, "%-16s waiting   %s\n", unit->name, unit->unit_to_activate);
+      append_response(out, cap, "%-16s waiting   %s\n", unit->name, unit->config.unit_to_activate);
     }
   }
 }
@@ -69,11 +69,11 @@ void list_dependencies(char *out, size_t cap, struct unit *unit, int depth) {
     append_response(out, cap, "  ");
   }
   append_response(out, cap, "%s\n", unit->name);
-  for (int i = 0; i < unit->requires_units.count; ++i) {
-    list_dependencies(out, cap, unit_by_name(unit->requires_units.items[i]), depth + 1);
+  for (int i = 0; i < unit->config.requires_units.count; ++i) {
+    list_dependencies(out, cap, unit_by_name(unit->config.requires_units.items[i]), depth + 1);
   }
-  for (int i = 0; i < unit->wants.count; ++i) {
-    list_dependencies(out, cap, unit_by_name(unit->wants.items[i]), depth + 1);
+  for (int i = 0; i < unit->config.wants.count; ++i) {
+    list_dependencies(out, cap, unit_by_name(unit->config.wants.items[i]), depth + 1);
   }
 }
 
@@ -175,7 +175,7 @@ void handle_command(const char *cmdline, const struct control_peer *peer, char *
     if (unit == NULL) {
       append_response(out, cap, "reload: unit not found\n");
     } else {
-      if (unit->exec_reload[0] != '\0') { (void)run_oneshot_command(unit, unit->exec_reload); }
+      if (unit->config.exec_reload[0] != '\0') { (void)run_oneshot_command(unit, unit->config.exec_reload); }
       append_response(out, cap, "%s reloaded\n", unit->name);
     }
   } else if (streq(argv[0], "daemon-reload")) {
@@ -194,7 +194,7 @@ void handle_command(const char *cmdline, const struct control_peer *peer, char *
     struct unit *unit = unit_by_name(argc > 1 ? argv[1] : "");
     if (unit != NULL) {
       append_response(out, cap, "Name=%s\nType=%s\nState=%s\nPID=%d\nCapability=%s\n", unit->name,
-                      type_name(unit->type), state_name(unit->state), (int)unit->pid, unit->capability);
+                      type_name(unit->config.type), state_name(unit->state), (int)unit->pid, unit->config.capability);
     }
   } else if (streq(argv[0], "cat")) {
     cat_unit(out, cap, argc > 1 ? argv[1] : "");

@@ -1,3 +1,10 @@
+host_kernel_rust = custom_target('host-kernel-rust',
+  input: kernel_rust_root,
+  output: 'libhost_kernel_rust.a',
+  depfile: 'host_kernel_rust.d',
+  command: [rustc, rust_archive_args, '--crate-name=host_kernel_rust',
+    '--emit=link,dep-info=@DEPFILE@', '@INPUT@', '-o', '@OUTPUT@'])
+
 test_include = [
   include_directories('../kernel/include'),
 ]
@@ -25,6 +32,8 @@ test('stack', test_stack)
 test_elf = executable('test_elf',
   elf_sources + vma_sources, 'test_elf.c', 'vfs_ref_stub.c',
   link_with: host_mem,
+  link_args: host_kernel_rust.full_path(),
+  link_depends: host_kernel_rust,
   include_directories: test_include,
   native: true)
 
@@ -44,6 +53,8 @@ host_ext2 = static_library('host-ext2', ext2_sources,
 
 test_ext2 = executable('test_ext2', 'test_ext2.c',
   link_with: [host_ext2, host_mem],
+  link_args: host_kernel_rust.full_path(),
+  link_depends: host_kernel_rust,
   include_directories: test_include,
   native: true)
 
@@ -51,6 +62,8 @@ test('ext2', test_ext2, args: [meson.project_build_root() / 'root.ext2'])
 
 bench_ext2_inodes = executable('bench_ext2_inodes', 'bench_ext2_inodes.c',
   link_with: [host_ext2, host_mem],
+  link_args: host_kernel_rust.full_path(),
+  link_depends: host_kernel_rust,
   include_directories: test_include,
   native: true)
 
@@ -107,6 +120,8 @@ test('mycelium-model', test_mycelium_model)
 test_net = executable('test_net',
   network_sources, 'test_net.c',
   link_with: host_mem,
+  link_args: host_kernel_rust.full_path(),
+  link_depends: host_kernel_rust,
   include_directories: test_include,
   native: true)
 

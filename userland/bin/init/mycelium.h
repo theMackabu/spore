@@ -76,13 +76,10 @@ struct string_list {
   int count;
 };
 
-struct unit {
-  bool used;
+struct unit_config {
   enum unit_type type;
   enum service_type service_type;
-  enum unit_state state;
   enum restart_policy restart;
-  char name[64];
   char description[96];
   char exec_start[192];
   char exec_start_pre[192];
@@ -103,21 +100,12 @@ struct unit {
   struct string_list conflicts;
   struct string_list after;
   struct string_list before;
-  pid_t pid;
-  int status;
-  int journal_fd;
-  bool journal_err;
-  time_t active_since;
-  time_t inactive_since;
-  time_t last_watchdog;
   int restart_sec;
   bool restart_immediately;
   int watchdog_sec;
   int timeout_stop_sec;
   int start_limit_interval;
   int start_limit_burst;
-  time_t starts[START_LIMIT_HISTORY];
-  int start_count;
   int on_boot_sec;
   int on_unit_active_sec;
   int on_unit_inactive_sec;
@@ -125,6 +113,22 @@ struct unit {
   uint64_t cpu_budget_ticks;
   uint64_t memory_pages;
   bool persistent;
+};
+
+struct unit {
+  struct unit_config config;
+  bool used;
+  enum unit_state state;
+  char name[64];
+  pid_t pid;
+  int status;
+  int journal_fd;
+  bool journal_err;
+  time_t active_since;
+  time_t inactive_since;
+  time_t last_watchdog;
+  time_t starts[START_LIMIT_HISTORY];
+  int start_count;
   bool boot_reported;
   time_t next_fire;
   char log_mem[LOG_MEM];
@@ -156,8 +160,6 @@ void append_log_file(const char *path, const char *text);
 void system_log_append(const char *text);
 void boot_log_append(const char *text);
 void sync_kernel_log(bool boot_snapshot);
-int parse_seconds(const char *s);
-void list_add_words(struct string_list *list, const char *value);
 bool list_has(const struct string_list *list, const char *name);
 int split_args(char *cmd, char **argv, int cap);
 void load_environment_file(const char *path);

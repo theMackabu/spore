@@ -55,6 +55,15 @@ configure_file(
   output: 'spore_version.h',
   configuration: spore_version_conf)
 
+kernel_rust_root = files('rust/lib.rs')
+kernel_rust = custom_target('spore-kernel-rust',
+  input: kernel_rust_root,
+  output: 'libspore_kernel.a',
+  depfile: 'spore_kernel.d',
+  command: [rustc, rust_archive_args, '--target=aarch64-unknown-none-softfloat',
+    '-C', 'relocation-model=static', '-C', 'code-model=small',
+    '--crate-name=spore_kernel', '--emit=link,dep-info=@DEPFILE@', '@INPUT@', '-o', '@OUTPUT@'])
+
 kernel_elf = executable('kernel.elf',
   kernel_sources, limine_header,
   include_directories: [
@@ -62,6 +71,7 @@ kernel_elf = executable('kernel.elf',
     include_directories('include'),
     include_directories('../boot'),
   ],
+  link_with: kernel_rust,
   c_args: kernel_target_args + kernel_c_args,
   link_args: kernel_link_args,
   link_depends: files('arch/aarch64/linker.ld'),

@@ -1,17 +1,6 @@
-spore_image = executable('spore-image',
-  files('src/spore_image.c'),
-  native: true,
-  install: false)
+spore_image = executable('spore-image', 'src/spore_image.rs', native: true, override_options: ['rust_std=2024'], install: false)
 
-spore_run = executable('spore-run',
-  files(
-    'src/spore_run.c',
-    'src/runner/harness.c',
-    'src/runner/fixture_servers.c',
-    'src/runner/guest_checks.c',
-    'src/runner/shell_check.c',
-    'src/runner/bench.c',
-    'src/runner/rng.c',
-  ),
-  native: true,
-  install: false)
+runner_terminal = static_library('runner-terminal', 'src/runner/terminal.c', native: true)
+spore_run = executable('spore-run', 'src/spore_run.rs',
+  link_with: runner_terminal,
+  native: true, override_options: ['rust_std=2024'], install: false)
