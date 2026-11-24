@@ -602,6 +602,12 @@
       "sha256": "7e69733605f5570febc1559b3cf69e045fd921f36afdcc1d32e09ff7ae5cc01d",
       "files": [],
       "manpages": "usr/share/man"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/liburing-doc-2.12-r0.apk",
+      "sha256": "95ea308c83edcf8949647596474241cb0f3845d877f68eb8291277011467c853",
+      "files": [],
+      "manpages": "usr/share/man"
     }
   ],
   "sdks": {
