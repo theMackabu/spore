@@ -3,6 +3,7 @@
 #include "fs/procfs.h"
 
 #include "proc/accounting.h"
+#include "proc/limits.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
@@ -180,6 +181,35 @@ bool vfs_lstat(const char *path, struct vfs_node *out) {
   }
   if (!vfs_lookup_ramfs(path, out)) { return false; }
   vfs_lookup_cache_put(path, true, out);
+  return true;
+}
+
+bool vfs_locate_entry(const char *path, const struct vfs_node *followed, struct vfs_entry_name *location) {
+  if (!path) { return false; }
+  if (followed && followed->backend == VFS_EXT2 && (followed->mode & 0170000u) != 0120000u) {
+    if (!ext2_locate_entry(vfs_root_ext2, path, followed->ext2.ino, location)) {
+      location->parent_ino = 0;
+      return false;
+    }
+    location->parent_dev = followed->dev_id;
+    return true;
+  }
+  size_t end = kstrlen(path);
+  while (end && path[end - 1] == '/') { --end; }
+  size_t start = end;
+  while (start && path[start - 1] != '/') { --start; }
+  if (!start || end - start >= sizeof(location->name)) { return false; }
+  char parent[CELL_PATH_MAX];
+  size_t prefix = start == 1 ? 1 : start - 1;
+  if (prefix >= sizeof(parent)) { return false; }
+  kmemcpy(parent, path, prefix);
+  parent[prefix] = 0;
+  struct vfs_node node;
+  if (!vfs_lookup(parent, &node)) { return false; }
+  location->parent_dev = node.dev_id;
+  location->parent_ino = node.ino;
+  kmemcpy(location->name, path + start, end - start);
+  location->name[end - start] = 0;
   return true;
 }
 

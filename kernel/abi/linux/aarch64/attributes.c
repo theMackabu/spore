@@ -32,7 +32,7 @@ static int attr_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descript
 
 static void notify_attr(const struct attr_target *target, uint32_t mask) {
   if (target->file) { fsnotify_file_event(target->file, mask); }
-  else { fsnotify_path_event(target->path, mask); }
+  else { fsnotify_node_event(&target->node, target->path, mask); }
 }
 
 int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, uint64_t flags) {

@@ -1,7 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
-#include "proc/limits.h"
+#include "fs/dirent.h"
 
 struct domain;
 struct open_file;
@@ -25,15 +25,10 @@ bool fsnotify_active(void);
 void fsnotify_emit(uint64_t dev, uint64_t ino, uint32_t mask, uint32_t cookie, const char *name, bool unlinked);
 void fsnotify_reclaim(uint64_t dev, uint64_t ino);
 
-struct fsnotify_name {
-  uint64_t parent_dev, parent_ino;
-  char name[CELL_PATH_MAX];
-};
-
 struct fsnotify_entry {
-  struct fsnotify_name location;
+  struct vfs_entry_name location;
   uint64_t dev, ino;
-  bool is_dir;
+  bool is_dir, is_symlink;
 };
 
 void fsnotify_track_open(struct open_file *file, const char *resolved);
@@ -42,6 +37,7 @@ void fsnotify_closed(struct open_file *file);
 void fsnotify_file_event(struct open_file *file, uint32_t mask);
 bool fsnotify_hold_watched(const char *path, struct vfs_node *node);
 void fsnotify_linked(const char *path);
+void fsnotify_node_event(const struct vfs_node *node, const char *path, uint32_t mask);
 void fsnotify_path_event(const char *path, uint32_t mask);
 void fsnotify_capture(const char *path, struct fsnotify_entry *entry);
 void fsnotify_prepare_change(const struct fsnotify_entry *entry);

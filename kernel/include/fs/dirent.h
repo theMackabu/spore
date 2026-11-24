@@ -19,3 +19,8 @@ struct vfs_dirent {
   uint8_t name_len;
   char name[256];
 };
+
+struct vfs_entry_name {
+  uint64_t parent_dev, parent_ino;
+  char name[256];
+};

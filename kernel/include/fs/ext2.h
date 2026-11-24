@@ -80,6 +80,7 @@ struct ext2_stats {
 bool ext2_mount(struct ext2_fs *fs, ext2_read_fn read, void *ctx);
 bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, void *ctx);
 void ext2_set_now(uint32_t epoch_sec);
+bool ext2_locate_entry(struct ext2_fs *fs, const char *path, uint32_t ino, struct vfs_entry_name *name);
 bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out);
 bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out);
 bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);

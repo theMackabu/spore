@@ -13,28 +13,7 @@ static struct open_file **bucket(uint64_t dev, uint64_t ino) {
   return &names[(dev ^ ino) % (sizeof(names) / sizeof(*names))];
 }
 
-static bool locate(const char *path, struct fsnotify_name *location) {
-  if (!path) { return false; }
-  size_t end = kstrlen(path);
-  while (end && path[end - 1] == '/') { --end; }
-  size_t start = end;
-  while (start && path[start - 1] != '/') { --start; }
-  if (!start || end - start >= sizeof(location->name)) { return false; }
-  char parent[CELL_PATH_MAX];
-  size_t prefix = start == 1 ? 1 : start - 1;
-  if (prefix >= sizeof(parent)) { return false; }
-  kmemcpy(parent, path, prefix);
-  parent[prefix] = 0;
-  struct vfs_node node;
-  if (!vfs_lookup(parent, &node)) { return false; }
-  location->parent_dev = node.dev_id;
-  location->parent_ino = node.ino;
-  kmemcpy(location->name, path + start, end - start);
-  location->name[end - start] = 0;
-  return true;
-}
-
-static void parent_event(const struct fsnotify_name *location, uint32_t mask, uint32_t cookie, bool unlinked) {
+static void parent_event(const struct vfs_entry_name *location, uint32_t mask, uint32_t cookie, bool unlinked) {
   if (location->parent_ino) {
     fsnotify_emit(location->parent_dev, location->parent_ino, mask, cookie, location->name, unlinked);
   }
@@ -42,8 +21,8 @@ static void parent_event(const struct fsnotify_name *location, uint32_t mask, ui
 
 static void resolve_open_name(struct open_file *file) {
   if (!file->name_unresolved) { return; }
-  struct fsnotify_name location = {0};
-  locate(file->notify_name.name, &location);
+  struct vfs_entry_name location = {0};
+  vfs_locate_entry(file->notify_name.name, &file->node, &location);
   file->notify_name = location;
   file->name_unresolved = false;
 }
@@ -97,8 +76,20 @@ void fsnotify_capture(const char *path, struct fsnotify_entry *entry) {
     entry->dev = node.dev_id;
     entry->ino = node.ino;
     entry->is_dir = node.is_dir;
+    entry->is_symlink = (node.mode & 0170000u) == 0120000u;
   }
-  locate(path, &entry->location);
+  vfs_locate_entry(path, NULL, &entry->location);
+}
+
+void fsnotify_node_event(const struct vfs_node *node, const char *path, uint32_t mask) {
+  if (!fsnotify_active()) { return; }
+  if (node->is_dir) { mask |= FS_ISDIR; }
+  if (fsnotify_directories()) {
+    struct vfs_entry_name name = {0};
+    if (vfs_locate_entry(path, node, &name)) { parent_event(&name, mask, 0, false); }
+  }
+  fsnotify_emit(node->dev_id, node->ino, mask, 0, NULL, false);
+  inotify_flush();
 }
 
 void fsnotify_path_event(const char *path, uint32_t mask) {
@@ -124,7 +115,7 @@ void fsnotify_linked(const char *path) {
 
 void fsnotify_prepare_change(const struct fsnotify_entry *entry) {
   if (!entry->ino) { return; }
-  if (entry->is_dir) {
+  if (entry->is_dir || entry->is_symlink) {
     for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
       for (struct open_file *f = names[i]; f; f = f->name_next) { resolve_open_name(f); }
     }
@@ -135,7 +126,7 @@ void fsnotify_prepare_change(const struct fsnotify_entry *entry) {
   }
 }
 
-static void relabel(const struct fsnotify_entry *entry, const struct fsnotify_name *to) {
+static void relabel(const struct fsnotify_entry *entry, const struct vfs_entry_name *to) {
   if (!entry->ino) { return; }
   for (struct open_file *f = *bucket(entry->dev, entry->ino); f; f = f->name_next) {
     if (f->node.ino != entry->ino || f->node.dev_id != entry->dev || f->name_unlinked ||

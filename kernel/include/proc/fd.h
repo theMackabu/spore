@@ -50,7 +50,7 @@ struct open_file {
     struct {
       struct pipe_obj *pipe;
       bool name_unlinked, name_unresolved, open_notified;
-      struct fsnotify_name notify_name;
+      struct vfs_entry_name notify_name;
       struct open_file *name_next, **name_link;
     };
     struct {

@@ -104,7 +104,7 @@ int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr,
     if ((flags & O_TRUNC) && (node.mode & S_IFMT) == S_IFREG && node.device == RAMFS_DEV_NONE) {
       if (vfs_truncate_sealed(&node, 0)) { return -EPERM; }
       if (!vfs_truncate(&node, 0) || !vfs_refresh(&node, &node)) { return -EIO; }
-      fsnotify_path_event(path, FS_MODIFY);
+      fsnotify_node_event(&node, path, FS_MODIFY);
     }
   }
   return cell_fd_open_node(&node, (uint32_t)flags, display, path, frame);

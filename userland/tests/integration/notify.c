@@ -78,6 +78,24 @@ static int inode_events(void) {
   return ok;
 }
 
+static int symlink_parent_events(void) {
+  const char *dir = "/notify-target", *path = "/notify-target/file", *link_path = "/notify-symlink";
+  if (mkdir(dir, 0700)) { return 0; }
+  int file = open(path, O_CREAT | O_RDWR, 0600);
+  if (file < 0) { return 0; }
+  close(file);
+  if (symlink(path, link_path)) { return 0; }
+  file = open(link_path, O_RDWR);
+  int ok = file >= 0 && unlink(link_path) == 0;
+  int fd = inotify_init1(IN_NONBLOCK);
+  int wd = inotify_add_watch(fd, dir, IN_MODIFY);
+  struct event_batch batch;
+  ok = ok && wd > 0 && write(file, "s", 1) == 1 && read_batch(fd, &batch) &&
+       next_event(&batch, wd, IN_MODIFY, "file") && batch.size == batch.offset;
+  close(fd); close(file); unlink(path); rmdir(dir);
+  return ok;
+}
+
 static int blocked_reader(void) {
   int fd = inotify_init1(0);
   int wd = inotify_add_watch(fd, "/tmp", IN_CREATE | IN_ONESHOT);
@@ -104,5 +122,5 @@ static int blocked_reader(void) {
 }
 
 int integration_notify_suite(void) {
-  return directory_events("/notify-check") && directory_events("/tmp/notify-check") && inode_events() && blocked_reader();
+  return directory_events("/notify-check") && directory_events("/tmp/notify-check") && inode_events() && symlink_parent_events() && blocked_reader();
 }
