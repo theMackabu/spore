@@ -45,7 +45,8 @@ static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || domain->fds[fd]->type != OPEN_SOCKET) {
     return NULL;
   }
-  return domain->fds[fd];
+  struct open_file *file = domain->fds[fd];
+  return file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP ? file : NULL;
 }
 
 static bool udp_local_port_in_use(uint16_t port, const struct open_file *except) {
