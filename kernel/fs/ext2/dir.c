@@ -1,41 +1,7 @@
 #include "internal.h"
 #include "records.h"
 
-enum {
-  CHILD_CACHE_ENTRIES = 4096,
-  CHILD_CACHE_BUCKETS = 4096,
-  CHILD_PARENT_CACHE_ENTRIES = 128,
-  SYMLINK_DEPTH_MAX = 8,
-};
-
-struct child_cache_entry {
-  struct ext2_fs *fs;
-  uint32_t parent_ino;
-  uint32_t ino;
-  uint16_t next;
-  uint8_t name_len;
-  char name[EXT2_NAME_MAX];
-};
-
-struct cached_inode {
-  struct ext2_fs *fs;
-  struct ext2_node node;
-};
-
-struct child_parent_cache_entry {
-  bool valid;
-  bool complete;
-  struct ext2_fs *fs;
-  uint32_t parent_ino;
-  uint64_t age;
-};
-
-static struct child_cache_entry child_cache[CHILD_CACHE_ENTRIES];
-static struct child_parent_cache_entry child_parent_cache[CHILD_PARENT_CACHE_ENTRIES];
-static uint64_t child_cache_clock;
-static uint16_t child_buckets[CHILD_CACHE_BUCKETS];
-static size_t child_next_slot;
-static struct cached_inode inode_cache[CHILD_CACHE_ENTRIES];
+constexpr int SYMLINK_DEPTH_MAX = 8;
 
 static uint16_t rec_len_for(uint8_t name_len) {
   return (uint16_t)((8u + name_len + 3u) & ~3u);
@@ -66,7 +32,7 @@ static bool ext2plus_hidden_name(struct ext2_fs *fs, const struct ext2_node *dir
          kmemcmp(name, hidden, sizeof(hidden) - 1) == 0;
 }
 
-static int visit_dir(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, ext2_record_visitor visit,
+int ext2_visit_dir(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, ext2_record_visitor visit,
                      void *ctx) {
   if (!ext2_is_dir(dir)) { return -EXT2_EIO; }
   while (*cursor < dir->size) {
@@ -116,158 +82,12 @@ static bool copy_dirent(void *ctx, uint32_t ino, uint8_t type, const char *name,
 int ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
   ++ext2_stat_counters.dir_iter_count;
   uint64_t start = 0;
-  return visit_dir(fs, dir, cursor != NULL ? cursor : &start, copy_dirent, out);
+  return ext2_visit_dir(fs, dir, cursor != NULL ? cursor : &start, copy_dirent, out);
 }
 
 static bool name_equals(const char *a, size_t a_len, const char *b) {
   if (kstrlen(b) != a_len) { return false; }
   return kmemcmp(a, b, a_len) == 0;
-}
-
-static uint32_t child_name_bucket(uint32_t parent, const char *name, size_t len) {
-  uint32_t hash = parent;
-  for (size_t i = 0; i < len; ++i) {
-    hash = (hash ^ (uint8_t)name[i]) * 16777619u;
-  }
-  return hash % CHILD_CACHE_BUCKETS;
-}
-
-static struct child_cache_entry *child_cache_find(struct ext2_fs *fs, uint32_t parent_ino, const char *name,
-                                                  size_t len) {
-  uint16_t slot = child_buckets[child_name_bucket(parent_ino, name, len)];
-  while (slot) {
-    struct child_cache_entry *entry = &child_cache[slot - 1];
-    if (entry->fs == fs && entry->parent_ino == parent_ino && entry->name_len == len &&
-        kmemcmp(entry->name, name, len) == 0) {
-      return entry;
-    }
-    slot = entry->next;
-  }
-  return NULL;
-}
-
-static void child_cache_erase(struct child_cache_entry *entry) {
-  uint16_t *slot = &child_buckets[child_name_bucket(entry->parent_ino, entry->name, entry->name_len)];
-  while (*slot && &child_cache[*slot - 1] != entry) {
-    slot = &child_cache[*slot - 1].next;
-  }
-  if (*slot) { *slot = entry->next; }
-  entry->fs = NULL;
-}
-
-void ext2_dir_drop_cache(struct ext2_fs *fs) {
-  for (size_t i = 0; i < CHILD_CACHE_ENTRIES; ++i) {
-    if (child_cache[i].fs == fs) { child_cache_erase(&child_cache[i]); }
-    if (inode_cache[i].fs == fs) { inode_cache[i].fs = NULL; }
-  }
-  for (size_t i = 0; i < CHILD_PARENT_CACHE_ENTRIES; ++i) {
-    if (child_parent_cache[i].fs == fs) { child_parent_cache[i].valid = false; }
-  }
-}
-
-static struct child_parent_cache_entry *child_parent_cache_find(struct ext2_fs *fs, uint32_t parent_ino) {
-  for (size_t i = 0; i < CHILD_PARENT_CACHE_ENTRIES; ++i) {
-    struct child_parent_cache_entry *entry = &child_parent_cache[i];
-    if (entry->valid && entry->fs == fs && entry->parent_ino == parent_ino) { return entry; }
-  }
-  return NULL;
-}
-
-static struct child_parent_cache_entry *child_parent_cache_alloc_slot(void) {
-  struct child_parent_cache_entry *entry = &child_parent_cache[0];
-  for (size_t i = 0; i < CHILD_PARENT_CACHE_ENTRIES; ++i) {
-    if (!child_parent_cache[i].valid) { return &child_parent_cache[i]; }
-    if (child_parent_cache[i].age < entry->age) { entry = &child_parent_cache[i]; }
-  }
-  return entry;
-}
-
-static bool child_parent_cache_complete(struct ext2_fs *fs, uint32_t parent_ino) {
-  struct child_parent_cache_entry *entry = child_parent_cache_find(fs, parent_ino);
-  if (entry == NULL || !entry->complete) { return false; }
-  entry->age = ++child_cache_clock;
-  return true;
-}
-
-static void child_parent_cache_set(struct ext2_fs *fs, uint32_t parent_ino, bool complete) {
-  struct child_parent_cache_entry *entry = child_parent_cache_find(fs, parent_ino);
-  if (entry == NULL) { entry = child_parent_cache_alloc_slot(); }
-  entry->valid = true;
-  entry->complete = complete;
-  entry->fs = fs;
-  entry->parent_ino = parent_ino;
-  entry->age = ++child_cache_clock;
-}
-
-static void child_cache_store(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t len, uint32_t ino) {
-  struct child_cache_entry *entry = child_cache_find(fs, parent_ino, name, len);
-  if (entry == NULL) {
-    entry = &child_cache[child_next_slot++ % CHILD_CACHE_ENTRIES];
-    if (entry->fs != NULL) {
-      child_parent_cache_set(entry->fs, entry->parent_ino, false);
-      child_cache_erase(entry);
-    }
-    entry->fs = fs;
-    entry->parent_ino = parent_ino;
-    entry->name_len = (uint8_t)len;
-    kmemcpy(entry->name, name, len);
-    uint32_t bucket = child_name_bucket(parent_ino, name, len);
-    entry->next = child_buckets[bucket];
-    child_buckets[bucket] = (uint16_t)(entry - child_cache + 1);
-  }
-  entry->ino = ino;
-}
-
-static bool child_cache_read_entry(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
-  struct cached_inode *entry = &inode_cache[ino % CHILD_CACHE_ENTRIES];
-  if (entry->fs != fs || entry->node.ino != ino) {
-    entry->fs = NULL;
-    if (!ext2_read_inode(fs, ino, &entry->node)) { return false; }
-    entry->fs = fs;
-  }
-  *out = entry->node;
-  return true;
-}
-
-void ext2_dir_cache_remove_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name) {
-  struct child_cache_entry *entry = child_cache_find(fs, parent_ino, name, kstrlen(name));
-  if (entry) { child_cache_erase(entry); }
-}
-
-void ext2_dir_cache_invalidate_inode(struct ext2_fs *fs, uint32_t ino) {
-  struct cached_inode *entry = &inode_cache[ino % CHILD_CACHE_ENTRIES];
-  if (entry->fs == fs && entry->node.ino == ino) { entry->fs = NULL; }
-}
-
-struct child_scan {
-  struct ext2_fs *fs;
-  uint32_t parent;
-  const char *name;
-  size_t name_len;
-  uint32_t matched_ino;
-};
-
-static bool cache_dirent(void *ctx, uint32_t ino, uint8_t type, const char *name, uint8_t len) {
-  (void)type;
-  struct child_scan *scan = ctx;
-  ++ext2_stat_counters.dir_iter_count;
-  child_cache_store(scan->fs, scan->parent, name, len, ino);
-  if (scan->name_len == len && kmemcmp(scan->name, name, len) == 0) { scan->matched_ino = ino; }
-  return false;
-}
-
-static bool lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t name_len,
-                         struct ext2_node *out) {
-  ++ext2_stat_counters.lookup_child_count;
-  struct child_cache_entry *cached = child_cache_find(fs, dir->ino, name, name_len);
-  if (cached != NULL) { return child_cache_read_entry(fs, cached->ino, out); }
-  if (child_parent_cache_complete(fs, dir->ino)) { return false; }
-  struct child_scan scan = {fs, dir->ino, name, name_len, 0};
-  uint64_t cursor = 0;
-  child_parent_cache_set(fs, dir->ino, true);
-  ++ext2_stat_counters.dir_iter_count;
-  if (visit_dir(fs, dir, &cursor, cache_dirent, &scan) < 0) { child_parent_cache_set(fs, dir->ino, false); }
-  return scan.matched_ino != 0 && child_cache_read_entry(fs, scan.matched_ino, out);
 }
 
 static bool split_parent_path(const char *path, char *parent, size_t parent_cap, char *name, size_t name_cap) {
@@ -413,7 +233,7 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
       dir->mtime = now;
       dir->ctime = now;
       bool ok = ext2_write_block(fs, disk_block, block) && ext2_write_inode(fs, dir);
-      if (ok) { child_cache_store(fs, dir->ino, name, name_len, ino); }
+      if (ok) { ext2_cache_add_name(fs, dir->ino, name, name_len, ino); }
       return ok;
     }
   }
@@ -429,7 +249,7 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
   dir->mtime = now;
   dir->ctime = now;
   bool ok = ext2_write_block(fs, new_block, block) && ext2_write_inode(fs, dir);
-  if (ok) { child_cache_store(fs, dir->ino, name, name_len, ino); }
+  if (ok) { ext2_cache_add_name(fs, dir->ino, name, name_len, ino); }
   return ok;
 }
 
@@ -506,7 +326,7 @@ static bool ext2_lookup_inner(struct ext2_fs *fs, const char *path, struct ext2_
     size_t len = (size_t)(p - start);
     if (len == 0) { return false; }
     struct ext2_node next;
-    if (!lookup_child(fs, &cur, start, len, &next)) { return false; }
+    if (!ext2_lookup_child(fs, &cur, start, len, &next)) { return false; }
     while (*p == '/') {
       ++p;
     }
@@ -544,7 +364,7 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, 
   struct ext2_node parent;
   if (!ext2_lookup(fs, parent_path, &parent) || !ext2_is_dir(&parent)) { return false; }
   struct ext2_node existing;
-  if (lookup_child(fs, &parent, name, kstrlen(name), &existing)) {
+  if (ext2_lookup_child(fs, &parent, name, kstrlen(name), &existing)) {
     if (out != NULL) { *out = existing; }
     return true;
   }
@@ -651,7 +471,7 @@ bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path) {
   struct ext2_node parent;
   struct ext2_node existing;
   if (!ext2_read_inode(fs, ino, &node) || ext2_is_dir(&node) || !ext2_lookup(fs, new_parent_path, &parent) ||
-      !ext2_is_dir(&parent) || lookup_child(fs, &parent, new_name, kstrlen(new_name), &existing)) {
+      !ext2_is_dir(&parent) || ext2_lookup_child(fs, &parent, new_name, kstrlen(new_name), &existing)) {
     return false;
   }
   struct ext2_tmpfile_ref *ref = tmpfile_ref(fs, ino);
@@ -678,7 +498,7 @@ bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path)
   struct ext2_node parent;
   struct ext2_node existing;
   if (!ext2_lookup(fs, parent_path, &parent) || !ext2_is_dir(&parent) ||
-      lookup_child(fs, &parent, name, kstrlen(name), &existing)) {
+      ext2_lookup_child(fs, &parent, name, kstrlen(name), &existing)) {
     return false;
   }
   uint32_t ino = 0;
@@ -752,7 +572,7 @@ int ext2_remove(struct ext2_fs *fs, const char *path) {
   if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) { return -EXT2_ENOENT; }
   struct ext2_node parent;
   struct ext2_node node;
-  if (!ext2_lookup(fs, parent_path, &parent) || !lookup_child(fs, &parent, name, kstrlen(name), &node)) {
+  if (!ext2_lookup(fs, parent_path, &parent) || !ext2_lookup_child(fs, &parent, name, kstrlen(name), &node)) {
     return -EXT2_ENOENT;
   }
   if (ext2_is_dir(&node)) {
@@ -792,7 +612,7 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
   struct ext2_node new_parent;
   struct ext2_node node;
   if (!ext2_lookup(fs, old_parent_path, &old_parent) || !ext2_lookup(fs, new_parent_path, &new_parent) ||
-      !lookup_child(fs, &old_parent, old_name, kstrlen(old_name), &node)) {
+      !ext2_lookup_child(fs, &old_parent, old_name, kstrlen(old_name), &node)) {
     return false;
   }
   if (name_equals(old_parent_path, kstrlen(old_parent_path), new_parent_path) &&
@@ -800,7 +620,7 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
     return true;
   }
   struct ext2_node existing;
-  if (lookup_child(fs, &new_parent, new_name, kstrlen(new_name), &existing)) {
+  if (ext2_lookup_child(fs, &new_parent, new_name, kstrlen(new_name), &existing)) {
     if ((ext2_is_dir(&node) && !ext2_is_dir(&existing)) || (!ext2_is_dir(&node) && ext2_is_dir(&existing))) {
       return false;
     }

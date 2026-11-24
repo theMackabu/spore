@@ -140,4 +140,6 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
 void ext2_free_indirect_tree(struct ext2_fs *fs, uint32_t block, uint32_t depth);
 void ext2_dir_drop_cache(struct ext2_fs *fs);
 void ext2_dir_cache_invalidate_inode(struct ext2_fs *fs, uint32_t ino);
+bool ext2_lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t len, struct ext2_node *out);
+void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t len, uint32_t ino);
 void ext2_dir_cache_remove_name(struct ext2_fs *fs, uint32_t parent, const char *name);

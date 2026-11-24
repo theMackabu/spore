@@ -498,6 +498,17 @@ static void test_full_length_names(struct ext2_fs *fs) {
   assert(ext2_lookup(fs, path, &found) && found.ino == a.ino);
   path[EXT2_NAME_MAX] = 'b';
   assert(ext2_lookup(fs, path, &found) && found.ino == b.ino);
+
+  uint32_t inos[1200];
+  for (size_t i = 0; i < sizeof(inos) / sizeof(inos[0]); ++i) {
+    snprintf(path + EXT2_NAME_MAX - 3, 5, "%04zu", i);
+    assert(ext2_create(fs, path, false, 0644, &found));
+    inos[i] = found.ino;
+  }
+  for (size_t i = 0; i < sizeof(inos) / sizeof(inos[0]); ++i) {
+    snprintf(path + EXT2_NAME_MAX - 3, 5, "%04zu", i);
+    assert(ext2_lookup(fs, path, &found) && found.ino == inos[i]);
+  }
 }
 
 static void test_mutations(const char *image_path) {
