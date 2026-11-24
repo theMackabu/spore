@@ -108,9 +108,7 @@ static void gic_cpu_init(void) {
                    : "memory");
 }
 
-void timer_init(uint64_t hhdm_offset) {
-  gic_hhdm_offset = hhdm_offset;
-  uint64_t freq = aarch64_counter_frequency();
+static void enable_user_cpu_features(void) {
   uint64_t cntkctl;
   __asm__ volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
   cntkctl |= 3ull;
@@ -124,6 +122,21 @@ void timer_init(uint64_t hhdm_offset) {
   sctlr |= 1ull << 15;
   sctlr |= 1ull << 26;
   __asm__ volatile("msr sctlr_el1, %0\nisb" : : "r"(sctlr) : "memory");
+}
+
+static void arm_virtual_timer(void) {
+  __asm__ volatile("msr cntv_tval_el0, %0\n"
+                   "msr cntv_ctl_el0, %1\n"
+                   "isb\n"
+                   :
+                   : "r"((uint64_t)timer_interval), "r"(1ull)
+                   : "memory");
+}
+
+void timer_init(uint64_t hhdm_offset) {
+  gic_hhdm_offset = hhdm_offset;
+  uint64_t freq = aarch64_counter_frequency();
+  enable_user_cpu_features();
   timer_interval = (uint32_t)(freq / 100);
   if (timer_interval == 0) { timer_interval = 1; }
   gic_dist_init();
@@ -131,37 +144,15 @@ void timer_init(uint64_t hhdm_offset) {
   gic_enable_spi(PL011_INTID);
   gic_cpu_init();
   pl011_enable_rx_irq();
-  __asm__ volatile("msr cntv_tval_el0, %0\n"
-                   "msr cntv_ctl_el0, %1\n"
-                   "isb\n"
-                   :
-                   : "r"((uint64_t)timer_interval), "r"(1ull)
-                   : "memory");
+  arm_virtual_timer();
   kprintf("[spore] scheduler 100Hz, gicv3 up\n");
 }
 
 void timer_cpu_init(uint32_t cpu) {
-  uint64_t cntkctl;
-  __asm__ volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
-  cntkctl |= 3ull;
-  __asm__ volatile("msr cntkctl_el1, %0" : : "r"(cntkctl) : "memory");
-  uint64_t cpacr;
-  __asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
-  cpacr |= 3ull << 20;
-  __asm__ volatile("msr cpacr_el1, %0\nisb" : : "r"(cpacr) : "memory");
-  uint64_t sctlr;
-  __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
-  sctlr |= 1ull << 15;
-  sctlr |= 1ull << 26;
-  __asm__ volatile("msr sctlr_el1, %0\nisb" : : "r"(sctlr) : "memory");
+  enable_user_cpu_features();
   gic_redist_init(cpu);
   gic_cpu_init();
-  __asm__ volatile("msr cntv_tval_el0, %0\n"
-                   "msr cntv_ctl_el0, %1\n"
-                   "isb\n"
-                   :
-                   : "r"((uint64_t)timer_interval), "r"(1ull)
-                   : "memory");
+  arm_virtual_timer();
 }
 
 static uint64_t irq_ack(void) {
@@ -183,12 +174,7 @@ void handle_irq(struct trap_frame *frame, uint64_t from_lower_el) {
   uint32_t intid = (uint32_t)(iar & 0xffffffu);
   if (intid == VIRTUAL_TIMER_INTID) {
     ++tick_count;
-    __asm__ volatile("msr cntv_tval_el0, %0\n"
-                     "msr cntv_ctl_el0, %1\n"
-                     "isb\n"
-                     :
-                     : "r"((uint64_t)timer_interval), "r"(1ull)
-                     : "memory");
+    arm_virtual_timer();
     if (pl011_poll_rx()) { cell_wake_stdin(from_lower_el != 0 ? frame : NULL); }
     irq_eoi(iar);
     cell_timer_tick(frame, from_lower_el != 0);

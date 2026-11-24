@@ -92,6 +92,18 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   cell_schedule(frame);
 }
 
+static void inherit_fork_context(struct thread *child, const struct thread *parent) {
+  child->state = THREAD_RUNNABLE;
+  child->tf = parent->tf;
+  child->context = parent->context;
+  child->signal_mask = parent->signal_mask;
+  child->pending_signals = 0;
+  child->sigaltstack_sp = parent->sigaltstack_sp;
+  child->sigaltstack_size = parent->sigaltstack_size;
+  child->sigaltstack_flags = parent->sigaltstack_flags;
+  trap_set_result(&child->tf, 0);
+}
+
 int cell_fork_current(struct trap_frame *frame) {
   struct domain *parent = current_domain();
   if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
@@ -108,15 +120,7 @@ int cell_fork_current(struct trap_frame *frame) {
   cell_copy_domain_metadata(child_domain, parent);
   if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
   child_domain->parent_id = parent->id;
-  child_thread->state = THREAD_RUNNABLE;
-  child_thread->tf = cell_current_thread_internal()->tf;
-  child_thread->context = cell_current_thread_internal()->context;
-  child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
-  child_thread->pending_signals = 0;
-  child_thread->sigaltstack_sp = cell_current_thread_internal()->sigaltstack_sp;
-  child_thread->sigaltstack_size = cell_current_thread_internal()->sigaltstack_size;
-  child_thread->sigaltstack_flags = cell_current_thread_internal()->sigaltstack_flags;
-  trap_set_result(&child_thread->tf, 0);
+  inherit_fork_context(child_thread, cell_current_thread_internal());
   trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)child_domain->id);
   copy_cstr(child_domain->name, sizeof(child_domain->name), parent->name);
   smp_notify();
@@ -138,15 +142,7 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   cell_copy_domain_metadata(child, parent);
   if (!cell_copy_fd_table(child, parent)) { cell_destroy_domain(child); return -12; }
   child->parent_id = parent->id;
-  child_thread->state = THREAD_RUNNABLE;
-  child_thread->tf = cell_current_thread_internal()->tf;
-  child_thread->context = cell_current_thread_internal()->context;
-  child_thread->signal_mask = cell_current_thread_internal()->signal_mask;
-  child_thread->pending_signals = 0;
-  child_thread->sigaltstack_sp = cell_current_thread_internal()->sigaltstack_sp;
-  child_thread->sigaltstack_size = cell_current_thread_internal()->sigaltstack_size;
-  child_thread->sigaltstack_flags = cell_current_thread_internal()->sigaltstack_flags;
-  trap_set_result(&child_thread->tf, 0);
+  inherit_fork_context(child_thread, cell_current_thread_internal());
   if (newsp != 0) { trap_set_stack(&child_thread->tf, newsp); }
   if ((flags & CLONE_SETTLS) != 0) { child_thread->context.thread_pointer = tls; }
   child_thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
