@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import select
 import socket
 import subprocess
 import tempfile
+import termios
 import time
 import urllib.error
 import urllib.request
@@ -54,22 +56,35 @@ def contract(d, disk):
 
 def repl_prompt():
     ant = BUILD / "userland/prebuilt/ant"
-    with subprocess.Popen([CLI, "run", ant], stdin=subprocess.PIPE, stdout=subprocess.PIPE) as vm:
-        try:
-            output = bytearray()
-            deadline = time.monotonic() + 30
-            while "❯".encode() not in output:
-                if not select.select([vm.stdout], [], [], max(0, deadline - time.monotonic()))[0]:
-                    raise AssertionError("Ant prompt did not appear before input")
-                chunk = os.read(vm.stdout.fileno(), 4096)
-                if not chunk:
-                    raise AssertionError("Ant exited before displaying its prompt")
-                output.extend(chunk)
-            vm.communicate(b".exit\r", timeout=5)
-            assert vm.returncode == 0
-        finally:
-            if vm.poll() is None:
-                vm.terminate()
+    master, slave = os.openpty()
+    try:
+        with subprocess.Popen([CLI, "run", ant], stdin=slave, stdout=subprocess.PIPE,
+                              start_new_session=True,
+                              preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0)) as vm:
+            def expect(marker):
+                output = bytearray()
+                deadline = time.monotonic() + 30
+                while marker not in output:
+                    if not select.select([vm.stdout], [], [], max(0, deadline - time.monotonic()))[0]:
+                        raise AssertionError(f"Ant timed out waiting for {marker!r}: {output[-200:]!r}")
+                    chunk = os.read(vm.stdout.fileno(), 4096)
+                    if not chunk:
+                        raise AssertionError(f"Ant exited waiting for {marker!r}: {output[-200:]!r}")
+                    output.extend(chunk)
+            try:
+                expect("❯".encode())
+                time.sleep(.3)
+                os.write(master, b"\x03")
+                expect(b"press Ctrl+C again")
+                time.sleep(.3)
+                os.write(master, b"\x03")
+                assert vm.wait(timeout=5) == 0
+            finally:
+                if vm.poll() is None:
+                    vm.terminate()
+    finally:
+        os.close(master)
+        os.close(slave)
 
 
 def service(d, image, ram, revision, operation, disk):

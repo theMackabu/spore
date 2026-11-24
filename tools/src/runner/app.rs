@@ -13,12 +13,24 @@ unsafe extern "C" {
     fn runner_interrupted() -> i32;
     fn runner_terminal_close();
 }
+struct Terminal;
+impl Terminal {
+    fn open() -> Self {
+        unsafe { runner_terminal_open(true) };
+        Self
+    }
+}
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        unsafe { runner_terminal_close() };
+    }
+}
+
 struct Vm(Child);
 impl Drop for Vm {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
-        unsafe { runner_terminal_close() };
     }
 }
 
@@ -64,6 +76,7 @@ pub fn run(
     deadline: u64,
 ) -> io::Result<i32> {
     let mut status = File::create_new(control).and_then(|_| File::open(control))?;
+    let _terminal = Terminal::open();
     let start = Instant::now();
     let mut vm = Vm(Command::new(&q[0])
         .args(&q[1..])
@@ -71,7 +84,6 @@ pub fn run(
         .spawn()?);
     let serial = vm.0.stdout.take().unwrap();
     let output = thread::spawn(move || relay_console(serial));
-    unsafe { runner_terminal_open(false) };
     let mut entry = None;
     let mut bytes = Vec::new();
     let mut protocol = false;
@@ -91,6 +103,10 @@ pub fn run(
         if entry.is_none() && records.starts_with(b"U\0") {
             entry = Some(start.elapsed().as_micros());
         }
+        let sig = unsafe { runner_interrupted() };
+        if sig != 0 {
+            break ("host-signal", sig);
+        }
         if let Some(status) = exited {
             if !status.success() {
                 break ("vm-error", 125);
@@ -101,10 +117,6 @@ pub fn run(
                 [b'B', n] | [b'U', 0, b'B', n] => ("boot-error", i32::from(*n)),
                 _ => ("vm-error", 125),
             };
-        }
-        let sig = unsafe { runner_interrupted() };
-        if sig != 0 {
-            break ("host-signal", sig);
         }
         if entry.is_none() && start.elapsed() >= Duration::from_secs(deadline) {
             break ("boot-timeout", 125);

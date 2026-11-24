@@ -263,8 +263,10 @@ fn launch(config: Config) -> io::Result<i32> {
         ])
     }
     q.extend([
+        "-chardev".into(),
+        "stdio,id=serial0,signal=off".into(),
         "-serial".into(),
-        "stdio".into(),
+        "chardev:serial0".into(),
         "-display".into(),
         "none".into(),
     ]);
