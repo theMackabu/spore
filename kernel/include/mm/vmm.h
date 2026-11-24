@@ -8,6 +8,7 @@ enum {
   VMM_USER_READ = 1u << 0,
   VMM_USER_WRITE = 1u << 1,
   VMM_USER_EXEC = 1u << 2,
+  VMM_MAP_SHARED = 1u << 3,
 };
 
 enum vmm_access {
@@ -34,9 +35,8 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset);
 bool vmm_map_page(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags);
 bool vmm_map_page_cow(struct user_address_space *as, uint64_t va, uint64_t pa, uint32_t flags);
 bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags);
-bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src);
-bool vmm_restore_shared_range(struct user_address_space *a, struct user_address_space *b, uint64_t start, uint64_t end,
-                              uint32_t flags);
+enum vmm_clone_mode { VMM_FORK, VMM_SNAPSHOT };
+bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, enum vmm_clone_mode mode);
 void vmm_destroy(struct user_address_space *as);
 bool vmm_handle_cow_fault(struct user_address_space *as, uint64_t va);
 bool vmm_is_mapped(const struct user_address_space *as, uint64_t va);

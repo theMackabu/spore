@@ -98,7 +98,21 @@ int main(void) {
   uint64_t cow_pa = pmm_alloc_zero_page();
   memcpy(&phys[cow_pa], "parent", 7);
   assert(vmm_map_page(&as, 0x500000, cow_pa, VMM_USER_READ | VMM_USER_WRITE));
-  assert(vmm_clone_cow(&child, &as));
+  assert(vmm_alloc_page(&as, 0x700000, VMM_USER_READ | VMM_USER_WRITE | VMM_MAP_SHARED));
+  assert(vmm_clone(&child, &as, VMM_FORK));
+  assert(vmm_copy_to_user(&child, 0x700000, "shared", 7));
+  char shared[7];
+  assert(vmm_copy_from_user(&as, shared, 0x700000, sizeof(shared)) && strcmp(shared, "shared") == 0);
+  struct user_address_space snapshot;
+  assert(vmm_clone(&snapshot, &as, VMM_SNAPSHOT));
+  assert(vmm_copy_to_user(&child, 0x700000, "later", 6));
+  assert(vmm_copy_from_user(&snapshot, shared, 0x700000, sizeof(shared)) && strcmp(shared, "shared") == 0);
+  vmm_destroy(&snapshot);
+  vmm_unmap_range(&as, 0x700000, 0x701000);
+
+  vmm_protect_range(&child, 0x400000, 0x401000, VMM_USER_READ | VMM_USER_WRITE);
+  assert(vmm_copy_to_user(&child, 0x400000, "new", 4));
+  assert(vmm_copy_from_user(&as, buf, 0x400000, sizeof(buf)) && strcmp(buf, "read") == 0);
   assert(refs[page_index(cow_pa)] == 2);
   assert(!vmm_user_range_accessible(&as, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(!vmm_user_range_accessible(&child, 0x500000, 1, VMM_ACCESS_WRITE));
@@ -107,6 +121,10 @@ int main(void) {
   assert(vmm_copy_from_user(&child, cow_buf, 0x500000, 7));
   assert(strcmp(cow_buf, "parent") == 0);
 
+  vmm_protect_range(&child, 0x500000, 0x501000, 0);
+  assert(!vmm_user_range_accessible(&child, 0x500000, 1, VMM_ACCESS_READ));
+  assert(!vmm_handle_cow_fault(&child, 0x500000));
+  vmm_protect_range(&child, 0x500000, 0x501000, VMM_USER_READ | VMM_USER_WRITE);
   assert(vmm_handle_cow_fault(&child, 0x500000));
   assert(vmm_user_range_accessible(&child, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(refs[page_index(cow_pa)] == 1);
@@ -134,6 +152,12 @@ int main(void) {
   vmm_unmap_range(&as, 0x601000, boundary);
   assert(vmm_mapped_pages_in_range(&as, 0x600000, boundary + TEST_PAGE_SIZE) == 2);
   assert(vmm_is_mapped(&as, boundary) && !vmm_is_mapped(&as, distant));
+  uint16_t before[TEST_PAGE_COUNT];
+  memcpy(before, refs, sizeof(before));
+  next_pa = sizeof(phys) - 2 * TEST_PAGE_SIZE;
+  struct user_address_space failed;
+  assert(!vmm_clone(&failed, &as, VMM_FORK));
+  assert(failed.root_pa == 0 && memcmp(refs, before, sizeof(refs)) == 0);
   next_pa = sizeof(phys) - TEST_PAGE_SIZE;
   assert(!vmm_alloc_page(&as, 2ull << 39, VMM_USER_READ));
   assert(!vmm_is_mapped(&as, 2ull << 39));

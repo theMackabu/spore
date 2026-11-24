@@ -23,8 +23,8 @@ struct user_address_space *cell_current_as(void) {
 static bool vma_is_shared_writable_file(const struct vma *vma);
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end);
 
-static bool vma_is_shared(const struct vma *vma) {
-  return vma != NULL && (vma->flags & MAP_SHARED) != 0;
+static uint32_t mapping_flags(const struct vma *vma) {
+  return vma->prot | ((vma->flags & MAP_SHARED) ? VMM_MAP_SHARED : 0);
 }
 
 bool cell_mm_reset(size_t capacity) {
@@ -52,7 +52,7 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
   if (src == NULL) { return NULL; }
   struct process_mm *mm = alloc_mm();
   if (mm == NULL) { return NULL; }
-  if (!vmm_clone_cow(&mm->as, &src->as)) {
+  if (!vmm_clone(&mm->as, &src->as, VMM_FORK)) {
     pool_free(&process_mms, mm);
     return NULL;
   }
@@ -60,16 +60,6 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src) {
     vmm_destroy(&mm->as);
     pool_free(&process_mms, mm);
     return NULL;
-  }
-  for (size_t i = 0; i < vma_count(&src->vmas); ++i) {
-    const struct vma *vma = vma_at(&src->vmas, i);
-    if (!vma_is_shared(vma)) { continue; }
-    if (!vmm_restore_shared_range(&src->as, &mm->as, vma->start, vma->end, vma->prot)) {
-      vmm_destroy(&mm->as);
-      vma_list_destroy(&mm->vmas);
-      pool_free(&process_mms, mm);
-      return NULL;
-    }
   }
   return mm;
 }
@@ -180,8 +170,8 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
     if ((read_off & (PAGE_SIZE - 1)) != 0) { goto private_copy; }
     uint64_t pa = 0;
     if (!vfs_retain_page_cached(&vma->file_node, read_off, &pa)) { return false; }
-    bool private_writable = (vma->flags & MAP_SHARED) == 0 && (vma->prot & VMM_USER_WRITE) != 0;
-    bool mapped = private_writable ? vmm_map_page_cow(as, page, pa, vma->prot) : vmm_map_page(as, page, pa, vma->prot);
+    bool mapped = (vma->flags & MAP_SHARED) ? vmm_map_page(as, page, pa, mapping_flags(vma))
+                                             : vmm_map_page_cow(as, page, pa, vma->prot);
     if (!mapped) {
       pmm_free_page(pa);
       return false;
@@ -203,7 +193,7 @@ private_copy:
       return false;
     }
   }
-  if (!vmm_map_page(as, page, pa, vma->prot)) {
+  if (!vmm_map_page(as, page, pa, mapping_flags(vma))) {
     pmm_free_page(pa);
     return false;
   }
@@ -238,7 +228,7 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
       if (vma->type == VMA_FILE) {
         if (!fault_file_page(domain, vma, page)) { return false; }
         note_fault(domain, true);
-      } else if (!vmm_alloc_page(as, page, vma->prot)) {
+      } else if (!vmm_alloc_page(as, page, mapping_flags(vma))) {
         return false;
       } else {
         note_fault(domain, false);
@@ -280,7 +270,7 @@ bool cell_handle_translation_fault(uint64_t far, enum vmm_access access) {
     return true;
   }
   if (vma->type != VMA_ANON && vma->type != VMA_STACK) { return false; }
-  if (!vmm_alloc_page(as, va, vma->prot)) { return false; }
+  if (!vmm_alloc_page(as, va, mapping_flags(vma))) { return false; }
   note_fault(domain, false);
   return true;
 }
@@ -321,7 +311,7 @@ bool cell_prefault_anon_vma(uint64_t start, uint64_t end) {
   if (vma == NULL || vma->type != VMA_ANON) { return false; }
   for (uint64_t page = start; page < end; page += PAGE_SIZE) {
     if (vmm_is_mapped(as, page)) { continue; }
-    if (!vmm_alloc_page(as, page, vma->prot)) {
+    if (!vmm_alloc_page(as, page, mapping_flags(vma))) {
       vmm_unmap_range(as, start, page);
       return false;
     }
