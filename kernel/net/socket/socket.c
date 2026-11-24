@@ -582,7 +582,7 @@ int64_t cell_fd_socket_recvmsg(int fd, uint64_t msg_addr, uint32_t flags, bool d
 }
 
 static void wake_socket_timeout_waiters(uint64_t now_ticks) {
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
         !thread->wait.has_deadline || now_ticks < thread->wait.deadline_tick) {
@@ -593,7 +593,7 @@ static void wake_socket_timeout_waiters(uint64_t now_ticks) {
 }
 
 void wake_socket_waiters(struct open_file *file) {
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
         thread->domain == NULL) {

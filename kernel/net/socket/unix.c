@@ -197,7 +197,7 @@ static int take_pending_unix(struct domain *domain, struct open_file *listener, 
 }
 
 static void wake_unix_accept_waiters(struct open_file *listener) {
-  for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
         thread->domain == NULL) {

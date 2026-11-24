@@ -24,6 +24,7 @@ constexpr int ETIMEDOUT = 110;
 
 static struct thread *threads;
 static size_t thread_capacity;
+static size_t thread_slot_limit;
 static int next_thread_id = 1;
 
 bool cell_thread_reset(size_t capacity) {
@@ -35,8 +36,13 @@ bool cell_thread_reset(size_t capacity) {
   } else {
     kmemset(threads, 0, thread_capacity * sizeof(*threads));
   }
+  thread_slot_limit = 0;
   next_thread_id = 1;
   return true;
+}
+
+size_t cell_thread_slot_limit(void) {
+  return thread_slot_limit;
 }
 
 int cell_current_tid(void) {
@@ -83,6 +89,7 @@ struct thread *cell_alloc_thread(struct domain *domain) {
   for (size_t i = 0; i < thread_capacity; ++i) {
     if (threads[i].state == THREAD_UNUSED) {
       kmemset(&threads[i], 0, sizeof(threads[i]));
+      if (i >= thread_slot_limit) { thread_slot_limit = i + 1; }
       threads[i].tid = next_thread_id++;
       threads[i].running_cpu = -1;
       threads[i].domain = domain;
