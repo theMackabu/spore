@@ -8,8 +8,6 @@
 #include "proc/fd.h"
 #include "proc/policy.h"
 
-static uint64_t memfd_sequence;
-
 static size_t append_literal(char *dst, size_t cap, size_t len, const char *text) {
   while (*text != '\0' && len + 1 < cap) {
     dst[len++] = *text++;
@@ -37,6 +35,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
   int64_t rc = syscall_read_path_at(dirfd, path_addr, &name);
   if (rc) { return rc; }
   const char *path = name.resolved;
+  const char *display = name.visible;
   bool path_only = flags & LINUX_O_PATH;
   if (path_only) { flags &= LINUX_O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC; }
   uint64_t access = linux_open_readable(flags) ? R_OK : 0;
@@ -84,7 +83,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
     }
     if (!cell_fd_stat(proc_fd, &node)) { return -ENOENT; }
     exists = true;
-    copy_cstr(name.visible, sizeof(name.visible), target->path);
+    display = target->path;
   } else {
     exists = (nofollow || exclusive) ? vfs_lstat(path, &node) : vfs_lookup(path, &node);
   }
@@ -106,41 +105,24 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
       fsnotify_path_event(path, FS_MODIFY);
     }
   }
-  return cell_fd_open_node(&node, (uint32_t)flags, name.visible, path);
-}
-
-static bool memfd_name_char_ok(char ch) {
-  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' ||
-         ch == '-';
+  return cell_fd_open_node(&node, (uint32_t)flags, display, path);
 }
 
 int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
-  if ((flags & ~(uint64_t)(MFD_CLOEXEC | MFD_ALLOW_SEALING)) != 0) { return -(int64_t)EINVAL; }
-  char name[64];
-  if (!syscall_copy_string_from_user(name_addr, name, sizeof(name))) { return -(int64_t)EFAULT; }
-  for (size_t i = 0; name[i] != '\0'; ++i) {
-    if (!memfd_name_char_ok(name[i])) { name[i] = '_'; }
-  }
-
-  for (unsigned attempt = 0; attempt < 16; ++attempt) {
-    char path[CELL_PATH_MAX];
-    size_t len = append_literal(path, sizeof(path), 0, "/run/memfd/");
-    len = append_u64(path, sizeof(path), len, (uint64_t)cell_current_pid());
-    len = append_literal(path, sizeof(path), len, "-");
-    len = append_u64(path, sizeof(path), len, ++memfd_sequence);
-    len = append_literal(path, sizeof(path), len, "-");
-    len = append_literal(path, sizeof(path), len, name[0] == '\0' ? "memfd" : name);
-    if (len + 1 >= sizeof(path)) { return -(int64_t)ENAMETOOLONG; }
-    struct vfs_node node;
-    if (!vfs_create(path, 0666, &node)) { continue; }
-    (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
-    (void)vfs_lookup(path, &node);
-    (void)vfs_set_sealable(&node, (flags & MFD_ALLOW_SEALING) != 0);
-    uint32_t open_flags = LINUX_O_RDWR | ((flags & MFD_CLOEXEC) != 0 ? O_CLOEXEC : 0);
-    int fd = cell_fd_open_node(&node, open_flags, path, path);
-    if (fd >= 0) { (void)vfs_remove(path); }
-    return fd;
-  }
-  return -(int64_t)EEXIST;
+  if (flags & ~(uint64_t)(MFD_CLOEXEC | MFD_ALLOW_SEALING)) { return -EINVAL; }
+  constexpr size_t NAME_CAP = 250;
+  char display[FD_PATH_MAX] = "/memfd:";
+  size_t prefix = sizeof("/memfd:") - 1;
+  int64_t len = syscall_read_user_string(name_addr, display + prefix, NAME_CAP);
+  if (len < 0) { return len == -E2BIG ? -EINVAL : len; }
+  static_assert(sizeof("/memfd:") - 1 + NAME_CAP - 1 + sizeof(" (deleted)") <= FD_PATH_MAX);
+  kmemcpy(display + prefix + len - 1, " (deleted)", sizeof(" (deleted)"));
+  struct vfs_node dir, node;
+  if (!vfs_lookup("/run", &dir)) { return -ENOENT; }
+  int rc = vfs_tmpfile(&dir, 0777, cell_current_euid(), cell_current_egid(), false, &node);
+  if (rc) { return rc; }
+  uint32_t open_flags = LINUX_O_RDWR | ((flags & MFD_CLOEXEC) ? O_CLOEXEC : 0);
+  int fd = vfs_set_sealable(&node, flags & MFD_ALLOW_SEALING) ? cell_fd_open_node(&node, open_flags, display, NULL) : -EINVAL;
+  vfs_release_node(&node);
+  return fd;
 }
-

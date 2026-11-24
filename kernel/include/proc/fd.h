@@ -34,6 +34,8 @@ enum open_file_type {
 
 struct epoll_watch;
 
+constexpr size_t FD_PATH_MAX = CELL_PATH_MAX + 16;
+
 struct open_file {
   uint32_t refcount;
   enum open_file_type type;
@@ -42,7 +44,7 @@ struct open_file {
   uint8_t flock_mode;
   struct open_file *flock_next;
   struct epoll_watch *epoll_observers;
-  char path[CELL_PATH_MAX];
+  char path[FD_PATH_MAX];
   struct vfs_node node;
   union {
     struct {

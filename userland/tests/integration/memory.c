@@ -214,30 +214,27 @@ static int shm_open_path_mmap_regression(void) {
   return ok;
 }
 
-static int count_dir_entries(const char *path) {
-  DIR *dir = opendir(path);
-  if (dir == NULL) { return -1; }
-  int count = 0;
-  struct dirent *ent;
-  while ((ent = readdir(dir)) != NULL) {
-    if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) { ++count; }
-  }
-  closedir(dir);
-  return count;
-}
-
 static int memfd_shared_mmap_regression(void) {
-  int before = count_dir_entries("/run/memfd");
-  long fd_long = integration_raw_syscall3(SYS_MEMFD_CREATE, (long)"spore-memfd", MFD_CLOEXEC, 0);
+  char name[251], proc[48], link[280];
+  memset(name, 'a', 249);
+  name[1] = '/'; name[2] = ' '; name[249] = 0;
+
+  long fd_long = integration_raw_syscall3(SYS_MEMFD_CREATE, (long)name, MFD_CLOEXEC, 0);
   int fd = (int)fd_long;
-  int ok = fd >= 0 && ftruncate(fd, 4096) == 0;
+  snprintf(proc, sizeof(proc), "/proc/self/fd/%d", fd);
+  struct stat st;
+  char expected[280];
+  int n = snprintf(expected, sizeof(expected), "/memfd:%s (deleted)", name);
+  int ok = fd >= 0 && fstat(fd, &st) == 0 && st.st_nlink == 0 && readlink(proc, link, sizeof(link)) == n &&
+           !memcmp(link, expected, n) && ftruncate(fd, 4096) == 0;
+  name[249] = 'x'; name[250] = 0;
+  ok = ok && syscall(SYS_MEMFD_CREATE, name, 0) == -1 && errno == EINVAL;
   char *map = ok ? mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
   ok = ok && map != MAP_FAILED;
   if (fd >= 0) {
     ok = ok && close(fd) == 0;
     fd = -1;
   }
-  ok = ok && count_dir_entries("/run/memfd") == before;
   if (ok) {
     map[0] = 'M';
     pid_t child = fork();
@@ -252,8 +249,7 @@ static int memfd_shared_mmap_regression(void) {
     ok = ok && munmap(map, 4096) == 0;
   }
   if (fd >= 0) { close(fd); }
-  ok = ok && count_dir_entries("/run/memfd") == before;
-  printf("[spore] memfd shared mmap fork: %s fd=%ld visible-before=%d\n", ok ? "PASS" : "FAIL", fd_long, before);
+  printf("[spore] memfd shared mmap fork: %s fd=%ld\n", ok ? "PASS" : "FAIL", fd_long);
   return ok;
 }
 

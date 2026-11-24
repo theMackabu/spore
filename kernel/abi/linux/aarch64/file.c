@@ -218,7 +218,7 @@ int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf, uint64_
   struct vfs_node node;
   int rc = syscall_lookup_at(dirfd, path_addr, AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW, 0, &node, NULL);
   if (rc) { return rc; }
-  char target[CELL_PATH_MAX];
+  char target[FD_PATH_MAX];
   size_t target_len;
   if (!vfs_readlink(&node, target, sizeof(target), &target_len)) { return -EINVAL; }
   if (target_len > len) { target_len = len; }

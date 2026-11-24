@@ -180,7 +180,7 @@ static size_t fd_link_target(int fd, char *out, size_t cap) {
 
 bool vfs_proc_readlink(const struct vfs_node *node, char *out, size_t cap, size_t *len_out) {
   if (!vfs_proc_node_live(node) || (node->mode & 0170000u) != 0120000u) { return false; }
-  char buf[CELL_PATH_MAX];
+  char buf[FD_PATH_MAX];
   const char *target = buf;
   size_t len;
   if (node->device == RAMFS_DEV_PROC_SELF) {

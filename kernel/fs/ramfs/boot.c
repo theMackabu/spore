@@ -170,8 +170,8 @@ bool ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *
   int proc = add_mount(fs, root, "proc", RAMFS_MOUNT_PROC);
   int sys = add_mount(fs, root, "sys", RAMFS_MOUNT_SYS);
   if (add_mount(fs, root, "tmp", RAMFS_MOUNT_TMP) < 0) { return false; }
-  int run = add_mount(fs, root, "run", RAMFS_MOUNT_RUN);
-  if (ramfs_add_node(fs, run, "memfd", true, true) < 0 || !populate_dev(fs, dev) ||
+  if (add_mount(fs, root, "run", RAMFS_MOUNT_RUN) < 0) { return false; }
+  if (!populate_dev(fs, dev) ||
       !populate_proc(fs, proc) || !populate_cpu(fs, sys)) { return false; }
   for (uint32_t i = 0; modules && i < count; ++i) {
     const struct spore_boot_module *m = &modules[i];
