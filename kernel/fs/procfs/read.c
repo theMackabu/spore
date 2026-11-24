@@ -71,12 +71,13 @@ static const char *domain_state_text(const struct domain *domain) {
   return state == THREAD_UNUSED ? "unknown" : thread_state_text(state);
 }
 
-static char domain_proc_state_char(const struct domain *domain) {
-  const char *state = domain_state_text(domain);
-  if (state[0] == 'r') { return 'R'; }
-  if (state[0] == 'b') { return 'S'; }
-  if (state[0] == 'z') { return 'Z'; }
-  return '?';
+static char proc_state_char(enum thread_state state) {
+  switch (state) {
+  case THREAD_RUNNABLE: return 'R';
+  case THREAD_BLOCKED: return 'S';
+  case THREAD_ZOMBIE: return 'Z';
+  default: return '?';
+  }
 }
 
 static const char *domain_wait_text(const struct domain *domain) {
@@ -145,22 +146,29 @@ static size_t procinfo_text(char *dst, size_t cap) {
   return len;
 }
 
-static const struct domain *domain_for_pid(int pid) {
-  return cell_find_domain(pid);
-}
+struct proc_task {
+  const struct domain *domain;
+  const struct thread *thread;
+};
 
-static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
+static size_t proc_pid_status_text(char *dst, size_t cap, const struct proc_task *task) {
   size_t len = 0;
-  const struct domain *domain = domain_for_pid(pid);
-  if (domain == NULL) { return 0; }
+  const struct domain *domain = task->domain;
   struct cell_memory_accounting mem = {0};
   (void)cell_memory_accounting(domain, &mem);
   proc_append_str(dst, cap, &len, "Name:\t");
   proc_append_str(dst, cap, &len, domain->name);
   proc_append_str(dst, cap, &len, "\nState:\t");
-  proc_append_str(dst, cap, &len, domain_state_text(domain));
-  proc_append_str(dst, cap, &len, "\nPid:\t");
+  enum thread_state state = task->thread ? task->thread->state : cell_domain_state(domain);
+  proc_append_char(dst, cap, &len, proc_state_char(state));
+  proc_append_str(dst, cap, &len, " (");
+  proc_append_str(dst, cap, &len, thread_state_text(state));
+  proc_append_str(dst, cap, &len, ")\nTgid:\t");
   proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
+  proc_append_str(dst, cap, &len, "\nPid:\t");
+  proc_append_u64(dst, cap, &len, task->thread ? task->thread->tid : domain->id);
+  proc_append_str(dst, cap, &len, "\nThreads:\t");
+  proc_append_u64(dst, cap, &len, domain->refcount);
   proc_append_str(dst, cap, &len, "\nPPid:\t");
   proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
   proc_append_str(dst, cap, &len, "\nUid:\t");
@@ -197,7 +205,7 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   proc_append_str(dst, cap, &len, "\nMajFlt:\t");
   proc_append_u64(dst, cap, &len, mem.major_faults);
   proc_append_str(dst, cap, &len, "\nCpuTicks:\t");
-  proc_append_u64(dst, cap, &len, domain->cpu_ticks);
+  proc_append_u64(dst, cap, &len, task->thread ? task->thread->cpu_ticks : domain->cpu_ticks);
   proc_append_str(dst, cap, &len, "\nCwd:\t");
   proc_append_str(dst, cap, &len, domain->cwd);
   proc_append_str(dst, cap, &len, "\nUnsupportedSyscalls:\t");
@@ -212,28 +220,33 @@ static size_t proc_pid_status_text(char *dst, size_t cap, int pid) {
   return len;
 }
 
-static size_t proc_pid_proc_stat_text(char *dst, size_t cap, int pid) {
+static size_t proc_pid_proc_stat_text(char *dst, size_t cap, const struct proc_task *task) {
   size_t len = 0;
-  const struct domain *domain = domain_for_pid(pid);
-  if (domain == NULL) { return 0; }
+  const struct domain *domain = task->domain;
   struct cell_memory_accounting mem = {0};
   (void)cell_memory_accounting(domain, &mem);
-  uint64_t start_time = domain->start_ticks;
-  uint64_t utime = domain->cpu_ticks;
-  proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
+  uint64_t start_time = task->thread ? task->thread->start_ticks : domain->start_ticks;
+  uint64_t utime = task->thread ? task->thread->cpu_ticks : domain->cpu_ticks;
+  proc_append_u64(dst, cap, &len, task->thread ? task->thread->tid : domain->id);
   proc_append_str(dst, cap, &len, " (");
   proc_append_str(dst, cap, &len, domain->name);
   proc_append_str(dst, cap, &len, ") ");
-  proc_append_char(dst, cap, &len, domain_proc_state_char(domain));
+  proc_append_char(dst, cap, &len, proc_state_char(task->thread ? task->thread->state : cell_domain_state(domain)));
   proc_append_char(dst, cap, &len, ' ');
   proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
-  proc_append_str(dst, cap, &len, " 0 0 0 0 0 ");
+  proc_append_char(dst, cap, &len, ' ');
+  proc_append_u64(dst, cap, &len, domain->pgrp_id);
+  proc_append_char(dst, cap, &len, ' ');
+  proc_append_u64(dst, cap, &len, domain->session_id);
+  proc_append_str(dst, cap, &len, " 0 0 0 ");
   proc_append_u64(dst, cap, &len, mem.minor_faults);
   proc_append_str(dst, cap, &len, " 0 ");
   proc_append_u64(dst, cap, &len, mem.major_faults);
   proc_append_str(dst, cap, &len, " 0 ");
   proc_append_u64(dst, cap, &len, utime);
-  proc_append_str(dst, cap, &len, " 0 0 0 20 0 1 0 ");
+  proc_append_str(dst, cap, &len, " 0 0 0 20 0 ");
+  proc_append_u64(dst, cap, &len, domain->refcount);
+  proc_append_str(dst, cap, &len, " 0 ");
   proc_append_u64(dst, cap, &len, start_time);
   proc_append_str(dst, cap, &len, " ");
   proc_append_u64(dst, cap, &len, mem.virtual_pages * PAGE_SIZE);
@@ -267,10 +280,9 @@ static int64_t read_cmdline(struct open_file *file, struct domain *caller, uint6
   return (int64_t)done;
 }
 
-static size_t proc_pid_statm_text(char *dst, size_t cap, int pid) {
+static size_t proc_pid_statm_text(char *dst, size_t cap, const struct proc_task *task) {
   size_t len = 0;
-  const struct domain *domain = domain_for_pid(pid);
-  if (domain == NULL) { return 0; }
+  const struct domain *domain = task->domain;
   struct cell_memory_accounting mem = {0};
   (void)cell_memory_accounting(domain, &mem);
   proc_append_u64(dst, cap, &len, mem.virtual_pages);
@@ -282,28 +294,25 @@ static size_t proc_pid_statm_text(char *dst, size_t cap, int pid) {
   return len;
 }
 
-static size_t proc_pid_comm_text(char *dst, size_t cap, int pid) {
+static size_t proc_pid_comm_text(char *dst, size_t cap, const struct proc_task *task) {
   size_t len = 0;
-  const struct domain *domain = domain_for_pid(pid);
-  if (domain == NULL) { return 0; }
+  const struct domain *domain = task->domain;
   proc_append_str(dst, cap, &len, domain->name);
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }
 
-static size_t proc_pid_cwd_text(char *dst, size_t cap, int pid) {
+static size_t proc_pid_cwd_text(char *dst, size_t cap, const struct proc_task *task) {
   size_t len = 0;
-  const struct domain *domain = domain_for_pid(pid);
-  if (domain == NULL) { return 0; }
+  const struct domain *domain = task->domain;
   proc_append_str(dst, cap, &len, domain->cwd);
   proc_append_char(dst, cap, &len, '\n');
   return len;
 }
 
-static size_t proc_pid_exe_text(char *dst, size_t cap, int pid) {
+static size_t proc_pid_exe_text(char *dst, size_t cap, const struct proc_task *task) {
   size_t len = 0;
-  const struct domain *domain = domain_for_pid(pid);
-  if (domain == NULL) { return 0; }
+  const struct domain *domain = task->domain;
   proc_append_str(dst, cap, &len, domain->exec_path[0] == '\0' ? "-" : domain->exec_path);
   proc_append_char(dst, cap, &len, '\n');
   return len;
@@ -403,9 +412,15 @@ static size_t sys_cpu_core_online_text(char *dst, size_t cap, const char *path) 
 }
 
 static int64_t read_generated_pid_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
-                                         size_t (*fill)(char *, size_t, int)) {
+                                         size_t (*fill)(char *, size_t, const struct proc_task *)) {
+  struct proc_task task = {.domain = cell_find_domain(file->node.proc.pid)};
+  if (task.domain == NULL) { return 0; }
+  if (file->node.proc.tid != 0) {
+    task.thread = cell_find_thread(file->node.proc.tid);
+    if (task.thread == NULL || task.thread->domain != task.domain) { return 0; }
+  }
   char text[4096];
-  size_t text_len = fill(text, sizeof(text), file->node.proc.pid);
+  size_t text_len = fill(text, sizeof(text), &task);
   return read_text_device(file, domain, buf, len, text, text_len);
 }
 

@@ -76,6 +76,8 @@ enum ramfs_device {
   RAMFS_DEV_SYS_CPU_CORE_ONLINE,
   RAMFS_DEV_BLK_ROOT,
   RAMFS_DEV_BLK_BOOT,
+  RAMFS_DEV_PROC_PID_TASK,
+  RAMFS_DEV_PROC_SELF,
 };
 
 struct ramfs_mem_node {

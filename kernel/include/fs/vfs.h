@@ -54,6 +54,7 @@ struct vfs_node {
     struct ext2_node ext2;
     struct {
       int pid;
+      int tid;
       int fd;
     } proc;
   };

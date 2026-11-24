@@ -324,20 +324,6 @@ bool cell_set_chroot(const char *path) {
   return true;
 }
 
-bool cell_proc_exists(int pid) {
-  return cell_find_domain(pid) != NULL;
-}
-
-uint32_t cell_proc_uid(int pid) {
-  struct domain *domain = cell_find_domain(pid);
-  return domain == NULL ? 0 : domain->uid;
-}
-
-uint32_t cell_proc_gid(int pid) {
-  struct domain *domain = cell_find_domain(pid);
-  return domain == NULL ? 0 : domain->gid;
-}
-
 void cell_note_unsupported_syscall(uint64_t nr) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return; }

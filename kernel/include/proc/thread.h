@@ -85,6 +85,8 @@ struct thread_wait {
 struct thread {
   int tid;
   int running_cpu;
+  uint64_t cpu_ticks;
+  uint64_t start_ticks;
   struct domain *domain;
   enum thread_state state;
   struct trap_frame tf;

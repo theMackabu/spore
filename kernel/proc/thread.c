@@ -78,6 +78,7 @@ struct thread *cell_alloc_thread(struct domain *domain, bool leader) {
       kmemset(&threads[i], 0, sizeof(threads[i]));
       if (i >= thread_slot_limit) { thread_slot_limit = i + 1; }
       threads[i].tid = leader ? domain->id : cell_new_task_id();
+      threads[i].start_ticks = cell_uptime_ticks();
       threads[i].running_cpu = -1;
       threads[i].domain = domain;
       threads[i].wait.target = -1;
@@ -309,8 +310,10 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
     cell_socket_timer_tick(ticks);
     cell_wake_poll_waiters_internal();
   }
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) { return; }
+  struct thread *current = cell_current_thread_internal();
+  if (current == NULL || current->domain == NULL) { return; }
+  if (from_lower_el) { ++current->cpu_ticks; }
+  struct domain *domain = current->domain;
   if (cell_charge_cpu_budget(domain, from_lower_el)) {
     kprintf("[spore] domain %d exceeded CPU budget -> killed\n", domain->id);
     if (from_lower_el) {

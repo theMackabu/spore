@@ -1,368 +1,257 @@
 #include "fs/procfs.h"
+#include "fs/procfs_format.h"
 #include "fs/vfs.h"
-#include "proc/info.h"
-
-#include "proc/accounting.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
+#include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/thread.h"
 
-enum { VFS_PROC_FD_MAX = 64, VFS_PROC_FD_PATH_MAX = 256 };
+static const struct proc_entry {
+  const char *name;
+  enum ramfs_device device;
+  uint8_t type;
+} entries[] = {
+  {"stat", RAMFS_DEV_PROC_PID_STAT, VFS_DT_REG},
+  {"status", RAMFS_DEV_PROC_PID_STATUS, VFS_DT_REG},
+  {"cmdline", RAMFS_DEV_PROC_PID_CMDLINE, VFS_DT_REG},
+  {"statm", RAMFS_DEV_PROC_PID_STATM, VFS_DT_REG},
+  {"comm", RAMFS_DEV_PROC_PID_COMM, VFS_DT_REG},
+  {"mounts", RAMFS_DEV_PROC_PID_MOUNTS, VFS_DT_REG},
+  {"mountinfo", RAMFS_DEV_PROC_PID_MOUNTINFO, VFS_DT_REG},
+  {"cwd", RAMFS_DEV_PROC_PID_CWD, VFS_DT_LNK},
+  {"exe", RAMFS_DEV_PROC_PID_EXE, VFS_DT_LNK},
+  {"fd", RAMFS_DEV_PROC_PID_FD, VFS_DT_DIR},
+  {"task", RAMFS_DEV_PROC_PID_TASK, VFS_DT_DIR},
+};
+constexpr size_t ENTRY_COUNT = sizeof(entries) / sizeof(entries[0]);
 
-static bool parse_uint_component(const char **p, int *out) {
+static uint64_t proc_ino(int pid, int tid, unsigned slot) {
+  return (UINT64_C(1) << 48) | ((uint64_t)(tid ? tid : pid) << 10) | (tid ? 512u : 0u) | slot;
+}
+
+static bool parse_number(const char **path, int *out) {
+  const char *p = *path;
+  if (*p < '0' || *p > '9') { return false; }
   int value = 0;
-  const char *s = *p;
-  if (*s < '0' || *s > '9') { return false; }
-  while (*s >= '0' && *s <= '9') {
-    value = value * 10 + (*s - '0');
-    ++s;
-  }
-  *p = s;
+  do {
+    int digit = *p++ - '0';
+    if (value > (INT32_MAX - digit) / 10) { return false; }
+    value = value * 10 + digit;
+  } while (*p >= '0' && *p <= '9');
+  *path = p;
   *out = value;
   return true;
 }
 
-static bool proc_kind_for_name(const char *name, enum ramfs_device *device) {
-  if (str_eq(name, "stat")) {
-    *device = RAMFS_DEV_PROC_PID_STAT;
-  } else if (str_eq(name, "status")) {
-    *device = RAMFS_DEV_PROC_PID_STATUS;
-  } else if (str_eq(name, "cmdline")) {
-    *device = RAMFS_DEV_PROC_PID_CMDLINE;
-  } else if (str_eq(name, "statm")) {
-    *device = RAMFS_DEV_PROC_PID_STATM;
-  } else if (str_eq(name, "comm")) {
-    *device = RAMFS_DEV_PROC_PID_COMM;
-  } else if (str_eq(name, "mounts")) {
-    *device = RAMFS_DEV_PROC_PID_MOUNTS;
-  } else if (str_eq(name, "mountinfo")) {
-    *device = RAMFS_DEV_PROC_PID_MOUNTINFO;
-  } else if (str_eq(name, "cwd")) {
-    *device = RAMFS_DEV_PROC_PID_CWD;
-  } else if (str_eq(name, "exe")) {
-    *device = RAMFS_DEV_PROC_PID_EXE;
-  } else {
-    return false;
-  }
-  return true;
+static const char *process_link(const struct domain *d, enum ramfs_device device) {
+  const char *text = device == RAMFS_DEV_PROC_PID_CWD ? d->cwd : d->exec_path;
+  return *text ? text : "-";
 }
 
-static bool proc_pid_file_node(int pid, enum ramfs_device device, struct vfs_node *out) {
+static bool proc_node(struct vfs_node *out, const struct domain *d, int tid, unsigned slot, enum ramfs_device device,
+                      uint8_t type, int fd) {
   uint64_t now = cell_realtime_seconds();
-  uint16_t mode = 0100444u;
-  uint64_t size = 0;
-
-  if (device == RAMFS_DEV_PROC_PID_CWD || device == RAMFS_DEV_PROC_PID_EXE) {
-    struct proc_info info;
-    mode = 0120777u;
-    if (cell_proc_info_for_pid(pid, &info)) {
-      const char *target = device == RAMFS_DEV_PROC_PID_CWD ? info.cwd : info.exec_path;
-      size = kstrlen(target[0] == '\0' ? "-" : target);
-    }
-  }
-
   *out = (struct vfs_node){
     .backend = VFS_PROC,
-    .ino = 110000u + (uint64_t)pid * 16u + (uint64_t)device,
-    .is_dir = false,
+    .ino = proc_ino(d->id, tid, slot),
+    .dev_id = VFS_DEV_PROC,
     .device = device,
-    .mode = mode,
+    .is_dir = type == VFS_DT_DIR,
+    .mode = type == VFS_DT_DIR   ? 0040555u
+            : type == VFS_DT_LNK ? 0120777u
+                                 : 0100444u,
+    .uid = d->uid,
+    .gid = d->gid,
     .links_count = 1,
-    .uid = cell_proc_uid(pid),
-    .gid = cell_proc_gid(pid),
-    .dev_id = VFS_DEV_PROC,
     .atime = now,
     .ctime = now,
     .mtime = now,
-    .proc.pid = pid,
-    .size = size,
+    .proc = {.pid = d->id, .tid = tid, .fd = fd},
   };
+  if (device == RAMFS_DEV_PROC_PID_CWD || device == RAMFS_DEV_PROC_PID_EXE) {
+    out->size = kstrlen(process_link(d, device));
+  }
   return true;
 }
 
-static bool proc_fd_dir_node(int pid, struct vfs_node *out) {
-  uint64_t now = cell_realtime_seconds();
-  *out = (struct vfs_node){
-    .backend = VFS_PROC,
-    .ino = 140000u + (uint64_t)pid,
-    .is_dir = true,
-    .device = RAMFS_DEV_PROC_PID_FD,
-    .mode = 0040555u,
-    .links_count = 1,
-    .uid = cell_proc_uid(pid),
-    .gid = cell_proc_gid(pid),
-    .dev_id = VFS_DEV_PROC,
-    .atime = now,
-    .ctime = now,
-    .mtime = now,
-    .proc = {.pid = pid, .fd = -1},
-  };
-  return true;
+static bool live_task(const struct domain *d, int tid) {
+  const struct thread *thread = cell_find_thread(tid);
+  return thread != NULL && thread->domain == d;
 }
 
-static bool proc_fd_link_node(int pid, int fd, struct vfs_node *out) {
-  if (pid != cell_current_pid()) { return false; }
-  struct vfs_node fd_node;
-  if (!cell_fd_stat(fd, &fd_node)) { return false; }
-  uint64_t now = cell_realtime_seconds();
-  *out = (struct vfs_node){
-    .backend = VFS_PROC,
-    .ino = 150000u + (uint64_t)pid * 64u + (uint64_t)fd,
-    .is_dir = false,
-    .device = RAMFS_DEV_PROC_PID_FD,
-    .mode = 0120777u,
-    .links_count = 1,
-    .uid = cell_proc_uid(pid),
-    .gid = cell_proc_gid(pid),
-    .dev_id = VFS_DEV_PROC,
-    .atime = now,
-    .ctime = now,
-    .mtime = now,
-    .proc = {.pid = pid, .fd = fd},
-  };
-  return true;
-}
-
-static size_t utoa_dec(uint64_t value, char *dst, size_t cap) {
-  char tmp[32];
-  size_t n = 0;
-  if (cap == 0) { return 0; }
-  if (value == 0) { tmp[n++] = '0'; }
-  while (value != 0 && n < sizeof(tmp)) {
-    tmp[n++] = (char)('0' + (value % 10));
-    value /= 10;
+static size_t self_target(int pid, int tid, char *out, size_t cap) {
+  size_t len = 0;
+  proc_append_u64(out, cap, &len, pid);
+  if (tid) {
+    proc_append_str(out, cap, &len, "/task/");
+    proc_append_u64(out, cap, &len, tid);
   }
-  size_t out = 0;
-  while (n > 0 && out + 1 < cap) {
-    dst[out++] = tmp[--n];
-  }
-  dst[out] = '\0';
-  return out;
-}
-
-static size_t append_text(char *dst, size_t cap, size_t len, const char *text) {
-  while (*text != '\0' && len + 1 < cap) {
-    dst[len++] = *text++;
-  }
-  if (cap != 0) { dst[len] = '\0'; }
   return len;
 }
 
-static size_t append_dec_text(char *dst, size_t cap, size_t len, uint64_t value) {
-  char tmp[32];
-  utoa_dec(value, tmp, sizeof(tmp));
-  return append_text(dst, cap, len, tmp);
-}
-
-static bool fd_link_target(int fd, char *out, size_t cap, size_t *len_out) {
-  if (cell_fd_path(fd, out, cap)) {
-    if (len_out != NULL) { *len_out = kstrlen(out); }
-    return true;
-  }
-  struct vfs_node node;
-  if (!cell_fd_stat(fd, &node)) { return false; }
-  uint32_t type = node.mode & 0170000u;
-  size_t len = 0;
-  if (type == 0010000u) {
-    len = append_text(out, cap, len, "pipe:[");
-    len = append_dec_text(out, cap, len, node.ino);
-    len = append_text(out, cap, len, "]");
-  } else if (type == 0140000u) {
-    len = append_text(out, cap, len, "socket:[");
-    len = append_dec_text(out, cap, len, node.ino);
-    len = append_text(out, cap, len, "]");
-  } else {
-    len = append_text(out, cap, len, "anon_inode:[fd");
-    len = append_dec_text(out, cap, len, (uint64_t)fd);
-    len = append_text(out, cap, len, "]");
-  }
-  if (len_out != NULL) { *len_out = len; }
-  return cap != 0;
-}
-
-static bool proc_pid_link_target(const struct vfs_node *node, char *out, size_t cap, size_t *len_out) {
-  struct proc_info info;
-  if (!cell_proc_info_for_pid(node->proc.pid, &info)) { return false; }
-  const char *target = NULL;
-  if (node->device == RAMFS_DEV_PROC_PID_CWD) {
-    target = info.cwd;
-  } else if (node->device == RAMFS_DEV_PROC_PID_EXE) {
-    target = info.exec_path;
-  } else {
+bool vfs_proc_lookup(const char *path, bool follow_self, struct vfs_node *out) {
+  if (!starts_with(path, "/proc/")) { return false; }
+  const char *p = path + 6;
+  int pid, tid = 0;
+  bool self = false;
+  if (starts_with(p, "self") && (p[4] == '/' || p[4] == '\0')) {
+    p += 4;
+    self = true;
+    pid = cell_current_pid();
+  } else if (starts_with(p, "thread-self") && (p[11] == '/' || p[11] == '\0')) {
+    p += 11;
+    self = true;
+    pid = cell_current_pid();
+    tid = cell_current_tid();
+  } else if (!parse_number(&p, &pid)) {
     return false;
   }
-  if (target == NULL || target[0] == '\0') { target = "-"; }
-  size_t target_len = kstrlen(target);
-  if (len_out != NULL) { *len_out = target_len; }
-  size_t copy_len = target_len;
-  if (copy_len > cap) { copy_len = cap; }
-  if (copy_len != 0) { kmemcpy(out, target, copy_len); }
+  const struct domain *d = cell_find_domain(pid);
+  if (d == NULL) {
+    const struct thread *t = cell_find_thread(pid);
+    if (t == NULL || t->domain == NULL) { return false; }
+    d = t->domain;
+    tid = t->tid;
+  }
+  if (self && !follow_self && *p == '\0') {
+    char target[32];
+    proc_node(out, d, tid, 0, RAMFS_DEV_PROC_SELF, VFS_DT_LNK, -1);
+    out->ino = proc_ino(0, 0, tid ? 2 : 1);
+    out->size = self_target(pid, tid, target, sizeof(target));
+    return true;
+  }
+  if (*p == '/') {
+    ++p;
+    if (tid == 0 && starts_with(p, "task/")) {
+      p += 5;
+      if (!parse_number(&p, &tid) || !live_task(d, tid)) { return false; }
+      if (*p != '/' && *p != '\0') { return false; }
+      if (*p == '/') { ++p; }
+    }
+    if (starts_with(p, "fd/")) {
+      p += 3;
+      int fd;
+      if (!parse_number(&p, &fd) || *p != '\0' || d->id != cell_current_pid() || cell_fd_get_fd_flags(fd) < 0) {
+        return false;
+      }
+      return proc_node(out, d, tid, 64u + (unsigned)fd, RAMFS_DEV_PROC_PID_FD, VFS_DT_LNK, fd);
+    }
+    for (size_t i = 0; i < ENTRY_COUNT; ++i) {
+      const struct proc_entry *e = &entries[i];
+      if ((tid == 0 || e->device != RAMFS_DEV_PROC_PID_TASK) && str_eq(p, e->name)) {
+        return proc_node(out, d, tid, (unsigned)i + 1, e->device, e->type, -1);
+      }
+    }
+  }
+  return *p == '\0' && proc_node(out, d, tid, 0, RAMFS_DEV_NONE, VFS_DT_DIR, -1);
+}
+
+bool vfs_proc_node_live(const struct vfs_node *node) {
+  const struct domain *d = cell_find_domain(node->proc.pid);
+  if (d == NULL || (node->proc.tid != 0 && !live_task(d, node->proc.tid))) { return false; }
+  if (node->device == RAMFS_DEV_PROC_PID_FD && node->proc.fd >= 0) {
+    return d->id == cell_current_pid() && cell_fd_get_fd_flags(node->proc.fd) >= 0;
+  }
   return true;
 }
 
-bool vfs_proc_lookup(const char *path, struct vfs_node *out) {
-  if (!str_eq(path, "/proc") && !starts_with(path, "/proc/")) { return false; }
-  const char *p = path + 5;
-  if (*p != '/') { return false; }
-  ++p;
-  int pid = 0;
-  if (starts_with(p, "self") && (p[4] == '\0' || p[4] == '/')) {
-    p += 4;
-    pid = cell_current_pid();
-  } else if (!parse_uint_component(&p, &pid)) {
-    return false;
+static size_t fd_link_target(int fd, char *out, size_t cap) {
+  if (cell_fd_path(fd, out, cap)) { return kstrlen(out); }
+  struct domain *d = cell_current_domain_internal();
+  struct open_file *file = d->fds[fd];
+  struct vfs_node node;
+  size_t len = 0;
+  if ((file->type == OPEN_PIPE || file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM ||
+       file->type == OPEN_UNIX_LISTENER) &&
+      cell_fd_stat(fd, &node)) {
+    proc_append_str(out, cap, &len, file->type == OPEN_PIPE ? "pipe:[" : "socket:[");
+    proc_append_u64(out, cap, &len, node.ino);
+  } else {
+    proc_append_str(out, cap, &len, "anon_inode:[fd");
+    proc_append_u64(out, cap, &len, (uint64_t)fd);
   }
-  if (!cell_proc_exists(pid)) { return false; }
-  if (*p == '\0') {
-    uint64_t now = cell_realtime_seconds();
-    *out = (struct vfs_node){
-      .backend = VFS_PROC,
-      .ino = 100000u + (uint64_t)pid,
-      .is_dir = true,
-      .device = RAMFS_DEV_NONE,
-      .mode = 0040555u,
-      .links_count = 1,
-      .uid = cell_proc_uid(pid),
-      .gid = cell_proc_gid(pid),
-      .dev_id = VFS_DEV_PROC,
-      .atime = now,
-      .ctime = now,
-      .mtime = now,
-      .proc.pid = pid,
-    };
-    return true;
-  }
-  if (*p != '/') { return false; }
-  ++p;
-  if (str_eq(p, "fd")) { return proc_fd_dir_node(pid, out); }
-  if (starts_with(p, "fd/")) {
-    p += 3;
-    int fd = 0;
-    if (!parse_uint_component(&p, &fd) || *p != '\0') { return false; }
-    return proc_fd_link_node(pid, fd, out);
-  }
-  if (str_eq(p, "task")) {
-    uint64_t now = cell_realtime_seconds();
-    *out = (struct vfs_node){
-      .backend = VFS_PROC,
-      .ino = 120000u + (uint64_t)pid,
-      .is_dir = true,
-      .device = RAMFS_DEV_NONE,
-      .mode = 0040555u,
-      .links_count = 1,
-      .uid = cell_proc_uid(pid),
-      .gid = cell_proc_gid(pid),
-      .dev_id = VFS_DEV_PROC,
-      .atime = now,
-      .ctime = now,
-      .mtime = now,
-      .proc.pid = -pid,
-    };
-    return true;
-  }
-  if (starts_with(p, "task/")) {
-    p += 5;
-    int tid = 0;
-    if (!parse_uint_component(&p, &tid) || tid != pid || !cell_proc_exists(tid)) { return false; }
-    if (*p == '\0') {
-      uint64_t now = cell_realtime_seconds();
-      *out = (struct vfs_node){
-        .backend = VFS_PROC,
-        .ino = 130000u + (uint64_t)pid,
-        .is_dir = true,
-        .device = RAMFS_DEV_NONE,
-        .mode = 0040555u,
-        .links_count = 1,
-        .uid = cell_proc_uid(pid),
-        .gid = cell_proc_gid(pid),
-        .dev_id = VFS_DEV_PROC,
-        .atime = now,
-        .ctime = now,
-        .mtime = now,
-        .proc.pid = pid,
-      };
-      return true;
-    }
-    if (*p != '/') { return false; }
-    ++p;
-  }
-  enum ramfs_device device;
-  if (!proc_kind_for_name(p, &device)) { return false; }
-  return proc_pid_file_node(pid, device, out);
+  proc_append_char(out, cap, &len, ']');
+  return len;
 }
 
 bool vfs_proc_readlink(const char *path, char *out, size_t cap, size_t *len_out) {
   struct vfs_node node;
-  if (vfs_proc_lookup(path, &node)) {
-    if (node.device == RAMFS_DEV_PROC_PID_FD && node.proc.fd >= 0) {
-      char target[VFS_PROC_FD_PATH_MAX];
-      size_t target_len = 0;
-      if (!fd_link_target(node.proc.fd, target, sizeof(target), &target_len)) { return false; }
-      if (len_out != NULL) { *len_out = target_len; }
-      size_t copy_len = target_len;
-      if (copy_len > cap) { copy_len = cap; }
-      if (copy_len != 0) { kmemcpy(out, target, copy_len); }
-      return true;
-    }
-    if (node.device == RAMFS_DEV_PROC_PID_CWD || node.device == RAMFS_DEV_PROC_PID_EXE) {
-      return proc_pid_link_target(&node, out, cap, len_out);
-    }
+  if (!vfs_proc_lookup(path, false, &node) || (node.mode & 0170000u) != 0120000u) { return false; }
+  char buf[CELL_PATH_MAX];
+  const char *target = buf;
+  size_t len;
+  if (node.device == RAMFS_DEV_PROC_SELF) {
+    len = self_target(node.proc.pid, node.proc.tid, buf, sizeof(buf));
+  } else if (node.device == RAMFS_DEV_PROC_PID_FD) {
+    len = fd_link_target(node.proc.fd, buf, sizeof(buf));
+  } else {
+    target = process_link(cell_find_domain(node.proc.pid), node.device);
+    len = kstrlen(target);
   }
-  return false;
+  if (len_out != NULL) { *len_out = len; }
+  if (cap != 0) { kmemcpy(out, target, len < cap ? len : cap); }
+  return true;
+}
+
+static bool numbered_dirent(struct vfs_dirent *out, uint64_t ino, uint8_t type, unsigned number) {
+  size_t len = 0;
+  proc_append_u64(out->name, sizeof(out->name), &len, number);
+  out->name_len = (uint8_t)len;
+  out->ino = ino;
+  out->type = type;
+  return true;
 }
 
 bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
-  if (cursor == NULL) { return false; }
-  if (dir->backend == VFS_PROC) {
-    if (dir->device == RAMFS_DEV_PROC_PID_FD && dir->proc.fd < 0) {
-      if (dir->proc.pid != cell_current_pid()) { return false; }
-      if (*cursor >= VFS_PROC_FD_MAX) { return false; }
-      for (int fd = (int)*cursor; fd < (int)VFS_PROC_FD_MAX; ++fd) {
-        if (cell_fd_get_fd_flags(fd) < 0) { continue; }
-        out->ino = 150000u + (uint64_t)dir->proc.pid * 64u + (uint64_t)fd;
-        out->type = VFS_DT_LNK;
-        out->name_len = (uint8_t)utoa_dec((uint64_t)fd, out->name, sizeof(out->name));
-        *cursor = (uint64_t)fd + 1;
-        return true;
-      }
-      return false;
-    }
-    if (dir->proc.pid < 0) {
-      if (*cursor != 0) { return false; }
-      int pid = -dir->proc.pid;
-      out->ino = 130000u + (uint64_t)pid;
-      out->type = VFS_DT_DIR;
-      out->name_len = (uint8_t)utoa_dec((uint64_t)pid, out->name, sizeof(out->name));
-      *cursor = 1;
-      return true;
-    }
-    static const struct {
-      const char *name;
-      uint8_t type;
-    } entries[] = {{"stat", VFS_DT_REG}, {"status", VFS_DT_REG}, {"cmdline", VFS_DT_REG},   {"statm", VFS_DT_REG},
-                   {"comm", VFS_DT_REG}, {"mounts", VFS_DT_REG}, {"mountinfo", VFS_DT_REG}, {"cwd", VFS_DT_LNK},
-                   {"exe", VFS_DT_LNK},  {"fd", VFS_DT_DIR},     {"task", VFS_DT_DIR}};
-    if (!dir->is_dir || *cursor >= sizeof(entries) / sizeof(entries[0])) { return false; }
-    const size_t index = (size_t)*cursor;
-    out->ino = dir->ino + index + 1;
-    out->type = entries[index].type;
-    out->name_len = (uint8_t)kstrlen(entries[index].name);
-    kmemcpy(out->name, entries[index].name, (size_t)out->name_len + 1);
-    ++*cursor;
-    return true;
-  }
   if (dir->backend == VFS_RAMFS && dir->ramfs.mount == RAMFS_MOUNT_PROC && str_eq(dir->ramfs.name, "proc")) {
     if (*cursor < RAMFS_MAX_NODES) { return false; }
-    for (size_t slot = (size_t)(*cursor - RAMFS_MAX_NODES), limit = cell_domain_slot_limit(); slot < limit; ++slot) {
-      struct domain *domain = cell_domain_slot(slot);
-      if (domain == NULL || !domain->used) { continue; }
-      out->ino = 100000u + (uint64_t)domain->id;
-      out->type = VFS_DT_DIR;
-      out->name_len = (uint8_t)utoa_dec((uint64_t)domain->id, out->name, sizeof(out->name));
-      *cursor = RAMFS_MAX_NODES + slot + 1;
+    if (*cursor < RAMFS_MAX_NODES + 2) {
+      bool thread = *cursor == RAMFS_MAX_NODES + 1;
+      const char *name = thread ? "thread-self" : "self";
+      out->ino = proc_ino(0, 0, thread ? 2 : 1);
+      out->type = VFS_DT_LNK;
+      out->name_len = (uint8_t)kstrlen(name);
+      kmemcpy(out->name, name, (size_t)out->name_len + 1);
+      ++*cursor;
       return true;
     }
+    for (uint64_t i = *cursor - RAMFS_MAX_NODES - 2, end = cell_domain_slot_limit(); i < end; ++i) {
+      const struct domain *d = cell_domain_slot(i);
+      if (!d->used) { continue; }
+      *cursor = RAMFS_MAX_NODES + 2 + i + 1;
+      return numbered_dirent(out, proc_ino(d->id, 0, 0), VFS_DT_DIR, d->id);
+    }
+    return false;
   }
-  return false;
+  if (dir->backend != VFS_PROC || !dir->is_dir) { return false; }
+  int pid = dir->proc.pid, tid = dir->proc.tid;
+  if (dir->device == RAMFS_DEV_PROC_PID_FD) {
+    if (pid != cell_current_pid()) { return false; }
+    for (uint64_t fd = *cursor; fd < MAX_FDS; ++fd) {
+      if (cell_fd_get_fd_flags((int)fd) < 0) { continue; }
+      *cursor = fd + 1;
+      return numbered_dirent(out, proc_ino(pid, tid, 64u + (unsigned)fd), VFS_DT_LNK, (unsigned)fd);
+    }
+    return false;
+  }
+  if (dir->device == RAMFS_DEV_PROC_PID_TASK) {
+    for (uint64_t i = *cursor, end = cell_thread_slot_limit(); i < end; ++i) {
+      const struct thread *t = cell_thread_slot(i);
+      if (t->state == THREAD_UNUSED || t->domain == NULL || t->domain->id != pid) { continue; }
+      *cursor = i + 1;
+      return numbered_dirent(out, proc_ino(pid, t->tid, 0), VFS_DT_DIR, t->tid);
+    }
+    return false;
+  }
+  if (*cursor >= ENTRY_COUNT) { return false; }
+  const struct proc_entry *e = &entries[*cursor];
+  if (tid && e->device == RAMFS_DEV_PROC_PID_TASK) { return false; }
+  out->ino = proc_ino(pid, tid, (unsigned)*cursor + 1);
+  out->type = e->type;
+  out->name_len = (uint8_t)kstrlen(e->name);
+  kmemcpy(out->name, e->name, (size_t)out->name_len + 1);
+  ++*cursor;
+  return true;
 }

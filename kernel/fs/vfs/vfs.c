@@ -1,8 +1,7 @@
 #include "internal.h"
 
 #include "lib/mem.h"
-#include "proc/domain.h"
-#include "proc/fd.h"
+#include "fs/procfs.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -322,11 +321,7 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
   }
   if (node->backend == VFS_PROC) {
     *out = *node;
-    if (node->device == RAMFS_DEV_PROC_PID_FD && node->proc.fd >= 0) {
-      struct vfs_node fd_node;
-      return node->proc.pid == cell_current_pid() && cell_fd_stat(node->proc.fd, &fd_node);
-    }
-    return cell_proc_exists(node->proc.pid);
+    return vfs_proc_node_live(node);
   }
   return false;
 }

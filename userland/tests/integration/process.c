@@ -1,5 +1,6 @@
 #include "integration.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -8,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -188,7 +190,42 @@ int integration_exec_private_data(void) {
   return ok;
 }
 
+static void *check_proc_thread(void *unused) {
+  (void)unused;
+  int tid = (int)syscall(SYS_GETTID);
+  int pid = getpid();
+  char expected[64], target[64];
+  int len = snprintf(expected, sizeof(expected), "%d/task/%d", pid, tid);
+  int ok = tid != pid && readlink("/proc/thread-self", target, sizeof(target)) == len &&
+           memcmp(target, expected, len) == 0;
+  DIR *tasks = opendir("/proc/self/task");
+  int seen = 0;
+  if (tasks == NULL) { return NULL; }
+  for (struct dirent *entry; (entry = readdir(tasks)) != NULL;) {
+    int id = atoi(entry->d_name);
+    if (id != tid && id != pid) { continue; }
+    struct stat st;
+    ok = ok && fstatat(dirfd(tasks), entry->d_name, &st, 0) == 0 && entry->d_ino == st.st_ino && S_ISDIR(st.st_mode);
+    seen |= id == tid ? 1 : 2;
+  }
+  closedir(tasks);
+  FILE *f = fopen("/proc/thread-self/status", "r");
+  if (f == NULL) { return NULL; }
+  char line[256];
+  int reported_tid = -1, tgid = -1, threads = -1;
+  while (fgets(line, sizeof(line), f)) {
+    sscanf(line, "Pid: %d", &reported_tid);
+    sscanf(line, "Tgid: %d", &tgid);
+    sscanf(line, "Threads: %d", &threads);
+  }
+  fclose(f);
+  return ok && seen == 3 && reported_tid == tid && tgid == pid && threads >= 2 ? (void *)1 : NULL;
+}
+
 int integration_proc_self_links(void) {
+  pthread_t worker;
+  void *result = NULL;
+  if (pthread_create(&worker, NULL, check_proc_thread, NULL) != 0 || pthread_join(worker, &result) != 0 || !result) { return 0; }
   char exe[128];
   char cwd[128];
   ssize_t exe_len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);

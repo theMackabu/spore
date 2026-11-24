@@ -141,7 +141,7 @@ bool vfs_lookup(const char *path, struct vfs_node *out) {
   ++vfs_stat_counters.lookup_count;
   if (vfs_lookup_cache_get(path, false, out)) { return true; }
   if (vfs_path_uses_ramfs(path)) {
-    if (vfs_proc_lookup(path, out)) { return true; }
+    if (vfs_proc_lookup(path, true, out)) { return true; }
     if (vfs_lookup_ramfs(path, out)) {
       vfs_lookup_cache_put(path, false, out);
       return true;
@@ -164,7 +164,7 @@ bool vfs_lstat(const char *path, struct vfs_node *out) {
   ++vfs_stat_counters.lstat_count;
   if (vfs_lookup_cache_get(path, true, out)) { return true; }
   if (vfs_path_uses_ramfs(path)) {
-    if (vfs_proc_lookup(path, out)) { return true; }
+    if (vfs_proc_lookup(path, false, out)) { return true; }
     if (vfs_lookup_ramfs(path, out)) {
       vfs_lookup_cache_put(path, true, out);
       return true;
