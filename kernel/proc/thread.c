@@ -1,3 +1,4 @@
+#include "mm/table.h"
 #include "proc/thread.h"
 
 #include "arch/aarch64/platform.h"
@@ -29,7 +30,7 @@ static size_t thread_slot_limit;
 bool cell_thread_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_THREADS) { return false; }
   if (threads == NULL || thread_capacity != capacity) {
-    threads = pmm_alloc_table(capacity, sizeof(*threads));
+    threads = table_alloc(capacity, sizeof(*threads));
     if (threads == NULL) { return false; }
     thread_capacity = capacity;
   } else {

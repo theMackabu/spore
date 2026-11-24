@@ -4,13 +4,9 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 
-#if __STDC_HOSTED__
-#include <stdlib.h>
-#endif
+#include "mm/table.h"
 
-constexpr size_t VMAS_PER_CHUNK = VMA_CHUNK_BYTES / sizeof(struct vma);
-
-static uint64_t vma_hhdm_offset;
+constexpr size_t VMAS_PER_CHUNK = PAGE_SIZE / sizeof(struct vma);
 
 static bool compatible(const struct vma *a, const struct vma *b) {
   if (a->prot != b->prot || a->flags != b->flags || a->type != b->type || a->shared_may_write != b->shared_may_write) { return false; }
@@ -20,70 +16,37 @@ static bool compatible(const struct vma *a, const struct vma *b) {
          a->file_offset == b->file_offset && a->file_size == b->file_size;
 }
 
-void vma_set_hhdm_offset(uint64_t hhdm_offset) {
-  vma_hhdm_offset = hhdm_offset;
-}
-
-static void *alloc_pages(size_t pages) {
-#if __STDC_HOSTED__
-  return calloc(pages, VMA_CHUNK_BYTES);
-#else
-  if (vma_hhdm_offset == 0) { return NULL; }
-  if (pages == 1) {
-    uint64_t pa = pmm_alloc_zero_page();
-    return pa ? (void *)(uintptr_t)(vma_hhdm_offset + pa) : NULL;
-  }
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (!pa) { return NULL; }
-  void *ptr = (void *)(uintptr_t)(vma_hhdm_offset + pa);
-  kmemset(ptr, 0, pages * PAGE_SIZE);
-  return ptr;
-#endif
-}
-
-static void free_pages(void *ptr, size_t pages) {
-#if __STDC_HOSTED__
-  (void)pages;
-  free(ptr);
-#else
-  uint64_t pa = (uintptr_t)ptr - vma_hhdm_offset;
-  for (size_t i = 0; i < pages; ++i) {
-    pmm_free_page(pa + i * PAGE_SIZE);
-  }
-#endif
-}
-
 static void trim_chunks(struct vma_list *list) {
   size_t needed = list->count / VMAS_PER_CHUNK + (list->count % VMAS_PER_CHUNK != 0);
   while (list->chunk_count > needed) {
-    free_pages(list->chunks[--list->chunk_count], 1);
+    table_free(list->chunks[--list->chunk_count], 1, PAGE_SIZE);
   }
   if (needed == 0) {
-    free_pages(list->chunks, list->directory_pages);
+    table_free(list->chunks, list->directory_pages, PAGE_SIZE);
     vma_list_init(list);
   }
 }
 
 static bool reserve_slots(struct vma_list *list, size_t count) {
   size_t needed = count / VMAS_PER_CHUNK + (count % VMAS_PER_CHUNK != 0);
-  size_t pointers_per_page = VMA_CHUNK_BYTES / sizeof(*list->chunks);
+  size_t pointers_per_page = PAGE_SIZE / sizeof(*list->chunks);
   if (needed > list->directory_pages * pointers_per_page) {
     size_t pages = list->directory_pages ? list->directory_pages : 1;
     while (needed > pages * pointers_per_page) {
-      if (pages > SIZE_MAX / VMA_CHUNK_BYTES / 2) { return false; }
+      if (pages > SIZE_MAX / PAGE_SIZE / 2) { return false; }
       pages *= 2;
     }
-    struct vma **chunks = alloc_pages(pages);
+    struct vma **chunks = table_alloc(pages, PAGE_SIZE);
     if (!chunks) { return false; }
     if (list->chunks) {
       kmemcpy(chunks, list->chunks, list->chunk_count * sizeof(*chunks));
-      free_pages(list->chunks, list->directory_pages);
+      table_free(list->chunks, list->directory_pages, PAGE_SIZE);
     }
     list->chunks = chunks;
     list->directory_pages = pages;
   }
   while (list->chunk_count < needed) {
-    struct vma *chunk = alloc_pages(1);
+    struct vma *chunk = table_alloc(1, PAGE_SIZE);
     if (!chunk) {
       trim_chunks(list);
       return false;

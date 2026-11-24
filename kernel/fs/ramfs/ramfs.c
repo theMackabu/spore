@@ -142,7 +142,7 @@ int ramfs_add_node(struct ramfs *fs, int parent, const char *name, bool is_dir, 
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
                 uint64_t hhdm_offset) {
   kmemset(fs, 0, sizeof(*fs));
-  ramfs_reset_pages(hhdm_offset);
+  ramfs_reset_pages();
   fs->hhdm_offset = hhdm_offset;
   fs->next_ino = 1;
 

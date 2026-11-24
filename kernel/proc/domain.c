@@ -1,3 +1,4 @@
+#include "mm/table.h"
 #include "proc/domain.h"
 #include "proc/accounting.h"
 #include "lib/kstr.h"
@@ -25,7 +26,7 @@ static bool task_ids_wrapped;
 bool cell_domain_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_DOMAINS) { return false; }
   if (domains == NULL || domain_capacity != capacity) {
-    domains = pmm_alloc_table(capacity, sizeof(*domains));
+    domains = table_alloc(capacity, sizeof(*domains));
     if (domains == NULL) { return false; }
     domain_capacity = capacity;
   } else {

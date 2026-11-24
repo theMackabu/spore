@@ -38,8 +38,7 @@ static void halt_table_init_failure(const char *name) {
   aarch64_halt();
 }
 
-void cell_system_init(uint64_t hhdm_offset) {
-  vma_set_hhdm_offset(hhdm_offset);
+void cell_system_init(void) {
   size_t domain_count = 0;
   size_t thread_count = 0;
   size_t mm_count = 0;

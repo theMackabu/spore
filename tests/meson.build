@@ -9,7 +9,7 @@ test_include = [
   include_directories('../kernel/include'),
 ]
 
-host_mem = static_library('host-kernel-mem', memory_primitives,
+host_mem = static_library('host-kernel-mem', memory_primitives + table_sources,
   include_directories: test_include,
   native: true)
 

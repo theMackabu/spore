@@ -6,8 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr int VMA_CHUNK_BYTES = 4096;
-
 enum vma_type {
   VMA_ANON,
   VMA_STACK,
@@ -34,7 +32,6 @@ struct vma_list {
   size_t chunk_count;
 };
 
-void vma_set_hhdm_offset(uint64_t hhdm_offset);
 void vma_list_init(struct vma_list *list);
 void vma_list_destroy(struct vma_list *list);
 const struct vma *vma_lookup(const struct vma_list *list, uint64_t va);

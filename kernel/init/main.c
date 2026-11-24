@@ -112,7 +112,7 @@ void kernel_main(void) {
     }
   }
   if (virtio_net_init(boot->hhdm_offset)) { net_init(); }
-  cell_system_init(boot->hhdm_offset);
+  cell_system_init();
 
   ramfs_init(&boot_ramfs, boot->modules, boot->module_count, boot->hhdm_offset);
   vfs_init(&boot_ramfs, root);
