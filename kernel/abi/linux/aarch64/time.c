@@ -17,6 +17,8 @@ enum {
   EINVAL = 22,
   CLOCK_REALTIME = 0,
   CLOCK_MONOTONIC = 1,
+  CLOCK_PROCESS_CPUTIME_ID = 2,
+  CLOCK_THREAD_CPUTIME_ID = 3,
 };
 
 struct itimerval64 {
@@ -93,63 +95,49 @@ int64_t sys_getrandom(uint64_t buf, uint64_t len) {
   return (int64_t)len;
 }
 
-int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp) {
-  uint64_t cnt;
-  uint64_t freq;
-  cnt = aarch64_counter_value();
-  freq = aarch64_counter_frequency();
-  uint64_t elapsed_cnt = cnt;
-  uint64_t base_sec = 0;
-  if (clk_id == CLOCK_REALTIME) {
-    uint64_t base_cnt;
-    uint64_t base_freq;
-    syscall_realtime_base(&base_sec, &base_cnt, &base_freq);
-    if (cnt >= base_cnt) { elapsed_cnt = cnt - base_cnt; }
-    if (base_freq != 0) { freq = base_freq; }
-  } else if (clk_id != CLOCK_MONOTONIC) {
-    return -(int64_t)EINVAL;
+static bool cpu_clock(uint64_t id) {
+  return id == CLOCK_PROCESS_CPUTIME_ID || id == CLOCK_THREAD_CPUTIME_ID;
+}
+
+static int write_timespec(uint64_t addr, struct timespec64 ts) {
+  return syscall_user_writable(addr, sizeof(ts)) && vmm_copy_to_user(syscall_active_as(), addr, &ts, sizeof(ts))
+           ? 0 : -EFAULT;
+}
+
+static struct timespec64 wall_time(bool realtime) {
+  uint64_t cnt = aarch64_counter_value(), freq = aarch64_counter_frequency(), epoch = 0;
+  if (realtime) {
+    uint64_t base, base_freq;
+    syscall_realtime_base(&epoch, &base, &base_freq);
+    if (cnt >= base) { cnt -= base; }
+    if (base_freq) { freq = base_freq; }
   }
-  struct timespec64 ts = {
-    .tv_sec = (int64_t)(base_sec + elapsed_cnt / freq),
-    .tv_nsec = (int64_t)(((elapsed_cnt % freq) * 1000000000ull) / freq),
-  };
-  return syscall_user_writable(tp, sizeof(ts)) && vmm_copy_to_user(syscall_active_as(), tp, &ts, sizeof(ts))
-           ? 0
-           : -(int64_t)EFAULT;
+  return (struct timespec64){.tv_sec = epoch + cnt / freq, .tv_nsec = (cnt % freq) * 1000000000ULL / freq};
+}
+
+int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp) {
+  if (cpu_clock(clk_id)) {
+    const struct thread *thread = cell_current_thread_internal();
+    uint64_t ticks = clk_id == CLOCK_THREAD_CPUTIME_ID ? thread->cpu_ticks : thread->domain->cpu_ticks;
+    return write_timespec(tp, (struct timespec64){.tv_sec = ticks / 100, .tv_nsec = (ticks % 100) * 10000000});
+  }
+  if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) { return -EINVAL; }
+  return write_timespec(tp, wall_time(clk_id == CLOCK_REALTIME));
 }
 
 int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
-  if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) { return -(int64_t)EINVAL; }
-  if (tp == 0) { return 0; }
   uint64_t freq;
-  freq = aarch64_counter_frequency();
-  int64_t nsec = 10000000;
-  if (freq != 0) {
-    uint64_t rounded = (1000000000ull + freq - 1) / freq;
-    nsec = (int64_t)(rounded == 0 ? 1 : rounded);
-  }
-  struct timespec64 ts = {.tv_sec = 0, .tv_nsec = nsec};
-  return syscall_user_writable(tp, sizeof(ts)) && vmm_copy_to_user(syscall_active_as(), tp, &ts, sizeof(ts))
-           ? 0
-           : -(int64_t)EFAULT;
+  if (cpu_clock(clk_id)) { freq = 100; }
+  else if (clk_id == CLOCK_REALTIME || clk_id == CLOCK_MONOTONIC) { freq = aarch64_counter_frequency(); }
+  else { return -EINVAL; }
+  if (!tp) { return 0; }
+  return write_timespec(tp, (struct timespec64){.tv_nsec = (1000000000ULL + freq - 1) / freq});
 }
 
 int64_t sys_gettimeofday(uint64_t tv_addr, uint64_t tz_addr) {
-  uint64_t cnt;
-  uint64_t freq;
-  cnt = aarch64_counter_value();
-  freq = aarch64_counter_frequency();
-  uint64_t base_sec;
-  uint64_t base_cnt;
-  uint64_t base_freq;
-  syscall_realtime_base(&base_sec, &base_cnt, &base_freq);
-  uint64_t elapsed_cnt = cnt >= base_cnt ? cnt - base_cnt : cnt;
-  if (base_freq != 0) { freq = base_freq; }
   if (tv_addr != 0) {
-    struct timeval64 tv = {
-      .tv_sec = (int64_t)(base_sec + elapsed_cnt / freq),
-      .tv_usec = (int64_t)(((elapsed_cnt % freq) * 1000000ull) / freq),
-    };
+    struct timespec64 ts = wall_time(true);
+    struct timeval64 tv = {.tv_sec = ts.tv_sec, .tv_usec = ts.tv_nsec / 1000};
     if (!syscall_user_writable(tv_addr, sizeof(tv)) ||
         !vmm_copy_to_user(syscall_active_as(), tv_addr, &tv, sizeof(tv))) {
       return -(int64_t)EFAULT;
@@ -166,19 +154,16 @@ int64_t sys_gettimeofday(uint64_t tv_addr, uint64_t tz_addr) {
 }
 
 int64_t sys_times(uint64_t buf_addr) {
-  uint64_t cnt;
-  uint64_t freq;
-  cnt = aarch64_counter_value();
-  freq = aarch64_counter_frequency();
-  int64_t ticks = (int64_t)((cnt * 100ull) / freq);
   if (buf_addr != 0) {
-    struct tms64 tms = {.tms_utime = ticks, .tms_stime = 0, .tms_cutime = 0, .tms_cstime = 0};
+    const struct domain *domain = cell_current_domain_internal();
+    struct tms64 tms = {.tms_utime = domain->cpu_ticks};
     if (!syscall_user_writable(buf_addr, sizeof(tms)) ||
         !vmm_copy_to_user(syscall_active_as(), buf_addr, &tms, sizeof(tms))) {
       return -(int64_t)EFAULT;
     }
   }
-  return ticks;
+  struct timespec64 ts = wall_time(false);
+  return ts.tv_sec * 100 + ts.tv_nsec / 10000000;
 }
 
 int64_t sys_getrusage(int who, uint64_t usage_addr) {
