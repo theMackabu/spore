@@ -1,13 +1,18 @@
-use std::env;
-use std::fs;
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
-use std::process::ExitCode;
-use std::time::Duration;
+#![no_std]
 
-const SYS_SPORE_NET_CONFIG: i64 = 0x400a;
-const DHCP_COOKIE: u32 = 0x63825363;
+#[path = "../../lib/spore/panic.rs"]
+mod panic;
+mod socket;
+
+use core::ffi::{CStr, c_char, c_int, c_void};
+use socket::Socket;
+
+const COOKIE: u32 = 0x63825363;
+const XID: u32 = 0x53504f52;
+const CLIENT_MAC: [u8; 6] = [0x52, 0x54, 0, 0x12, 0x34, 0x56];
 
 #[repr(C)]
+#[derive(Default)]
 struct NetConfig {
     local_ip: u32,
     gateway_ip: u32,
@@ -17,42 +22,62 @@ struct NetConfig {
 }
 
 unsafe extern "C" {
-    fn syscall(number: i64, ...) -> i64;
+    fn net_config_get(config: &mut NetConfig) -> bool;
+    fn net_config_set(config: &NetConfig) -> bool;
+    fn format_ipv4(ip: u32, buf: *mut c_char, capacity: usize);
+    fn dprintf(fd: c_int, format: *const c_char, ...) -> c_int;
+    fn fopen(path: *const c_char, mode: *const c_char) -> *mut c_void;
+    fn fprintf(file: *mut c_void, format: *const c_char, ...) -> c_int;
+    fn fclose(file: *mut c_void) -> c_int;
 }
 
-fn net_config_get(config: &mut NetConfig) -> bool {
-    unsafe { syscall(SYS_SPORE_NET_CONFIG, 0i64, config as *mut NetConfig) == 0 }
-}
-fn net_config_set(config: &NetConfig) -> bool {
-    unsafe { syscall(SYS_SPORE_NET_CONFIG, 1i64, config as *const NetConfig) == 0 }
+fn address_text(ip: u32) -> [c_char; 16] {
+    let mut buf = [0; 16];
+    unsafe {
+        format_ipv4(ip, buf.as_mut_ptr(), buf.len());
+    }
+    buf
 }
 
-fn ip(value: u32) -> Ipv4Addr {
-    Ipv4Addr::from(value.to_le_bytes())
-}
 fn le_ip(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
-fn packet(kind: u8, xid: u32, requested: u32, server: u32) -> Vec<u8> {
-    let mut out = Vec::with_capacity(261);
-    out.resize(240, 0);
-    out[0..4].copy_from_slice(&[1, 1, 6, 0]);
-    out[4..8].copy_from_slice(&xid.to_be_bytes());
-    out[10] = 0x80;
-    out[28..34].copy_from_slice(&[0x52, 0x54, 0, 0x12, 0x34, 0x56]);
-    out[236..240].copy_from_slice(&DHCP_COOKIE.to_be_bytes());
-    out.extend_from_slice(&[53, 1, kind]);
-    if requested != 0 {
-        out.extend_from_slice(&[50, 4]);
-        out.extend_from_slice(&requested.to_le_bytes());
+struct Packet {
+    bytes: [u8; 261],
+    len: usize,
+}
+
+impl Packet {
+    fn new(kind: u8, requested: u32, server: u32) -> Self {
+        let mut packet = Self {
+            bytes: [0; 261],
+            len: 240,
+        };
+        packet.bytes[..3].copy_from_slice(&[1, 1, 6]);
+        packet.bytes[4..8].copy_from_slice(&XID.to_be_bytes());
+        packet.bytes[10] = 0x80;
+        packet.bytes[28..34].copy_from_slice(&CLIENT_MAC);
+        packet.bytes[236..240].copy_from_slice(&COOKIE.to_be_bytes());
+        packet.append(&[53, 1, kind]);
+        for (option, value) in [(50, requested), (54, server)] {
+            if value != 0 {
+                packet.append(&[option, 4]);
+                packet.append(&value.to_le_bytes());
+            }
+        }
+        packet.append(&[55, 3, 1, 3, 6, 255]);
+        packet
     }
-    if server != 0 {
-        out.extend_from_slice(&[54, 4]);
-        out.extend_from_slice(&server.to_le_bytes());
+
+    fn append(&mut self, data: &[u8]) {
+        self.bytes[self.len..self.len + data.len()].copy_from_slice(data);
+        self.len += data.len();
     }
-    out.extend_from_slice(&[55, 3, 1, 3, 6, 255]);
-    out
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
 }
 
 #[derive(Default)]
@@ -107,106 +132,86 @@ fn parse(packet: &[u8], xid: u32) -> Option<Lease> {
     (lease.kind != 0 && lease.address != 0).then_some(lease)
 }
 
-fn receive(socket: &UdpSocket, xid: u32, kind: u8) -> Option<Lease> {
-    socket
-        .set_read_timeout(Some(Duration::from_millis(2500)))
-        .ok()?;
-    let mut bytes = [0u8; 600];
+fn exchange(socket: &Socket, packet: Packet, kind: u8) -> Option<Lease> {
+    if !socket.broadcast(67, packet.as_slice()) {
+        return None;
+    }
+    let mut bytes = [0; 600];
     loop {
-        let (size, _) = socket.recv_from(&mut bytes).ok()?;
-        if let Some(lease) = parse(&bytes[..size], xid) {
-            if lease.kind == kind {
-                return Some(lease);
-            }
+        let data = socket.receive(&mut bytes, 2500)?;
+        if let Some(lease) = parse(data, XID)
+            && lease.kind == kind
+        {
+            return Some(lease);
         }
     }
 }
 
-fn main() -> ExitCode {
-    let mut args = env::args_os().skip(1);
-    if let Some(arg) = args.next() {
-        if arg != "--address" || args.next().is_some() {
-            eprintln!("usage: dhcpc [--address]");
-            return ExitCode::from(64);
-        }
-        let mut config = NetConfig {
-            local_ip: 0,
-            gateway_ip: 0,
-            netmask: 0,
-            dns_ip: 0,
-            configured: 0,
-        };
-        return if net_config_get(&mut config) && config.local_ip != 0 {
-            println!("{}", ip(config.local_ip));
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        };
-    }
-    let socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 68)) {
-        Ok(socket) => socket,
-        Err(error) => {
-            eprintln!("dhcpc: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    if let Err(error) = socket.set_broadcast(true) {
-        eprintln!("dhcpc: set broadcast: {error}");
-        return ExitCode::FAILURE;
-    }
-    let xid = 0x53504f52;
-    let destination = SocketAddrV4::new(Ipv4Addr::BROADCAST, 67);
-    if let Err(error) = socket.send_to(&packet(1, xid, 0, 0), destination) {
-        eprintln!("dhcpc: send discover: {error}");
-        return ExitCode::FAILURE;
-    }
-    let offer = match receive(&socket, xid, 2) {
-        Some(lease) => lease,
-        None => {
-            eprintln!("dhcpc: no offer");
-            return ExitCode::FAILURE;
-        }
-    };
-    if let Err(error) = socket.send_to(&packet(3, xid, offer.address, offer.server), destination) {
-        eprintln!("dhcpc: send request: {error}");
-        return ExitCode::FAILURE;
-    }
-    let mut ack = match receive(&socket, xid, 5) {
-        Some(lease) => lease,
-        None => {
-            eprintln!("dhcpc: no ack");
-            return ExitCode::FAILURE;
-        }
-    };
-    if ack.router == 0 {
-        ack.router = offer.server;
-    }
-    if ack.dns == 0 {
-        ack.dns = offer.server;
-    }
-    if ack.netmask == 0 {
-        ack.netmask = 0x00ff_ffff;
-    }
+fn configure() -> Result<(), &'static CStr> {
+    let socket = Socket::bind_broadcast(68).ok_or(c"cannot open DHCP socket")?;
+    let offer = exchange(&socket, Packet::new(1, 0, 0), 2).ok_or(c"no offer")?;
+    let ack = exchange(&socket, Packet::new(3, offer.address, offer.server), 5).ok_or(c"no ack")?;
     let config = NetConfig {
         local_ip: ack.address,
-        gateway_ip: ack.router,
-        netmask: ack.netmask,
-        dns_ip: ack.dns,
+        gateway_ip: if ack.router == 0 {
+            offer.server
+        } else {
+            ack.router
+        },
+        netmask: if ack.netmask == 0 {
+            0x00ff_ffff
+        } else {
+            ack.netmask
+        },
+        dns_ip: if ack.dns == 0 { offer.server } else { ack.dns },
         configured: 1,
     };
-    if !net_config_set(&config) {
-        eprintln!(
-            "dhcpc: set network configuration: {}",
-            std::io::Error::last_os_error()
-        );
-        return ExitCode::FAILURE;
+    if !unsafe { net_config_set(&config) } {
+        return Err(c"cannot set network configuration");
     }
-    let _ = fs::write("/etc/resolv.conf", format!("nameserver {}\n", ip(ack.dns)));
-    println!(
-        "leased {} gateway {} dns {}",
-        ip(config.local_ip),
-        ip(config.gateway_ip),
-        ip(config.dns_ip)
-    );
-    ExitCode::SUCCESS
+    let dns = address_text(config.dns_ip);
+    unsafe {
+        let file = fopen(c"/etc/resolv.conf".as_ptr(), c"w".as_ptr());
+        if !file.is_null() {
+            fprintf(file, c"nameserver %s\n".as_ptr(), dns.as_ptr());
+            fclose(file);
+        }
+        dprintf(
+            1,
+            c"leased %s gateway %s dns %s\n".as_ptr(),
+            address_text(config.local_ip).as_ptr(),
+            address_text(config.gateway_ip).as_ptr(),
+            dns.as_ptr(),
+        );
+    }
+    Ok(())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    if argc == 2 && unsafe { CStr::from_ptr(*argv.add(1)) } == c"--address" {
+        let mut config = NetConfig::default();
+        if !unsafe { net_config_get(&mut config) } || config.local_ip == 0 {
+            return 1;
+        }
+        unsafe {
+            dprintf(1, c"%s\n".as_ptr(), address_text(config.local_ip).as_ptr());
+        }
+        return 0;
+    }
+    if argc != 1 {
+        unsafe {
+            dprintf(2, c"usage: dhcpc [--address]\n".as_ptr());
+        }
+        return 64;
+    }
+    match configure() {
+        Ok(()) => 0,
+        Err(message) => {
+            unsafe {
+                dprintf(2, c"dhcpc: %s\n".as_ptr(), message.as_ptr());
+            }
+            1
+        }
+    }
 }
