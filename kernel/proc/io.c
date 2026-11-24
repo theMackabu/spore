@@ -112,6 +112,19 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
 
 static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame);
 
+static int64_t read_generated_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len) {
+  uint64_t chunk = bounded_io_len(len);
+  bool random = file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM;
+  if (random) {
+    random_bytes(file_io_tmp, (size_t)chunk);
+  } else {
+    kmemset(file_io_tmp, 0, (size_t)chunk);
+  }
+  bool copied = vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)chunk);
+  if (random) { kmemset(file_io_tmp, 0, (size_t)chunk); }
+  return copied ? (int64_t)chunk : -14;
+}
+
 static int64_t read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                            struct trap_frame *frame) {
   if (len == 0) { return 0; }
@@ -121,20 +134,8 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   case RAMFS_DEV_ZERO:
   case RAMFS_DEV_FULL:
   case RAMFS_DEV_RANDOM:
-  case RAMFS_DEV_URANDOM: {
-    uint64_t chunk = bounded_io_len(len);
-    if (file->node.device == RAMFS_DEV_RANDOM || file->node.device == RAMFS_DEV_URANDOM) {
-      random_bytes(file_io_tmp, (size_t)chunk);
-    } else {
-      kmemset(file_io_tmp, 0, (size_t)chunk);
-    }
-    if (!vmm_copy_to_user(cell_domain_as(domain), buf, file_io_tmp, (size_t)chunk)) {
-      kmemset(file_io_tmp, 0, FILE_IO_CHUNK);
-      return -14;
-    }
-    kmemset(file_io_tmp, 0, FILE_IO_CHUNK);
-    return (int64_t)chunk;
-  }
+  case RAMFS_DEV_URANDOM:
+    return read_generated_device(file, domain, buf, len);
   case RAMFS_DEV_CONSOLE:
   case RAMFS_DEV_TTY: {
     int64_t n = cell_tty_read_to_user(domain, buf, len);
