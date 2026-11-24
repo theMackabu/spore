@@ -7,5 +7,5 @@ dhcpc_archive = custom_target('dhcpc-rust',
 userland_dhcpc = custom_target('userland-dhcpc',
   input: userland_libspore + [dhcpc_archive],
   output: 'dhcpc',
-  command: userland_cc + ['-Wl,-z,max-page-size=4096', '@INPUT@', '-o', '@OUTPUT@'])
+  command: userland_cc + ['@INPUT@', '-o', '@OUTPUT@'])
 userland_image_targets += userland_dhcpc

@@ -4,16 +4,17 @@ userland_rust_archive = [rustc, rust_archive_args, guest_rust_target, '-C', 'rel
 userland_rust_panic = files('lib/spore/panic.rs')
 userland_include_arg = '-I' + meson.current_source_dir() / 'lib/spore'
 
-userland_compiler = [userland_musl_cc, '-std=c23', '-D_GNU_SOURCE', '-s', userland_include_arg]
+userland_compiler = [userland_musl_cc, '-std=c23', '-D_GNU_SOURCE', '-s', '-ffunction-sections', '-fdata-sections', userland_include_arg]
 optimization = get_option('optimization')
 if optimization != 'plain'
   userland_compiler += '-O' + optimization
 endif
-userland_cc = userland_compiler + [
+userland_link = userland_compiler + ['-Wl,--gc-sections,-z,max-page-size=4096']
+userland_cc = userland_link + [
   '-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1',
   '-Wl,-rpath,/lib',
 ]
-userland_static_cc = userland_compiler + ['-static']
+userland_static_cc = userland_link + ['-static']
 userland_image_targets = []
 userland_test_targets = []
 
