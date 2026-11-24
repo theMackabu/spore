@@ -120,6 +120,15 @@ bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst);
 bool ext2_write_block(struct ext2_fs *fs, uint32_t block, const void *src);
 bool ext2_write_blocks_direct(struct ext2_fs *fs, uint32_t first_block, const void *src, uint32_t block_count);
 bool ext2_cache_range_has_dirty(struct ext2_fs *fs, uint32_t first_block, uint32_t block_count);
+struct block_cache_entry;
+struct ext2_block_edit {
+  struct block_cache_entry *entry;
+  uint8_t *bytes;
+};
+bool ext2_begin_edit(struct ext2_fs *fs, uint64_t offset, uint32_t len, struct ext2_block_edit *edit);
+void ext2_end_edit(struct ext2_block_edit *edit, bool changed);
+uint64_t ext2_group_offset(const struct ext2_fs *fs, uint32_t group);
+extern const uint8_t ext2_zero_block[4096];
 bool ext2_read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t len);
 bool ext2_write_bytes(struct ext2_fs *fs, uint64_t offset, const void *src, uint32_t len);
 bool ext2_read_super(struct ext2_fs *fs, struct ext2_super *out);

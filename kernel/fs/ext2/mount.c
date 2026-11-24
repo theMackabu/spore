@@ -23,16 +23,19 @@ bool ext2_write_super(struct ext2_fs *fs, const struct ext2_super *sb) {
   return fs->write != NULL && ext2_write_bytes(fs, EXT2_SUPER_OFFSET, sb, sizeof(*sb));
 }
 
+uint64_t ext2_group_offset(const struct ext2_fs *fs, uint32_t group) {
+  uint64_t table = fs->block_size == 1024 ? 2ull * fs->block_size : fs->block_size;
+  return table + (uint64_t)group * sizeof(struct ext2_group_desc);
+}
+
 bool ext2_read_group_desc(struct ext2_fs *fs, uint32_t group, struct ext2_group_desc *out) {
   if (group >= fs->group_count) { return false; }
-  uint64_t table = fs->block_size == 1024 ? 2ull * fs->block_size : fs->block_size;
-  return ext2_read_bytes(fs, table + (uint64_t)group * sizeof(*out), out, sizeof(*out));
+  return ext2_read_bytes(fs, ext2_group_offset(fs, group), out, sizeof(*out));
 }
 
 bool ext2_write_group_desc(struct ext2_fs *fs, uint32_t group, const struct ext2_group_desc *in) {
   if (group >= fs->group_count || fs->write == NULL) { return false; }
-  uint64_t table = fs->block_size == 1024 ? 2ull * fs->block_size : fs->block_size;
-  return ext2_write_bytes(fs, table + (uint64_t)group * sizeof(*in), in, sizeof(*in));
+  return ext2_write_bytes(fs, ext2_group_offset(fs, group), in, sizeof(*in));
 }
 
 static bool ext2plus_header_valid(struct ext2_fs *fs, const struct ext2plus_header *hdr) {

@@ -188,7 +188,6 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
 }
 
 int64_t ext2_writeback_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, size_t len) {
-  static const uint8_t zeros[4096];
   const uint8_t *data = src;
   if (off > node->size || len > node->size - off) { return -EXT2_EIO; }
   size_t run = 0;
@@ -199,7 +198,7 @@ int64_t ext2_writeback_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t
     if (chunk > len - pos) { chunk = len - pos; }
     uint32_t block;
     if (!ext2_file_block(fs, node, at / fs->block_size, &block)) { return -EXT2_EIO; }
-    const uint8_t *bytes = block ? ext2_peek_block(fs, block) : zeros;
+    const uint8_t *bytes = block ? ext2_peek_block(fs, block) : ext2_zero_block;
     if (bytes && !kmemcmp(bytes + within, data + pos, chunk)) {
       if (pos > run && ext2_write_file(fs, node, off + run, data + run, pos - run) != (int64_t)(pos - run)) {
         return -EXT2_EIO;
@@ -285,8 +284,7 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
       if (tail != 0) {
         uint32_t block;
         if (!ext2_file_block(fs, node, size / fs->block_size, &block)) { return false; }
-        static const uint8_t zero[4096];
-        if (block && !ext2_write_bytes(fs, (uint64_t)block * fs->block_size + tail, zero, fs->block_size - tail)) {
+        if (block && !ext2_write_bytes(fs, (uint64_t)block * fs->block_size + tail, ext2_zero_block, fs->block_size - tail)) {
           return false;
         }
       }

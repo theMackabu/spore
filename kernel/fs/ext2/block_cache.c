@@ -6,7 +6,7 @@ struct block_cache_entry {
   struct ext2_fs *fs;
   uint64_t age;
   uint32_t block;
-  uint8_t next;
+  uint8_t next, pins;
   bool dirty;
 };
 
@@ -95,15 +95,15 @@ static struct block_cache_entry *cache_find(const struct ext2_fs *fs, uint32_t b
 }
 
 static bool cache_victim(struct block_cache_entry **out) {
-  struct block_cache_entry *victim = &block_cache[0];
+  struct block_cache_entry *victim = NULL;
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     if (block_cache[i].fs == NULL) {
       *out = &block_cache[i];
       return true;
     }
-    if (block_cache[i].age < victim->age) { victim = &block_cache[i]; }
+    if (!block_cache[i].pins && (!victim || block_cache[i].age < victim->age)) { victim = &block_cache[i]; }
   }
-  if (!cache_flush_entry(victim)) { return false; }
+  if (!victim || !cache_flush_entry(victim)) { return false; }
   cache_remove(victim);
   *out = victim;
   return true;
@@ -188,6 +188,23 @@ bool ext2_write_blocks_direct(struct ext2_fs *fs, uint32_t first_block, const vo
 static bool disk_contains(const struct ext2_fs *fs, uint64_t offset, uint32_t len) {
   uint64_t end = (uint64_t)fs->block_count * fs->block_size;
   return offset <= end && len <= end - offset;
+}
+
+bool ext2_begin_edit(struct ext2_fs *fs, uint64_t offset, uint32_t len, struct ext2_block_edit *edit) {
+  uint32_t within = offset % fs->block_size;
+  if (!fs->write || !disk_contains(fs, offset, len) || len > fs->block_size - within) { return false; }
+  struct block_cache_entry *entry = cache_read(fs, (uint32_t)(offset / fs->block_size));
+  if (!entry) { return false; }
+  ++entry->pins;
+  edit->entry = entry;
+  edit->bytes = block_data(entry) + within;
+  return true;
+}
+
+void ext2_end_edit(struct ext2_block_edit *edit, bool changed) {
+  if (!edit->entry) { return; }
+  if (changed) { edit->entry->dirty = true; ++ext2_stat_counters.block_cache_writes; }
+  --edit->entry->pins;
 }
 
 bool ext2_read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t len) {
