@@ -1,5 +1,5 @@
 use super::serial::SerialWindow;
-use crate::{fixtures, modes};
+use super::{fixtures, modes};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};

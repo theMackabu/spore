@@ -26,6 +26,12 @@ subdir('userland')
 subdir('tools')
 subdir('boot')
 subdir('kernel')
+spore_cli = executable('spore', 'tools/src/spore.rs',
+  native: true,
+  override_options: ['rust_std=2024'],
+  link_with: runner_terminal,
+  install: false)
+alias_target('appliance-cli', spore_cli, kernel_boot_elf, boot_efi, spore_image)
 fs = import('fs')
 foreach variant : [
   ['image', 'root', 'userland/image.manifest', userland_image_targets],

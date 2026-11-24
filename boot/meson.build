@@ -14,3 +14,5 @@ limine_header = custom_target('limine-protocol',
     'https://github.com/Limine-Bootloader/limine-protocol/archive/' + protocol_rev + '.zip',
     'f792c62257377208e6f53a31aa3442eb182e9ba451f139749296da9d411f2adb',
     meson.current_build_dir(), 'limine-protocol-' + protocol_rev + '/include/limine.h'])
+
+configure_file(input: 'LIMINE-LICENSE', output: 'LIMINE-LICENSE', copy: true)

@@ -1,3 +1,6 @@
+#[path = "image/app.rs"]
+mod app;
+mod app_network;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions, Permissions};
@@ -355,12 +358,14 @@ fn build_esp(
     config: &Path,
     license: &Path,
     image: &Path,
+    bundle: Option<&Path>,
 ) -> io::Result<()> {
+    let extra = bundle.map(fs::metadata).transpose()?.map_or(0, |m| m.len());
     let payload = fs::metadata(kernel)?.len()
         + fs::metadata(boot)?.len()
         + fs::metadata(config)?.len()
         + fs::metadata(license)?.len();
-    let mib = (payload * 2 + 2 * MIB).div_ceil(MIB).max(9);
+    let mib = (payload * 2 + extra + 2 * MIB).div_ceil(MIB).max(9);
     File::create(image)?.set_len(mib * MIB)?;
     run(Command::new("mkfs.fat")
         .args(["-F", "16"])
@@ -379,20 +384,28 @@ fn build_esp(
     ] {
         run(Command::new("mcopy").arg("-i").arg(image).arg(src).arg(dst))?;
     }
+    if let Some(src) = bundle {
+        run(Command::new("mcopy")
+            .arg("-i")
+            .arg(image)
+            .arg(src)
+            .arg("::/boot/app.bin"))?;
+    }
     Ok(())
 }
 fn main() -> ExitCode {
     let args: Vec<PathBuf> = env::args_os().skip(1).map(PathBuf::from).collect();
     let rc = match args.as_slice() {
+        [mode, rest @ ..] if mode == Path::new("app") => app::build(rest),
         [mode, k, b, c, l, o] if mode == Path::new("esp") => {
-            build_image(o, |tmp| build_esp(k, b, c, l, tmp))
+            build_image(o, |tmp| build_esp(k, b, c, l, tmp, None))
         }
         [mode, s, t, m, p, o] if mode == Path::new("rootfs") => {
             build_image(o, |tmp| build_root(s, t, m, p, tmp))
         }
         _ => {
             eprintln!(
-                "usage: spore-image esp KERNEL_ELF BOOT_EFI CONFIG LICENSE OUTPUT\n       spore-image rootfs SOURCE_ROOT STAGE MANIFEST PREBUILT_ROOT OUTPUT"
+                "usage: spore-image app KERNEL_ELF BOOT_EFI LICENSE OUTPUT ELF [OPTIONS] [-- ARGS...]\n       spore-image esp KERNEL_ELF BOOT_EFI CONFIG LICENSE OUTPUT\n       spore-image rootfs SOURCE_ROOT STAGE MANIFEST PREBUILT_ROOT OUTPUT"
             );
             return ExitCode::from(2);
         }

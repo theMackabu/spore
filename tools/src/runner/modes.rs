@@ -1,4 +1,4 @@
-use crate::runner::serial::SerialWindow;
+use super::serial::SerialWindow;
 use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
