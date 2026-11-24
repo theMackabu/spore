@@ -255,6 +255,38 @@ static int fifo_without_reader(void) {
   return ok;
 }
 
+static int deep_directory(void) {
+  char path[128] = "/deep-dir-check", cwd[128];
+  size_t base = strlen(path), len = base;
+  if (mkdir(path, 0700)) { return 0; }
+  int ok = 1;
+  for (int i = 0; ok && i < 24; ++i) {
+    memcpy(path + len, "/d", 3);
+    if (mkdir(path, 0700)) { path[len] = 0; ok = 0; break; }
+    len += 2;
+  }
+  int fd = open(path, O_RDONLY | O_DIRECTORY);
+  struct stat st;
+  ok = ok && fd >= 0 && fstatat(fd, "", &st, AT_EMPTY_PATH) == 0 && S_ISDIR(st.st_mode) &&
+       fstatat(fd, "", &st, 0) == -1 && errno == ENOENT;
+  if (fd >= 0) { close(fd); }
+  if (ok) {
+    pid_t child = fork();
+    if (!child) {
+      _exit(chdir(path) == 0 && syscall(SYS_getcwd, cwd, len) == -1 && errno == ERANGE &&
+            syscall(SYS_getcwd, cwd, sizeof(cwd)) == (long)len + 1 && !strcmp(cwd, path) &&
+            chdir("../.././d") == 0 && syscall(SYS_getcwd, cwd, sizeof(cwd)) == (long)len - 1 ? 0 : 1);
+    }
+    int status;
+    ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
+  }
+  while (len > base) {
+    if (rmdir(path)) { ok = 0; }
+    len -= 2; path[len] = 0;
+  }
+  return rmdir(path) == 0 && ok;
+}
+
 static int creation_mask(void) {
   mode_t saved = umask(0077);
   pid_t child = fork();
@@ -496,7 +528,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !creation_mask() || !disk_fifo() || !pathname_page_boundary() ||
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !creation_mask() || !deep_directory() || !disk_fifo() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }

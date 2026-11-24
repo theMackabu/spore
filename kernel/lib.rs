@@ -8,6 +8,8 @@ mod elf;
 mod manifest;
 #[path = "net/packet.rs"]
 mod packet;
+#[path = "abi/linux/path.rs"]
+mod path;
 #[path = "fs/ext2/records.rs"]
 mod records;
 

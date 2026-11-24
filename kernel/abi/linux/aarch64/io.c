@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 enum {
+  AT_FDCWD = -100,
   EFAULT = 14,
   EINVAL = 22,
   ENOENT = 2,
@@ -85,7 +86,8 @@ int64_t sys_inotify_init1(uint64_t flags) {
 
 int64_t sys_inotify_add_watch(uint64_t fd, uint64_t path_addr, uint64_t mask) {
   char path[CELL_PATH_MAX];
-  if (!syscall_copy_resolved_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
+  int64_t rc = syscall_copy_resolved_path_at(AT_FDCWD, path_addr, path, sizeof(path));
+  if (rc) { return rc; }
   struct vfs_node node;
   bool exists = mask & FS_DONT_FOLLOW ? vfs_lstat(path, &node) : vfs_lookup(path, &node);
   if (!exists) { return -ENOENT; }

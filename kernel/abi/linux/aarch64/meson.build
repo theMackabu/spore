@@ -9,6 +9,7 @@ kernel_sources += files(
   'message.c',
   'misc.c',
   'net.c',
+  'path.c',
   'poll.c',
   'process.c',
   'signal.c',

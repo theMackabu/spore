@@ -19,6 +19,7 @@
 
 enum {
   E2BIG = 7,
+  AT_FDCWD = -100,
   EFAULT = 14,
   EACCES = 13,
   ENOMEM = 12,
@@ -28,39 +29,6 @@ enum {
   X_OK = 1,
   EXEC_ARG_MAX_BYTES = USER_STACK_SIZE / 16,
 };
-
-static bool streq(const char *a, const char *b) {
-  while (*a != '\0' && *b != '\0') {
-    if (*a++ != *b++) { return false; }
-  }
-  return *a == '\0' && *b == '\0';
-}
-
-static bool copy_exec_path(uint64_t path_addr, char *out, size_t cap) {
-  char raw[CELL_PATH_MAX];
-  char virtual_path[CELL_PATH_MAX];
-  if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw)) ||
-      !syscall_normalize_path(cell_current_cwd(), raw, virtual_path, sizeof(virtual_path))) {
-    return false;
-  }
-  const char *chroot = cell_current_chroot();
-  if (streq(chroot, "/")) {
-    if (kstrlen(virtual_path) >= cap) { return false; }
-    kmemcpy(out, virtual_path, kstrlen(virtual_path) + 1);
-    return true;
-  }
-  if (streq(virtual_path, "/")) {
-    if (kstrlen(chroot) >= cap) { return false; }
-    kmemcpy(out, chroot, kstrlen(chroot) + 1);
-    return true;
-  }
-  size_t root_len = kstrlen(chroot);
-  size_t path_len = kstrlen(virtual_path);
-  if (root_len + path_len >= cap) { return false; }
-  kmemcpy(out, chroot, root_len);
-  kmemcpy(out + root_len, virtual_path, path_len + 1);
-  return true;
-}
 
 static void free_pages(uint64_t pa, uint64_t pages) {
   for (uint64_t i = 0; i < pages; ++i) {
@@ -233,7 +201,8 @@ static bool parse_shebang_node(const struct vfs_node *node, char *interp, size_t
 
 int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
   char path[CELL_PATH_MAX];
-  if (!copy_exec_path(path_addr, path, sizeof(path))) { return -(int64_t)EFAULT; }
+  int64_t path_rc = syscall_copy_resolved_path_at(AT_FDCWD, path_addr, path, sizeof(path));
+  if (path_rc) { return path_rc; }
   if (!cell_fs_path_allowed(path, CELL_FS_EXEC)) { return -(int64_t)EPERM; }
 
   uint64_t argc = 0;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mm/vmm.h"
+#include "path.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,13 +14,6 @@ bool syscall_user_writable(uint64_t buf, uint64_t len);
 void syscall_realtime_base(uint64_t *epoch_sec, uint64_t *counter, uint64_t *freq);
 int64_t syscall_read_user_string(uint64_t user, char *dst, size_t limit);
 bool syscall_copy_string_from_user(uint64_t user, char *dst, size_t cap);
-bool syscall_normalize_path(const char *base, const char *path, char *out, size_t cap);
-bool syscall_copy_resolved_path(uint64_t path_addr, char *out, size_t cap);
-int64_t syscall_resolve_path_at(uint64_t dirfd, const char *raw, char *out, size_t cap);
-int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap);
-bool syscall_copy_virtual_path(uint64_t path_addr, char *out, size_t cap);
-int64_t syscall_copy_virtual_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap);
-bool syscall_path_policy_denied(void);
 bool syscall_node_access_allowed(const struct vfs_node *node, uint64_t mask);
 uint8_t syscall_fs_rights_from_access(uint64_t access);
 
