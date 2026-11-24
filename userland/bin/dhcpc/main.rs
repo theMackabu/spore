@@ -8,9 +8,11 @@ use std::time::Duration;
 struct NetConfig { local_ip: u32, gateway_ip: u32, netmask: u32, dns_ip: u32, configured: u32 }
 
 unsafe extern "C" {
-    fn net_config_get(out: *mut NetConfig) -> bool;
-    fn net_config_set(config: *const NetConfig) -> bool;
+    fn syscall(number: i64, operation: i64, config: *mut NetConfig) -> i64;
 }
+
+fn net_config_get(config: &mut NetConfig) -> bool { unsafe { syscall(0x400a, 0, config) == 0 } }
+fn net_config_set(config: &NetConfig) -> bool { unsafe { syscall(0x400a, 1, config as *const NetConfig as *mut NetConfig) == 0 } }
 
 fn ip(value: u32) -> Ipv4Addr { Ipv4Addr::from(value.to_le_bytes()) }
 fn be32(value: u32) -> [u8; 4] { value.to_be_bytes() }
@@ -70,7 +72,7 @@ fn receive(socket: &UdpSocket, xid: u32, kind: u8) -> Option<Lease> {
 fn main() -> ExitCode {
     if env::args().nth(1).as_deref() == Some("--address") {
         let mut config = NetConfig { local_ip: 0, gateway_ip: 0, netmask: 0, dns_ip: 0, configured: 0 };
-        return if unsafe { net_config_get(&mut config) } && config.local_ip != 0 { println!("{}", ip(config.local_ip)); ExitCode::SUCCESS } else { ExitCode::FAILURE };
+        return if net_config_get(&mut config) && config.local_ip != 0 { println!("{}", ip(config.local_ip)); ExitCode::SUCCESS } else { ExitCode::FAILURE };
     }
     let socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 68)) { Ok(socket) => socket, Err(error) => { eprintln!("dhcpc: {error}"); return ExitCode::FAILURE; } };
     if socket.set_broadcast(true).is_err() { return ExitCode::FAILURE; }
@@ -84,7 +86,7 @@ fn main() -> ExitCode {
     if ack.dns == 0 { ack.dns = offer.server; }
     if ack.netmask == 0 { ack.netmask = 0x00ff_ffff; }
     let config = NetConfig { local_ip: ack.address, gateway_ip: ack.router, netmask: ack.netmask, dns_ip: ack.dns, configured: 1 };
-    if !unsafe { net_config_set(&config) } { return ExitCode::FAILURE; }
+    if !net_config_set(&config) { return ExitCode::FAILURE; }
     let _ = fs::write("/etc/resolv.conf", format!("nameserver {}\n", ip(ack.dns)));
     println!("leased {} gateway {} dns {}", ip(config.local_ip), ip(config.gateway_ip), ip(config.dns_ip));
     ExitCode::SUCCESS
