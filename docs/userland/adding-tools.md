@@ -1,10 +1,9 @@
 # Add a guest command or demo
 
-1. Put a human-facing command in `userland/bin/NAME/`. Model its Meson target on
-   [logger](../../userland/bin/logger/meson.build). Include [spore.h](../../userland/lib/spore/spore.h)
+1. Put the source in `userland/bin/NAME/main.c`. Include [spore.h](../../userland/lib/spore/spore.h)
    for helpers such as `usage` and `eprintf`.
-2. Register the directory in the [userland build](../../userland/meson.build) and add a
-   source-to-guest path such as `userland/bin/NAME /bin/NAME` to the [image manifest](../../userland/image.manifest).
+2. Add `'bin/NAME'` to the program list in the [userland build](../../userland/meson.build).
+   Add `userland/programs/NAME /bin/NAME` to the [image manifest](../../userland/image.manifest).
 3. Run `./build/spore build --userland` and `./build/spore boot --snapshot` to try it.
 
 Commands conventionally return 0 for success, 1 for an ordinary failure and 2 for usage

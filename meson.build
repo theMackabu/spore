@@ -34,35 +34,11 @@ spore_cli = executable('spore', 'tools/src/spore.rs',
   install: false)
 alias_target('cli', spore_cli, kernel_boot_elf, direct_kernel, boot_efi)
 if get_option('userland')
-  fs = import('fs')
-  foreach variant : [
-    ['image', 'root', 'userland/image.manifest', userland_image_targets],
-    ['test_image', 'test_root', 'userland/tests/integration/image.manifest', userland_test_targets],
-  ]
-    manifest_data = [userland_os_release]
-    foreach line : fs.read(variant[2]).split('\n')
-      fields = line.strip().split()
-      if fields.length() == 2 and not fields[0].startswith('#') and fs.is_file(fields[0])
-        manifest_data += files(fields[0])
-      endif
-    endforeach
-    root_disk = custom_target(variant[1] + '.ext2',
-      input: [files(variant[2]), manifest_data],
-      output: variant[1] + '.ext2',
-      command: [spore_cli, '_image', 'rootfs', meson.project_source_root(),
-        meson.project_build_root() / (variant[0] + '_root'), '@INPUT0@',
-        meson.project_build_root(), '@OUTPUT@'],
-      depends: variant[3])
-    if variant[1] == 'root'
-      system_root_disk = root_disk
-    endif
-    custom_target(variant[0] + '.img',
-      input: [kernel_boot_elf, boot_efi, limine_data],
-      output: variant[0] + '.img',
-      command: [spore_cli, '_image', 'esp', '@INPUT@', '@OUTPUT@'],
-      depends: root_disk,
-      build_by_default: variant[0] == 'image')
-  endforeach
+  subdir('images')
+  system_root_disk = custom_target(output: 'root.ext2', kwargs: rootfs['image'])
+  test_root_disk = custom_target(output: 'test_root.ext2', kwargs: rootfs['test_image'])
+  custom_target(output: 'image.img', depends: system_root_disk, build_by_default: true, kwargs: esp)
+  custom_target(output: 'test_image.img', depends: test_root_disk, kwargs: esp)
 endif
 
 subdir('tests')

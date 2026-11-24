@@ -24,34 +24,42 @@ userland_cc = userland_link + [
 userland_static_cc = userland_link + ['-static']
 
 subdir('etc')
-
 subdir('lib/spore')
+
+foreach program : [
+  'bin/logger',
+  'bin/myc',
+  'bin/reboot',
+  'bin/shutdown',
+  'demos/cpuburn',
+  'demos/escalate',
+  'demos/inodes',
+  'demos/memhog',
+  'demos/peeker',
+  'demos/signal-crash',
+  'demos/spinner',
+  'demos/writer',
+  'libexec/spore-test/pthread-demo',
+  'libexec/spore-test/udp-echo',
+  'libexec/spore-test/udp-recv',
+  'libexec/spore-test/udp-send',
+  'libexec/spore-test/uds-client',
+  'libexec/spore-test/uds-server',
+]
+  name = program.split('/')[-1]
+  userland_image_targets += custom_target('userland-' + name,
+    input: files(program / 'main.c') + userland_libspore,
+    build_subdir: 'programs',
+    output: name,
+    command: userland_cc + ['@INPUT@', '-o', '@OUTPUT@'])
+endforeach
 
 subdir('bin/init')
 subdir('bin/msh')
-subdir('bin/myc')
-subdir('bin/shutdown')
-subdir('bin/reboot')
 subdir('bin/dhcpc')
-subdir('bin/logger')
 subdir('libexec/trustd')
-subdir('libexec/spore-test/pthread-demo')
-subdir('libexec/spore-test/udp-echo')
-subdir('libexec/spore-test/udp-send')
-subdir('libexec/spore-test/udp-recv')
-subdir('libexec/spore-test/uds-server')
-subdir('libexec/spore-test/uds-client')
 
 subdir('usr/local/bin/curl')
 subdir('usr/local/bin/apk')
-
-subdir('demos/spinner')
-subdir('demos/cpuburn')
-subdir('demos/peeker')
-subdir('demos/writer')
-subdir('demos/memhog')
-subdir('demos/escalate')
-subdir('demos/signal-crash')
-subdir('demos/inodes')
 
 subdir('tests/integration')

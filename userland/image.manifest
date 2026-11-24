@@ -18,7 +18,7 @@ dir /etc/apk/keys
 
 userland/bin/init/init /lib/mycelium/init
 symlink /lib/mycelium/init /sbin/init
-userland/bin/myc/myc /lib/mycelium/myc
+userland/programs/myc /lib/mycelium/myc
 symlink /lib/mycelium/myc /sbin/myc
 userland/libexec/trustd/trustd /libexec/trustd
 userland/prebuilt/sudoers.so /usr/lib/sudo/sudoers.so
@@ -56,8 +56,8 @@ userland/bin/msh/msh /bin/msh
 userland/prebuilt/dash /bin/dash
 symlink dash /bin/sh
 
-userland/bin/shutdown/shutdown /bin/shutdown
-userland/bin/reboot/reboot /bin/reboot
+userland/programs/shutdown /bin/shutdown
+userland/programs/reboot /bin/reboot
 userland/prebuilt/ls /bin/ls
 userland/prebuilt/cat /bin/cat
 userland/prebuilt/echo /bin/echo
@@ -102,7 +102,7 @@ userland/prebuilt/hostid /bin/hostid
 userland/prebuilt/id /bin/id
 userland/prebuilt/who /bin/who
 userland/prebuilt/tee /bin/tee
-userland/bin/logger/logger /bin/logger
+userland/programs/logger /bin/logger
 userland/prebuilt/env /usr/bin/env
 userland/prebuilt/printenv /bin/printenv
 userland/prebuilt/printf /bin/printf
@@ -141,21 +141,21 @@ userland/prebuilt/true /bin/true
 userland/prebuilt/false /bin/false
 userland/prebuilt/toybox /bin/ping
 
-userland/libexec/spore-test/pthread-demo/pthread-demo /libexec/spore-test/pthread-demo
-userland/libexec/spore-test/udp-echo/udp-echo /libexec/spore-test/udp-echo
-userland/libexec/spore-test/udp-send/udp-send /libexec/spore-test/udp-send
-userland/libexec/spore-test/udp-recv/udp-recv /libexec/spore-test/udp-recv
-userland/libexec/spore-test/uds-server/uds-server /libexec/spore-test/uds-server
-userland/libexec/spore-test/uds-client/uds-client /libexec/spore-test/uds-client
+userland/programs/pthread-demo /libexec/spore-test/pthread-demo
+userland/programs/udp-echo /libexec/spore-test/udp-echo
+userland/programs/udp-send /libexec/spore-test/udp-send
+userland/programs/udp-recv /libexec/spore-test/udp-recv
+userland/programs/uds-server /libexec/spore-test/uds-server
+userland/programs/uds-client /libexec/spore-test/uds-client
 
-userland/demos/spinner/spinner /home/spore/demos/spinner
-userland/demos/cpuburn/cpuburn /home/spore/demos/cpuburn
-userland/demos/peeker/peeker /home/spore/demos/peeker
-userland/demos/writer/writer /home/spore/demos/writer
-userland/demos/memhog/memhog /home/spore/demos/memhog
-userland/demos/escalate/escalate /home/spore/demos/escalate
-userland/demos/signal-crash/signal-crash /home/spore/demos/signal-crash
-userland/demos/inodes/inodes /home/spore/demos/inodes
+userland/programs/spinner /home/spore/demos/spinner
+userland/programs/cpuburn /home/spore/demos/cpuburn
+userland/programs/peeker /home/spore/demos/peeker
+userland/programs/writer /home/spore/demos/writer
+userland/programs/memhog /home/spore/demos/memhog
+userland/programs/escalate /home/spore/demos/escalate
+userland/programs/signal-crash /home/spore/demos/signal-crash
+userland/programs/inodes /home/spore/demos/inodes
 userland/demos/something /home/spore/demos/something
 userland/demos/something-else.msh /home/spore/demos/something-else.msh
 
