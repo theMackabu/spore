@@ -103,7 +103,7 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   kmemcpy(dst->exec_path, src->exec_path, sizeof(dst->exec_path));
   kmemcpy(dst->argv0, src->argv0, sizeof(dst->argv0));
   kmemcpy(dst->cmdline, src->cmdline, sizeof(dst->cmdline));
-  dst->caps = src->caps;
+  dst->caps = cell_policy_retain(src->caps);
   dst->budget = src->budget;
   dst->uid = src->uid;
   dst->euid = src->euid;
@@ -142,6 +142,8 @@ void cell_destroy_domain(struct domain *domain) {
   cell_close_all_fds(domain);
   cell_mm_release(domain->mm);
   domain->mm = NULL;
+  cell_policy_release(domain->caps);
+  domain->caps = NULL;
   domain->used = false;
   domain->zombie = false;
   domain->refcount = 0;

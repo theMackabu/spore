@@ -45,6 +45,7 @@ void cell_system_init(uint64_t hhdm_offset) {
   size_t mm_count = 0;
   size_t open_file_count = 0;
   derive_table_sizes(&domain_count, &thread_count, &mm_count, &open_file_count);
+  if (!cell_policy_init(domain_count)) { halt_table_init_failure("policy"); }
   if (!cell_mm_reset(mm_count)) { halt_table_init_failure("mm"); }
   if (!cell_domain_reset(domain_count)) { halt_table_init_failure("domain"); }
   if (!cell_thread_reset(thread_count)) { halt_table_init_failure("thread"); }

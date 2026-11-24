@@ -2,8 +2,41 @@
 #include "lib/kprintf.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
+#include "mm/pool.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
+
+struct egress_rule {
+  uint32_t address;
+  uint32_t mask;
+  uint16_t port;
+  uint8_t protocol;
+};
+
+struct capability_set {
+  uint64_t syscall_allow[8];
+  uint64_t memory_page_cap;
+  struct egress_rule egress;
+  bool restrict_egress;
+  bool restrict_fs;
+  unsigned refs;
+  char executable[CELL_PATH_MAX];
+};
+
+static struct object_pool policies;
+
+bool cell_policy_init(size_t domains) {
+  return pool_init(&policies, sizeof(struct capability_set), domains + 1);
+}
+
+struct capability_set *cell_policy_retain(struct capability_set *caps) {
+  if (caps != NULL) { ++caps->refs; }
+  return caps;
+}
+
+void cell_policy_release(struct capability_set *caps) {
+  if (caps != NULL && --caps->refs == 0) { pool_free(&policies, caps); }
+}
 
 enum policy_profile { POLICY_COMPUTE, POLICY_FILES, POLICY_MEMORY, POLICY_NETWORK };
 struct policy_request {
@@ -13,18 +46,34 @@ struct policy_request {
 };
 extern bool spore_parse_manifest(const char *text, struct policy_request *out);
 
-static bool path_matches_rule(const char *path, const struct fs_rule *rule) {
-  if (str_eq(rule->path, "/")) { return true; }
-  size_t len = kstrlen(rule->path);
-  return starts_with(path, rule->path) && (path[len] == '\0' || path[len] == '/');
+static bool under_path(const char *path, const char *base) {
+  if (str_eq(base, "/")) { return true; }
+  size_t len = kstrlen(base);
+  return starts_with(path, base) && (path[len] == '\0' || path[len] == '/');
+}
+
+static bool fs_allowed(const struct capability_set *caps, const char *path, uint8_t rights) {
+  static const struct {
+    const char *path;
+    uint8_t rights;
+  } rules[] = {
+    {"/tmp", CELL_FS_READ | CELL_FS_WRITE | CELL_FS_EXEC},
+    {"/etc/ld-musl-aarch64.path", CELL_FS_READ},
+    {"/lib", CELL_FS_READ | CELL_FS_EXEC},
+    {"/usr/local/lib", CELL_FS_READ | CELL_FS_EXEC},
+  };
+  for (size_t i = 0; i < sizeof(rules) / sizeof(rules[0]); ++i) {
+    if ((rights & ~rules[i].rights) == 0 && under_path(path, rules[i].path)) { return true; }
+  }
+  return caps->executable[0] && !(rights & ~(CELL_FS_READ | CELL_FS_EXEC)) && under_path(path, caps->executable);
 }
 
 static bool caps_subset(const struct capability_set *requested, const struct capability_set *parent) {
   for (size_t i = 0; i < sizeof(requested->syscall_allow) / sizeof(requested->syscall_allow[0]); ++i) {
     if ((requested->syscall_allow[i] & ~parent->syscall_allow[i]) != 0) { return false; }
   }
-  if (parent->flags & CAP_EGRESS_ENFORCE) {
-    if (!(requested->flags & CAP_EGRESS_ENFORCE)) { return false; }
+  if (parent->restrict_egress) {
+    if (!requested->restrict_egress) { return false; }
     const struct egress_rule *child = &requested->egress, *limit = &parent->egress;
     if (child->protocol != 0 &&
         (child->protocol != limit->protocol || child->port != limit->port ||
@@ -36,22 +85,9 @@ static bool caps_subset(const struct capability_set *requested, const struct cap
       (requested->memory_page_cap == 0 || requested->memory_page_cap > parent->memory_page_cap)) {
     return false;
   }
-  if (parent->fs_rule_count != 0) {
-    if (requested->fs_rule_count == 0) { return false; }
-    for (uint8_t i = 0; i < requested->fs_rule_count; ++i) {
-      bool covered = false;
-      for (uint8_t j = 0; j < parent->fs_rule_count; ++j) {
-        bool path_covered = path_matches_rule(requested->fs_rules[i].path, &parent->fs_rules[j]);
-        bool rights_covered = (requested->fs_rules[i].rights & ~parent->fs_rules[j].rights) == 0;
-        if (path_covered && rights_covered) {
-          covered = true;
-          break;
-        }
-      }
-      if (!covered) { return false; }
-    }
-  }
-  return true;
+  return !parent->restrict_fs ||
+         (requested->restrict_fs &&
+          (!requested->executable[0] || fs_allowed(parent, requested->executable, CELL_FS_READ | CELL_FS_EXEC)));
 }
 
 static void cap_allow(struct capability_set *caps, uint64_t nr) {
@@ -76,38 +112,22 @@ static void cap_allow_files(struct capability_set *caps) {
   }
 }
 
-static bool cap_add_fs_rule(struct capability_set *caps, const char *path, uint8_t rights) {
-  if (caps == NULL || path == NULL || path[0] != '/' || kstrlen(path) >= CELL_PATH_MAX ||
-      caps->fs_rule_count >= CELL_FS_RULE_CAP) {
-    return false;
-  }
-  struct fs_rule *rule = &caps->fs_rules[caps->fs_rule_count++];
-  copy_cstr(rule->path, sizeof(rule->path), path);
-  rule->rights = rights;
-  return true;
-}
-
 bool cell_fs_path_allowed(const char *path, uint8_t rights) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || (domain->caps.flags & CAP_ENFORCE) == 0 || domain->caps.fs_rule_count == 0) { return true; }
-  for (uint8_t i = 0; i < domain->caps.fs_rule_count; ++i) {
-    const struct fs_rule *rule = &domain->caps.fs_rules[i];
-    if (path_matches_rule(path, rule) && (rights == 0 || (rule->rights & rights) == rights)) { return true; }
-  }
-  return false;
+  const struct domain *domain = cell_current_domain_internal();
+  return domain == NULL || domain->caps == NULL || !domain->caps->restrict_fs || fs_allowed(domain->caps, path, rights);
 }
 
 bool cell_syscall_allowed(uint64_t nr) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || (domain->caps.flags & CAP_ENFORCE) == 0) { return true; }
+  if (domain == NULL || domain->caps == NULL) { return true; }
   if (nr >= 512) { return false; }
-  return (domain->caps.syscall_allow[nr / 64] & (1ull << (nr % 64))) != 0;
+  return (domain->caps->syscall_allow[nr / 64] & (1ull << (nr % 64))) != 0;
 }
 
 bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || (domain->caps.flags & CAP_EGRESS_ENFORCE) == 0) { return true; }
-  const struct egress_rule *rule = &domain->caps.egress;
+  if (domain == NULL || domain->caps == NULL || !domain->caps->restrict_egress) { return true; }
+  const struct egress_rule *rule = &domain->caps->egress;
   bool allowed = rule->protocol == proto && rule->port == port && (ip & rule->mask) == rule->address;
   if (!allowed) {
     kprintf("[spore] egress denied domain=%d proto=%u dst=%x:%u\n", domain->id, (unsigned)proto, (unsigned)ip,
@@ -135,18 +155,18 @@ static uint64_t overlap_pages(const struct vma_list *vmas, uint64_t start, uint6
 
 static bool memory_pages_allowed(uint64_t removed_pages, uint64_t added_pages) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || domain->caps.memory_page_cap == 0) { return true; }
+  if (domain == NULL || domain->caps == NULL || domain->caps->memory_page_cap == 0) { return true; }
 
   const struct vma_list *vmas = cell_domain_vmas_const(domain);
   if (vmas == NULL) { return false; }
   uint64_t current_pages = vma_virtual_pages(vmas);
   uint64_t base_pages = removed_pages > current_pages ? 0 : current_pages - removed_pages;
-  return added_pages <= domain->caps.memory_page_cap && base_pages <= domain->caps.memory_page_cap - added_pages;
+  return added_pages <= domain->caps->memory_page_cap && base_pages <= domain->caps->memory_page_cap - added_pages;
 }
 
 bool cell_map_add_allowed(uint64_t start, uint64_t end, bool replace_existing) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || domain->caps.memory_page_cap == 0) { return true; }
+  if (domain == NULL || domain->caps == NULL || domain->caps->memory_page_cap == 0) { return true; }
   const struct vma_list *vmas = cell_domain_vmas_const(domain);
   uint64_t removed_pages = replace_existing ? overlap_pages(vmas, start, end) : 0;
   return memory_pages_allowed(removed_pages, page_count(start, end));
@@ -155,7 +175,7 @@ bool cell_map_add_allowed(uint64_t start, uint64_t end, bool replace_existing) {
 bool cell_map_resize_allowed(uint64_t old_start, uint64_t old_end, uint64_t new_start, uint64_t new_end,
                              bool replace_new) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || domain->caps.memory_page_cap == 0) { return true; }
+  if (domain == NULL || domain->caps == NULL || domain->caps->memory_page_cap == 0) { return true; }
   const struct vma_list *vmas = cell_domain_vmas_const(domain);
   uint64_t removed_pages = overlap_pages(vmas, old_start, old_end);
   if (replace_new) { removed_pages += overlap_pages(vmas, new_start, new_end); }
@@ -167,19 +187,18 @@ int cell_apply_policy(const char *manifest) {
   if (domain == NULL) { return -3; }
   struct policy_request request;
   if (!spore_parse_manifest(manifest, &request)) { return -2; }
-  struct capability_set caps = {.flags = CAP_ENFORCE};
+  struct capability_set caps = {.refs = 1};
   cap_allow_common(&caps);
   switch (request.profile) {
   case POLICY_COMPUTE:
     break;
   case POLICY_FILES:
     cap_allow_files(&caps);
-    if (!cap_add_fs_rule(&caps, "/tmp", CELL_FS_READ | CELL_FS_WRITE | CELL_FS_EXEC) ||
-        !cap_add_fs_rule(&caps, "/etc/ld-musl-aarch64.path", CELL_FS_READ) ||
-        !cap_add_fs_rule(&caps, "/lib", CELL_FS_READ | CELL_FS_EXEC) ||
-        !cap_add_fs_rule(&caps, "/usr/local/lib", CELL_FS_READ | CELL_FS_EXEC) ||
-        (request.executable && !cap_add_fs_rule(&caps, request.executable, CELL_FS_READ | CELL_FS_EXEC))) {
-      return -2;
+    caps.restrict_fs = true;
+    if (request.executable != NULL) {
+      size_t len = kstrlen(request.executable);
+      if (len >= sizeof(caps.executable)) { return -2; }
+      kmemcpy(caps.executable, request.executable, len + 1);
     }
     break;
   case POLICY_MEMORY:
@@ -187,16 +206,20 @@ int cell_apply_policy(const char *manifest) {
     break;
   case POLICY_NETWORK:
     cap_allow_files(&caps);
-    caps.flags |= CAP_EGRESS_ENFORCE;
+    caps.restrict_egress = true;
     caps.egress = request.network;
     break;
   }
-  if ((domain->caps.flags & CAP_ENFORCE) != 0 && !caps_subset(&caps, &domain->caps)) { return -1; }
+  if (domain->caps != NULL && !caps_subset(&caps, domain->caps)) { return -1; }
+  struct capability_set *published = pool_alloc(&policies);
+  if (published == NULL) { return -12; }
+  *published = caps;
   if (request.profile == POLICY_COMPUTE && (domain->budget.max_ticks == 0 || domain->budget.max_ticks > 20)) {
     if (domain->budget.max_ticks == 0 || domain->budget.remaining_ticks > 20) { domain->budget.remaining_ticks = 20; }
     domain->budget.max_ticks = 20;
   }
-  domain->caps = caps;
+  cell_policy_release(domain->caps);
+  domain->caps = published;
   kprintf("[spore] policy applied: %s\n", manifest);
   return 0;
 }

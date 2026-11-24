@@ -1,11 +1,9 @@
 #pragma once
 
-#include "proc/limits.h"
+#include <stddef.h>
 
 #include <stdbool.h>
 #include <stdint.h>
-
-constexpr int CELL_FS_RULE_CAP = 8;
 
 enum cell_fs_right {
   CELL_FS_READ = 1u << 0,
@@ -13,31 +11,10 @@ enum cell_fs_right {
   CELL_FS_EXEC = 1u << 2,
 };
 
-enum cell_cap_flag {
-  CAP_ENFORCE = 1u << 0,
-  CAP_EGRESS_ENFORCE = 1u << 1,
-};
-
-struct fs_rule {
-  char path[CELL_PATH_MAX];
-  uint8_t rights;
-};
-
-struct egress_rule {
-  uint32_t address;
-  uint32_t mask;
-  uint16_t port;
-  uint8_t protocol;
-};
-
-struct capability_set {
-  uint64_t syscall_allow[8];
-  uint64_t flags;
-  uint64_t memory_page_cap;
-  struct fs_rule fs_rules[CELL_FS_RULE_CAP];
-  uint8_t fs_rule_count;
-  struct egress_rule egress;
-};
+struct capability_set;
+bool cell_policy_init(size_t domains);
+struct capability_set *cell_policy_retain(struct capability_set *caps);
+void cell_policy_release(struct capability_set *caps);
 
 struct cpu_budget {
   uint64_t remaining_ticks;
