@@ -117,7 +117,6 @@ pub struct Config {
     pub image: OsString,
     pub root: Option<OsString>,
     pub vars: Option<OsString>,
-    pub control: Option<OsString>,
     pub report: Option<OsString>,
     pub forwards: Vec<(u16, u16)>,
     pub timeout: u64,
@@ -162,7 +161,6 @@ pub fn run(config: Config) -> io::Result<i32> {
             Some(config.image.as_os_str()),
             config.root.as_deref(),
             config.vars.as_deref(),
-            config.control.as_deref(),
             config.direct.as_ref().map(|boot| boot.kernel.as_os_str()),
         ]
         .into_iter()
@@ -192,7 +190,6 @@ fn launch(config: Config) -> io::Result<i32> {
         image,
         root,
         vars,
-        control,
         report,
         forwards,
         timeout,
@@ -280,22 +277,8 @@ fn launch(config: Config) -> io::Result<i32> {
         "-display".into(),
         "none".into(),
     ]);
-    if let Some(control) = control {
-        q.extend([
-            "-no-reboot".into(),
-            "-device".into(),
-            "virtio-serial-device,id=statusbus".into(),
-            "-chardev".into(),
-            drive("file,id=status,path=", &control, ""),
-            "-device".into(),
-            "virtconsole,bus=statusbus.0,chardev=status".into(),
-        ]);
-        return super::app::run(
-            &q,
-            Path::new(&control),
-            report.as_deref().map(Path::new),
-            timeout,
-        );
+    if mode == "app" {
+        return super::app::run(q, report.as_deref().map(Path::new), timeout);
     }
     super::fixtures::start(mode)?;
     super::harness::run(&q, mode, timings)
@@ -307,23 +290,32 @@ fn append_firmware(q: &mut Vec<OsString>, image: &OsStr, vars: Option<&OsStr>) -
         return Err(io::Error::other("edk2-aarch64-code.fd not found"));
     };
 
-    if let Some(v) = vars {
-        if fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(v)
-            .is_err()
-        {
-            let Some(template) = find(&dirs, &["edk2-arm-vars.fd", "edk2-aarch64-vars.fd"]) else {
-                return Err(io::Error::other("edk2 vars template not found"));
-            };
-            let copy = fs::File::open(&template).and_then(|mut src| {
-                let mut dst = fs::File::create(v)?;
-                std::io::copy(&mut src, &mut dst)
-            });
-            copy?;
+    let template = || {
+        find(&dirs, &["edk2-arm-vars.fd", "edk2-aarch64-vars.fd"])
+            .ok_or_else(|| io::Error::other("edk2 vars template not found"))
+    };
+    let vars_drive = if let Some(v) = vars {
+        let path = Path::new(v);
+        if !path.try_exists()? {
+            let stage = crate::Workspace::at(path.parent().unwrap_or(Path::new(".")))?;
+            let copy = stage.0.join("vars.fd");
+            fs::copy(template()?, &copy)?;
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&copy, fs::Permissions::from_mode(0o600))?;
+            if let Err(e) = fs::hard_link(&copy, path)
+                && e.kind() != io::ErrorKind::AlreadyExists
+            {
+                return Err(e);
+            }
         }
-    }
+        drive("if=pflash,format=raw,file=", v, "")
+    } else {
+        drive(
+            "if=pflash,format=raw,snapshot=on,file=",
+            template()?.as_os_str(),
+            "",
+        )
+    };
     q.extend([
         "-boot".into(),
         "order=d,menu=on,splash-time=0,strict=on".into(),
@@ -334,9 +326,7 @@ fn append_firmware(q: &mut Vec<OsString>, image: &OsStr, vars: Option<&OsStr>) -
             "",
         ),
     ]);
-    if let Some(v) = vars {
-        q.extend(["-drive".into(), drive("if=pflash,format=raw,file=", v, "")])
-    }
+    q.extend(["-drive".into(), vars_drive]);
     if image.as_bytes().ends_with(b".iso") {
         q.extend(["-cdrom".into(), image.to_owned()])
     } else {

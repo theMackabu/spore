@@ -2,21 +2,24 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io::{self, BufRead, BufReader, Read, Write},
-    os::fd::AsFd,
+    os::fd::{AsFd, AsRawFd},
+    os::unix::{net::UnixStream, process::CommandExt},
     path::Path,
     process::{Child, ChildStdout, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
 unsafe extern "C" {
-    fn runner_terminal_open(interactive: bool);
+    fn runner_terminal_open(interactive: bool, events: i32);
+    fn runner_poll(status: i32, events: i32, timeout: i32) -> i32;
+    fn runner_inherit_fd(fd: i32) -> i32;
     fn runner_interrupted() -> i32;
     fn runner_terminal_close();
 }
 struct Terminal;
 impl Terminal {
-    fn open() -> Self {
-        unsafe { runner_terminal_open(true) };
+    fn open(events: &UnixStream) -> Self {
+        unsafe { runner_terminal_open(true, events.as_raw_fd()) };
         Self
     }
 }
@@ -69,65 +72,132 @@ pub fn report(path: Option<&Path>, kind: &str, value: i32, entry: Option<u128>) 
     Ok(())
 }
 
-pub fn run(
-    q: &[OsString],
-    control: &Path,
-    result_path: Option<&Path>,
-    deadline: u64,
-) -> io::Result<i32> {
-    let mut status = File::create_new(control).and_then(|_| File::open(control))?;
-    let _terminal = Terminal::open();
-    let start = Instant::now();
-    let mut vm = Vm(Command::new(&q[0])
-        .args(&q[1..])
-        .stdout(Stdio::piped())
-        .spawn()?);
-    let serial = vm.0.stdout.take().unwrap();
-    let output = thread::spawn(move || relay_console(serial));
-    let mut entry = None;
-    let mut bytes = Vec::new();
-    let mut protocol = false;
-    let (kind, value) = loop {
-        let exited = vm.0.try_wait()?;
-        status.read_to_end(&mut bytes)?;
-        let magic = b"\0SPORE1\0";
-        if !protocol {
-            if let Some(i) = bytes.windows(magic.len()).position(|w| w == magic) {
-                bytes.drain(..i + magic.len());
-                protocol = true;
-            } else if bytes.len() >= magic.len() {
-                bytes.drain(..bytes.len() - (magic.len() - 1));
+#[derive(Default)]
+struct GuestStatus {
+    prefix: usize,
+    records: Vec<u8>,
+    entry: Option<u128>,
+}
+
+impl GuestStatus {
+    fn receive(&mut self, bytes: &[u8], start: Instant) {
+        const MAGIC: &[u8] = b"\0SPORE1\0";
+        for &byte in bytes {
+            if self.prefix < MAGIC.len() {
+                self.prefix = if byte == MAGIC[self.prefix] {
+                    self.prefix + 1
+                } else {
+                    usize::from(byte == MAGIC[0])
+                };
+            } else if self.records.len() < 5 {
+                self.records.push(byte);
+                if self.records == b"U\0" {
+                    self.entry = Some(start.elapsed().as_micros());
+                }
             }
         }
-        let records = if protocol { bytes.as_slice() } else { &[] };
-        if entry.is_none() && records.starts_with(b"U\0") {
-            entry = Some(start.elapsed().as_micros());
+    }
+
+    fn result(&self) -> (&'static str, i32) {
+        match self.records.as_slice() {
+            [b'U', 0, b'E', n] => ("exit", i32::from(*n)),
+            [b'U', 0, b'S', n] => ("signal", i32::from(*n)),
+            [b'B', n] | [b'U', 0, b'B', n] => ("boot-error", i32::from(*n)),
+            _ => ("vm-error", 125),
+        }
+    }
+}
+
+pub fn run(mut q: Vec<OsString>, result_path: Option<&Path>, deadline: u64) -> io::Result<i32> {
+    let (mut status, peer) = UnixStream::pair()?;
+    let (mut events, notify) = UnixStream::pair()?;
+    notify.set_nonblocking(true)?;
+    status.set_nonblocking(true)?;
+    let _terminal = Terminal::open(&notify);
+    let fd = peer.as_raw_fd();
+    q.extend([
+        "-no-reboot".into(),
+        "-device".into(),
+        "virtio-serial-device,id=statusbus".into(),
+        "-chardev".into(),
+        format!("socket,id=status,fd={fd},server=off").into(),
+        "-device".into(),
+        "virtconsole,bus=statusbus.0,chardev=status".into(),
+    ]);
+    let mut cmd = Command::new(&q[0]);
+    cmd.args(&q[1..]).stdout(Stdio::piped());
+    unsafe {
+        cmd.pre_exec(move || {
+            if runner_inherit_fd(fd) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let start = Instant::now();
+    let mut vm = Vm(cmd.spawn()?);
+    drop(peer);
+    let serial = vm.0.stdout.take().unwrap();
+    let output = thread::spawn(move || relay_console(serial));
+    let mut guest = GuestStatus::default();
+    let mut open = true;
+    let mut buffer = [0; 512];
+    let (kind, value) = loop {
+        let exited = vm.0.try_wait()?;
+        while open {
+            match status.read(&mut buffer) {
+                Ok(0) => open = false,
+                Ok(n) => {
+                    guest.receive(&buffer[..n], start);
+                    if exited.is_none() {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::ConnectionReset => open = false,
+                Err(e) => return Err(e),
+            }
         }
         let sig = unsafe { runner_interrupted() };
         if sig != 0 {
             break ("host-signal", sig);
         }
         if let Some(status) = exited {
-            if !status.success() {
-                break ("vm-error", 125);
-            }
-            break match records {
-                [b'U', 0, b'E', n] => ("exit", i32::from(*n)),
-                [b'U', 0, b'S', n] => ("signal", i32::from(*n)),
-                [b'B', n] | [b'U', 0, b'B', n] => ("boot-error", i32::from(*n)),
-                _ => ("vm-error", 125),
+            break if status.success() {
+                guest.result()
+            } else {
+                ("vm-error", 125)
             };
         }
-        if entry.is_none() && start.elapsed() >= Duration::from_secs(deadline) {
-            break ("boot-timeout", 125);
+        let timeout = if guest.entry.is_some() {
+            -1
+        } else {
+            let left = Duration::from_secs(deadline).saturating_sub(start.elapsed());
+            if left.is_zero() {
+                break ("boot-timeout", 125);
+            }
+            left.as_millis().clamp(1, i32::MAX as u128) as i32
+        };
+        let ready = unsafe {
+            runner_poll(
+                if open { status.as_raw_fd() } else { -1 },
+                events.as_raw_fd(),
+                timeout,
+            )
+        };
+        if ready < 0 {
+            return Err(io::Error::last_os_error());
         }
-        thread::sleep(Duration::from_millis(if entry.is_some() { 20 } else { 2 }));
+        if ready & 2 != 0 {
+            events.read_exact(&mut buffer[..1])?;
+        }
     };
     drop(vm);
     output
         .join()
         .map_err(|_| io::Error::other("console relay failed"))??;
-    report(result_path, kind, value, entry)?;
+    report(result_path, kind, value, guest.entry)?;
     eprintln!("spore: {kind} {value}");
     Ok(match kind {
         "exit" => value,

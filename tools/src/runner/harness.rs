@@ -8,7 +8,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 unsafe extern "C" {
-    fn runner_terminal_open(interactive: bool);
+    fn runner_terminal_open(interactive: bool, events: i32);
     fn runner_terminal_close();
     fn runner_resized() -> bool;
     fn runner_interrupted() -> i32;
@@ -26,7 +26,7 @@ struct Terminal;
 impl Terminal {
     fn open(plain: bool) -> Self {
         reset_mouse();
-        unsafe { runner_terminal_open(plain) };
+        unsafe { runner_terminal_open(plain, -1) };
         Self
     }
     fn send_size(&self, writer: &mut impl Write) -> io::Result<()> {

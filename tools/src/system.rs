@@ -157,16 +157,8 @@ pub fn boot(
             seed_disk(&base, Path::new(disk), reset)?;
         }
     }
-    let tmp = Workspace::new()?;
-    if vm.vars.is_none() {
-        vm.vars = Some(
-            if vm.snap || image_supplied {
-                tmp.0.join("vars.fd")
-            } else {
-                build.join("edk2-vars.fd")
-            }
-            .into(),
-        );
+    if vm.vars.is_none() && !vm.snap && !image_supplied {
+        vm.vars = Some(build.join("edk2-vars.fd").into());
     }
     qemu::run(vm)
 }

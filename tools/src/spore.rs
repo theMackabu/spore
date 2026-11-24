@@ -97,7 +97,6 @@ fn vm_config(mode: &str) -> runner::qemu::Config {
         image: OsString::new(),
         root: None,
         vars: None,
-        control: None,
         report: None,
         forwards: vec![],
         timeout: 30,
@@ -306,11 +305,6 @@ fn execute() -> io::Result<i32> {
         return Ok(0);
     }
     vm.image = image.into_os_string();
-    vm.control = Some(tmp.0.join("control").into_os_string());
-    if vm.direct.is_none() {
-        vm.vars
-            .get_or_insert_with(|| tmp.0.join("vars.fd").into_os_string());
-    }
     runner::qemu::run(vm)
 }
 
