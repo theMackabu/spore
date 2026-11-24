@@ -1,9 +1,12 @@
 #include "internal.h"
+#include "mm/table.h"
 
 constexpr int BLOCK_CACHE_ENTRIES = 32;
+constexpr size_t CACHE_BLOCK_BYTES = 4096;
 
 struct block_cache_entry {
   struct ext2_fs *fs;
+  uint8_t *data;
   uint64_t age;
   uint32_t block;
   uint8_t next, pins;
@@ -12,12 +15,7 @@ struct block_cache_entry {
 
 static struct block_cache_entry block_cache[BLOCK_CACHE_ENTRIES];
 static uint8_t buckets[BLOCK_CACHE_ENTRIES];
-alignas(8) static uint8_t block_bytes[BLOCK_CACHE_ENTRIES][4096];
 static uint64_t block_cache_clock;
-
-static uint8_t *block_data(const struct block_cache_entry *entry) {
-  return block_bytes[entry - block_cache];
-}
 
 static unsigned bucket_for(uint32_t block) {
   return (block ^ (block >> 5) ^ (block >> 16)) % BLOCK_CACHE_ENTRIES;
@@ -43,7 +41,7 @@ static void cache_remove(struct block_cache_entry *entry) {
 static bool cache_flush_entry(struct block_cache_entry *entry) {
   if (!entry->dirty) { return true; }
   if (entry->fs->write == NULL) { return false; }
-  if (!entry->fs->write(entry->fs->ctx, (uint64_t)entry->block * entry->fs->block_size, block_data(entry),
+  if (!entry->fs->write(entry->fs->ctx, (uint64_t)entry->block * entry->fs->block_size, entry->data,
                         entry->fs->block_size)) {
     return false;
   }
@@ -65,11 +63,13 @@ bool ext2_drop_cache(struct ext2_fs *fs) {
   bool ok = true;
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     if (block_cache[i].fs == fs) {
-      if (!cache_flush_entry(&block_cache[i])) {
+      if (block_cache[i].pins || !cache_flush_entry(&block_cache[i])) {
         ok = false;
         continue;
       }
       cache_remove(&block_cache[i]);
+      table_free(block_cache[i].data, 1, CACHE_BLOCK_BYTES);
+      block_cache[i].data = NULL;
     }
   }
   if (ok) { ext2_dir_drop_cache(fs); }
@@ -95,13 +95,15 @@ static struct block_cache_entry *cache_find(const struct ext2_fs *fs, uint32_t b
 }
 
 static bool cache_victim(struct block_cache_entry **out) {
-  struct block_cache_entry *victim = NULL;
+  struct block_cache_entry *victim = NULL, *empty = NULL;
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
-    if (block_cache[i].fs == NULL) {
-      *out = &block_cache[i];
-      return true;
-    }
-    if (!block_cache[i].pins && (!victim || block_cache[i].age < victim->age)) { victim = &block_cache[i]; }
+    struct block_cache_entry *entry = &block_cache[i];
+    if (!entry->fs) { empty = entry; }
+    else if (!entry->pins && (!victim || entry->age < victim->age)) { victim = entry; }
+  }
+  if (empty && (empty->data = table_alloc(1, CACHE_BLOCK_BYTES))) {
+    *out = empty;
+    return true;
   }
   if (!victim || !cache_flush_entry(victim)) { return false; }
   cache_remove(victim);
@@ -112,7 +114,7 @@ static bool cache_victim(struct block_cache_entry **out) {
 static void cache_update_clean(struct ext2_fs *fs, uint32_t block, const void *src) {
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) { return; }
-  kmemcpy(block_data(entry), src, fs->block_size);
+  kmemcpy(entry->data, src, fs->block_size);
   entry->dirty = false;
   entry->age = ++block_cache_clock;
 }
@@ -126,12 +128,16 @@ bool ext2_cache_range_has_dirty(struct ext2_fs *fs, uint32_t first_block, uint32
 }
 
 static struct block_cache_entry *cache_read(struct ext2_fs *fs, uint32_t block) {
-  if (block >= fs->block_count || fs->block_size > sizeof(block_bytes[0])) { return NULL; }
+  if (block >= fs->block_count || fs->block_size > CACHE_BLOCK_BYTES) { return NULL; }
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
     ++ext2_stat_counters.block_cache_misses;
     if (!cache_victim(&entry)) { return NULL; }
-    if (!fs->read(fs->ctx, (uint64_t)block * fs->block_size, block_data(entry), fs->block_size)) { return NULL; }
+    if (!fs->read(fs->ctx, (uint64_t)block * fs->block_size, entry->data, fs->block_size)) {
+      table_free(entry->data, 1, CACHE_BLOCK_BYTES);
+      entry->data = NULL;
+      return NULL;
+    }
     cache_insert(entry, fs, block);
   } else {
     ++ext2_stat_counters.block_cache_hits;
@@ -142,12 +148,12 @@ static struct block_cache_entry *cache_read(struct ext2_fs *fs, uint32_t block) 
 
 const uint8_t *ext2_peek_block(struct ext2_fs *fs, uint32_t block) {
   struct block_cache_entry *entry = cache_find(fs, block);
-  return entry ? block_data(entry) : NULL;
+  return entry ? entry->data : NULL;
 }
 
 const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block) {
   struct block_cache_entry *entry = cache_read(fs, block);
-  return entry != NULL ? block_data(entry) : NULL;
+  return entry != NULL ? entry->data : NULL;
 }
 
 bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
@@ -158,7 +164,7 @@ bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst) {
 }
 
 bool ext2_write_block(struct ext2_fs *fs, uint32_t block, const void *src) {
-  if (block >= fs->block_count || fs->write == NULL || fs->block_size > sizeof(block_bytes[0])) { return false; }
+  if (block >= fs->block_count || fs->write == NULL || fs->block_size > CACHE_BLOCK_BYTES) { return false; }
   ++ext2_stat_counters.block_cache_writes;
   struct block_cache_entry *entry = cache_find(fs, block);
   if (entry == NULL) {
@@ -166,7 +172,7 @@ bool ext2_write_block(struct ext2_fs *fs, uint32_t block, const void *src) {
     cache_insert(entry, fs, block);
   }
   entry->age = ++block_cache_clock;
-  kmemcpy(block_data(entry), src, fs->block_size);
+  kmemcpy(entry->data, src, fs->block_size);
   entry->dirty = true;
   return true;
 }
@@ -197,7 +203,7 @@ bool ext2_begin_edit(struct ext2_fs *fs, uint64_t offset, uint32_t len, struct e
   if (!entry) { return false; }
   ++entry->pins;
   edit->entry = entry;
-  edit->bytes = block_data(entry) + within;
+  edit->bytes = entry->data + within;
   return true;
 }
 
@@ -205,6 +211,7 @@ void ext2_end_edit(struct ext2_block_edit *edit, bool changed) {
   if (!edit->entry) { return; }
   if (changed) { edit->entry->dirty = true; ++ext2_stat_counters.block_cache_writes; }
   --edit->entry->pins;
+  edit->entry = NULL;
 }
 
 bool ext2_read_bytes(struct ext2_fs *fs, uint64_t offset, void *dst, uint32_t len) {
@@ -238,7 +245,7 @@ bool ext2_write_bytes(struct ext2_fs *fs, uint64_t offset, const void *src, uint
     } else {
       struct block_cache_entry *entry = cache_read(fs, block_index);
       if (entry == NULL) { return false; }
-      kmemcpy(block_data(entry) + within, in, chunk);
+      kmemcpy(entry->data + within, in, chunk);
       entry->dirty = true;
       ++ext2_stat_counters.block_cache_writes;
     }
