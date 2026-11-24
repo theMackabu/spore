@@ -9,6 +9,7 @@ extern struct ext2_fs *vfs_root_ext2;
 bool vfs_lookup_cache_get(const char *path, bool lstat, struct vfs_node *out);
 void vfs_lookup_cache_put(const char *path, bool lstat, const struct vfs_node *node);
 void vfs_lookup_cache_clear(void);
+void vfs_lookup_cache_changed(const struct vfs_node *node);
 
 void vfs_page_cache_configure(void);
 bool vfs_sync_mapped_pages(void);

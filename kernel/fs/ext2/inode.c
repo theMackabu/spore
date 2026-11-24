@@ -310,11 +310,6 @@ bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
   return ext2_write_inode(fs, &copy);
 }
 
-bool ext2_chmod(struct ext2_fs *fs, const char *path, uint32_t mode) {
-  struct ext2_node node;
-  return ext2_lookup(fs, path, &node) && ext2_chmod_node(fs, &node, mode);
-}
-
 bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t uid, uint32_t gid) {
   if (node == NULL || uid > UINT16_MAX || gid > UINT16_MAX) { return false; }
   struct ext2_node copy;
@@ -323,9 +318,4 @@ bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
   copy.gid = (uint16_t)gid;
   copy.ctime = ext2_now_sec();
   return ext2_write_inode(fs, &copy);
-}
-
-bool ext2_chown(struct ext2_fs *fs, const char *path, uint32_t uid, uint32_t gid) {
-  struct ext2_node node;
-  return ext2_lookup(fs, path, &node) && ext2_chown_node(fs, &node, uid, gid);
 }

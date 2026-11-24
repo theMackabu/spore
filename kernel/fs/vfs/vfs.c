@@ -158,7 +158,7 @@ bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
   }
   if (ok) {
     vfs_page_cache_truncate(node, size);
-    vfs_lookup_cache_clear();
+    vfs_lookup_cache_changed(node);
   }
   return ok;
 }
@@ -201,17 +201,10 @@ bool vfs_symlink(const char *target, const char *link_path) {
 }
 
 bool vfs_chmod(const char *path, uint32_t mode) {
-  vfs_update_time_sources();
-  bool ok = false;
-  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
-    ok = ext2_chmod(vfs_root_ext2, path, mode);
-  } else {
-    struct ramfs_node node;
-    ok = vfs_root_ramfs != NULL && vfs_path_uses_ramfs(path) && ramfs_lookup_node(vfs_root_ramfs, path, &node) &&
-         ramfs_chmod_node(vfs_root_ramfs, node.index, (uint16_t)mode);
-  }
-  if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_ATTRIB); }
-  return ok;
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node) || !vfs_chmod_node(&node, mode)) { return false; }
+  fsnotify_path_event(path, FS_ATTRIB);
+  return true;
 }
 
 bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode) {
@@ -222,22 +215,15 @@ bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode) {
   } else if (node->backend == VFS_RAMFS) {
     ok = ramfs_chmod_node(node->ramfs.fs, node->ramfs.index, (uint16_t)mode);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_changed(node); }
   return ok;
 }
 
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
-  vfs_update_time_sources();
-  bool ok = false;
-  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
-    ok = ext2_chown(vfs_root_ext2, path, uid, gid);
-  } else {
-    struct ramfs_node node;
-    ok = vfs_root_ramfs != NULL && vfs_path_uses_ramfs(path) && ramfs_lookup_node(vfs_root_ramfs, path, &node) &&
-         ramfs_chown_node(vfs_root_ramfs, node.index, uid, gid);
-  }
-  if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_ATTRIB); }
-  return ok;
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node) || !vfs_chown_node(&node, uid, gid)) { return false; }
+  fsnotify_path_event(path, FS_ATTRIB);
+  return true;
 }
 
 bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
@@ -248,7 +234,7 @@ bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
   } else if (node->backend == VFS_RAMFS) {
     ok = ramfs_chown_node(node->ramfs.fs, node->ramfs.index, uid, gid);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) { vfs_lookup_cache_changed(node); }
   return ok;
 }
 
@@ -333,7 +319,7 @@ static int64_t write_node(const struct vfs_node *node, uint64_t off, const void 
   }
   if (written > 0) {
     vfs_page_cache_write(node, off, src, (uint64_t)written);
-    vfs_lookup_cache_clear();
+    vfs_lookup_cache_changed(node);
   }
   return written;
 }
@@ -356,7 +342,6 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
   if (node->backend == VFS_EXT2) {
     struct ext2_node fresh;
     if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &fresh)) { return false; }
-    *out = *node;
     vfs_from_ext2(&fresh, out);
     return true;
   }

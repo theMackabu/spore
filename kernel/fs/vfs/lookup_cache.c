@@ -8,10 +8,11 @@ enum {
   LOOKUP_CACHE_SETS = 32,
   LOOKUP_CACHE_WAYS = 4,
   LOOKUP_CACHE_PATH_MAX = 255,
+  METADATA_BUCKETS = 256,
 };
 
 struct vfs_lookup_cache_entry {
-  uint32_t generation;
+  uint32_t generation, metadata_version;
   bool lstat;
   uint64_t age;
   char path[LOOKUP_CACHE_PATH_MAX + 1];
@@ -22,6 +23,15 @@ static struct vfs_lookup_cache_entry entries[LOOKUP_CACHE_SETS][LOOKUP_CACHE_WAY
 static uint64_t clock;
 static uint32_t generation = 1;
 static bool populated;
+static uint32_t metadata_versions[METADATA_BUCKETS];
+
+static uint32_t *version_for(const struct vfs_node *node) {
+  return &metadata_versions[(node->ino ^ node->dev_id) % METADATA_BUCKETS];
+}
+
+void vfs_lookup_cache_changed(const struct vfs_node *node) {
+  if (populated && !++*version_for(node)) { vfs_lookup_cache_clear(); }
+}
 
 static bool same_path(const char *a, const char *b) {
   while (*a && *b) {
@@ -59,6 +69,15 @@ bool vfs_lookup_cache_get(const char *path, bool lstat, struct vfs_node *out) {
   }
   struct vfs_lookup_cache_entry *entry = find_entry(set, path, lstat);
   if (entry != NULL) {
+    uint32_t version = *version_for(&entry->node);
+    if (entry->metadata_version != version) {
+      if (!vfs_refresh(&entry->node, &entry->node)) {
+        entry->generation = 0;
+        ++vfs_stat_counters.lookup_cache_misses;
+        return false;
+      }
+      entry->metadata_version = version;
+    }
     entry->age = ++clock;
     *out = entry->node;
     ++vfs_stat_counters.lookup_cache_hits;
@@ -89,6 +108,7 @@ void vfs_lookup_cache_put(const char *path, bool lstat, const struct vfs_node *n
   entry->node = *node;
   entry->age = ++clock;
   entry->generation = generation;
+  entry->metadata_version = *version_for(node);
   populated = true;
 }
 
