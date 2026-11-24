@@ -76,7 +76,7 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
 }
 
 static int64_t ppoll_check(struct thread *thread, bool commit) {
-  if (thread == NULL || thread->domain == NULL || thread->wait.poll_nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
+  if (thread == NULL || thread->domain == NULL || thread->wait.poll_nfds > MAX_FDS) { return -EINVAL; }
   int64_t ready = 0;
   for (uint64_t i = 0; i < thread->wait.poll_nfds; ++i) {
     struct pollfd64 pfd;
@@ -94,43 +94,36 @@ static int64_t ppoll_check(struct thread *thread, bool commit) {
   return ready;
 }
 
+enum { SELECT_WORDS = (MAX_FDS + 63) / 64 };
+
 static int64_t pselect_check(struct thread *thread, bool commit) {
-  if (thread == NULL || thread->domain == NULL || thread->wait.poll_nfds > 64) { return -EINVAL; }
-  uint64_t read_in = 0;
-  uint64_t write_in = 0;
-  uint64_t read_out = 0;
-  uint64_t write_out = 0;
-  uint64_t except_out = 0;
-  if (thread->wait.poll_readfds != 0 &&
-      !vmm_copy_from_user(cell_domain_as(thread->domain), &read_in, thread->wait.poll_readfds, sizeof(read_in))) {
-    return -EFAULT;
+  struct thread_wait *wait = &thread->wait;
+  struct user_address_space *as = cell_domain_as(thread->domain);
+  uint64_t sets[3][SELECT_WORDS] = {0};
+  uint64_t addresses[] = {wait->poll_readfds, wait->poll_writefds, wait->poll_exceptfds};
+  size_t words = (wait->poll_nfds + 63) / 64, bytes = words * sizeof(uint64_t);
+  for (unsigned i = 0; i < 3; ++i) {
+    if (addresses[i] && !vmm_copy_from_user(as, sets[i], addresses[i], bytes)) { return -EFAULT; }
   }
-  if (thread->wait.poll_writefds != 0 &&
-      !vmm_copy_from_user(cell_domain_as(thread->domain), &write_in, thread->wait.poll_writefds, sizeof(write_in))) {
-    return -EFAULT;
-  }
-
   int64_t ready = 0;
-  for (uint64_t fd = 0; fd < thread->wait.poll_nfds; ++fd) {
-    uint64_t bit = 1ull << fd;
-    int events = 0;
-    if ((read_in & bit) != 0) { events |= CELL_POLLIN; }
-    if ((write_in & bit) != 0) { events |= CELL_POLLOUT; }
-    if (events == 0) { continue; }
-    int revents = fd_poll_events_for_domain(thread->domain, (int)fd, events);
-    if ((revents & CELL_POLLIN) != 0 && (read_in & bit) != 0) { read_out |= bit; }
-    if ((revents & CELL_POLLOUT) != 0 && (write_in & bit) != 0) { write_out |= bit; }
-    if ((revents & (CELL_POLLIN | CELL_POLLOUT | CELL_POLLERR | CELL_POLLHUP | CELL_POLLNVAL)) != 0) { ++ready; }
+  for (size_t i = 0; i < words; ++i) {
+    uint64_t read = sets[0][i], write = sets[1][i], bits = read | write | sets[2][i];
+    sets[0][i] = sets[1][i] = sets[2][i] = 0;
+    if (i + 1 == words && wait->poll_nfds % 64) { bits &= (UINT64_C(1) << (wait->poll_nfds % 64)) - 1; }
+    while (bits) {
+      unsigned pos = (unsigned)__builtin_ctzll(bits);
+      uint64_t bit = UINT64_C(1) << pos;
+      int events = (read & bit ? CELL_POLLIN : 0) | (write & bit ? CELL_POLLOUT : 0);
+      int revents = fd_poll_events_for_domain(thread->domain, (int)(64 * i + pos), events);
+      if (revents & CELL_POLLNVAL) { return -9; }
+      if ((read & bit) && (revents & (CELL_POLLIN | CELL_POLLHUP | CELL_POLLERR))) { sets[0][i] |= bit; ++ready; }
+      if ((write & bit) && (revents & (CELL_POLLOUT | CELL_POLLERR))) { sets[1][i] |= bit; ++ready; }
+      bits &= bits - 1;
+    }
   }
-
   if (commit) {
-    if ((thread->wait.poll_readfds != 0 &&
-         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->wait.poll_readfds, &read_out, sizeof(read_out))) ||
-        (thread->wait.poll_writefds != 0 &&
-         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->wait.poll_writefds, &write_out, sizeof(write_out))) ||
-        (thread->wait.poll_exceptfds != 0 &&
-         !vmm_copy_to_user(cell_domain_as(thread->domain), thread->wait.poll_exceptfds, &except_out, sizeof(except_out)))) {
-      return -EFAULT;
+    for (unsigned i = 0; i < 3; ++i) {
+      if (addresses[i] && !vmm_copy_to_user(as, addresses[i], sets[i], bytes)) { return -EFAULT; }
     }
   }
   return ready;
@@ -154,7 +147,6 @@ static void wake_poll_waiters(void) {
     bool expired = thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick;
     if (ready != 0 || expired) {
       if (ready >= 0) { ready = poll_wait_check(thread, true); }
-      if (ready < 0) { ready = -EFAULT; }
       cell_finish_wait(thread, ready);
     }
   }
@@ -234,7 +226,7 @@ static int sleep_poll(struct thread *thread, struct trap_frame *frame, const uin
 int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks,
                        const uint64_t *mask, struct trap_frame *frame) {
   struct thread *thread = cell_current_thread_internal();
-  if (thread == NULL || cell_current_domain_internal() == NULL || nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
+  if (thread == NULL || cell_current_domain_internal() == NULL || nfds > MAX_FDS) { return -EINVAL; }
   thread->wait.poll_kind = 1;
   thread->wait.poll_fds = fds;
   thread->wait.poll_nfds = nfds;
@@ -250,7 +242,12 @@ int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t t
 int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds, bool has_timeout,
                           uint64_t timeout_ticks, const uint64_t *mask, struct trap_frame *frame) {
   struct thread *thread = cell_current_thread_internal();
-  if (thread == NULL || cell_current_domain_internal() == NULL || nfds > 64) { return -EINVAL; }
+  if (thread == NULL || cell_current_domain_internal() == NULL || nfds > MAX_FDS) { return -EINVAL; }
+  size_t bytes = ((nfds + 63) / 64) * sizeof(uint64_t);
+  uint64_t sets[] = {readfds, writefds, exceptfds};
+  for (unsigned i = 0; i < 3; ++i) {
+    if (sets[i] && !cell_domain_ensure_user_range(thread->domain, sets[i], bytes, VMM_ACCESS_WRITE)) { return -EFAULT; }
+  }
   thread->wait.poll_kind = 2;
   thread->wait.poll_nfds = nfds;
   thread->wait.poll_readfds = readfds;

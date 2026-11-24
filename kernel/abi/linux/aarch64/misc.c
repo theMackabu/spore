@@ -73,31 +73,29 @@ int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, uint6
     RLIMIT_AS = 9,
   };
   if (pid != 0 && (int)pid != cell_current_pid()) { return -(int64_t)EINVAL; }
-  if (new_limit != 0) {
-    struct rlimit64 ignored;
-    if (!syscall_user_readable(new_limit, sizeof(ignored)) ||
-        !vmm_copy_from_user(syscall_active_as(), &ignored, new_limit, sizeof(ignored))) {
-      return -(int64_t)EFAULT;
+  struct domain *domain = cell_current_domain_internal();
+  struct rlimit64 next;
+  if (new_limit) {
+    if (!syscall_user_readable(new_limit, sizeof(next)) ||
+        !vmm_copy_from_user(syscall_active_as(), &next, new_limit, sizeof(next))) { return -EFAULT; }
+    if (resource == RLIMIT_NOFILE) {
+      if (next.rlim_cur > next.rlim_max) { return -EINVAL; }
+      if (next.rlim_max > MAX_FDS || (next.rlim_max > domain->nofile_hard && domain->euid != 0)) { return -EPERM; }
     }
   }
-  if (old_limit == 0) { return 0; }
-
-  uint64_t unlimited = UINT64_MAX;
-  struct rlimit64 out = {.rlim_cur = unlimited, .rlim_max = unlimited};
-  if (resource == RLIMIT_STACK) {
-    out.rlim_cur = USER_STACK_SIZE;
-    out.rlim_max = USER_STACK_SIZE;
-  } else if (resource == RLIMIT_NOFILE) {
-    out.rlim_cur = MAX_FDS;
-    out.rlim_max = MAX_FDS;
-  } else if (resource == RLIMIT_AS) {
-    out.rlim_cur = USER_STACK_TOP;
-    out.rlim_max = USER_STACK_TOP;
+  if (old_limit) {
+    struct rlimit64 out = {UINT64_MAX, UINT64_MAX};
+    if (resource == RLIMIT_STACK) { out = (struct rlimit64){USER_STACK_SIZE, USER_STACK_SIZE}; }
+    else if (resource == RLIMIT_NOFILE) { out = (struct rlimit64){domain->nofile_soft, domain->nofile_hard}; }
+    else if (resource == RLIMIT_AS) { out = (struct rlimit64){USER_STACK_TOP, USER_STACK_TOP}; }
+    if (!syscall_user_writable(old_limit, sizeof(out)) ||
+        !vmm_copy_to_user(syscall_active_as(), old_limit, &out, sizeof(out))) { return -EFAULT; }
   }
-  return syscall_user_writable(old_limit, sizeof(out)) &&
-             vmm_copy_to_user(syscall_active_as(), old_limit, &out, sizeof(out))
-           ? 0
-           : -(int64_t)EFAULT;
+  if (new_limit && resource == RLIMIT_NOFILE) {
+    domain->nofile_soft = (uint32_t)next.rlim_cur;
+    domain->nofile_hard = (uint32_t)next.rlim_max;
+  }
+  return 0;
 }
 
 static void uts_copy(char dst[65], const char *src) {

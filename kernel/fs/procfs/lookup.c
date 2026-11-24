@@ -27,8 +27,10 @@ static const struct proc_entry {
 };
 constexpr size_t ENTRY_COUNT = sizeof(entries) / sizeof(entries[0]);
 
+static_assert(64 + MAX_FDS <= 2048);
+
 static uint64_t proc_ino(int pid, int tid, unsigned slot) {
-  return (UINT64_C(1) << 48) | ((uint64_t)(tid ? tid : pid) << 10) | (tid ? 512u : 0u) | slot;
+  return (UINT64_C(1) << 48) | ((uint64_t)(tid ? tid : pid) << 12) | (tid ? 2048u : 0u) | slot;
 }
 
 static bool parse_number(const char **path, int *out) {

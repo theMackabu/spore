@@ -5,8 +5,6 @@
 
 struct trap_frame;
 
-constexpr int CELL_MAX_POLL_FDS = 64;
-
 enum cell_poll_events {
   CELL_POLLIN = 0x0001,
   CELL_POLLOUT = 0x0004,

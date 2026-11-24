@@ -2,6 +2,7 @@
 #include "arch/aarch64/regs.h"
 #include "handlers.h"
 #include "proc/accounting.h"
+#include "proc/domain.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
 
@@ -11,7 +12,6 @@
 enum {
   EFAULT = 14,
   EINVAL = 22,
-  MAX_POLL_FDS = 64,
   TIMER_ABSTIME = 1,
 };
 
@@ -82,7 +82,7 @@ int64_t sys_clock_nanosleep(struct trap_frame *frame, uint64_t clock_id, uint64_
 
 int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
                   uint64_t sigsetsize) {
-  if (nfds > MAX_POLL_FDS) { return -(int64_t)EINVAL; }
+  if (nfds > cell_current_domain_internal()->nofile_soft) { return -(int64_t)EINVAL; }
   uint64_t fds_bytes = nfds * sizeof(struct pollfd64);
   if ((nfds != 0 && fds_bytes / sizeof(struct pollfd64) != nfds) || !syscall_user_readable(fds, fds_bytes) ||
       !syscall_user_writable(fds, fds_bytes)) {

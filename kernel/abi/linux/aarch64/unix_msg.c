@@ -44,7 +44,7 @@ static int write_control(struct domain *domain, const struct unix_rights *rights
                          uint64_t addr, uint32_t flags) {
   struct {
     struct cmsghdr64 header;
-    int fds[MAX_FDS];
+    int fds[UNIX_MAX_RIGHTS];
   } control = {0};
   unsigned count = 0;
   uint64_t used = 0;
@@ -54,7 +54,7 @@ static int write_control(struct domain *domain, const struct unix_rights *rights
     unsigned capacity = 0;
     if (msg->control && msg->controllen > sizeof(control.header)) {
       capacity = (msg->controllen - sizeof(control.header)) / sizeof(int);
-      if (capacity > MAX_FDS) { capacity = MAX_FDS; }
+      if (capacity > UNIX_MAX_RIGHTS) { capacity = UNIX_MAX_RIGHTS; }
     }
     bool truncated;
     count = unix_install_rights(domain, rights, control.fds, capacity, flags & MSG_CMSG_CLOEXEC, &truncated);

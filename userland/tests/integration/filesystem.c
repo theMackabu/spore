@@ -14,6 +14,8 @@
 #include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#include <sys/select.h>
 
 #include <sys/time.h>
 #include <sys/uio.h>
@@ -146,6 +148,42 @@ static int eventfd_counter(void) {
   if (child > 0) { ok = waitpid(child, &status, 0) == child && status == 0 && ok; }
   close(fd);
   printf("[spore] eventfd capacity, semaphore and blocked transfers: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
+static int high_fd_limit(void) {
+  int counter = eventfd(1, EFD_NONBLOCK), fd = fcntl(counter, F_DUPFD_CLOEXEC, 900);
+  if (fd < 0) { return 0; }
+  struct rlimit limit;
+  if (getrlimit(RLIMIT_NOFILE, &limit) != 0) { return 0; }
+  limit.rlim_cur = 16;
+  if (setrlimit(RLIMIT_NOFILE, &limit) != 0) { return 0; }
+  fd_set reads, writes;
+  FD_ZERO(&reads); FD_SET(fd, &reads);
+  FD_ZERO(&writes); FD_SET(fd, &writes);
+  struct timeval now = {0};
+  if (select(fd + 1, &reads, &writes, NULL, &now) != 2 || !FD_ISSET(fd, &reads) || !FD_ISSET(fd, &writes) ||
+      fcntl(fd, F_GETFD) != FD_CLOEXEC || dup2(counter, fd + 1) != -1 || errno != EBADF) { return 0; }
+  pid_t child = fork();
+  if (!child) {
+    struct rlimit inherited;
+    eventfd_t value;
+    _exit(getrlimit(RLIMIT_NOFILE, &inherited) || inherited.rlim_cur != 16 ||
+          eventfd_read(fd, &value) || value != 1);
+  }
+  int status;
+  if (child < 0 || waitpid(child, &status, 0) != child || status != 0) { return 0; }
+  close(fd);
+  FD_ZERO(&reads); FD_SET(fd, &reads);
+  return select(fd + 1, &reads, NULL, NULL, &now) == -1 && errno == EBADF;
+}
+
+static int fd_limit_regression(void) {
+  pid_t child = fork();
+  if (!child) { _exit(!high_fd_limit()); }
+  int status;
+  int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
+  printf("[spore] sparse descriptors and inherited limits: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
@@ -398,7 +436,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }
