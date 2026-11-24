@@ -97,7 +97,7 @@ int64_t sys_clock_nanosleep(struct trap_frame *frame, uint64_t clock_id, uint64_
 int64_t sys_ppoll(struct trap_frame *frame, uint64_t fds, uint64_t nfds, uint64_t timeout_addr, uint64_t sigmask,
                   uint64_t sigsetsize);
 int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds,
-                     uint64_t timeout_addr);
+                     uint64_t timeout_addr, uint64_t sigmask_data);
 int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr);
 int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
                         uint64_t timeout_ms, uint64_t sigmask, uint64_t sigsetsize);

@@ -1,4 +1,5 @@
 #include "proc/poll.h"
+#include "proc/signal.h"
 
 #include "arch/aarch64/regs.h"
 #include "proc/accounting.h"
@@ -227,33 +228,49 @@ void cell_wake_epoll_waiters_internal(void) {
   wake_epoll_waiters();
 }
 
-int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks,
-                       struct trap_frame *frame) {
-  struct thread *thread = cell_current_thread_internal();
-  if (thread == NULL || cell_current_domain_internal() == NULL || nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
-  cell_save_current(frame);
-  thread->wait.poll_kind = 1;
-  thread->wait.poll_fds = fds;
-  thread->wait.poll_nfds = nfds;
-  int64_t ready = ppoll_check(thread, true);
-  if (ready != 0 || (has_timeout && timeout_ticks == 0)) {
-    cell_clear_wait(thread);
-    return (int)ready;
+static int sleep_poll(struct thread *thread, struct trap_frame *frame, const uint64_t *mask,
+                      bool has_timeout, uint64_t timeout_ticks) {
+  if (mask != NULL) {
+    thread->wait.saved_signal_mask = thread->signal_mask;
+    thread->wait.restore_signal_mask = true;
+    thread->signal_mask = cell_sanitize_signal_mask(*mask);
   }
   thread->state = THREAD_BLOCKED;
-  thread->running_cpu = -1;
-  thread->wait.reason = WAIT_POLL;
+  if ((thread->pending_signals | thread->domain->pending_signals) && cell_deliver_pending_signals_current(frame)) {
+    return CELL_SWITCHED;
+  }
+  if (has_timeout && timeout_ticks == 0) {
+    int ready = thread->wait.poll_kind == 2 ? pselect_check(thread, true) : 0;
+    cell_resume_wait(thread);
+    return ready;
+  }
   thread->wait.has_deadline = has_timeout;
-  thread->wait.deadline_tick = cell_uptime_ticks() + timeout_ticks;
+  if (has_timeout) { thread->wait.deadline_tick = cell_uptime_ticks() + timeout_ticks; }
+  thread->running_cpu = -1;
   cell_schedule(frame);
   return CELL_SWITCHED;
 }
 
+int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks,
+                       const uint64_t *mask, struct trap_frame *frame) {
+  struct thread *thread = cell_current_thread_internal();
+  if (thread == NULL || cell_current_domain_internal() == NULL || nfds > CELL_MAX_POLL_FDS) { return -EINVAL; }
+  thread->wait.poll_kind = 1;
+  thread->wait.poll_fds = fds;
+  thread->wait.poll_nfds = nfds;
+  int64_t ready = ppoll_check(thread, true);
+  if (ready != 0) {
+    cell_clear_wait(thread);
+    return (int)ready;
+  }
+  thread->wait.reason = WAIT_POLL;
+  return sleep_poll(thread, frame, mask, has_timeout, timeout_ticks);
+}
+
 int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds, bool has_timeout,
-                          uint64_t timeout_ticks, struct trap_frame *frame) {
+                          uint64_t timeout_ticks, const uint64_t *mask, struct trap_frame *frame) {
   struct thread *thread = cell_current_thread_internal();
   if (thread == NULL || cell_current_domain_internal() == NULL || nfds > 64) { return -EINVAL; }
-  cell_save_current(frame);
   thread->wait.poll_kind = 2;
   thread->wait.poll_nfds = nfds;
   thread->wait.poll_readfds = readfds;
@@ -261,18 +278,12 @@ int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, ui
   thread->wait.poll_exceptfds = exceptfds;
   int64_t ready = pselect_check(thread, false);
   if (ready > 0) { ready = pselect_check(thread, true); }
-  if (ready != 0 || (has_timeout && timeout_ticks == 0)) {
-    if (ready == 0) { ready = pselect_check(thread, true); }
+  if (ready != 0) {
     cell_clear_wait(thread);
     return (int)ready;
   }
-  thread->state = THREAD_BLOCKED;
-  thread->running_cpu = -1;
   thread->wait.reason = WAIT_POLL;
-  thread->wait.has_deadline = has_timeout;
-  thread->wait.deadline_tick = cell_uptime_ticks() + timeout_ticks;
-  cell_schedule(frame);
-  return CELL_SWITCHED;
+  return sleep_poll(thread, frame, mask, has_timeout, timeout_ticks);
 }
 
 int cell_fd_epoll_create(int flags) {
@@ -320,7 +331,7 @@ int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data) 
   return 0;
 }
 
-int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, struct trap_frame *frame) {
+int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, const uint64_t *mask, struct trap_frame *frame) {
   if (maxevents <= 0) { return -EINVAL; }
   if (!cell_ensure_user_range(events_addr, (size_t)maxevents * sizeof(struct epoll_event64), VMM_ACCESS_WRITE)) {
     return -EFAULT;
@@ -329,8 +340,9 @@ int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int t
   int ready = epoll_wait_for_domain(domain, epfd, events_addr, maxevents, true);
   if (ready != 0 || timeout_ms == 0 || frame == NULL) { return ready; }
 
-  struct thread_wait wait = {.reason = WAIT_EPOLL, .target = epfd, .epoll_events = events_addr,
-                             .epoll_maxevents = maxevents, .has_deadline = timeout_ms > 0};
-  if (wait.has_deadline) { wait.deadline_tick = cell_uptime_ticks() + ((uint64_t)timeout_ms + 9) / 10; }
-  return cell_block_current(frame, wait);
+  struct thread *thread = cell_current_thread_internal();
+  thread->wait = (struct thread_wait){.reason = WAIT_EPOLL, .target = epfd, .epoll_events = events_addr,
+                                      .epoll_maxevents = maxevents};
+  uint64_t ticks = timeout_ms > 0 ? ((uint64_t)timeout_ms + 9) / 10 : 0;
+  return sleep_poll(thread, frame, mask, timeout_ms > 0, ticks);
 }

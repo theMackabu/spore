@@ -1,10 +1,13 @@
 #include "integration.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/epoll.h>
+#include <sys/select.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -26,6 +29,8 @@ static unsigned char altstack_area[16384];
 static volatile uintptr_t signal_stack_addr;
 static volatile sig_atomic_t interrupted_signals;
 static volatile sig_atomic_t nested_signals;
+static volatile sig_atomic_t temporary_mask_signals;
+static volatile sig_atomic_t usr2_blocked_in_handler;
 
 static void signal_mask_handler(int signal) {
   saw_sigint += signal;
@@ -48,6 +53,13 @@ static void signal_nested_int_handler(int signal) {
   nested_signals = nested_signals * 10 + signal;
   kill(getpid(), SIGTERM);
   nested_signals = nested_signals * 10 + signal;
+}
+
+static void temporary_mask_handler(int signal) {
+  sigset_t mask;
+  sigprocmask(SIG_SETMASK, NULL, &mask);
+  usr2_blocked_in_handler = sigismember(&mask, SIGUSR2);
+  temporary_mask_signals += signal;
 }
 
 void integration_sleep_ms(long ms) {
@@ -93,6 +105,59 @@ static int signal_mask_regression(void) {
   ok = ok && saw_sigint == SIGINT;
 
   printf("[spore] signal mask pending delivery: %s seen=%d\n", ok ? "PASS" : "FAIL", (int)saw_sigint);
+  return ok;
+}
+
+static int masked_wait(int kind, int fd, int ep, const sigset_t *mask) {
+  struct timespec timeout = {.tv_nsec = 100000000};
+  if (kind == 0) {
+    struct pollfd pfd = {.fd = fd, .events = POLLIN};
+    return ppoll(&pfd, 1, &timeout, mask);
+  }
+  if (kind == 1) {
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(fd, &readfds);
+    return pselect(fd + 1, &readfds, NULL, NULL, &timeout, mask);
+  }
+  struct epoll_event event;
+  return epoll_pwait(ep, &event, 1, 100, mask);
+}
+
+static int temporary_mask_regression(void) {
+  int fds[2];
+  if (pipe(fds) < 0) { return 0; }
+  int ep = epoll_create1(0);
+  struct epoll_event event = {.events = EPOLLIN, .data.fd = fds[0]};
+  struct sigaction action = {.sa_handler = temporary_mask_handler}, old_action;
+  sigemptyset(&action.sa_mask);
+  sigset_t original, temporary, old_mask;
+  sigemptyset(&original);
+  sigaddset(&original, SIGUSR1);
+  sigemptyset(&temporary);
+  sigaddset(&temporary, SIGUSR2);
+  if (sigaction(SIGUSR1, &action, &old_action) < 0) { close(ep); close(fds[0]); close(fds[1]); return 0; }
+  int masked = sigprocmask(SIG_SETMASK, &original, &old_mask) == 0;
+  int ok = masked && ep >= 0 && epoll_ctl(ep, EPOLL_CTL_ADD, fds[0], &event) == 0;
+  for (int kind = 0; ok && kind < 3; ++kind) {
+    char byte;
+    temporary_mask_signals = 0;
+    usr2_blocked_in_handler = 0;
+    ok = write(fds[1], "x", 1) == 1 && raise(SIGUSR1) == 0 &&
+         masked_wait(kind, fds[0], ep, &temporary) == 1 && temporary_mask_signals == 0 &&
+         read(fds[0], &byte, 1) == 1;
+    sigset_t after;
+    ok = ok && masked_wait(kind, fds[0], ep, &temporary) == -1 && errno == EINTR &&
+         temporary_mask_signals == SIGUSR1 && usr2_blocked_in_handler == 1 &&
+         sigprocmask(SIG_SETMASK, NULL, &after) == 0 &&
+         sigismember(&after, SIGUSR1) == 1 && sigismember(&after, SIGUSR2) == 0;
+  }
+  if (masked) { sigprocmask(SIG_SETMASK, &old_mask, NULL); }
+  sigaction(SIGUSR1, &old_action, NULL);
+  if (ep >= 0) { close(ep); }
+  close(fds[0]);
+  close(fds[1]);
+  printf("[spore] temporary signal masks: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
@@ -255,6 +320,7 @@ static int absolute_sleep_regression(void) {
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
   return absolute_sleep_regression() && interval_timer_regression() && signal_mask_regression() &&
+         temporary_mask_regression() &&
          signal_altstack_regression() && signal_interrupted_read_regression() && signal_restart_read_regression() &&
          signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) && signal_nested_regression();
 }

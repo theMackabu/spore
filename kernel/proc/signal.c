@@ -126,6 +126,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
     return false;
   }
 
+  uint64_t handler_mask = thread->signal_mask;
   if (thread->state == THREAD_BLOCKED) {
     if ((action->flags & SA_RESTART) && wait_is_restartable(&thread->wait) &&
         aarch64_restart_syscall(&thread->tf)) {
@@ -139,7 +140,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
     terminate_domain_by_signal(domain, SIGSEGV);
     return true;
   }
-  thread->signal_mask = cell_sanitize_signal_mask(thread->signal_mask | action->mask | signal_bit(signal));
+  thread->signal_mask = cell_sanitize_signal_mask(handler_mask | action->mask | signal_bit(signal));
   if ((action->flags & SA_RESETHAND) != 0) { action->handler = 0; }
   return true;
 }
@@ -185,6 +186,10 @@ bool cell_deliver_pending_signals(struct thread *thread) {
     uint64_t *pending = (thread->pending_signals & bit) ? &thread->pending_signals : &thread->domain->pending_signals;
     if ((*pending & bit) == 0 || signal_is_blocked(thread, signal)) { continue; }
     *pending &= ~bit;
+    const struct signal_action *action = &thread->domain->signal_actions[signal];
+    if (signal != SIGKILL && (action->handler == 1 || (action->handler == 0 && signal_default_ignored(signal)))) {
+      continue;
+    }
     return cell_deliver_signal_to_thread(thread, signal);
   }
   return false;

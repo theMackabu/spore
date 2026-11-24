@@ -41,6 +41,7 @@ struct thread_wait {
   int target;
   uint64_t deadline_tick;
   bool has_deadline;
+  bool restore_signal_mask;
   union {
     struct {
       uint64_t buf;
@@ -56,16 +57,15 @@ struct thread_wait {
       bool socket_msg;
     };
     struct {
+      uint64_t saved_signal_mask;
       uint64_t poll_fds;
       uint64_t poll_nfds;
       uint64_t poll_readfds;
       uint64_t poll_writefds;
       uint64_t poll_exceptfds;
-      uint8_t poll_kind;
-    };
-    struct {
       uint64_t epoll_events;
       int epoll_maxevents;
+      uint8_t poll_kind;
     };
     uint64_t futex_addr;
     struct {

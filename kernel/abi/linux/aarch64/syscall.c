@@ -420,7 +420,7 @@ l_pread64:
 l_pwrite64:
   return sys_pwrite64(f, a0, a1, a2, a3);
 l_pselect6:
-  return sys_pselect6(f, a0, a1, a2, a3, a4);
+  return sys_pselect6(f, a0, a1, a2, a3, a4, a5);
 l_ppoll:
   return sys_ppoll(f, a0, a1, a2, a3, a4);
 l_eventfd2:
