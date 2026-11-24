@@ -128,11 +128,11 @@ test_net = executable('test_net',
 
 test('net', test_net)
 
-test_tcp_tx = executable('test_tcp_transmit', tcp_tx_sources + pmm_sources, 'test_tcp_transmit.c',
+test_tcp_stream = executable('test_tcp_stream', tcp_tx_sources + tcp_rx_sources + pmm_sources, 'test_tcp_stream.c',
   link_with: host_mem,
   link_args: host_kernel_rust.full_path(),
   link_depends: host_kernel_rust,
   include_directories: test_include + [include_directories('../kernel')],
   native: true)
 
-test('tcp-transmit', test_tcp_tx)
+test('tcp-stream', test_tcp_stream)

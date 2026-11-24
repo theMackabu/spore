@@ -9,7 +9,7 @@
 
 struct domain;
 struct trap_frame;
-struct tcp_ooo_state;
+struct tcp_fragment;
 struct tcp_segment;
 struct socket_datagram;
 struct tcp_rx_state;
@@ -116,7 +116,7 @@ struct open_file {
       uint32_t tcp_rx_len;
       uint8_t tcp_state;
       uint8_t tcp_error;
-      uint8_t tcp_ooo_slot;
+      uint8_t tcp_ooo_count;
       uint8_t tcp_syn_retries;
       uint8_t tcp_keepalive_probes;
       uint8_t tcp_remote_window_scale, tcp_local_window_scale;
@@ -135,7 +135,7 @@ struct open_file {
       struct tcp_segment *tcp_tx_head;
       struct tcp_segment *tcp_tx_tail;
       struct tcp_segment *tcp_tx_spare;
-      struct tcp_ooo_state *tcp_ooo;
+      struct tcp_fragment *tcp_ooo;
     };
     struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
     struct {

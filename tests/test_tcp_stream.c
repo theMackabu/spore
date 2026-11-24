@@ -60,12 +60,39 @@ static int fill(void *source, uint8_t *dst, size_t len) {
 
 static int64_t send_text(const char *s) { return tcp_write_stream(&sender, strlen(s), fill, &s); }
 
+void tcp_ack_current_state(struct open_file *) {}
+
+static int collect(void *destination, const uint8_t *src, size_t len) {
+  char **dst = destination;
+  memcpy(*dst, src, len);
+  *dst += len;
+  return 0;
+}
+
+static void test_reordered_stream(void) {
+  struct open_file stream = {.type = OPEN_SOCKET, .socket_proto = IPPROTO_TCP, .tcp_ack = UINT32_MAX - 3};
+  tcp_receive_segment(&stream, 2, (const uint8_t *)"gh", 2, true);
+  tcp_receive_segment(&stream, 0, (const uint8_t *)"efg", 3, false);
+  tcp_receive_segment(&stream, 2, (const uint8_t *)"gh", 2, false);
+  tcp_receive_segment(&stream, UINT32_MAX - 3, (const uint8_t *)"abcde", 5, false);
+  char result[8], *dst = result;
+  assert(tcp_read_stream(&stream, sizeof(result), 0, collect, &dst) == 8);
+  assert(memcmp(result, "abcdefgh", 8) == 0);
+  assert(tcp_read_stream(&stream, sizeof(result), 0, collect, &dst) == 0);
+  tcp_free_rx(&stream);
+  struct open_file other = {.type = OPEN_SOCKET, .socket_proto = IPPROTO_TCP, .tcp_ack = 64};
+  tcp_receive_segment(&other, 80, (const uint8_t *)"later", 5, false);
+  tcp_free_ooo(&other);
+}
+
 int main(void) {
   test_window_negotiation();
   alignas(PAGE_SIZE) static uint8_t backing[32 * PAGE_SIZE];
   struct spore_memmap_entry memory = {.base = 0x100000, .length = sizeof(backing), .type = SPORE_MEMMAP_USABLE};
   pmm_init((uintptr_t)backing - memory.base, &memory, 1);
   uint64_t free_pages = pmm_free_pages();
+  test_reordered_stream();
+  assert(pmm_free_pages() == free_pages);
   sender = (struct open_file){.type = OPEN_SOCKET, .socket_proto = IPPROTO_TCP, .tcp_state = TCP_ESTABLISHED,
                               .tcp_seq = UINT32_MAX - 2, .tcp_remote_window = 6};
   tcp_init_rto(&sender);

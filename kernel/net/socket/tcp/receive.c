@@ -109,6 +109,7 @@ int64_t tcp_read_stream(struct open_file *file, uint64_t len, uint32_t flags, so
   }
   if (!(flags & MSG_PEEK)) {
     consume(file, bytes);
+    tcp_drain_ooo(file);
     tcp_ack_current_state(file);
   }
   return bytes;
