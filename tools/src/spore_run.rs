@@ -56,12 +56,28 @@ fn drive(prefix: &str, path: &OsStr, suffix: &str) -> OsString {
     value
 }
 
+fn default_accelerator() -> &'static str {
+    if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+        "hvf"
+    } else if cfg!(all(target_arch = "aarch64", target_os = "linux"))
+        && fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/kvm")
+            .is_ok()
+    {
+        "kvm"
+    } else {
+        "tcg"
+    }
+}
+
 fn main() {
     let mut mode = OsString::from("filter");
     let (mut image, mut root, mut vars) = (None, None, None);
     let mut qemu = OsString::from("qemu-system-aarch64");
-    let mut accel = OsString::from("hvf");
-    let mut cpu = OsString::from("host");
+    let mut accel = None;
+    let mut cpu = None;
     let mut mem = OsString::from("8G");
     let mut smp = OsString::from("4");
     let (mut timings, mut snap) = (false, false);
@@ -73,8 +89,8 @@ fn main() {
             "--image" => image = Some(value()),
             "--qemu" => qemu = value(),
             "--root" => root = Some(value()),
-            "--accel" => accel = value(),
-            "--cpu" => cpu = value(),
+            "--accel" => accel = Some(value()),
+            "--cpu" => cpu = Some(value()),
             "--memory" => mem = value(),
             "--smp" => smp = value(),
             "--vars" => vars = Some(value()),
@@ -119,6 +135,14 @@ fn main() {
             }
         }
     }
+    let accel = accel.unwrap_or_else(|| default_accelerator().into());
+    let cpu = cpu.unwrap_or_else(|| {
+        if accel.as_bytes().split(|&b| b == b',').next() == Some(b"tcg") {
+            "max".into()
+        } else {
+            "host".into()
+        }
+    });
     let mut q = vec![
         qemu,
         "-M".into(),
