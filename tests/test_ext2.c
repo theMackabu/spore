@@ -368,6 +368,34 @@ static void test_superblock_counter_coherence(bool ext2plus) {
   assert(remove(path) == 0);
 }
 
+static void test_malformed_directory_is_not_empty(void) {
+  char path[256];
+  make_ext2_image(path, sizeof(path), 4096, 1024, 0);
+  FILE *f = fopen(path, "r+b");
+  assert(f != NULL);
+  struct ext2_fs fs;
+  struct ext2_node dir;
+  assert(ext2_mount_rw(&fs, file_read, file_write, f));
+  assert(ext2_create(&fs, "/keep", true, 0755, &dir));
+  assert(ext2_create(&fs, "/keep/child", false, 0644, NULL));
+  assert(ext2_drop_cache(&fs));
+
+  uint64_t first_rec_len = (uint64_t)dir.blocks[0] * fs.block_size + 4;
+  uint8_t original[2];
+  const uint8_t invalid[2] = {7, 0};
+  assert(file_read(f, first_rec_len, original, sizeof(original)));
+  assert(file_write(f, first_rec_len, invalid, sizeof(invalid)));
+  assert(ext2_remove(&fs, "/keep") == -EIO);
+  assert(ext2_drop_cache(&fs));
+  assert(file_write(f, first_rec_len, original, sizeof(original)));
+  struct ext2_node child;
+  assert(ext2_lookup(&fs, "/keep/child", &child));
+  assert(ext2_remove(&fs, "/keep") == -LINUX_ENOTEMPTY);
+  assert(ext2_drop_cache(&fs));
+  assert(fclose(f) == 0);
+  assert(remove(path) == 0);
+}
+
 static void test_cache_flush_retry(void) {
   char path[256];
   make_ext2_image(path, sizeof(path), 4096, 1024, 0);
@@ -550,6 +578,7 @@ int main(int argc, char **argv) {
   test_superblock_counter_coherence(false);
   test_superblock_counter_coherence(true);
   test_cache_flush_retry();
+  test_malformed_directory_is_not_empty();
 
   FILE *f = fopen(argv[1], "rb");
   assert(f != NULL);

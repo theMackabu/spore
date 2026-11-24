@@ -141,6 +141,21 @@ int main(void) {
   assert(data != NULL && data->type == VMA_FILE && data->file_offset == 0x200 && data->file_size == 3);
   assert((data->prot & VMM_USER_WRITE) != 0);
 
+  struct elf64_ehdr *eh = (struct elf64_ehdr *)image;
+  struct elf64_phdr *ph = (struct elf64_phdr *)(image + eh->e_phoff);
+  const char interpreter[] = "/lib/ld-musl-aarch64.so.1";
+  char path[64];
+  ph[2] = (struct elf64_phdr){.p_type = 3, .p_offset = 0x210, .p_filesz = sizeof(interpreter)};
+  memcpy(image + ph[2].p_offset, interpreter, sizeof(interpreter));
+  eh->e_phnum = 3;
+  assert(elf_find_interp_aarch64(&reader, path, sizeof(path)) && strcmp(path, interpreter) == 0);
+  assert(!elf_find_interp_aarch64(&reader, path, 4));
+
+  vma_list_destroy(&vmas);
+  vma_list_init(&vmas);
+  eh->e_type = 3;
+  assert(elf_load_aarch64(&as, &vmas, &reader, 0x100000, &loaded));
+  assert(loaded.entry == 0x501000 && loaded.phdr == 0x500040 && loaded.brk_base == 0x502000);
   image[18] = 0;
   assert(!elf_load_aarch64(&as, &vmas, &reader, 0, &loaded));
   vma_list_destroy(&vmas);
