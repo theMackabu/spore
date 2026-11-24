@@ -1,7 +1,3 @@
-#![no_std]
-
-use core::panic::PanicInfo;
-
 #[repr(C)]
 pub struct NetTcpOptions {
     pub mss: u16,
@@ -9,9 +5,22 @@ pub struct NetTcpOptions {
     pub has_mss: u8,
 }
 
-#[panic_handler]
-fn panic(_: &PanicInfo) -> ! {
-    loop {}
+#[repr(C)]
+pub struct NetRxHeader {
+    pub eth_type: u16,
+    pub ip_protocol: u8,
+    pub ttl: u8,
+    pub ip_header_len: u16,
+    pub transport_len: u16,
+    pub src_ip: u32,
+    pub dst_ip: u32,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub sequence: u32,
+    pub acknowledgement: u32,
+    pub window: u16,
+    pub tcp_flags: u8,
+    pub tcp_options_len: u8,
 }
 
 fn be16(bytes: &[u8]) -> u16 {
@@ -33,13 +42,16 @@ fn checksum(bytes: &[u8]) -> u16 {
     !(sum as u16)
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn spore_net_validate_ethernet(frame: *const u8, len: usize) -> bool {
-    if frame.is_null() || len < 14 {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spore_net_decode_ethernet(frame: *const u8, len: usize, out: *mut NetRxHeader) -> bool {
+    if frame.is_null() || out.is_null() || len < 14 {
         return false;
     }
-    let frame = core::slice::from_raw_parts(frame, len);
-    match be16(&frame[12..14]) {
+    let frame = unsafe { core::slice::from_raw_parts(frame, len) };
+    let mut decoded = NetRxHeader { eth_type: be16(&frame[12..14]), ip_protocol: 0, ttl: 0, ip_header_len: 0,
+        transport_len: 0, src_ip: 0, dst_ip: 0, src_port: 0, dst_port: 0, sequence: 0, acknowledgement: 0,
+        window: 0, tcp_flags: 0, tcp_options_len: 0 };
+    let valid = match decoded.eth_type {
         0x0806 => frame.len() >= 42 && be16(&frame[14..16]) == 1 && be16(&frame[16..18]) == 0x0800 &&
                   frame[18] == 6 && frame[19] == 4,
         0x0800 => {
@@ -56,26 +68,41 @@ pub unsafe extern "C" fn spore_net_validate_ethernet(frame: *const u8, len: usiz
                 return false;
             }
             let payload = &ip[ihl..total];
+            decoded.ip_protocol = ip[9];
+            decoded.ttl = ip[8];
+            decoded.ip_header_len = ihl as u16;
+            decoded.transport_len = payload.len() as u16;
+            decoded.src_ip = u32::from_le_bytes([ip[12], ip[13], ip[14], ip[15]]);
+            decoded.dst_ip = u32::from_le_bytes([ip[16], ip[17], ip[18], ip[19]]);
             match ip[9] {
                 1 => payload.len() >= 8 && checksum(payload) == 0,
                 6 => {
-                    if payload.len() < 20 || payload[0] == 0 || payload[1] == 0 {
+                    if payload.len() < 20 || be16(&payload[0..2]) == 0 || be16(&payload[2..4]) == 0 {
                         return false;
                     }
                     let offset = ((payload[12] >> 4) as usize) * 4;
+                    decoded.src_port = be16(&payload[0..2]);
+                    decoded.dst_port = be16(&payload[2..4]);
+                    decoded.sequence = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+                    decoded.acknowledgement = u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
+                    decoded.window = be16(&payload[14..16]);
+                    decoded.tcp_flags = payload[13];
+                    decoded.tcp_options_len = (offset - 20) as u8;
                     offset >= 20 && offset <= payload.len() &&
                         (payload[13] & 3 != 3) && !(payload[13] & 2 != 0 && payload[13] & 5 != 0)
                 }
-                17 => payload.len() >= 8 && payload[0] != 0 && payload[1] != 0 &&
+                17 => payload.len() >= 8 && be16(&payload[0..2]) != 0 && be16(&payload[2..4]) != 0 &&
                       (be16(&payload[4..6]) as usize) >= 8 && (be16(&payload[4..6]) as usize) <= payload.len(),
                 _ => true,
             }
         }
         _ => false,
-    }
+    };
+    if valid { unsafe { *out = decoded; } }
+    valid
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn spore_net_decode_tcp_options(
     options: *const u8,
     len: usize,
@@ -84,7 +111,7 @@ pub unsafe extern "C" fn spore_net_decode_tcp_options(
     if out.is_null() || (options.is_null() && len != 0) || len > 40 {
         return false;
     }
-    let options = core::slice::from_raw_parts(options, len);
+    let options = if len == 0 { &[] } else { unsafe { core::slice::from_raw_parts(options, len) } };
     let mut decoded = NetTcpOptions { mss: 1460, window_scale: 0, has_mss: 0 };
     let mut index = 0;
     while index < options.len() {
@@ -109,6 +136,6 @@ pub unsafe extern "C" fn spore_net_decode_tcp_options(
             }
         }
     }
-    *out = decoded;
+    unsafe { *out = decoded; }
     true
 }
