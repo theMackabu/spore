@@ -107,6 +107,8 @@ struct ramfs_node {
   uint64_t mtime;
 };
 
+typedef void (*ramfs_reclaim_fn)(enum ramfs_mount mount, uint64_t ino);
+void ramfs_set_reclaim_callback(struct ramfs *fs, ramfs_reclaim_fn callback);
 void ramfs_destroy(struct ramfs *fs);
 bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);
 void ramfs_set_now(uint64_t epoch_sec);

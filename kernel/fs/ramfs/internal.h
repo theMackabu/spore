@@ -41,6 +41,7 @@ struct ramfs_slot {
 
 struct ramfs_table {
   struct ramfs *owner;
+  ramfs_reclaim_fn reclaim;
   struct ramfs_table *next;
   int capacity, next_unused, first_free, live;
   struct ramfs_slot slots[];

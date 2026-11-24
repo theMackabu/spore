@@ -14,6 +14,7 @@ void vfs_page_cache_configure(void);
 bool vfs_sync_mapped_pages(void);
 bool vfs_node_cacheable(const struct vfs_node *node);
 uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
+void vfs_page_cache_forget(const struct vfs_node *node);
 void vfs_page_cache_truncate(const struct vfs_node *node, uint64_t size);
 void vfs_page_cache_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
 void vfs_page_cache_stats(struct vfs_stats *stats);

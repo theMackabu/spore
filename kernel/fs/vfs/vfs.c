@@ -14,12 +14,20 @@ static void ext2_inode_freed(uint32_t ino) {
   struct ext2_node ext = {.ino = ino};
   struct vfs_node node;
   vfs_from_ext2(&ext, &node);
-  vfs_page_cache_truncate(&node, 0);
+  vfs_page_cache_forget(&node);
+}
+
+static void ramfs_inode_freed(enum ramfs_mount mount, uint64_t ino) {
+  struct ramfs_node ram = {.mount = mount, .ino = ino};
+  struct vfs_node node;
+  vfs_from_ramfs(&ram, &node);
+  vfs_page_cache_forget(&node);
 }
 
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2) {
   vfs_root_ramfs = ramfs;
   vfs_root_ext2 = ext2;
+  if (ramfs) { ramfs_set_reclaim_callback(ramfs, ramfs_inode_freed); }
   if (ext2) { ext2->inode_freed = ext2_inode_freed; }
   vfs_page_cache_configure();
   vfs_update_time_sources();

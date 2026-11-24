@@ -26,6 +26,7 @@ static bool resize_table(struct ramfs *fs, int capacity, int high) {
   struct ramfs_table *t = table_alloc(1, table_bytes(capacity));
   if (!t) { return false; }
   t->owner = fs;
+  t->reclaim = old ? old->reclaim : NULL;
   t->capacity = capacity;
   t->next_unused = high;
   for (int i = high; i-- > 0;) {
@@ -59,7 +60,14 @@ static struct ramfs_mem_node *alloc_inode(void) {
 #endif
 }
 
-static void destroy_inode(struct ramfs_mem_node *node) {
+void ramfs_set_reclaim_callback(struct ramfs *fs, ramfs_reclaim_fn callback) {
+  fs->table->reclaim = callback;
+}
+
+static void destroy_inode(const struct ramfs_table *t, struct ramfs_mem_node *node) {
+  if (t->reclaim && node->link_target < 0 && !node->is_dir && node->device == RAMFS_DEV_NONE) {
+    t->reclaim(node->mount, node->ino);
+  }
   ramfs_free_node_pages(node);
 #if __STDC_HOSTED__
   free(node);
@@ -94,7 +102,7 @@ int ramfs_alloc_inode(struct ramfs *fs) {
 
 void ramfs_free_inode(struct ramfs *fs, int i) {
   struct ramfs_table *t = fs->table;
-  destroy_inode(t->slots[i].node);
+  destroy_inode(t, t->slots[i].node);
   t->slots[i].node = NULL;
   t->slots[i].free_next = t->first_free;
   t->first_free = i + 1;
@@ -115,7 +123,7 @@ void ramfs_destroy(struct ramfs *fs) {
   if (t) {
     *slot = t->next;
     for (int i = 0; i < t->next_unused; ++i) {
-      if (t->slots[i].node) { destroy_inode(t->slots[i].node); }
+      if (t->slots[i].node) { destroy_inode(t, t->slots[i].node); }
     }
     table_free(t, 1, table_bytes(t->capacity));
   }

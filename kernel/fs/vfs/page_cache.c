@@ -253,6 +253,21 @@ bool vfs_sync_mapped_pages(void) {
   return true;
 }
 
+void vfs_page_cache_forget(const struct vfs_node *node) {
+  struct vfs_page_cache_entry *entry = files[file_bucket(node->ino, node->dev_id)];
+  bool any = false;
+  while (entry) {
+    struct vfs_page_cache_entry *next = entry->file_next;
+    if (same_file(entry, node)) {
+      vmm_file_page_rearm(&entry->mapped);
+      clear_entry(entry);
+      any = true;
+    }
+    entry = next;
+  }
+  if (any) { ++vfs_stat_counters.page_cache_invalidations; }
+}
+
 void vfs_page_cache_truncate(const struct vfs_node *node, uint64_t size) {
   struct vfs_page_cache_entry *e = files[file_bucket(node->ino, node->dev_id)];
   bool any = false;
