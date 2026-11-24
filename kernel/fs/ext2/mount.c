@@ -11,10 +11,6 @@ uint32_t ext2_now_sec(void) {
   return ext2_now;
 }
 
-uint32_t ext2_div_round_up(uint32_t a, uint32_t b) {
-  return (a + b - 1) / b;
-}
-
 struct ext2_stats ext2_get_stats(void) {
   return ext2_stat_counters;
 }
@@ -112,38 +108,30 @@ static bool ext2plus_mount_init(struct ext2_fs *fs) {
 }
 
 bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, void *ctx) {
+  if (fs == NULL || read == NULL) { return false; }
   struct ext2_super sb;
   if (!read(ctx, EXT2_SUPER_OFFSET, &sb, sizeof(sb))) { return false; }
   if (sb.magic != EXT2_SUPER_MAGIC) { return false; }
   if (sb.log_block_size > 2) { return false; }
+  uint32_t block_size = 1024u << sb.log_block_size;
+  uint32_t inode_size = sb.inode_size ? sb.inode_size : 128u;
+  if (inode_size < 128 || inode_size > block_size || (inode_size & (inode_size - 1)) != 0 ||
+      sb.first_data_block != (block_size == 1024 ? 1u : 0u) || sb.blocks_count <= sb.first_data_block ||
+      sb.blocks_per_group == 0 || sb.blocks_per_group > block_size * 8 ||
+      sb.inodes_per_group == 0 || sb.inodes_per_group > block_size * 8) { return false; }
+  uint32_t groups = 1 + (sb.blocks_count - sb.first_data_block - 1) / sb.blocks_per_group;
+  if (sb.inodes_count < EXT2_ROOT_INO || sb.inodes_count > (uint64_t)groups * sb.inodes_per_group) { return false; }
   uint32_t supported_incompat = EXT2_INCOMPAT_FILETYPE | EXT2_INCOMPAT_SPORE_EXT2PLUS;
   if ((sb.feature_incompat & ~supported_incompat) != 0) { return false; }
 
   if (!ext2_drop_cache(fs)) { return false; }
-  fs->tmpfile_count = 0;
-  fs->read = read;
-  fs->write = write;
-  fs->ctx = ctx;
-  fs->ext2plus = false;
-  fs->ext2plus_store_valid = false;
-  fs->block_size = 1024u << sb.log_block_size;
-  fs->inodes_per_group = sb.inodes_per_group;
-  fs->blocks_per_group = sb.blocks_per_group;
-  fs->inode_size = sb.inode_size == 0 ? 128 : sb.inode_size;
-  fs->first_data_block = sb.first_data_block;
-  fs->inode_count = sb.inodes_count;
-  fs->block_count = sb.blocks_count;
-  fs->next_alloc_block = sb.first_data_block;
-  fs->group_count = ext2_div_round_up(sb.blocks_count - sb.first_data_block, sb.blocks_per_group);
-  fs->ext2plus_store_ino = 0;
-  fs->ext2plus_base_ino = 0;
-  fs->ext2plus_capacity = 0;
-  fs->ext2plus_next_index = 0;
-  fs->ext2plus_free_head = EXT2PLUS_FREE_NONE;
-  fs->ext2plus_free_count = 0;
-  fs->ext2plus_chunk_size = 0;
-  fs->ext2plus_static_inodes_used = 0;
-  if (fs->inodes_per_group == 0 || fs->blocks_per_group == 0 || fs->group_count == 0) { return false; }
+  *fs = (struct ext2_fs){
+    .read = read, .write = write, .ctx = ctx,
+    .block_size = block_size, .inode_size = inode_size, .group_count = groups,
+    .inodes_per_group = sb.inodes_per_group, .blocks_per_group = sb.blocks_per_group,
+    .first_data_block = sb.first_data_block, .next_alloc_block = sb.first_data_block,
+    .inode_count = sb.inodes_count, .block_count = sb.blocks_count, .ext2plus_free_head = EXT2PLUS_FREE_NONE,
+  };
   if ((sb.feature_incompat & EXT2_INCOMPAT_SPORE_EXT2PLUS) != 0 && !ext2plus_mount_init(fs)) { return false; }
   return true;
 }

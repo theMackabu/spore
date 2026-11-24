@@ -244,6 +244,9 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
 
   assert(ext2_drop_cache(&fs));
   assert(fclose(f) == 0);
+  char check[384];
+  snprintf(check, sizeof(check), "e2fsck -fn %s > /dev/null", path);
+  assert(system(check) == 0);
   assert(remove(path) == 0);
 }
 

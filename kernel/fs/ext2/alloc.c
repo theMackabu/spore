@@ -5,15 +5,15 @@ static int alloc_block_maybe_zero(struct ext2_fs *fs, uint32_t *out, bool zero_b
   if (fs->block_size > sizeof(bitmap)) { return -EXT2_EIO; }
   uint32_t start = fs->next_alloc_block;
   if (start < fs->first_data_block || start >= fs->block_count) { start = fs->first_data_block; }
-  uint32_t start_group = start / fs->blocks_per_group;
-  uint32_t start_bit = start % fs->blocks_per_group;
+  uint32_t start_group = (start - fs->first_data_block) / fs->blocks_per_group;
+  uint32_t start_bit = (start - fs->first_data_block) % fs->blocks_per_group;
   for (uint32_t group_step = 0; group_step < fs->group_count; ++group_step) {
     uint32_t group = (start_group + group_step) % fs->group_count;
     struct ext2_group_desc gd;
     if (!ext2_read_group_desc(fs, group, &gd)) { return -EXT2_EIO; }
     if (gd.free_blocks_count == 0) { continue; }
     if (!ext2_read_block(fs, gd.block_bitmap, bitmap)) { return -EXT2_EIO; }
-    uint32_t group_first = group * fs->blocks_per_group;
+    uint32_t group_first = fs->first_data_block + group * fs->blocks_per_group;
     if (group_first >= fs->block_count) { continue; }
     for (uint32_t bit_step = 0; bit_step < fs->blocks_per_group; ++bit_step) {
       uint32_t bit = group == start_group ? (start_bit + bit_step) % fs->blocks_per_group : bit_step;
@@ -49,8 +49,8 @@ int ext2_alloc_block(struct ext2_fs *fs, uint32_t *out) {
 
 bool ext2_free_block(struct ext2_fs *fs, uint32_t block) {
   if (block < fs->first_data_block || block >= fs->block_count) { return false; }
-  uint32_t group = block / fs->blocks_per_group;
-  uint32_t bit = block % fs->blocks_per_group;
+  uint32_t group = (block - fs->first_data_block) / fs->blocks_per_group;
+  uint32_t bit = (block - fs->first_data_block) % fs->blocks_per_group;
   if (group >= fs->group_count) { return false; }
   struct ext2_group_desc gd;
   uint8_t bitmap[4096];
