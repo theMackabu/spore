@@ -268,6 +268,34 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
   assert(remove(path) == 0);
 }
 
+static void test_full_disk_short_write(void) {
+  char path[256];
+  make_ext2_image(path, sizeof(path), 1024, 1024, 0);
+  FILE *f = fopen(path, "r+b");
+  assert(f);
+  struct ext2_fs fs;
+  struct ext2_node node;
+  assert(ext2_mount_rw(&fs, file_read, file_write, f));
+  assert(ext2_create(&fs, "/full", false, 0600, &node));
+  static uint8_t data[1024 * 1024];
+  memset(data, 0x3f, sizeof(data));
+  assert(ext2_write_file(&fs, &node, 1234, data, 0) == 0 && node.size == 0);
+  int64_t wrote = ext2_write_file(&fs, &node, 0, data, sizeof(data));
+  assert(wrote > 0 && wrote < (int64_t)sizeof(data));
+  assert(ext2_write_file(&fs, &node, wrote, data, 1024) == -ENOSPC);
+  assert(ext2_drop_cache(&fs) && ext2_lookup(&fs, "/full", &node));
+  assert(node.size == (uint32_t)wrote);
+  uint8_t byte;
+  uint32_t count;
+  assert(ext2_read_file(&fs, &node, wrote - 1, &byte, 1, &count) && count == 1 && byte == 0x3f);
+  assert(ext2_drop_cache(&fs));
+  assert(fclose(f) == 0);
+  char check[384];
+  snprintf(check, sizeof(check), "e2fsck -fn %s > /dev/null", path);
+  assert(system(check) == 0);
+  assert(remove(path) == 0);
+}
+
 static void test_ext2plus_dynamic_inodes(void) {
   char path[256];
   make_ext2plus_image(path, sizeof(path));
@@ -627,6 +655,7 @@ int main(int argc, char **argv) {
   assert(argc == 2);
   test_block_group_boundary(1024, 20000, 0, 8500);
   test_block_group_boundary(4096, 8192, 2048, 3000);
+  test_full_disk_short_write();
   test_ext2plus_dynamic_inodes();
   test_superblock_counter_coherence(false);
   test_superblock_counter_coherence(true);
