@@ -87,6 +87,8 @@ bool cell_init_stdio(struct domain *domain) {
   in->type = OPEN_STDIN;
   out->type = OPEN_STDOUT;
   err->type = OPEN_STDOUT;
+  out->flags = LINUX_O_WRONLY;
+  err->flags = LINUX_O_WRONLY;
   cell_copy_open_path(in, "/dev/console");
   cell_copy_open_path(out, "/dev/console");
   cell_copy_open_path(err, "/dev/console");

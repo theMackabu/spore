@@ -16,6 +16,11 @@ static uintptr_t integration_page_down(uintptr_t value) {
 }
 
 int main(void) {
+  if ((fcntl(STDOUT_FILENO, F_GETFL) & O_ACCMODE) != O_WRONLY ||
+      (fcntl(STDERR_FILENO, F_GETFL) & O_ACCMODE) != O_WRONLY) {
+    printf("[spore] console output access mode: FAIL\n");
+    return 1;
+  }
   size_t len = 8 * 1024 * 1024;
   unsigned char *mem = malloc(len);
   if (mem == NULL) {
