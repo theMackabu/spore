@@ -126,6 +126,8 @@ bool ext2_read_super(struct ext2_fs *fs, struct ext2_super *out);
 bool ext2_write_super(struct ext2_fs *fs, const struct ext2_super *sb);
 bool ext2_read_group_desc(struct ext2_fs *fs, uint32_t group, struct ext2_group_desc *out);
 bool ext2_write_group_desc(struct ext2_fs *fs, uint32_t group, const struct ext2_group_desc *in);
+bool ext2_read_raw_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);
+void ext2_cache_written_inode(struct ext2_fs *fs, const struct ext2_node *node);
 bool ext2_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);
 bool ext2_write_inode(struct ext2_fs *fs, const struct ext2_node *node);
 bool ext2_file_block(struct ext2_fs *fs, const struct ext2_node *node, uint32_t file_block_index, uint32_t *block_out);

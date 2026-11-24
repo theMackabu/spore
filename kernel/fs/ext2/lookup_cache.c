@@ -192,12 +192,18 @@ static struct ext2_node *inode_slot(struct ext2_dir_cache *cache, uint32_t ino, 
   return *page ? &(*page)[i % INODES_PER_PAGE] : NULL;
 }
 
-static bool read_cached(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
-  struct ext2_node *node = inode_slot(fs->dir_cache, ino, true);
-  if (!node) { return ext2_read_inode(fs, ino, out); }
-  if (node->ino != ino && !ext2_read_inode(fs, ino, node)) { node->ino = 0; return false; }
+bool ext2_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
+  if (!ino) { return false; }
+  struct ext2_node *node = inode_slot(get_cache(fs), ino, true);
+  if (!node) { return ext2_read_raw_inode(fs, ino, out); }
+  if (node->ino != ino && !ext2_read_raw_inode(fs, ino, node)) { node->ino = 0; return false; }
   *out = *node;
   return true;
+}
+
+void ext2_cache_written_inode(struct ext2_fs *fs, const struct ext2_node *node) {
+  struct ext2_node *cached = inode_slot(fs->dir_cache, node->ino, false);
+  if (cached && (!cached->ino || cached->ino == node->ino)) { *cached = *node; }
 }
 
 void ext2_dir_cache_invalidate_inode(struct ext2_fs *fs, uint32_t ino) {
@@ -229,7 +235,7 @@ int ext2_find_child(struct ext2_fs *fs, const struct ext2_node *dir, const char 
   ++ext2_stat_counters.lookup_child_count;
   struct ext2_dir_cache *cache = get_cache(fs);
   struct child_entry *entry = find_child(cache, dir->ino, name, len, name_hash(dir->ino, name, len));
-  if (entry) { return read_cached(fs, entry->ino, out) ? 1 : -EXT2_EIO; }
+  if (entry) { return ext2_read_inode(fs, entry->ino, out) ? 1 : -EXT2_EIO; }
   struct child_scan scan = {.fs = fs, .parent = dir->ino, .name = name, .len = len};
   struct cached_parent *parent = NULL;
   if (cache) {
@@ -244,5 +250,5 @@ int ext2_find_child(struct ext2_fs *fs, const struct ext2_node *dir, const char 
     if (parent) { parent->complete = false; }
     if (!scan.match) { return -EXT2_EIO; }
   }
-  return scan.match ? (read_cached(fs, scan.match, out) ? 1 : -EXT2_EIO) : 0;
+  return scan.match ? (ext2_read_inode(fs, scan.match, out) ? 1 : -EXT2_EIO) : 0;
 }

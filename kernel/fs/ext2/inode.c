@@ -34,7 +34,7 @@ static void encode_inode(const struct ext2_node *node, struct ext2_inode_disk *i
   }
 }
 
-bool ext2_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
+bool ext2_read_raw_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   if (fs->ext2plus && ino >= fs->ext2plus_base_ino) { return ext2plus_read_inode(fs, ino, out); }
   if (ino == 0 || ino > fs->inode_count) { return false; }
   uint32_t index = ino - 1;
@@ -105,7 +105,7 @@ static bool ext2plus_write_inode(struct ext2_fs *fs, const struct ext2_node *nod
   kmemset(&inode, 0, sizeof(inode));
   encode_inode(node, &inode);
   bool ok = ext2plus_write_store(fs, ext2plus_inode_offset(fs, index), &inode, sizeof(inode));
-  if (ok) { ext2_dir_cache_invalidate_inode(fs, node->ino); }
+  if (ok) { ext2_cache_written_inode(fs, node); }
   return ok;
 }
 
@@ -122,7 +122,7 @@ bool ext2_write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   if (!ext2_read_bytes(fs, off, &inode, sizeof(inode))) { return false; }
   encode_inode(node, &inode);
   bool ok = ext2_write_bytes(fs, off, &inode, sizeof(inode));
-  if (ok) { ext2_dir_cache_invalidate_inode(fs, node->ino); }
+  if (ok) { ext2_cache_written_inode(fs, node); }
   return ok;
 }
 
