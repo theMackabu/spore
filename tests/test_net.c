@@ -5,6 +5,7 @@
 #include "drivers/virtio_net.h"
 
 #include <assert.h>
+#include <string.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -746,6 +747,23 @@ static void test_zero_udp_destination_port_is_dropped(void) {
   assert(!saw_frame);
 }
 
+static void test_udp_mtu(void) {
+  uint8_t payload[1473];
+  for (size_t i = 0; i < sizeof(payload); ++i) { payload[i] = (uint8_t)i; }
+  net_init();
+  assert(net_udp_send(49152, UINT32_MAX, 5555, payload, sizeof(payload) - 1));
+  assert(sent_frame_len == 1514);
+  const uint8_t *ip = sent_frame + ETH_HEADER_LEN;
+  assert(ip_checksum(ip, IPV4_HEADER_LEN) == 0);
+  assert(load_be16(ip + 2) == 1500);
+  const uint8_t *udp = ip + IPV4_HEADER_LEN;
+  assert(load_be16(udp + 4) == 1480);
+  assert(memcmp(udp + UDP_HEADER_LEN, payload, sizeof(payload) - 1) == 0);
+  saw_frame = false;
+  assert(!net_udp_send(49152, UINT32_MAX, 5555, payload, sizeof(payload)));
+  assert(!saw_frame);
+}
+
 static void test_arp_miss_queues_ipv4_until_reply(void) {
   uint8_t arp[ETH_HEADER_LEN + 28] = {0};
   uint32_t remote_ip = net_ipv4(93, 184, 216, 34);
@@ -912,6 +930,7 @@ int main(void) {
   test_broadcast_udp_closed_port_does_not_emit_icmp();
   test_bad_udp_checksum_is_dropped();
   test_zero_udp_destination_port_is_dropped();
+  test_udp_mtu();
   test_arp_miss_queues_ipv4_until_reply();
   test_local_subnet_routes_directly();
   test_ipv4_ttl_and_tos_are_preserved_on_udp_and_tcp_send();

@@ -18,14 +18,8 @@ enum {
   ICMP_ECHO_REQUEST = 8,
   ICMP_CODE_PORT_UNREACH = 3,
   IPV4_HEADER_LEN = 20,
-  IPV4_FLAG_RESERVED = 0x8000,
-  IPV4_FLAG_MORE_FRAGMENTS = 0x2000,
-  IPV4_FRAGMENT_OFFSET_MASK = 0x1fff,
   UDP_HEADER_LEN = 8,
   TCP_HEADER_LEN = 20,
-  TCP_FLAG_FIN = 0x01,
-  TCP_FLAG_SYN = 0x02,
-  TCP_FLAG_RST = 0x04,
   ICMP_HEADER_LEN = 8,
   ETH_HEADER_LEN = 14,
   MAX_FRAME = 1514,
@@ -249,7 +243,7 @@ static void arp_flush_pending(uint32_t next_hop, const uint8_t mac[6]) {
     if (!arp_pending[i].used || arp_pending[i].next_hop != next_hop) { continue; }
     kmemcpy(arp_pending[i].frame, mac, 6);
     (void)virtio_net_send_frame(arp_pending[i].frame, arp_pending[i].len);
-    arp_pending[i] = (struct arp_pending_packet){0};
+    arp_pending[i].used = false;
     if (arp_pending_count != 0) { --arp_pending_count; }
   }
   arp_refresh_retry_deadline();
@@ -271,12 +265,20 @@ static void arp_retry_pending(void) {
   arp_refresh_retry_deadline();
 }
 
-static uint32_t build_ipv4_frame(uint8_t *frame, const uint8_t dst_mac[6], uint8_t proto, uint8_t ttl, uint8_t tos,
-                                 uint32_t dst_ip, const void *payload, size_t len) {
-  kmemcpy(frame, dst_mac, 6);
-  kmemcpy(frame + 6, local_mac, 6);
-  store_be16(frame + 12, ETH_TYPE_IPV4);
-  uint8_t *ip = frame + ETH_HEADER_LEN;
+struct ipv4_frame {
+  uint8_t ethernet[ETH_HEADER_LEN];
+  uint8_t ip[IPV4_HEADER_LEN];
+  uint8_t payload[MAX_FRAME - ETH_HEADER_LEN - IPV4_HEADER_LEN];
+};
+
+static bool send_ipv4_frame(struct ipv4_frame *frame, uint8_t proto, uint8_t ttl, uint8_t tos, uint32_t dst_ip,
+                            size_t len) {
+  uint32_t next_hop;
+  bool resolved = resolve_mac_cached(dst_ip, frame->ethernet, &next_hop);
+  if (!resolved) { kmemset(frame->ethernet, 0, 6); }
+  kmemcpy(frame->ethernet + 6, local_mac, 6);
+  store_be16(frame->ethernet + 12, ETH_TYPE_IPV4);
+  uint8_t *ip = frame->ip;
   ip[0] = 0x45;
   ip[1] = tos;
   store_be16(ip + 2, (uint16_t)(IPV4_HEADER_LEN + len));
@@ -288,42 +290,17 @@ static uint32_t build_ipv4_frame(uint8_t *frame, const uint8_t dst_mac[6], uint8
   store_ip(ip + 12, local_ip);
   store_ip(ip + 16, dst_ip);
   store_be16(ip + 10, net_checksum(ip, IPV4_HEADER_LEN));
-  kmemcpy(ip + IPV4_HEADER_LEN, payload, len);
-  return (uint32_t)(ETH_HEADER_LEN + IPV4_HEADER_LEN + len);
-}
-
-static bool send_ipv4_ttl_tos(uint8_t proto, uint8_t ttl, uint8_t tos, uint32_t dst_ip, const void *payload,
-                              size_t len) {
-  if (len + ETH_HEADER_LEN + IPV4_HEADER_LEN > MAX_FRAME) { return false; }
-  uint8_t dst_mac[6];
-  uint32_t next_hop = 0;
-  uint8_t frame[MAX_FRAME];
-  uint32_t frame_len = 0;
-  if (!resolve_mac_cached(dst_ip, dst_mac, &next_hop)) {
-    uint8_t placeholder_mac[6] = {0};
-    frame_len = build_ipv4_frame(frame, placeholder_mac, proto, ttl, tos, dst_ip, payload, len);
-    return queue_ipv4_for_arp(next_hop, frame, frame_len);
-  }
-
-  frame_len = build_ipv4_frame(frame, dst_mac, proto, ttl, tos, dst_ip, payload, len);
-  return virtio_net_send_frame(frame, frame_len);
-}
-
-static bool send_ipv4_tos(uint8_t proto, uint8_t tos, uint32_t dst_ip, const void *payload, size_t len) {
-  return send_ipv4_ttl_tos(proto, 64, tos, dst_ip, payload, len);
-}
-
-static bool send_ipv4(uint8_t proto, uint32_t dst_ip, const void *payload, size_t len) {
-  return send_ipv4_tos(proto, 0, dst_ip, payload, len);
+  uint32_t frame_len = (uint32_t)(ETH_HEADER_LEN + IPV4_HEADER_LEN + len);
+  return resolved ? virtio_net_send_frame(frame, frame_len) : queue_ipv4_for_arp(next_hop, (uint8_t *)frame, frame_len);
 }
 
 static void send_icmp_port_unreachable(uint32_t dst_ip, const uint8_t *original_ip, size_t original_ihl,
                                        const uint8_t *original_payload, size_t original_payload_len) {
   size_t quoted_payload_len = original_payload_len < 8 ? original_payload_len : 8;
   size_t quoted_len = original_ihl + quoted_payload_len;
-  if (ICMP_HEADER_LEN + quoted_len > 1472) { return; }
-
-  uint8_t packet[ICMP_HEADER_LEN + 1472];
+  struct ipv4_frame frame;
+  if (quoted_len > sizeof(frame.payload) - ICMP_HEADER_LEN) { return; }
+  uint8_t *packet = frame.payload;
   packet[0] = ICMP_DEST_UNREACH;
   packet[1] = ICMP_CODE_PORT_UNREACH;
   store_be16(packet + 2, 0);
@@ -334,7 +311,7 @@ static void send_icmp_port_unreachable(uint32_t dst_ip, const uint8_t *original_
     kmemcpy(packet + ICMP_HEADER_LEN + original_ihl, original_payload, quoted_payload_len);
   }
   store_be16(packet + 2, net_checksum(packet, ICMP_HEADER_LEN + quoted_len));
-  (void)send_ipv4(NET_IP_ICMP, dst_ip, packet, ICMP_HEADER_LEN + quoted_len);
+  (void)send_ipv4_frame(&frame, NET_IP_ICMP, 64, 0, dst_ip, ICMP_HEADER_LEN + quoted_len);
 }
 
 bool net_udp_send(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload, size_t len) {
@@ -353,8 +330,9 @@ bool net_udp_send_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
     kprintf("[spore] net: tx denied proto=udp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
   }
-  if (len + UDP_HEADER_LEN > 1472) { return false; }
-  uint8_t packet[UDP_HEADER_LEN + 1472];
+  struct ipv4_frame frame;
+  if (len > sizeof(frame.payload) - UDP_HEADER_LEN) { return false; }
+  uint8_t *packet = frame.payload;
   store_be16(packet, src_port);
   store_be16(packet + 2, dst_port);
   store_be16(packet + 4, (uint16_t)(UDP_HEADER_LEN + len));
@@ -362,7 +340,7 @@ bool net_udp_send_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
   kmemcpy(packet + UDP_HEADER_LEN, payload, len);
   uint16_t sum = net_transport_checksum(local_ip, dst_ip, NET_IP_UDP, packet, UDP_HEADER_LEN + len);
   store_be16(packet + 6, sum == 0 ? 0xffffu : sum);
-  return send_ipv4_ttl_tos(NET_IP_UDP, ttl, tos, dst_ip, packet, UDP_HEADER_LEN + len);
+  return send_ipv4_frame(&frame, NET_IP_UDP, ttl, tos, dst_ip, UDP_HEADER_LEN + len);
 }
 
 bool net_tcp_send_segment(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
@@ -402,11 +380,11 @@ bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, ui
     kprintf("[spore] net: tx denied proto=tcp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
   }
-  if ((options_len & 3u) != 0 || options_len > 40 ||
-      len + TCP_HEADER_LEN + options_len > MAX_FRAME - ETH_HEADER_LEN - IPV4_HEADER_LEN) {
+  struct ipv4_frame frame;
+  if ((options_len & 3u) != 0 || options_len > 40 || len > sizeof(frame.payload) - TCP_HEADER_LEN - options_len) {
     return false;
   }
-  uint8_t packet[TCP_HEADER_LEN + 40 + 1460];
+  uint8_t *packet = frame.payload;
   size_t header_len = TCP_HEADER_LEN + options_len;
   store_be16(packet, src_port);
   store_be16(packet + 2, dst_port);
@@ -420,15 +398,17 @@ bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, ui
   if (options_len != 0) { kmemcpy(packet + TCP_HEADER_LEN, options, options_len); }
   if (len != 0) { kmemcpy(packet + header_len, payload, len); }
   store_be16(packet + 16, net_transport_checksum(local_ip, dst_ip, NET_IP_TCP, packet, header_len + len));
-  return send_ipv4_ttl_tos(NET_IP_TCP, ttl, tos, dst_ip, packet, header_len + len);
+  return send_ipv4_frame(&frame, NET_IP_TCP, ttl, tos, dst_ip, header_len + len);
 }
 
 bool net_icmp_send_echo(uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, const void *payload, size_t len) {
   const uint8_t *data = payload;
   bool has_header = len >= ICMP_HEADER_LEN && data[0] == ICMP_ECHO_REQUEST && data[1] == 0;
-  size_t packet_len = has_header ? len : ICMP_HEADER_LEN + len;
-  uint8_t packet[1472];
-  if (packet_len > sizeof(packet)) { return false; }
+  struct ipv4_frame frame;
+  size_t extra = has_header ? 0 : ICMP_HEADER_LEN;
+  if (len > sizeof(frame.payload) - extra) { return false; }
+  size_t packet_len = len + extra;
+  uint8_t *packet = frame.payload;
   if (has_header) {
     kmemcpy(packet, data, len);
   } else {
@@ -445,7 +425,7 @@ bool net_icmp_send_echo(uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, 
     cell_net_deliver_icmp(dst_ip, 64, packet, packet_len);
     return true;
   }
-  return send_ipv4_ttl_tos(NET_IP_ICMP, ttl, tos, dst_ip, packet, packet_len);
+  return send_ipv4_frame(&frame, NET_IP_ICMP, ttl, tos, dst_ip, packet_len);
 }
 
 static void handle_arp(const struct net_rx_header *h, const uint8_t *arp) {
@@ -465,13 +445,14 @@ static void handle_arp(const struct net_rx_header *h, const uint8_t *arp) {
 static void handle_icmp(const struct net_rx_header *h, const uint8_t *icmp) {
   size_t len = h->transport_len;
   if (h->icmp_type == ICMP_ECHO_REQUEST) {
-    uint8_t reply[ICMP_HEADER_LEN + 1472];
-    if (len > sizeof(reply)) { return; }
+    struct ipv4_frame frame;
+    if (len > sizeof(frame.payload)) { return; }
+    uint8_t *reply = frame.payload;
     kmemcpy(reply, icmp, len);
     reply[0] = ICMP_ECHO_REPLY;
     store_be16(reply + 2, 0);
     store_be16(reply + 2, net_checksum(reply, len));
-    (void)send_ipv4(NET_IP_ICMP, h->src_ip, reply, len);
+    (void)send_ipv4_frame(&frame, NET_IP_ICMP, 64, 0, h->src_ip, len);
   } else if (h->icmp_type == ICMP_ECHO_REPLY) {
     cell_net_deliver_icmp(h->src_ip, h->ttl, icmp, len);
   } else if (h->quoted_src == local_ip) {
@@ -528,7 +509,7 @@ void net_init(void) {
     arp_cache[i].valid = false;
   }
   for (size_t i = 0; i < ARP_PENDING_ENTRIES; ++i) {
-    arp_pending[i] = (struct arp_pending_packet){0};
+    arp_pending[i].used = false;
   }
   kprintf("[spore] net: ipv4 fallback 10.0.2.15 gateway 10.0.2.2; waiting for network.service\n");
 }
@@ -557,7 +538,7 @@ void net_set_config(const struct net_config *cfg) {
     arp_cache[i].valid = false;
   }
   for (size_t i = 0; i < ARP_PENDING_ENTRIES; ++i) {
-    arp_pending[i] = (struct arp_pending_packet){0};
+    arp_pending[i].used = false;
   }
   kprintf("[spore] net: ipv4 %u.%u.%u.%u gateway %u.%u.%u.%u dns %u.%u.%u.%u\n", (unsigned)(local_ip & 0xffu),
           (unsigned)((local_ip >> 8) & 0xffu), (unsigned)((local_ip >> 16) & 0xffu),
