@@ -122,15 +122,26 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
   st->stx_ctime.tv_sec = (int64_t)node->ctime;
 }
 
+static int copy_result(uint64_t addr, const void *value, size_t size) {
+  if (!syscall_user_writable(addr, size) || !vmm_copy_to_user(syscall_active_as(), addr, value, size)) { return -EFAULT; }
+  return 0;
+}
+
+static int copy_stat(uint64_t addr, const struct vfs_node *node) {
+  struct stat64_aarch64 st;
+  fill_stat(&st, node);
+  return copy_result(addr, &st, sizeof(st));
+}
+
+static int copy_statfs(uint64_t addr, const struct vfs_node *node) {
+  struct statfs64_aarch64 st;
+  if (!fill_statfs(&st, node)) { return -EIO; }
+  return copy_result(addr, &st, sizeof(st));
+}
+
 int64_t sys_fstat(uint64_t fd, uint64_t stat_addr) {
   struct vfs_node node;
-  if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
-  struct stat64_aarch64 st;
-  fill_stat(&st, &node);
-  return syscall_user_writable(stat_addr, sizeof(st)) &&
-             vmm_copy_to_user(syscall_active_as(), stat_addr, &st, sizeof(st))
-           ? 0
-           : -(int64_t)EFAULT;
+  return cell_fd_stat((int)fd, &node) ? copy_stat(stat_addr, &node) : -EBADF;
 }
 
 int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr) {
@@ -138,24 +149,12 @@ int64_t sys_statfs(uint64_t path_addr, uint64_t statfs_addr) {
   int64_t rc = syscall_copy_resolved_path_at(AT_FDCWD, path_addr, path, sizeof(path));
   if (rc) { return rc; }
   struct vfs_node node;
-  if (!vfs_lookup(path, &node)) { return -(int64_t)ENOENT; }
-  struct statfs64_aarch64 st;
-  if (!fill_statfs(&st, &node)) { return -(int64_t)EIO; }
-  return syscall_user_writable(statfs_addr, sizeof(st)) &&
-             vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
-           ? 0
-           : -(int64_t)EFAULT;
+  return vfs_lookup(path, &node) ? copy_statfs(statfs_addr, &node) : -ENOENT;
 }
 
 int64_t sys_fstatfs(uint64_t fd, uint64_t statfs_addr) {
   struct vfs_node node;
-  if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
-  struct statfs64_aarch64 st;
-  if (!fill_statfs(&st, &node)) { return -(int64_t)EIO; }
-  return syscall_user_writable(statfs_addr, sizeof(st)) &&
-             vmm_copy_to_user(syscall_active_as(), statfs_addr, &st, sizeof(st))
-           ? 0
-           : -(int64_t)EFAULT;
+  return cell_fd_stat((int)fd, &node) ? copy_statfs(statfs_addr, &node) : -EBADF;
 }
 
 int64_t sys_statx(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mask, uint64_t statx_addr) {
@@ -165,18 +164,13 @@ int64_t sys_statx(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t m
   if (rc) { return rc; }
   struct statx64 st;
   fill_statx(&st, &node);
-  return syscall_user_writable(statx_addr, sizeof(st)) &&
-         vmm_copy_to_user(syscall_active_as(), statx_addr, &st, sizeof(st)) ? 0 : -EFAULT;
+  return copy_result(statx_addr, &st, sizeof(st));
 }
 
 int64_t sys_newfstatat(uint64_t dirfd, uint64_t path_addr, uint64_t stat_addr, uint64_t flags) {
   struct vfs_node node;
   int rc = syscall_lookup_at(dirfd, path_addr, flags, 0, &node, NULL);
-  if (rc) { return rc; }
-  struct stat64_aarch64 st;
-  fill_stat(&st, &node);
-  return syscall_user_writable(stat_addr, sizeof(st)) &&
-         vmm_copy_to_user(syscall_active_as(), stat_addr, &st, sizeof(st)) ? 0 : -EFAULT;
+  return rc ? rc : copy_stat(stat_addr, &node);
 }
 
 int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_t flags) {
@@ -187,4 +181,3 @@ int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_
   if (rc) { return rc; }
   return syscall_node_access_allowed(&node, mode) ? 0 : -EACCES;
 }
-
