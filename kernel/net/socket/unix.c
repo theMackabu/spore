@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/pipe.h"
@@ -18,17 +19,25 @@ static struct open_file **listener_bucket(const struct vfs_node *node) {
   return &listeners[node->ino % (sizeof(listeners) / sizeof(*listeners))];
 }
 
+static struct open_file *unix_socket(int pid, uint32_t uid, uint32_t gid) {
+  struct open_file *file = cell_alloc_open_file();
+  if (file) {
+    file->type = OPEN_UNIX_STREAM;
+    file->unix_owner_pid = pid;
+    file->unix_owner_uid = uid;
+    file->unix_owner_gid = gid;
+    unix_track_socket(file);
+  }
+  return file;
+}
+
 int cell_fd_socket_unix(void) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
   int fd = cell_find_free_fd(domain, 0);
   if (fd < 0) { return -24; }
-  struct open_file *file = cell_alloc_open_file();
+  struct open_file *file = unix_socket(domain->id, domain->euid, domain->egid);
   if (file == NULL) { return -12; }
-  file->type = OPEN_UNIX_STREAM;
-  file->unix_owner_pid = domain->id;
-  file->unix_owner_uid = domain->euid;
-  file->unix_owner_gid = domain->egid;
   domain->fds[fd] = file;
   domain->fd_flags[fd] = 0;
   return fd;
@@ -53,8 +62,8 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
     return -23;
   }
 
-  struct open_file *a = cell_alloc_open_file();
-  struct open_file *b = cell_alloc_open_file();
+  struct open_file *a = unix_socket(domain->id, domain->euid, domain->egid);
+  struct open_file *b = unix_socket(domain->id, domain->euid, domain->egid);
   if (a == NULL || b == NULL) {
     cell_release_open_file(a);
     cell_release_open_file(b);
@@ -68,26 +77,18 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
   cell_pipe_add_reader(b2a);
   cell_pipe_add_writer(b2a);
 
-  a->type = OPEN_UNIX_STREAM;
   a->flags = (uint32_t)(flags & CELL_O_NONBLOCK);
   a->unix_connected = true;
   a->unix_rx_pipe = b2a;
   a->unix_tx_pipe = a2b;
-  a->unix_owner_pid = domain->id;
-  a->unix_owner_uid = domain->euid;
-  a->unix_owner_gid = domain->egid;
   a->unix_peer_pid = domain->id;
   a->unix_peer_uid = domain->euid;
   a->unix_peer_gid = domain->egid;
 
-  b->type = OPEN_UNIX_STREAM;
   b->flags = (uint32_t)(flags & CELL_O_NONBLOCK);
   b->unix_connected = true;
   b->unix_rx_pipe = a2b;
   b->unix_tx_pipe = b2a;
-  b->unix_owner_pid = domain->id;
-  b->unix_owner_uid = domain->euid;
-  b->unix_owner_gid = domain->egid;
   b->unix_peer_pid = domain->id;
   b->unix_peer_uid = domain->euid;
   b->unix_peer_gid = domain->egid;
@@ -134,11 +135,13 @@ static struct open_file *take_head(struct open_file *listener) {
   listener->unix_pending_head = server->unix_pending_next;
   if (!listener->unix_pending_head) { listener->unix_pending_tail = NULL; }
   server->unix_pending_next = NULL;
+  server->unix_pending_owned = false;
   --listener->unix_pending_count;
   return server;
 }
 
 void cell_unix_release_file(struct open_file *file) {
+  unix_untrack_socket(file);
   if (file->type == OPEN_UNIX_LISTENER) {
     socket_index_remove(listener_bucket(&file->node), file);
     while (file->unix_pending_head) { cell_release_open_file(take_head(file)); }
@@ -212,7 +215,7 @@ int cell_fd_unix_connect(int fd, const char *path) {
     cell_pipe_discard(s2c);
     return -23;
   }
-  struct open_file *server = cell_alloc_open_file();
+  struct open_file *server = unix_socket(listener->unix_owner_pid, listener->unix_owner_uid, listener->unix_owner_gid);
   if (server == NULL) {
     cell_pipe_discard(c2s);
     cell_pipe_discard(s2c);
@@ -228,17 +231,14 @@ int cell_fd_unix_connect(int fd, const char *path) {
   client->unix_peer_pid = listener->unix_owner_pid;
   client->unix_peer_uid = listener->unix_owner_uid;
   client->unix_peer_gid = listener->unix_owner_gid;
-  server->type = OPEN_UNIX_STREAM;
   server->unix_connected = true;
   server->unix_rx_pipe = c2s;
   server->unix_tx_pipe = s2c;
-  server->unix_owner_pid = listener->unix_owner_pid;
-  server->unix_owner_uid = listener->unix_owner_uid;
-  server->unix_owner_gid = listener->unix_owner_gid;
   server->unix_peer_pid = domain->id;
   server->unix_peer_uid = domain->euid;
   server->unix_peer_gid = domain->egid;
   server->node = listener->node;
+  server->unix_pending_owned = true;
   if (listener->unix_pending_tail) { listener->unix_pending_tail->unix_pending_next = server; }
   else { listener->unix_pending_head = server; }
   listener->unix_pending_tail = server;

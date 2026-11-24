@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
@@ -65,4 +66,5 @@ void cell_socket_wake_file(struct open_file *file) {
 void cell_socket_timer_tick(uint64_t now_ticks) {
   wake_socket_timeout_waiters(now_ticks);
   tcp_timer_tick(now_ticks);
+  (void)unix_collect_cycles();
 }

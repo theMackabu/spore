@@ -107,6 +107,22 @@ static int unix_rights_regression(void) {
   return ok;
 }
 
+static int unix_rights_lifetime(void) {
+  int a[2], b[2], probe[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, a) || socketpair(AF_UNIX, SOCK_STREAM, 0, b) || pipe(probe)) { return 0; }
+  int to_a[] = {b[0], probe[1]}, to_b[] = {a[0], probe[1]};
+  int ok = send_pair(a[1], to_a) == 2 && send_pair(b[1], to_b) == 2;
+  close(probe[1]); close(b[0]); close(b[1]); close(a[1]);
+  struct pollfd watch = {.fd = probe[0], .events = POLLIN};
+  ok = ok && poll(&watch, 1, 30) == 0;
+  close(a[0]);
+  char byte;
+  ok = ok && poll(&watch, 1, 1000) == 1 && (watch.revents & POLLHUP) && read(probe[0], &byte, 1) == 0;
+  close(probe[0]);
+  printf("[spore] Unix in-flight descriptor lifetime: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_unix_suite(void) {
-  return unix_listener_names() && unix_peer_close_poll_regression() && unix_rights_regression();
+  return unix_listener_names() && unix_peer_close_poll_regression() && unix_rights_regression() && unix_rights_lifetime();
 }

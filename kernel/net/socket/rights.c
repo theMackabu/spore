@@ -2,6 +2,7 @@
 #include "mm/pool.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/pipe.h"
 
 struct unix_rights {
   struct unix_rights *next;
@@ -12,6 +13,32 @@ struct unix_rights {
 
 static const unsigned capacities[] = {4, 16, 64, UNIX_MAX_RIGHTS};
 static struct object_pool pools[sizeof(capacities) / sizeof(*capacities)];
+
+static struct open_file *sockets;
+static bool collection_pending, collecting;
+static size_t queued_sockets;
+
+static bool is_unix(const struct open_file *file) {
+  return file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER;
+}
+
+void unix_track_socket(struct open_file *file) {
+  file->unix_gc_next = sockets;
+  file->unix_gc_link = &sockets;
+  if (sockets) { sockets->unix_gc_link = &file->unix_gc_next; }
+  sockets = file;
+}
+
+void unix_untrack_socket(struct open_file *file) {
+  *file->unix_gc_link = file->unix_gc_next;
+  if (file->unix_gc_next) { file->unix_gc_next->unix_gc_link = file->unix_gc_link; }
+}
+
+void unix_check_last_reference(struct open_file *file) {
+  if (file->unix_inflight && file->refcount == file->unix_inflight + file->unix_pending_owned) {
+    collection_pending = true;
+  }
+}
 
 int unix_prepare_rights(struct domain *domain, const int32_t *fds, unsigned count, struct unix_rights **out) {
   *out = NULL;
@@ -44,6 +71,13 @@ void unix_release_rights(struct unix_rights *rights) {
 }
 
 void unix_queue_rights(struct unix_rights_queue *queue, struct unix_rights *rights, uint64_t start, uint64_t end) {
+  for (unsigned i = 0; i < rights->count; ++i) {
+    if (is_unix(rights->files[i])) {
+      ++rights->files[i]->unix_inflight;
+      ++queued_sockets;
+      unix_check_last_reference(rights->files[i]);
+    }
+  }
   rights->start = start;
   rights->end = end;
   if (queue->tail) { queue->tail->next = rights; }
@@ -55,6 +89,12 @@ static void drop_head(struct unix_rights_queue *queue) {
   struct unix_rights *rights = queue->head;
   queue->head = rights->next;
   if (!queue->head) { queue->tail = NULL; }
+  for (unsigned i = 0; i < rights->count; ++i) {
+    if (is_unix(rights->files[i])) {
+      --rights->files[i]->unix_inflight;
+      --queued_sockets;
+    }
+  }
   unix_release_rights(rights);
 }
 
@@ -88,4 +128,49 @@ unsigned unix_install_rights(struct domain *domain, const struct unix_rights *ri
   }
   *truncated = count < rights->count;
   return count;
+}
+
+static void mark(struct open_file *file, struct open_file **work) {
+  if (!is_unix(file) || file->unix_reachable) { return; }
+  file->unix_reachable = true;
+  file->unix_gc_work = *work;
+  *work = file;
+}
+
+bool unix_collect_cycles(void) {
+  if (!collection_pending || !queued_sockets || collecting) { return false; }
+  collecting = true;
+  collection_pending = false;
+  struct open_file *work = NULL;
+  for (struct open_file *file = sockets; file; file = file->unix_gc_next) {
+    file->unix_reachable = false;
+    if (file->refcount > file->unix_inflight + file->unix_pending_owned) { mark(file, &work); }
+  }
+  while (work) {
+    struct open_file *file = work;
+    work = file->unix_gc_work;
+    for (struct open_file *child = file->unix_pending_head; child; child = child->unix_pending_next) {
+      mark(child, &work);
+    }
+    if (!file->unix_connected) { continue; }
+    for (struct unix_rights *r = cell_pipe_rights(file->unix_rx_pipe)->head; r; r = r->next) {
+      for (unsigned i = 0; i < r->count; ++i) { mark(r->files[i], &work); }
+    }
+  }
+  for (struct open_file *file = sockets; file; file = file->unix_gc_next) {
+    if (!file->unix_reachable) {
+      cell_retain_open_file(file);
+      file->unix_gc_work = work;
+      work = file;
+    }
+  }
+  bool reclaimed = work != NULL;
+  while (work) {
+    struct open_file *file = work;
+    work = file->unix_gc_work;
+    if (file->unix_connected) { unix_clear_rights(cell_pipe_rights(file->unix_rx_pipe)); }
+    cell_release_open_file(file);
+  }
+  collecting = false;
+  return reclaimed;
 }

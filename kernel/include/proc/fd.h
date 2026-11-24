@@ -89,7 +89,9 @@ struct open_file {
           int unix_peer_pid;
           uint32_t unix_peer_uid;
           uint32_t unix_peer_gid;
-          bool unix_bound;
+          bool unix_bound, unix_pending_owned, unix_reachable;
+          uint32_t unix_inflight;
+          struct open_file *unix_gc_next, **unix_gc_link, *unix_gc_work;
           uint16_t unix_backlog, unix_pending_count;
           struct open_file *unix_pending_head, *unix_pending_tail, *unix_pending_next;
         };

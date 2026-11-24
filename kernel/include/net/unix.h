@@ -23,3 +23,8 @@ void unix_clear_rights(struct unix_rights_queue *queue);
 const struct unix_rights *unix_next_rights(const struct unix_rights_queue *queue, uint64_t offset, uint64_t *bytes);
 unsigned unix_install_rights(struct domain *domain, const struct unix_rights *rights, int *fds, unsigned capacity,
                              bool cloexec, bool *truncated);
+
+void unix_track_socket(struct open_file *file);
+void unix_untrack_socket(struct open_file *file);
+void unix_check_last_reference(struct open_file *file);
+bool unix_collect_cycles(void);

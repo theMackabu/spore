@@ -14,6 +14,7 @@
 #include "proc/thread.h"
 #include "tty/pty.h"
 #include "net/socket.h"
+#include "net/unix.h"
 
 enum {
   CELL_O_NONBLOCK = 04000,
@@ -65,6 +66,7 @@ int cell_find_free_fd(struct domain *domain, int start) {
 
 struct open_file *cell_alloc_open_file(void) {
   struct open_file *file = pool_alloc(&open_files);
+  if (!file && unix_collect_cycles()) { file = pool_alloc(&open_files); }
   if (file != NULL) { file->refcount = 1; }
   return file;
 }
@@ -92,6 +94,8 @@ void cell_release_open_file(struct open_file *file) {
     }
     if (file->type == OPEN_VFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
     pool_free(&open_files, file);
+  } else if (file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
+    unix_check_last_reference(file);
   }
 }
 
