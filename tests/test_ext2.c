@@ -243,6 +243,23 @@ static void test_block_group_boundary(uint32_t block_size, uint32_t image_blocks
   assert(ext2_read_file(&fs, &fresh, offset - 1, got, 5, &read));
   assert(read == 5 && memcmp(got, "\0edge", 5) == 0);
 
+  struct ext2_info full, trimmed;
+  assert(ext2_info(&fs, &full));
+  uint32_t keep = 13 * block_size + 1;
+  assert(ext2_truncate(&fs, &fresh, keep));
+  assert(ext2_info(&fs, &trimmed));
+  assert(trimmed.free_blocks > full.free_blocks + write_blocks - 16);
+  assert(fresh.sectors_count == 15 * (block_size / 512));
+  assert(!ext2_truncate(&fs, &fresh, (uint64_t)UINT32_MAX + 1));
+  assert(ext2_truncate(&fs, &fresh, offset + 4));
+  assert(ext2_drop_cache(&fs));
+  assert(ext2_lookup(&fs, "/group-cross.bin", &fresh));
+  assert(ext2_read_file(&fs, &fresh, keep - 1, got, 2, &read));
+  assert(read == 2 && got[0] == 13 && got[1] == 0);
+  assert(ext2_read_file(&fs, &fresh, offset, got, 4, &read));
+  assert(read == 4 && memcmp(got, "\0\0\0\0", 4) == 0);
+  assert(ext2_info(&fs, &full) && full.free_blocks == trimmed.free_blocks);
+
   assert(ext2_drop_cache(&fs));
   assert(fclose(f) == 0);
   char check[384];

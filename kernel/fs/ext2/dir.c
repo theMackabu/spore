@@ -390,11 +390,10 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, 
   if (dir) {
     uint32_t block = 0;
     uint8_t buf[4096];
-    if (fs->block_size > sizeof(buf) || ext2_alloc_block(fs, &block) != 0) {
+    if (fs->block_size > sizeof(buf) || ext2_file_block_for_write(fs, &node, 0, &block, false) != 0) {
       (void)ext2_free_inode(fs, ino);
       return false;
     }
-    node.blocks[0] = block;
     node.size = fs->block_size;
     kmemset(buf, 0, fs->block_size);
     write_dir_record(buf, ino, rec_len_for(1), 1, EXT2_FT_DIR, ".");

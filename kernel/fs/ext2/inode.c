@@ -3,6 +3,37 @@
 static bool ext2plus_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);
 static bool ext2plus_write_inode(struct ext2_fs *fs, const struct ext2_node *node);
 
+static void decode_inode(uint32_t ino, const struct ext2_inode_disk *inode, struct ext2_node *out) {
+  out->ino = ino;
+  out->mode = inode->mode;
+  out->links_count = inode->links_count;
+  out->uid = inode->uid;
+  out->gid = inode->gid;
+  out->size = inode->size;
+  out->atime = inode->atime;
+  out->ctime = inode->ctime;
+  out->mtime = inode->mtime;
+  out->sectors_count = inode->sectors_count;
+  for (size_t i = 0; i < 15; ++i) {
+    out->blocks[i] = inode->block[i];
+  }
+}
+
+static void encode_inode(const struct ext2_node *node, struct ext2_inode_disk *inode) {
+  inode->mode = node->mode;
+  inode->uid = node->uid;
+  inode->gid = node->gid;
+  inode->size = node->size;
+  inode->atime = node->atime;
+  inode->ctime = node->ctime;
+  inode->mtime = node->mtime;
+  inode->links_count = node->links_count;
+  inode->sectors_count = node->sectors_count;
+  for (size_t i = 0; i < 15; ++i) {
+    inode->block[i] = node->blocks[i];
+  }
+}
+
 bool ext2_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   if (fs->ext2plus && ino >= fs->ext2plus_base_ino) { return ext2plus_read_inode(fs, ino, out); }
   if (ino == 0 || ino > fs->inode_count) { return false; }
@@ -14,49 +45,12 @@ bool ext2_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   struct ext2_inode_disk inode;
   uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)local * fs->inode_size;
   if (!ext2_read_bytes(fs, off, &inode, sizeof(inode))) { return false; }
-  out->ino = ino;
-  out->mode = inode.mode;
-  out->links_count = inode.links_count;
-  out->uid = inode.uid;
-  out->gid = inode.gid;
-  out->size = inode.size;
-  out->atime = inode.atime;
-  out->ctime = inode.ctime;
-  out->mtime = inode.mtime;
-  out->sectors_count = inode.sectors_count;
-  for (size_t i = 0; i < 15; ++i) {
-    out->blocks[i] = inode.block[i];
-  }
+  decode_inode(ino, &inode, out);
   return true;
 }
 
 bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   return ext2_read_inode(fs, ino, out);
-}
-
-static uint32_t count_indirect_tree_blocks(struct ext2_fs *fs, uint32_t block, uint32_t depth) {
-  if (block == 0) { return 0; }
-  uint32_t count = 1;
-  uint8_t buf[4096];
-  if (depth == 0 || fs->block_size > sizeof(buf) || !ext2_read_block(fs, block, buf)) { return count; }
-  const uint32_t *entries = (const uint32_t *)buf;
-  uint32_t n = fs->block_size / sizeof(uint32_t);
-  for (uint32_t i = 0; i < n; ++i) {
-    if (entries[i] == 0) { continue; }
-    count += depth == 1 ? 1 : count_indirect_tree_blocks(fs, entries[i], depth - 1);
-  }
-  return count;
-}
-
-static uint32_t count_allocated_blocks(struct ext2_fs *fs, const struct ext2_node *node) {
-  uint32_t count = 0;
-  for (size_t i = 0; i < 12; ++i) {
-    if (node->blocks[i] != 0) { ++count; }
-  }
-  count += count_indirect_tree_blocks(fs, node->blocks[12], 1);
-  count += count_indirect_tree_blocks(fs, node->blocks[13], 2);
-  count += count_indirect_tree_blocks(fs, node->blocks[14], 3);
-  return count;
 }
 
 bool ext2plus_load_store(struct ext2_fs *fs, struct ext2_node *out) {
@@ -96,19 +90,7 @@ static bool ext2plus_read_disk_inode(struct ext2_fs *fs, uint32_t ino, struct ex
 static bool ext2plus_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   struct ext2_inode_disk inode;
   if (!ext2plus_read_disk_inode(fs, ino, &inode) || inode.mode == 0) { return false; }
-  out->ino = ino;
-  out->mode = inode.mode;
-  out->links_count = inode.links_count;
-  out->uid = inode.uid;
-  out->gid = inode.gid;
-  out->size = inode.size;
-  out->atime = inode.atime;
-  out->ctime = inode.ctime;
-  out->mtime = inode.mtime;
-  out->sectors_count = inode.sectors_count;
-  for (size_t i = 0; i < 15; ++i) {
-    out->blocks[i] = inode.block[i];
-  }
+  decode_inode(ino, &inode, out);
   return true;
 }
 
@@ -121,20 +103,7 @@ static bool ext2plus_write_inode(struct ext2_fs *fs, const struct ext2_node *nod
 
   struct ext2_inode_disk inode;
   kmemset(&inode, 0, sizeof(inode));
-  inode.mode = node->mode;
-  inode.uid = node->uid;
-  inode.gid = node->gid;
-  inode.size = node->size;
-  inode.atime = node->atime;
-  inode.ctime = node->ctime;
-  inode.mtime = node->mtime;
-  inode.links_count = node->links_count;
-  inode.sectors_count = ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)
-                          ? 0
-                          : count_allocated_blocks(fs, node) * (fs->block_size / 512);
-  for (size_t i = 0; i < 15; ++i) {
-    inode.block[i] = node->blocks[i];
-  }
+  encode_inode(node, &inode);
   bool ok = ext2plus_write_store(fs, ext2plus_inode_offset(fs, index), &inode, sizeof(inode));
   if (ok) { ext2_dir_cache_invalidate_inode(fs, node->ino); }
   return ok;
@@ -151,65 +120,22 @@ bool ext2_write_inode(struct ext2_fs *fs, const struct ext2_node *node) {
   struct ext2_inode_disk inode;
   uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)local * fs->inode_size;
   if (!ext2_read_bytes(fs, off, &inode, sizeof(inode))) { return false; }
-  inode.mode = node->mode;
-  inode.uid = node->uid;
-  inode.gid = node->gid;
-  inode.size = node->size;
-  inode.atime = node->atime;
-  inode.ctime = node->ctime;
-  inode.mtime = node->mtime;
-  inode.links_count = node->links_count;
-  inode.sectors_count = ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)
-                          ? 0
-                          : count_allocated_blocks(fs, node) * (fs->block_size / 512);
-  for (size_t i = 0; i < 15; ++i) {
-    inode.block[i] = node->blocks[i];
-  }
+  encode_inode(node, &inode);
   bool ok = ext2_write_bytes(fs, off, &inode, sizeof(inode));
   if (ok) { ext2_dir_cache_invalidate_inode(fs, node->ino); }
   return ok;
 }
 
-bool ext2_file_block(struct ext2_fs *fs, const struct ext2_node *node, uint32_t index, uint32_t *out) {
-  uint32_t entries = fs->block_size / sizeof(uint32_t);
-  if (fs->block_size > 4096 || entries == 0) { return false; }
-  if (index < 12) {
-    *out = node->blocks[index];
-    return true;
-  }
-  index -= 12;
-  uint32_t span = entries;
-  size_t root = 12;
-  while (index >= span) {
-    if (root == 14) { return false; }
-    index -= span;
-    span *= entries;
-    ++root;
-  }
-
-  uint32_t block = node->blocks[root];
-  if (root == 14 && block == 0) { return false; }
-  for (size_t depth = root - 11; depth != 0 && block != 0; --depth) {
-    span /= entries;
-    const uint8_t *pointers = ext2_cached_block(fs, block);
-    if (pointers == NULL) { return false; }
-    kmemcpy(&block, pointers + (index / span) * sizeof(block), sizeof(block));
-    index %= span;
-  }
-  *out = block;
-  return true;
-}
-
 bool ext2_is_dir(const struct ext2_node *node) {
-  return (node->mode & EXT2_S_IFDIR) == EXT2_S_IFDIR;
+  return (node->mode & 0170000u) == EXT2_S_IFDIR;
 }
 
 bool ext2_is_regular(const struct ext2_node *node) {
-  return (node->mode & EXT2_S_IFREG) == EXT2_S_IFREG;
+  return (node->mode & 0170000u) == EXT2_S_IFREG;
 }
 
 bool ext2_is_symlink(const struct ext2_node *node) {
-  return (node->mode & EXT2_S_IFLNK) == EXT2_S_IFLNK;
+  return (node->mode & 0170000u) == EXT2_S_IFLNK;
 }
 
 bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, void *dst, uint32_t len,
@@ -309,37 +235,27 @@ int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off
 }
 
 bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
-  if (fs->write == NULL) { return false; }
-  if (size != 0) {
-    node->size = (uint32_t)size;
-    uint32_t now = ext2_now_sec();
-    node->mtime = now;
-    node->ctime = now;
-    return ext2_write_inode(fs, node);
-  }
-  if (ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)) {
-    kmemset(node->blocks, 0, sizeof(node->blocks));
-    node->size = 0;
-    uint32_t now = ext2_now_sec();
-    node->mtime = now;
-    node->ctime = now;
-    return ext2_write_inode(fs, node);
-  }
-  for (size_t i = 0; i < 12; ++i) {
-    if (node->blocks[i] != 0) {
-      (void)ext2_free_block(fs, node->blocks[i]);
-      node->blocks[i] = 0;
+  if (fs->write == NULL || size > UINT32_MAX) { return false; }
+  if (size < node->size || size == 0) {
+    if (ext2_is_symlink(node) && node->sectors_count == 0 && node->size <= sizeof(node->blocks)) {
+      kmemset((uint8_t *)node->blocks + size, 0, sizeof(node->blocks) - size);
+    } else {
+      uint32_t tail = size % fs->block_size;
+      if (tail != 0) {
+        uint32_t block;
+        if (!ext2_file_block(fs, node, size / fs->block_size, &block)) { return false; }
+        static const uint8_t zero[4096];
+        if (block && !ext2_write_bytes(fs, (uint64_t)block * fs->block_size + tail, zero, fs->block_size - tail)) {
+          return false;
+        }
+      }
+      if (!ext2_trim_blocks(fs, node, (size + fs->block_size - 1) / fs->block_size)) {
+        (void)ext2_write_inode(fs, node);
+        return false;
+      }
     }
   }
-  ext2_free_indirect_tree(fs, node->blocks[12], 1);
-  node->blocks[12] = 0;
-  ext2_free_indirect_tree(fs, node->blocks[13], 2);
-  node->blocks[13] = 0;
-  ext2_free_indirect_tree(fs, node->blocks[14], 3);
-  node->blocks[14] = 0;
-  node->size = 0;
-  uint32_t now = ext2_now_sec();
-  node->mtime = now;
-  node->ctime = now;
+  node->size = (uint32_t)size;
+  node->mtime = node->ctime = ext2_now_sec();
   return ext2_write_inode(fs, node);
 }
