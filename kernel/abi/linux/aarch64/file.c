@@ -44,9 +44,12 @@ enum {
   EEXIST = 17,
   EINVAL = 22,
   ENOTDIR = 20,
+  EISDIR = 21,
   ENAMETOOLONG = 36,
   ENOTEMPTY = 39,
   EIO = 5,
+  EBUSY = 16,
+  E2BIG = 7,
   STATX_BASIC_STATS = 0x000007ff,
 };
 
@@ -269,7 +272,7 @@ int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
     (void)vfs_set_sealable(&node, (flags & MFD_ALLOW_SEALING) != 0);
     uint32_t open_flags = O_RDWR | ((flags & MFD_CLOEXEC) != 0 ? O_CLOEXEC : 0);
     int fd = cell_fd_open_node(&node, open_flags, path);
-    if (fd >= 0) { (void)vfs_unlink(path); }
+    if (fd >= 0) { (void)vfs_remove(path); }
     return fd;
   }
   return -(int64_t)EEXIST;
@@ -553,13 +556,43 @@ int64_t sys_mknodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   return 0;
 }
 
-int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr) {
+int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
+  constexpr uint64_t AT_REMOVEDIR = 0x200;
+  if ((flags & ~AT_REMOVEDIR) != 0) { return -(int64_t)EINVAL; }
+  bool directory = (flags & AT_REMOVEDIR) != 0;
+  char raw[CELL_PATH_MAX];
+  int64_t size = syscall_read_user_string(path_addr, raw, sizeof(raw));
+  if (size < 0) { return size == -E2BIG ? -ENAMETOOLONG : size; }
+  if (size == 1) { return -ENOENT; }
+  size_t end = (size_t)size - 1;
+  bool trailing_slash = raw[end - 1] == '/';
+  while (end && raw[end - 1] == '/') { --end; }
+  if (!end) { return directory ? -EBUSY : -EISDIR; }
+  raw[end] = '\0';
+  size_t start = end;
+  while (start && raw[start - 1] != '/') { --start; }
+  bool dot = str_eq(raw + start, ".");
+  bool dotdot = str_eq(raw + start, "..");
+  if (dot || dotdot) { raw[start] = '\0'; }
+
   char path[CELL_PATH_MAX];
-  int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
+  int64_t path_rc = syscall_resolve_path_at(dirfd, raw[0] ? raw : ".", path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   struct vfs_node node;
-  if (!vfs_lstat(path, &node)) { return -(int64_t)ENOENT; }
-  return vfs_unlink(path) ? 0 : -(int64_t)ENOTEMPTY;
+  if (dot || dotdot) {
+    if (!vfs_lookup(path, &node)) { return -ENOENT; }
+    if (!node.is_dir) { return -ENOTDIR; }
+    if (!directory) { return -EISDIR; }
+    return dot ? -EINVAL : -ENOTEMPTY;
+  }
+  if (!vfs_lstat(path, &node)) { return -ENOENT; }
+  if (!node.is_dir && (directory || trailing_slash)) { return -ENOTDIR; }
+  if (node.is_dir && !directory) { return -EISDIR; }
+  const struct vfs_mount *mount;
+  for (size_t i = 0; (mount = vfs_mount_at(i)) != NULL; ++i) {
+    if (str_eq(path, mount->target)) { return -EBUSY; }
+  }
+  return vfs_remove(path);
 }
 
 int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr) {

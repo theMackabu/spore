@@ -787,14 +787,14 @@ bool ramfs_tmpfile(const struct ramfs_node *dir, uint16_t mode, uint32_t uid, ui
   return ramfs_refresh_node(fs, index, out);
 }
 
-bool ramfs_unlink(struct ramfs *fs, const char *path) {
+int ramfs_remove(struct ramfs *fs, const char *path) {
   int entry = lookup_entry(fs, path);
-  if (entry <= 0) { return false; }
+  if (entry <= 0) { return -2; }
   int index = inode_index(fs, entry);
   struct ramfs_mem_node *node = &fs->nodes[index];
   if (node->is_dir) {
     for (int i = 0; i < RAMFS_MAX_NODES; ++i) {
-      if (fs->nodes[i].used && fs->nodes[i].parent == index) { return false; }
+      if (fs->nodes[i].used && fs->nodes[i].parent == index) { return -39; }
     }
   }
   if (entry == index) {
@@ -806,7 +806,7 @@ bool ramfs_unlink(struct ramfs *fs, const char *path) {
   --node->links_count;
   node->ctime = ramfs_now_sec;
   if (node->links_count == 0 && node->refs == 0) { free_node(fs, index); }
-  return true;
+  return 0;
 }
 
 bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path) {

@@ -14,6 +14,7 @@
 #endif
 
 enum {
+  LINUX_ENOTEMPTY = 39,
   EXT2_SUPER_OFFSET = 1024,
   EXT2_FEATURE_INCOMPAT_OFFSET = EXT2_SUPER_OFFSET + 96,
   EXT2_INCOMPAT_SPORE_EXT2PLUS = 0x80000000u,
@@ -54,10 +55,12 @@ static bool file_write(void *ctx, uint64_t offset, const void *src, uint32_t len
 struct retry_io {
   FILE *file;
   unsigned failed_writes;
+  uint64_t unreadable_offset;
 };
 
 static bool retry_read(void *ctx, uint64_t offset, void *dst, uint32_t len) {
   struct retry_io *io = ctx;
+  if (io->unreadable_offset != 0 && offset == io->unreadable_offset) { return false; }
   return file_read(io->file, offset, dst, len);
 }
 
@@ -386,6 +389,16 @@ static void test_cache_flush_retry(void) {
   assert(ext2_read_file(&fs, &fresh, 0, &value, 1, &read));
   assert(read == 1 && value == 'x');
 
+  struct ext2_node dir;
+  assert(ext2_create(&fs, "/keep", true, 0755, &dir));
+  assert(ext2_create(&fs, "/keep/.entry", false, 0644, NULL));
+  assert(ext2_drop_cache(&fs));
+  io.unreadable_offset = (uint64_t)dir.blocks[0] * fs.block_size;
+  assert(ext2_remove(&fs, "/keep") == -EIO);
+  io.unreadable_offset = 0;
+  assert(ext2_lookup(&fs, "/keep/.entry", &fresh));
+  assert(ext2_remove(&fs, "/keep") == -LINUX_ENOTEMPTY);
+
   assert(ext2_flush(&fs));
   assert(ext2_drop_cache(&fs));
   assert(ext2_mount_rw(&fs, retry_read, retry_write, &io));
@@ -461,6 +474,14 @@ static void test_mutations(const char *image_path) {
 
   test_large_file_write(&fs);
   test_relative_symlink_with_dotdot(&fs);
+
+  assert(ext2_create(&fs, "/empty-dir", true, 0755, NULL));
+  assert(ext2_unlink(&fs, "/empty-dir"));
+  assert(ext2_create(&fs, "/dot-hidden-dir", true, 0755, NULL));
+  assert(ext2_create(&fs, "/dot-hidden-dir/.keep", false, 0644, NULL));
+  assert(!ext2_unlink(&fs, "/dot-hidden-dir"));
+  assert(ext2_unlink(&fs, "/dot-hidden-dir/.keep"));
+  assert(ext2_unlink(&fs, "/dot-hidden-dir"));
 
   assert(ext2_create(&fs, "/apkdir", true, 0755, NULL));
   for (int i = 0; i < 128; ++i) {

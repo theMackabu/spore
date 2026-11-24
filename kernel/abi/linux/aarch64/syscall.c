@@ -763,7 +763,7 @@ l_linkat:
 l_symlinkat:
   return sys_symlinkat(a0, a1, a2);
 l_unlinkat:
-  return sys_unlinkat(a0, a1);
+  return sys_unlinkat(a0, a1, a2);
 l_renameat:
   return sys_renameat(a0, a1, a2, a3);
 l_renameat2:

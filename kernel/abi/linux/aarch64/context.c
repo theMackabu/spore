@@ -207,6 +207,11 @@ int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *
   path_policy_denied = false;
   char raw[CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(path_addr, raw, sizeof(raw))) { return -(int64_t)EFAULT; }
+  return syscall_resolve_path_at(dirfd, raw, out, cap);
+}
+
+int64_t syscall_resolve_path_at(uint64_t dirfd, const char *raw, char *out, size_t cap) {
+  path_policy_denied = false;
   char dir_path[CELL_PATH_MAX];
   char virtual_path[CELL_PATH_MAX];
   const char *base = cell_current_cwd();

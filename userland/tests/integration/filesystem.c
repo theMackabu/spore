@@ -201,6 +201,35 @@ static int flock_regression(void) {
   return ok;
 }
 
+static int removal_errors(const char *base, int test_symlink) {
+  if (mkdir(base, 0700) != 0) { return 0; }
+  int dir = open(base, O_RDONLY | O_DIRECTORY);
+  if (dir < 0) { return 0; }
+  int fd = openat(dir, ".keep", O_CREAT | O_RDWR, 0600);
+  int ok = fd >= 0 && write(fd, "X", 1) == 1 &&
+           unlinkat(dir, ".keep", AT_REMOVEDIR) < 0 && errno == ENOTDIR &&
+           unlinkat(dir, ".keep", 1) < 0 && errno == EINVAL &&
+           unlinkat(dir, ".keep/", 0) < 0 && errno == ENOTDIR &&
+           unlinkat(dir, ".", AT_REMOVEDIR) < 0 && errno == EINVAL &&
+           unlinkat(dir, "..", AT_REMOVEDIR) < 0 && errno == ENOTEMPTY &&
+           unlinkat(dir, "", AT_REMOVEDIR) < 0 && errno == ENOENT &&
+           unlink(base) < 0 && errno == EISDIR && rmdir(base) < 0 && errno == ENOTEMPTY;
+  if (fd >= 0) { close(fd); }
+  if (test_symlink) {
+    ok = ok && symlinkat(".keep", dir, "link") == 0 &&
+         unlinkat(dir, "link", AT_REMOVEDIR) < 0 && errno == ENOTDIR &&
+         unlinkat(dir, "link/", 0) < 0 && errno == ENOTDIR && unlinkat(dir, "link", 0) == 0;
+  }
+  fd = openat(dir, ".keep", O_RDONLY);
+  char marker = 0;
+  ok = ok && fd >= 0 && read(fd, &marker, 1) == 1 && marker == 'X';
+  if (fd >= 0) { close(fd); }
+  ok = ok && unlinkat(dir, ".keep", 0) == 0 && rmdir(base) == 0;
+  close(dir);
+  printf("[spore] removal semantics %s: %s\n", base, ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_fs_demo(void) {
   int ok = 1;
   errno = 0;
@@ -242,7 +271,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!flock_regression() || !inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+  if (!removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
       !getdents_proc_batches()) {
     ok = 0;
   }

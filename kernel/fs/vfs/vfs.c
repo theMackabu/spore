@@ -141,16 +141,16 @@ bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
   return ok;
 }
 
-bool vfs_unlink(const char *path) {
+int vfs_remove(const char *path) {
   vfs_update_time_sources();
-  bool ok = false;
+  int rc;
   if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
-    ok = ext2_unlink(vfs_root_ext2, path);
+    rc = ext2_remove(vfs_root_ext2, path);
   } else {
-    ok = vfs_root_ramfs != NULL && ramfs_unlink(vfs_root_ramfs, path);
+    rc = vfs_root_ramfs != NULL ? ramfs_remove(vfs_root_ramfs, path) : -2;
   }
-  if (ok) { vfs_lookup_cache_clear(); }
-  return ok;
+  if (rc == 0) { vfs_lookup_cache_clear(); }
+  return rc;
 }
 
 bool vfs_link(const char *old_path, const char *new_path) {

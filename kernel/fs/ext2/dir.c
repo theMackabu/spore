@@ -67,43 +67,47 @@ static bool ext2plus_hidden_name(struct ext2_fs *fs, const struct ext2_node *dir
          kmemcmp(name, hidden, sizeof(hidden) - 1) == 0;
 }
 
-bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
+static int read_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
   ++ext2_stat_counters.dir_iter_count;
-  if (!ext2_is_dir(dir)) { return false; }
-  uint64_t off = cursor == NULL ? 0 : *cursor;
-  while (off + 8 <= dir->size) {
-    uint32_t file_block_index = (uint32_t)(off / fs->block_size);
-    uint32_t within = (uint32_t)(off % fs->block_size);
-    if (within + 8 > fs->block_size) {
-      off += fs->block_size - within;
-      continue;
-    }
+  if (!ext2_is_dir(dir)) { return -EXT2_EIO; }
+  while (*cursor < dir->size) {
+    uint32_t file_block_index = (uint32_t)(*cursor / fs->block_size);
+    uint32_t within = (uint32_t)(*cursor % fs->block_size);
+    if (fs->block_size - within < 8 || dir->size - *cursor < 8) { return -EXT2_EIO; }
     uint32_t disk_block = 0;
-    if (!ext2_file_block(fs, dir, file_block_index, &disk_block) || disk_block == 0) { return false; }
+    if (!ext2_file_block(fs, dir, file_block_index, &disk_block) || disk_block == 0) { return -EXT2_EIO; }
     const uint8_t *block = ext2_cached_block(fs, disk_block);
-    if (block == NULL) { return false; }
+    if (block == NULL) { return -EXT2_EIO; }
     const uint8_t *record = block + within;
     uint32_t ino =
       (uint32_t)record[0] | ((uint32_t)record[1] << 8) | ((uint32_t)record[2] << 16) | ((uint32_t)record[3] << 24);
     uint16_t rec_len = (uint16_t)record[4] | ((uint16_t)record[5] << 8);
     uint8_t name_len = record[6];
-    uint8_t type = record[7];
-    if (rec_len < 8 || within + rec_len > fs->block_size || off + rec_len > dir->size) { return false; }
-    off += rec_len;
-    if (cursor != NULL) { *cursor = off; }
-    if (ino != 0 && name_len > 0 && name_len <= EXT2_NAME_MAX && name_len + 8 <= rec_len) {
-      const char *name = (const char *)(record + 8);
-      bool dot = (name_len == 1 && name[0] == '.') || (name_len == 2 && name[0] == '.' && name[1] == '.');
-      if (!dot && !ext2plus_hidden_name(fs, dir, name, name_len)) {
-        kmemcpy(out->name, name, name_len);
-        out->name[name_len] = '\0';
-        out->ino = ino;
-        out->type = type;
-        return true;
-      }
+    if (rec_len < 8 || (rec_len & 3u) || rec_len > fs->block_size - within || rec_len > dir->size - *cursor ||
+        (ino && (name_len == 0 || name_len + 8 > rec_len))) {
+      return -EXT2_EIO;
     }
+    *cursor += rec_len;
+    if (!ino) { continue; }
+    const char *name = (const char *)(record + 8);
+    if ((name_len == 1 && name[0] == '.') || (name_len == 2 && name[0] == '.' && name[1] == '.') ||
+        ext2plus_hidden_name(fs, dir, name, name_len)) {
+      continue;
+    }
+    if (out != NULL) {
+      kmemcpy(out->name, name, name_len);
+      out->name[name_len] = '\0';
+      out->ino = ino;
+      out->type = record[7];
+    }
+    return 1;
   }
-  return false;
+  return 0;
+}
+
+bool ext2_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, struct ext2_dirent *out) {
+  uint64_t start = 0;
+  return read_next_dirent(fs, dir, cursor != NULL ? cursor : &start, out) == 1;
 }
 
 bool ext2_dirent(struct ext2_fs *fs, const struct ext2_node *dir, size_t index, struct ext2_dirent *out) {
@@ -736,26 +740,26 @@ bool ext2_chown(struct ext2_fs *fs, const char *path, uint32_t uid, uint32_t gid
   return ext2_lookup(fs, path, &node) && ext2_chown_node(fs, &node, uid, gid);
 }
 
-bool ext2_unlink(struct ext2_fs *fs, const char *path) {
+int ext2_remove(struct ext2_fs *fs, const char *path) {
   char parent_path[256];
   char name[EXT2_NAME_MAX + 1];
-  if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) { return false; }
+  if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) { return -EXT2_ENOENT; }
   struct ext2_node parent;
   struct ext2_node node;
   if (!ext2_lookup(fs, parent_path, &parent) || !lookup_child(fs, &parent, name, kstrlen(name), &node)) {
-    return false;
+    return -EXT2_ENOENT;
   }
   if (ext2_is_dir(&node)) {
-    struct ext2_dirent ent;
-    for (size_t i = 0; ext2_dirent(fs, &node, i, &ent); ++i) {
-      if (!name_equals(ent.name, 1, ".") && !name_equals(ent.name, 2, "..")) { return false; }
-    }
+    uint64_t cursor = 0;
+    int rc = read_next_dirent(fs, &node, &cursor, NULL);
+    if (rc < 0) { return rc; }
+    if (rc > 0) { return -EXT2_ENOTEMPTY; }
   }
-  if (!remove_dirent(fs, &parent, name, NULL)) { return false; }
+  if (!remove_dirent(fs, &parent, name, NULL)) { return -EXT2_EIO; }
   if (!ext2_is_dir(&node) && (node.links_count > 1 || tmpfile_ref(fs, node.ino) != NULL)) {
     --node.links_count;
     node.ctime = ext2_now_sec();
-    return ext2_write_inode(fs, &node);
+    return ext2_write_inode(fs, &node) ? 0 : -EXT2_EIO;
   }
   (void)ext2_truncate(fs, &node, 0);
   if (ext2_is_dir(&node)) {
@@ -766,7 +770,7 @@ bool ext2_unlink(struct ext2_fs *fs, const char *path) {
     (void)ext2_adjust_group_used_dirs(fs, node.ino, -1);
   }
   (void)ext2_free_inode(fs, node.ino);
-  return true;
+  return 0;
 }
 
 bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path) {

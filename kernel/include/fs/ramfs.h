@@ -153,7 +153,10 @@ bool ramfs_write_sealed(struct ramfs *fs, int index);
 bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size);
 bool ramfs_shared_writable_mmap_sealed(struct ramfs *fs, int index);
 void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add);
-bool ramfs_unlink(struct ramfs *fs, const char *path);
+int ramfs_remove(struct ramfs *fs, const char *path);
+static inline bool ramfs_unlink(struct ramfs *fs, const char *path) {
+  return ramfs_remove(fs, path) == 0;
+}
 bool ramfs_tmpfile(const struct ramfs_node *dir, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable,
                    struct ramfs_node *out);
 bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path);
