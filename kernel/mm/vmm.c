@@ -92,6 +92,8 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   as->context_id = __atomic_add_fetch(&last_context_id, 1, __ATOMIC_RELAXED);
   as->root_pa = root;
   as->hhdm_offset = hhdm_offset;
+  as->resident_pages = 0;
+  as->peak_resident_pages = 0;
   as->arg_start = 0;
   as->arg_end = 0;
   as->brk_base = 0;
@@ -138,7 +140,11 @@ static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t p
 
   uint64_t entry = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER | PTE_PXN | permissions;
   if (flags & VMM_MAP_SHARED) { entry |= PTE_SHARED; }
-  l3[pt_index(va, 12)] = with_protection(entry, flags);
+  uint64_t *pte = &l3[pt_index(va, 12)];
+  if (*pte & PTE_VALID) { return false; }
+  *pte = with_protection(entry, flags);
+  ++as->resident_pages;
+  if (as->resident_pages > as->peak_resident_pages) { as->peak_resident_pages = as->resident_pages; }
   aarch64_tlb_flush_va(va);
   return true;
 }
@@ -217,7 +223,12 @@ bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, e
   dst->mmap_base = src->mmap_base;
 
   bool ok = clone_table(dst, src, dst->root_pa, src->root_pa, 0, mode);
-  if (!ok) { vmm_destroy(dst); }
+  if (ok) {
+    dst->resident_pages = src->resident_pages;
+    dst->peak_resident_pages = src->resident_pages;
+  } else {
+    vmm_destroy(dst);
+  }
   aarch64_tlb_flush_all();
   return ok;
 }
@@ -241,6 +252,7 @@ void vmm_destroy(struct user_address_space *as) {
   if (as->root_pa != 0) {
     destroy_table(as, as->root_pa, 0);
     as->root_pa = 0;
+    as->resident_pages = 0;
   }
 }
 
@@ -330,6 +342,7 @@ void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end
       uint64_t entry = range.ptes[i];
       if ((entry & PTE_VALID) == 0) { continue; }
       range.ptes[i] = 0;
+      --as->resident_pages;
       aarch64_tlb_flush_va(range.va + i * PAGE_SIZE);
       pmm_free_page(entry & PTE_ADDR_MASK);
     }

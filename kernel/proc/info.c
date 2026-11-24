@@ -44,14 +44,6 @@ static void fill_proc_info(const struct domain *domain, struct proc_info *out) {
   *out = info;
 }
 
-bool cell_proc_info_for_pid(int pid, struct proc_info *out) {
-  if (out == NULL) { return false; }
-  const struct domain *domain = cell_find_domain(pid);
-  if (domain == NULL || !domain->used) { return false; }
-  fill_proc_info(domain, out);
-  return true;
-}
-
 size_t cell_proc_info(struct proc_info *out, size_t max) {
   size_t count = 0;
   for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {

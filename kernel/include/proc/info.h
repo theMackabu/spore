@@ -27,5 +27,4 @@ struct proc_info {
 };
 
 enum thread_state cell_domain_state(const struct domain *domain);
-bool cell_proc_info_for_pid(int pid, struct proc_info *out);
 size_t cell_proc_info(struct proc_info *out, size_t max);

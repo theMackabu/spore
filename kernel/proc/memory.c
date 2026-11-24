@@ -81,7 +81,11 @@ void cell_mm_release(struct process_mm *mm) {
 
 bool cell_domain_set_mm(struct domain *domain, struct process_mm *mm) {
   if (domain == NULL || mm == NULL) { return false; }
-  if (domain->mm != NULL) { cell_mm_release(domain->mm); }
+  if (domain->mm != NULL) {
+    uint64_t peak = domain->mm->as.peak_resident_pages;
+    if (peak > domain->previous_peak_rss) { domain->previous_peak_rss = peak; }
+    cell_mm_release(domain->mm);
+  }
   domain->mm = mm;
   return true;
 }
@@ -391,11 +395,7 @@ bool cell_memory_accounting(const struct domain *domain, struct cell_memory_acco
   const struct vma_list *vmas = cell_domain_vmas_const(domain);
   if (as == NULL || vmas == NULL) { return false; }
   out->virtual_pages = vma_virtual_pages(vmas);
-  out->resident_pages = 0;
-  for (size_t i = 0; i < vma_count(vmas); ++i) {
-    const struct vma *vma = vma_at(vmas, i);
-    out->resident_pages += vmm_mapped_pages_in_range(as, vma->start, vma->end);
-  }
+  out->resident_pages = as->resident_pages;
   out->minor_faults = domain->minor_faults;
   out->major_faults = domain->major_faults;
   return true;
