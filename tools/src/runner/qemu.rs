@@ -221,7 +221,6 @@ fn launch(config: Config) -> io::Result<i32> {
     } else {
         ("user,id=sporenet".into(), String::new())
     };
-    let forwards_fixture_port = forwards.iter().any(|&(host, _)| host == 8080);
     for (host, port) in forwards {
         net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-{guest}:{port}"));
     }
@@ -298,7 +297,7 @@ fn launch(config: Config) -> io::Result<i32> {
             timeout,
         );
     }
-    super::fixtures::start(mode, forwards_fixture_port)?;
+    super::fixtures::start(mode)?;
     super::harness::run(&q, mode, timings)
 }
 
