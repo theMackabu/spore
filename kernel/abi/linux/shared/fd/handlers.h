@@ -21,9 +21,5 @@ int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events
 
 int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr);
 
-int64_t sys_io_uring_setup(uint32_t entries, uint64_t params);
-int64_t sys_io_uring_enter(struct trap_frame *frame, int fd, uint32_t submit, uint32_t minimum, uint32_t flags, uint64_t sigmask, uint64_t sigsize, bool allow_epoll_ctl);
-int64_t sys_io_uring_register(int fd, uint32_t op, uint64_t arg, uint32_t count);
-
 int64_t sys_poll_ms(struct trap_frame *frame, uint64_t fds, uint64_t nfds, int timeout);
 int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg);

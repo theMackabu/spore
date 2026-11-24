@@ -38,6 +38,7 @@ fn abi_sources(arch: &str) -> impl Iterator<Item = std::path::PathBuf> {
 
 fn runtime_sources() -> impl Iterator<Item = std::path::PathBuf> {
     [
+        "io_uring",
         "mm",
         "fs",
         "proc",

@@ -1,3 +1,4 @@
+#include "io_uring/syscalls.h"
 #include "proc/accounting.h"
 #include "abi/linux/shared/dispatch.h"
 #include "arch/platform.h"

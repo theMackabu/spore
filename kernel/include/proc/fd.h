@@ -1,7 +1,7 @@
 #pragma once
 
 #include "proc/limits.h"
-#include "proc/uring.h"
+#include "io_uring/ring.h"
 #include "fs/vfs.h"
 #include "fs/notify.h"
 

@@ -1,0 +1,51 @@
+#pragma once
+#include <stdint.h>
+
+enum {
+  SETUP_CQSIZE = 1u << 3,
+  SETUP_CLAMP = 1u << 4,
+  SETUP_NO_SQARRAY = 1u << 16,
+  SINGLE_MMAP = 1,
+  GETEVENTS = 1,
+  OFF_CQ_RING = 0x8000000,
+  OFF_SQES = 0x10000000,
+  OP_NOP = 0,
+  OP_EPOLL_CTL = 29,
+  REGISTER_PROBE = 8,
+  MAX_ENTRIES = 1024,
+  EBADF = 9,
+  ENOMEM = 12,
+  EFAULT = 14,
+  EBUSY = 16,
+  EINVAL = 22,
+};
+
+struct offsets {
+  uint32_t head, tail, mask, entries, flags_or_overflow, dropped_or_cqes, array_or_flags, reserved;
+  uint64_t addr;
+};
+struct params {
+  uint32_t sq_entries, cq_entries, flags, cpu, idle, features, wq_fd, reserved[3];
+  struct offsets sq, cq;
+};
+struct rings {
+  uint32_t sq_head, sq_tail, sq_mask, sq_entries, sq_flags, dropped;
+  uint32_t cq_head, cq_tail, cq_mask, cq_entries, overflow, cq_flags;
+};
+struct sqe {
+  uint8_t opcode, flags;
+  uint16_t priority;
+  int32_t fd;
+  uint64_t off, addr;
+  uint32_t len, op_flags;
+  uint64_t data;
+  uint16_t buf_index, personality;
+  uint32_t file_index;
+  uint64_t addr3, pad;
+};
+struct cqe {
+  uint64_t data;
+  int32_t result;
+  uint32_t flags;
+};
+static_assert(sizeof(struct params) == 120 && sizeof(struct sqe) == 64 && sizeof(struct cqe) == 16);
