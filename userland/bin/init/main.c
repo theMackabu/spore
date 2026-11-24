@@ -22,9 +22,9 @@ static void add_control_fd(struct pollfd *fds, nfds_t *nfds) {
 
 static void add_journal_fds(struct pollfd *fds, struct unit **journal_units, nfds_t *nfds) {
   for (size_t i = 0; i < UNIT_CAP && *nfds < UNIT_CAP + 1; ++i) {
-    if (!units[i].used || units[i].journal_fd < 0) { continue; }
+    if (!units[i].used || units[i].journal.fd < 0) { continue; }
     journal_units[*nfds] = &units[i];
-    fds[*nfds] = (struct pollfd){.fd = units[i].journal_fd, .events = POLLIN | POLLHUP};
+    fds[*nfds] = (struct pollfd){.fd = units[i].journal.fd, .events = POLLIN | POLLHUP};
     ++*nfds;
   }
 }
@@ -47,7 +47,8 @@ static nfds_t first_journal_event_index(void) {
 static void dispatch_journal_events(struct pollfd *fds, struct unit **journal_units, nfds_t start, nfds_t nfds) {
   for (nfds_t i = start; i < nfds; ++i) {
     if ((fds[i].revents & (POLLIN | POLLHUP)) == 0) { continue; }
-    read_journal_fd(journal_units[i]);
+    struct unit *unit=journal_units[i];
+    if (unit->journal.fd==fds[i].fd) { journal_read(unit,&unit->journal); }
   }
 }
 

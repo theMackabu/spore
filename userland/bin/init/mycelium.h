@@ -115,6 +115,8 @@ struct unit_config {
   bool persistent;
 };
 
+struct journal_stream { int fd; size_t used; char line[LOG_LINE]; };
+
 struct unit {
   struct unit_config config;
   bool used;
@@ -122,8 +124,7 @@ struct unit {
   char name[64];
   pid_t pid;
   int status;
-  int journal_fd;
-  bool journal_err;
+  struct journal_stream journal;
   time_t active_since;
   time_t inactive_since;
   time_t last_watchdog;
@@ -180,7 +181,10 @@ int start_unit_name(const char *name, char *err, size_t err_cap);
 int run_oneshot_command(struct unit *unit, const char *cmdline);
 void stop_unit(struct unit *unit);
 void reap_children(void);
-void read_journal_fd(struct unit *unit);
+void redirect_output(const char *mode, int fd, int fallback_fd);
+pid_t fork_unit(struct unit *unit, struct journal_stream *stream);
+void journal_read(struct unit *unit, struct journal_stream *stream);
+void journal_finish(struct unit *unit, struct journal_stream *stream);
 void check_timers(void);
 void check_watchdogs(void);
 int next_poll_timeout_ms(void);

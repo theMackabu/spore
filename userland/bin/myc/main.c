@@ -40,6 +40,33 @@ static int send_command(int argc, char **argv) {
   return EXIT_SUCCESS;
 }
 
+static int logs(int argc, char **argv) {
+  bool follow = argc > 1 && streq(argv[1], "-f");
+  int index = follow ? 2 : 1;
+  if (argc > index + 1) {
+    fputs("usage: myc logs [-f] [UNIT]\n", stderr);
+    return EXIT_USAGE;
+  }
+  char path[128] = "/var/log/syslog";
+  if (argc > index) {
+    const char *name = argv[index];
+    if (!*name || strchr(name, '/')) {
+      fputs("logs: invalid unit name\n", stderr);
+      return EXIT_FAILURE;
+    }
+    int n = snprintf(path, sizeof(path), "/var/log/%s%s.log", name, strchr(name, '.') ? "" : ".service");
+    if (n < 0 || (size_t)n >= sizeof(path)) { return EXIT_USAGE; }
+    if (access(path, R_OK) < 0 && errno == ENOENT && !follow) { return send_command(argc, argv); }
+  }
+  if (follow) {
+    execlp("tail", "tail", "-n", "50", "-f", path, (char *)NULL);
+  } else {
+    execlp("tail", "tail", "-n", "50", path, (char *)NULL);
+  }
+  perror("myc: tail");
+  return EXIT_FAILURE;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2 || streq(argv[1], "--help")) {
     puts("usage: myc COMMAND [UNIT]");
@@ -47,5 +74,6 @@ int main(int argc, char **argv) {
     puts("          list-dependencies is-active is-failed daemon-reload logs isolate reboot poweroff");
     return argc < 2 ? EXIT_USAGE : EXIT_SUCCESS;
   }
+  if (streq(argv[1], "logs")) { return logs(argc - 1, argv + 1); }
   return send_command(argc - 1, argv + 1);
 }

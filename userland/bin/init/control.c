@@ -184,7 +184,13 @@ void handle_command(const char *cmdline, const struct control_peer *peer, char *
   } else if (streq(argv[0], "logs")) {
     int arg = 1;
     if (argc > 1 && streq(argv[1], "-f")) { arg = 2; }
-    struct unit *unit = unit_by_name(arg < argc ? argv[arg] : "");
+    const char *name=arg < argc ? argv[arg] : "";
+    struct unit *unit=unit_by_name(name);
+    if (!unit && *name && !strchr(name,'.')) {
+      char service[sizeof(unit->name)];
+      int len=snprintf(service,sizeof(service),"%s.service",name);
+      if (len>0 && (size_t)len<sizeof(service)) { unit=unit_by_name(service); }
+    }
     if (unit == NULL) {
       append_response(out, cap, "logs: unit not found\n");
     } else {

@@ -28,7 +28,7 @@ struct unit *alloc_unit(const char *name) {
       units[i].config.service_type = SERVICE_SIMPLE;
       units[i].state = STATE_INACTIVE;
       units[i].config.restart = RESTART_NO;
-      units[i].journal_fd = -1;
+      units[i].journal.fd = -1;
       units[i].config.restart_sec = 1;
       units[i].config.timeout_stop_sec = 3;
       units[i].config.start_limit_interval = 10;

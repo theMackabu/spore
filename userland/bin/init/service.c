@@ -116,28 +116,9 @@ int spawn_service(struct unit *unit) {
   if (unit->config.exec_start[0] == '\0') { return -1; }
   if (!rate_limit_ok(unit)) { return -1; }
 
-  int journal_pipe[2] = {-1, -1};
-  bool journal_out = streq(unit->config.standard_output, "journal") || streq(unit->config.standard_error, "journal");
-  if (journal_out && pipe(journal_pipe) != 0) { return -1; }
-
-  pid_t pid = fork();
-  if (pid < 0) {
-    if (journal_pipe[0] >= 0) {
-      close(journal_pipe[0]);
-      close(journal_pipe[1]);
-    }
-    return -1;
-  }
-  if (pid == 0) {
-    if (journal_pipe[1] >= 0) {
-      if (streq(unit->config.standard_output, "journal")) { dup2(journal_pipe[1], STDOUT_FILENO); }
-      if (streq(unit->config.standard_error, "journal")) { dup2(journal_pipe[1], STDERR_FILENO); }
-      close(journal_pipe[0]);
-      close(journal_pipe[1]);
-    }
-    redirect_output(unit->config.standard_output, STDOUT_FILENO, STDOUT_FILENO);
-    redirect_output(unit->config.standard_error, STDERR_FILENO, STDERR_FILENO);
-
+  pid_t pid=fork_unit(unit,&unit->journal);
+  if (pid<0) { return -1; }
+  if (!pid) {
     struct passwd *user = NULL;
     if (unit->config.user[0]) {
       user = getpwnam(unit->config.user);
@@ -170,8 +151,6 @@ int spawn_service(struct unit *unit) {
     _exit(127);
   }
 
-  if (journal_pipe[1] >= 0) { close(journal_pipe[1]); }
-  unit->journal_fd = journal_pipe[0];
   unit->pid = pid;
   unit->status = 0;
   unit->state = unit->config.service_type == SERVICE_NOTIFY ? STATE_ACTIVATING : STATE_ACTIVE;
@@ -206,6 +185,7 @@ int start_unit_name(const char *name, char *err, size_t err_cap) {
     goto out;
   }
   if (unit->config.type == UNIT_TARGET) {
+    journal_append(unit,"reached target");
     unit->state = STATE_ACTIVE;
     unit->active_since = time(NULL);
     announce_unit_started(unit);
@@ -260,17 +240,27 @@ int run_oneshot_command(struct unit *unit, const char *cmdline) {
   copy_text(copy, sizeof(copy), cmdline);
   char *argv[ARG_CAP];
   split_args(copy, argv, ARG_CAP);
-  pid_t pid = fork();
-  if (pid < 0) { return 1; }
+  struct journal_stream stream={.fd=-1};
+  pid_t pid = fork_unit(unit,&stream);
+  if (pid < 0) { journal_append(unit,"fork: %s",strerror(errno)); return 1; }
   if (pid == 0) {
     if (unit->config.capability[0] != '\0') { (void)syscall(SYS_SPORE_APPLY_POLICY, unit->config.capability); }
     close_inherited_manager_fds();
     execvp(argv[0], argv);
+    perror(argv[0]);
     _exit(127);
   }
-  int status = 0;
-  (void)waitpid(pid, &status, 0);
-  int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+  int status;
+  pid_t got;
+  for (;;) {
+    got=waitpid(pid,&status,stream.fd>=0 ? WNOHANG : 0);
+    if (got==pid || (got<0 && errno!=EINTR)) { break; }
+    if (got<0) { continue; }
+    struct pollfd watch={.fd=stream.fd,.events=POLLIN};
+    if (poll(&watch,1,50)>0) { journal_read(unit,&stream); }
+  }
+  journal_finish(unit,&stream);
+  int rc=got!=pid ? 1 : WIFEXITED(status) ? WEXITSTATUS(status) : 128+WTERMSIG(status);
   journal_append(unit, "oneshot '%s' exit=%d", cmdline, rc);
   return rc;
 }
@@ -300,10 +290,7 @@ void stop_unit(struct unit *unit) {
       unit->pid = 0;
     }
   }
-  if (unit->journal_fd >= 0) {
-    close(unit->journal_fd);
-    unit->journal_fd = -1;
-  }
+  journal_finish(unit,&unit->journal);
   unit->state = STATE_INACTIVE;
   unit->inactive_since = time(NULL);
   journal_append(unit, "stopped");
@@ -338,10 +325,7 @@ void reap_children(void) {
     if (unit == NULL) { continue; }
     unit->pid = 0;
     unit->status = status;
-    if (unit->journal_fd >= 0) {
-      close(unit->journal_fd);
-      unit->journal_fd = -1;
-    }
+    journal_finish(unit,&unit->journal);
     if (WIFEXITED(status)) {
       journal_append(unit, "exited status=%d", WEXITSTATUS(status));
     } else if (WIFSIGNALED(status)) {
@@ -365,24 +349,6 @@ void reap_children(void) {
         copy_text(unit->fail_reason, sizeof(unit->fail_reason), "exit-failure");
       }
     }
-  }
-}
-
-void read_journal_fd(struct unit *unit) {
-  char buf[192];
-  ssize_t n = read(unit->journal_fd, buf, sizeof(buf) - 1);
-  if (n <= 0) {
-    close(unit->journal_fd);
-    unit->journal_fd = -1;
-    return;
-  }
-  buf[n] = '\0';
-  char *line = strtok(buf, "\n");
-  while (line != NULL) {
-    if (strstr(line, "READY=1") != NULL && unit->state == STATE_ACTIVATING) { unit->state = STATE_ACTIVE; }
-    if (strstr(line, "WATCHDOG=1") != NULL) { unit->last_watchdog = time(NULL); }
-    journal_append(unit, "%s", line);
-    line = strtok(NULL, "\n");
   }
 }
 

@@ -7,7 +7,7 @@ banner. It reaps children, checks timers and watchdogs, and applies each service
 
 `myc` sends requests to the manager over `/run/mycelium.sock`. From the shell, try
 `myc list-dependencies multi-user.target`, `myc status network.service` or
-`myc logs hostname.service`. Services can direct output to the journal or console.
+`myc logs` for the latest 50 system log lines, or `myc logs network` for the DHCP service. Add `-f` to follow new output. Service and oneshot stdout and stderr follow the unit’s output settings. Full logs are in `/var/log/syslog` and `/var/log/UNIT.log`.
 The `logger` command appends a tagged message to `/var/log/messages` and `/var/log/syslog`.
 Use `sudo shutdown` to power off. [Control socket](../../userland/bin/init/control.c) · [Logger](../../userland/bin/logger/main.c)
 
