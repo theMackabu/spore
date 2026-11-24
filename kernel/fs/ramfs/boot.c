@@ -99,7 +99,9 @@ static int add_mount(struct ramfs *fs, int root, const char *name, enum ramfs_mo
 static bool populate_dev(struct ramfs *fs, int dev) {
   int mounts = ramfs_add_node(fs, dev, "fs", true, true);
   int blk = ramfs_add_node(fs, dev, "blk", true, true);
-  if (ramfs_add_node(fs, dev, "shm", true, true) < 0) { return false; }
+  int shm = ramfs_add_node(fs, dev, "shm", true, true);
+  if (shm < 0) { return false; }
+  ramfs_inode_at(fs, shm)->mode = 0041777;
   int pts = ramfs_add_node(fs, dev, "pts", true, true);
   static const struct boot_node devices[] = {
     {"null", RAMFS_DEV_NULL, CHAR_DEVICE}, {"zero", RAMFS_DEV_ZERO, CHAR_DEVICE},
@@ -169,7 +171,9 @@ bool ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *
   int dev = add_mount(fs, root, "dev", RAMFS_MOUNT_DEV);
   int proc = add_mount(fs, root, "proc", RAMFS_MOUNT_PROC);
   int sys = add_mount(fs, root, "sys", RAMFS_MOUNT_SYS);
-  if (add_mount(fs, root, "tmp", RAMFS_MOUNT_TMP) < 0) { return false; }
+  int tmp = add_mount(fs, root, "tmp", RAMFS_MOUNT_TMP);
+  if (tmp < 0) { return false; }
+  ramfs_inode_at(fs, tmp)->mode = 0041777;
   if (add_mount(fs, root, "run", RAMFS_MOUNT_RUN) < 0) { return false; }
   if (!populate_dev(fs, dev) ||
       !populate_proc(fs, proc) || !populate_cpu(fs, sys)) { return false; }

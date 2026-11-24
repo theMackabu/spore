@@ -186,6 +186,7 @@ enum {
   EPERM = 1,
   EIO = 5,
   EBADF = 9,
+  EACCES = 13,
   EFAULT = 14,
   EINVAL = 22,
   ENOTDIR = 20,
@@ -787,6 +788,7 @@ l_fchdir: {
   struct vfs_node node;
   if (!cell_fd_stat((int)a0, &node)) { return -(int64_t)EBADF; }
   if (!node.is_dir) { return -(int64_t)ENOTDIR; }
+  if (!syscall_node_access_allowed(&node, 1)) { return -EACCES; }
   char path[CELL_PATH_MAX];
   if (!cell_fd_path((int)a0, path, sizeof(path))) { return -(int64_t)EBADF; }
   return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;

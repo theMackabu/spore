@@ -94,3 +94,24 @@ int syscall_lookup_at(uint64_t dirfd, uint64_t addr, uint64_t flags, uint8_t rig
   if (!found) { return -ENOENT; }
   return directory && !node->is_dir ? -ENOTDIR : 0;
 }
+
+
+int syscall_may_change_entry(char *path, bool replacing) {
+  if (!cell_fs_path_allowed(path, CELL_FS_WRITE)) { return -EPERM; }
+  size_t component = base_name(path) - path;
+  size_t split = component > 1 ? component - 1 : 1;
+  char saved = path[split];
+  path[split] = 0;
+  struct vfs_node parent;
+  bool found = vfs_lookup(path, &parent);
+  path[split] = saved;
+  if (!found) { return -ENOENT; }
+  if (!parent.is_dir) { return -ENOTDIR; }
+  if (!syscall_node_access_allowed(&parent, W_OK | X_OK)) { return -EACCES; }
+  uint32_t euid = cell_current_euid();
+  if (replacing && (parent.mode & 01000u) && euid && euid != parent.uid) {
+    struct vfs_node victim;
+    if (vfs_lstat(path, &victim) && euid != victim.uid) { return -EPERM; }
+  }
+  return 0;
+}

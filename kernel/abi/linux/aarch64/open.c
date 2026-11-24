@@ -34,7 +34,7 @@ int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr,
   struct syscall_path name;
   int64_t rc = syscall_read_path_at(dirfd, path_addr, &name);
   if (rc) { return rc; }
-  const char *path = name.resolved;
+  char *path = name.resolved;
   const char *display = name.visible;
   bool path_only = flags & LINUX_O_PATH;
   if (path_only) { flags &= LINUX_O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC; }
@@ -90,6 +90,8 @@ int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr,
   if (!exists) {
     if (!(flags & O_CREAT)) { return -ENOENT; }
     if (directory) { return -EISDIR; }
+    rc = syscall_may_change_entry(path, false);
+    if (rc) { return rc; }
     if (!vfs_create(path, cell_creation_mode(mode), &node)) { return -ENOENT; }
     (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
     if (!vfs_refresh(&node, &node)) { return -EIO; }

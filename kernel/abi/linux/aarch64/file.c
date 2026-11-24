@@ -22,10 +22,12 @@ int64_t sys_chdir(uint64_t path_addr) {
   struct vfs_node node;
   if (!vfs_lookup(name.resolved, &node)) { return -(int64_t)ENOENT; }
   if (!node.is_dir) { return -(int64_t)ENOTDIR; }
+  if (!syscall_node_access_allowed(&node, X_OK)) { return -EACCES; }
   return cell_set_cwd(name.visible) ? 0 : -(int64_t)ENAMETOOLONG;
 }
 
 int64_t sys_chroot(uint64_t path_addr) {
+  if (cell_current_euid()) { return -EPERM; }
   char path[CELL_PATH_MAX];
   int64_t rc = syscall_copy_resolved_path_at(AT_FDCWD, path_addr, path, sizeof(path));
   if (rc) { return rc; }
@@ -40,6 +42,8 @@ int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
+  path_rc = syscall_may_change_entry(path, false);
+  if (path_rc) { return path_rc; }
   if (!vfs_mkdir(path, cell_creation_mode(mode))) {
     struct vfs_node existing;
     if (vfs_lookup(path, &existing)) { return -(int64_t)EEXIST; }
@@ -55,7 +59,9 @@ int64_t sys_mknodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   if (path_rc != 0) { return path_rc; }
   if ((mode & S_IFMT) != S_IFIFO) { return -(int64_t)EINVAL; }
   struct vfs_node node;
-  int rc = vfs_mkspecial(path, (uint16_t)(S_IFIFO | (cell_creation_mode(mode))), &node);
+  path_rc = syscall_may_change_entry(path, false);
+  if (path_rc) { return path_rc; }
+  int rc = vfs_mkspecial(path, S_IFIFO | cell_creation_mode(mode), &node);
   if (rc) { return rc; }
   (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
   return 0;
@@ -97,7 +103,8 @@ int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   for (size_t i = 0; (mount = vfs_mount_at(i)) != NULL; ++i) {
     if (str_eq(path, mount->target)) { return -EBUSY; }
   }
-  return vfs_remove(path);
+  path_rc = syscall_may_change_entry(path, true);
+  return path_rc ? path_rc : vfs_remove(path);
 }
 
 static int64_t rename_path(uint64_t dirfd, uint64_t addr, char path[CELL_PATH_MAX], bool *trailing_slash) {
@@ -118,23 +125,7 @@ static int64_t rename_path(uint64_t dirfd, uint64_t addr, char path[CELL_PATH_MA
   for (size_t i = 0; (mount = vfs_mount_at(i)); ++i) {
     if (str_eq(path, mount->target)) { return -EBUSY; }
   }
-  if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(W_OK))) { return -EPERM; }
-
-  size_t name = base_name(path) - path;
-  size_t split = name > 1 ? name - 1 : 1;
-  char saved = path[split];
-  path[split] = 0;
-  struct vfs_node parent;
-  bool found = vfs_lookup(path, &parent);
-  path[split] = saved;
-  if (!found) { return -ENOENT; }
-  if (!parent.is_dir) { return -ENOTDIR; }
-  if (!syscall_node_access_allowed(&parent, W_OK | X_OK)) { return -EACCES; }
-  if ((parent.mode & 01000u) && cell_current_euid() && cell_current_euid() != parent.uid) {
-    struct vfs_node victim;
-    if (vfs_lstat(path, &victim) && victim.uid != cell_current_euid()) { return -EPERM; }
-  }
-  return 0;
+  return syscall_may_change_entry(path, true);
 }
 
 int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_addr, uint64_t new_dirfd, uint64_t new_addr, uint64_t flags) {
@@ -165,7 +156,8 @@ int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirf
   char old_path[CELL_PATH_MAX], new_path[CELL_PATH_MAX];
   int64_t rc = syscall_copy_resolved_path_at(new_dirfd, new_path_addr, new_path, sizeof(new_path));
   if (rc != 0) { return rc; }
-  if (!cell_fs_path_allowed(new_path, syscall_fs_rights_from_access(W_OK))) { return -EPERM; }
+  rc = syscall_may_change_entry(new_path, false);
+  if (rc) { return rc; }
 
   if (!syscall_user_readable(old_path_addr, 1) || !vmm_copy_from_user(syscall_active_as(), &first, old_path_addr, 1)) {
     return -EFAULT;
@@ -209,7 +201,12 @@ int64_t sys_symlinkat(uint64_t target_addr, uint64_t new_dirfd, uint64_t link_pa
   }
   int64_t path_rc = syscall_copy_resolved_path_at(new_dirfd, link_path_addr, link_path, sizeof(link_path));
   if (path_rc != 0) { return path_rc; }
-  return vfs_symlink(target, link_path) ? 0 : -(int64_t)EEXIST;
+  path_rc = syscall_may_change_entry(link_path, false);
+  if (path_rc) { return path_rc; }
+  if (!vfs_symlink(target, link_path)) { return -EEXIST; }
+  struct vfs_node node;
+  if (!vfs_lstat(link_path, &node) || !vfs_chown_node(&node, cell_current_euid(), cell_current_egid())) { return -EIO; }
+  return 0;
 }
 
 int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t buf, uint64_t len) {

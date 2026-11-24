@@ -168,6 +168,7 @@ int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
   if (family == AF_UNIX) {
     char path[CELL_PATH_MAX];
     int rc = unix_socket_path(addr, len, path);
+    if (!rc) { rc = syscall_may_change_entry(path, false); }
     return rc ? rc : cell_fd_unix_bind((int)fd, path);
   }
   struct sockaddr_in64 sa;
