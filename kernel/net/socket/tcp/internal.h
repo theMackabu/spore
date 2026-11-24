@@ -12,6 +12,10 @@ enum {
 
 bool tcp_send_syn(const struct open_file *file, uint32_t seq, bool reply);
 void tcp_apply_syn_options(struct open_file *file, uint16_t window, const void *options, size_t len);
+void tcp_set_timer_active(struct open_file *file, bool active);
+void tcp_note_activity(struct open_file *file, uint64_t now);
+void tcp_init_keepalive(struct open_file *file, uint64_t now);
+void tcp_fail(struct open_file *file, int error);
 void tcp_free_rx(struct open_file *file);
 uint32_t tcp_append_rx(struct open_file *file, const uint8_t *data, uint32_t len);
 void tcp_ack_current_state(struct open_file *file);
