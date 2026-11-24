@@ -64,11 +64,13 @@ pub unsafe extern "C" fn spore_elf_load(read: Option<Read>, ctx: *mut core::ffi:
         let end = match segment_end.checked_add(4095) { Some(value) => value & !4095, None => return false };
         if !unsafe { map(map_ctx, &program, segment, segment & !4095, end) } { return false; }
         if segment_end > high { high = segment_end; }
-        if header.phoff >= program.offset && phend <= program.offset.saturating_add(program.filesz) { phdr = segment + header.phoff - program.offset; }
+        let file_end = match program.offset.checked_add(program.filesz) { Some(value) => value, None => return false };
+        if header.phoff >= program.offset && phend <= file_end { phdr = segment + header.phoff - program.offset; }
     }
     if high == 0 { return false; }
     let brk = match high.checked_add(4095) { Some(value) => value & !4095, None => return false };
-    unsafe { *out = SporeElfLoaded { entry: base + header.entry, load_base: base, phdr, brk_base: brk, phent: 56, phnum: header.phnum }; }
+    let entry = match base.checked_add(header.entry) { Some(value) => value, None => return false };
+    unsafe { *out = SporeElfLoaded { entry, load_base: base, phdr, brk_base: brk, phent: 56, phnum: header.phnum }; }
     true
 }
 
