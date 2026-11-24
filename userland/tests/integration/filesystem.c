@@ -255,6 +255,26 @@ static int fifo_without_reader(void) {
   return ok;
 }
 
+static int creation_mask(void) {
+  mode_t saved = umask(0077);
+  pid_t child = fork();
+  if (child == 0) {
+    struct stat st;
+    int ok = umask(0027) == 0077;
+    int fd = open("/tmp/masked", O_CREAT | O_EXCL | O_RDWR, 0666);
+    ok = ok && fd >= 0 && fstat(fd, &st) == 0 && (st.st_mode & 0777) == 0640;
+    if (fd >= 0) { close(fd); unlink("/tmp/masked"); }
+    _exit(ok ? 0 : 1);
+  }
+  int status;
+  int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
+  struct stat st;
+  int fd = open("/", O_TMPFILE | O_RDWR, 0777);
+  ok = ok && fd >= 0 && fstat(fd, &st) == 0 && (st.st_mode & 0777) == 0700;
+  if (fd >= 0) { close(fd); }
+  return umask(saved) == 0077 && ok;
+}
+
 static int disk_fifo(void) {
   const char *name = "/spore-fifo", *link_name = "/spore-fifo-link";
   if (mkfifo(name, 0600) || link(name, link_name)) { return 0; }
@@ -476,7 +496,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !disk_fifo() || !pathname_page_boundary() ||
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !creation_mask() || !disk_fifo() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }

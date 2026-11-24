@@ -21,6 +21,7 @@ struct domain {
   int pgrp_id;
   int session_id;
   uint16_t refcount;
+  uint16_t umask;
   bool used;
   bool zombie;
   int exit_status;
@@ -75,6 +76,8 @@ int cell_current_pid(void);
 int cell_current_ppid(void);
 const char *cell_current_name(void);
 void cell_set_current_name(const char *name);
+uint16_t cell_creation_mode(uint32_t mode);
+uint16_t cell_set_umask(uint32_t mask);
 uint32_t cell_current_uid(void);
 uint32_t cell_current_euid(void);
 uint32_t cell_current_gid(void);

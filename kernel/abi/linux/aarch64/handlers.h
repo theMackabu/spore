@@ -6,8 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr int SYSCALL_UMASK = 0022;
-
 struct user_address_space *syscall_active_as(void);
 struct vfs_node;
 bool syscall_user_readable(uint64_t buf, uint64_t len);

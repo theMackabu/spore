@@ -743,7 +743,7 @@ l_uname:
 l_sethostname:
   return sys_sethostname(a0, a1);
 l_umask:
-  return SYSCALL_UMASK;
+  return cell_set_umask(a0);
 l_prctl:
   return sys_prctl(a0, a1, a2, a3, a4);
 l_chroot:

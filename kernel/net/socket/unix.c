@@ -143,7 +143,7 @@ int cell_fd_unix_bind(int fd, const char *path) {
   if (file == NULL || file->type != OPEN_UNIX_STREAM || path == NULL || path[0] == '\0') { return -EINVAL; }
   struct vfs_node node;
   if (file->unix_bound) { return -EINVAL; }
-  int rc = vfs_mkspecial(path, 0140755, &node);
+  int rc = vfs_mkspecial(path, 0140000 | cell_creation_mode(0777), &node);
   if (rc) { return rc == -17 ? -EADDRINUSE : rc; }
   (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
   if (!vfs_retain_node(&node)) { (void)vfs_remove(path); return -12; }

@@ -171,7 +171,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
     if (!vfs_lookup(path, &dir)) { return -ENOENT; }
     if (!dir.is_dir) { return -ENOTDIR; }
     if (!syscall_node_access_allowed(&dir, W_OK | X_OK)) { return -EACCES; }
-    int rc = vfs_tmpfile(&dir, mode & 07777u & ~SYSCALL_UMASK, cell_current_euid(), cell_current_egid(),
+    int rc = vfs_tmpfile(&dir, cell_creation_mode(mode), cell_current_euid(), cell_current_egid(),
                          (flags & O_EXCL) == 0, &tmp);
     if (rc < 0) { return rc; }
     size_t len = kstrlen(virtual_path);
@@ -199,7 +199,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
   bool exists = vfs_lookup(path, &node);
   if (exists && (flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) { return -(int64_t)EEXIST; }
   if (!exists) {
-    uint16_t create_mode = (uint16_t)(mode & 07777u & ~SYSCALL_UMASK);
+    uint16_t create_mode = cell_creation_mode(mode);
     if ((flags & O_CREAT) == 0 || !vfs_create(path, create_mode, &node)) { return -(int64_t)ENOENT; }
     (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
     (void)vfs_lookup(path, &node);
@@ -476,7 +476,7 @@ int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
-  if (!vfs_mkdir(path, (uint32_t)mode & ~SYSCALL_UMASK)) {
+  if (!vfs_mkdir(path, cell_creation_mode(mode))) {
     struct vfs_node existing;
     if (vfs_lookup(path, &existing)) { return -(int64_t)EEXIST; }
     return -(int64_t)EINVAL;
@@ -491,7 +491,7 @@ int64_t sys_mknodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   if (path_rc != 0) { return path_rc; }
   if ((mode & S_IFMT) != S_IFIFO) { return -(int64_t)EINVAL; }
   struct vfs_node node;
-  int rc = vfs_mkspecial(path, (uint16_t)(S_IFIFO | (mode & 07777u & ~SYSCALL_UMASK)), &node);
+  int rc = vfs_mkspecial(path, (uint16_t)(S_IFIFO | (cell_creation_mode(mode))), &node);
   if (rc) { return rc; }
   (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
   return 0;

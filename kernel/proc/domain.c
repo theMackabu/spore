@@ -82,6 +82,7 @@ struct thread *cell_alloc_process(void) {
       kmemset(&domains[i], 0, sizeof(domains[i]));
       if (i == domain_slot_limit) { ++domain_slot_limit; }
       domains[i].used = true;
+      domains[i].umask = 0022;
       domains[i].nofile_soft = domains[i].nofile_hard = MAX_FDS;
       domains[i].id = cell_new_task_id();
       domains[i].pgrp_id = domains[i].id;
@@ -109,6 +110,7 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   dst->budget = src->budget;
   dst->nofile_soft = src->nofile_soft;
   dst->nofile_hard = src->nofile_hard;
+  dst->umask = src->umask;
   dst->uid = src->uid;
   dst->euid = src->euid;
   dst->gid = src->gid;
@@ -225,6 +227,17 @@ int cell_setsid_current(void) {
   domain->session_id = domain->id;
   domain->pgrp_id = domain->id;
   return domain->session_id;
+}
+
+uint16_t cell_creation_mode(uint32_t mode) {
+  return (uint16_t)(mode & 07777u & ~cell_current_domain_internal()->umask);
+}
+
+uint16_t cell_set_umask(uint32_t mask) {
+  struct domain *domain = cell_current_domain_internal();
+  uint16_t old = domain->umask;
+  domain->umask = mask & 0777;
+  return old;
 }
 
 uint32_t cell_current_uid(void) {

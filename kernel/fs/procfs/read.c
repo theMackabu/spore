@@ -159,6 +159,10 @@ static size_t proc_pid_status_text(char *dst, size_t cap, const struct proc_task
   (void)cell_memory_accounting(domain, &mem);
   proc_append_str(dst, cap, &len, "Name:\t");
   proc_append_str(dst, cap, &len, domain->name);
+  proc_append_str(dst, cap, &len, "\nUmask:\t0");
+  for (int shift = 6; shift >= 0; shift -= 3) {
+    proc_append_char(dst, cap, &len, '0' + ((domain->umask >> shift) & 7));
+  }
   proc_append_str(dst, cap, &len, "\nState:\t");
   enum thread_state state = task->thread ? task->thread->state : cell_domain_state(domain);
   proc_append_char(dst, cap, &len, proc_state_char(state));
