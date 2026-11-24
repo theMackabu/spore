@@ -3,9 +3,11 @@
 #include <errno.h>
 #include <poll.h>
 #include <pthread.h>
+#include <setjmp.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/auxv.h>
 #include <sys/epoll.h>
 #include <sys/select.h>
 #include <sys/syscall.h>
@@ -22,6 +24,22 @@ uint64_t integration_usec_now(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+}
+
+static sigjmp_buf probe_return;
+
+static void probe_signal(int sig, siginfo_t *info, void *context) {
+  (void)context;
+  siglongjmp(probe_return, sig == SIGILL && info->si_code == ILL_ILLOPC && info->si_addr ? 1 : 2);
+}
+
+static int vector_probe_fallback(void) {
+  if (getauxval(AT_HWCAP) & (1ul << 22)) { return 1; }
+  struct sigaction old, action = {.sa_sigaction = probe_signal, .sa_flags = SA_SIGINFO};
+  if (sigaction(SIGILL, &action, &old)) { return 0; }
+  int caught = sigsetjmp(probe_return, 1);
+  if (!caught) { __asm__ volatile(".inst 0x04a03000" ::: "v0"); }
+  return sigaction(SIGILL, &old, NULL) == 0 && caught == 1;
 }
 
 static volatile sig_atomic_t saw_sigint;
@@ -319,8 +337,9 @@ static int absolute_sleep_regression(void) {
 
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
-  return absolute_sleep_regression() && interval_timer_regression() && signal_mask_regression() &&
-         temporary_mask_regression() &&
-         signal_altstack_regression() && signal_interrupted_read_regression() && signal_restart_read_regression() &&
-         signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) && signal_nested_regression();
+  return vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
+         signal_mask_regression() && temporary_mask_regression() && signal_altstack_regression() &&
+         signal_interrupted_read_regression() && signal_restart_read_regression() &&
+         signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) &&
+         signal_nested_regression();
 }

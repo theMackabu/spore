@@ -10,7 +10,18 @@
 #include "proc/memory.h"
 #include "proc/signal.h"
 
-enum { EC_SVC_A64 = 0x15, SIGSEGV = 11, SEGV_MAPERR = 1, SEGV_ACCERR = 2 };
+enum {
+  EC_UNKNOWN = 0x00,
+  EC_SVC_A64 = 0x15,
+  EC_SYS64 = 0x18,
+  EC_SVE = 0x19,
+  EC_SME = 0x1d,
+  SIGILL = 4,
+  SIGSEGV = 11,
+  ILL_ILLOPC = 1,
+  SEGV_MAPERR = 1,
+  SEGV_ACCERR = 2
+};
 
 extern char vectors[];
 
@@ -40,8 +51,8 @@ void handle_unhandled_exception(void) {
 
 void handle_lower_sync(struct trap_frame *frame) {
   uint64_t ec = (frame->esr_el1 >> 26) & 0x3f;
-  if (ec == 0) {
-    cell_signal_current_fault(4, frame, frame->elr_el1, 1);
+  if (ec == EC_UNKNOWN || ec == EC_SYS64 || ec == EC_SVE || ec == EC_SME) {
+    cell_signal_current_fault(SIGILL, frame, frame->elr_el1, ILL_ILLOPC);
     return;
   }
   if (ec != EC_SVC_A64) {
