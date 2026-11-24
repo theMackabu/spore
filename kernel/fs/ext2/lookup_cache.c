@@ -15,6 +15,7 @@ struct child_cache_entry {
   uint32_t ino;
   uint32_t hash;
   uint32_t name_start;
+  uint32_t block_index;
   uint16_t next;
   uint8_t name_len;
 };
@@ -107,7 +108,7 @@ static void evict_oldest(void) {
   child_cache_erase(entry);
 }
 
-void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t len, uint32_t ino) {
+void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t len, uint32_t ino, uint32_t block_index) {
   uint32_t hash = child_name_hash(parent_ino, name, len);
   struct child_cache_entry *entry = child_cache_find(fs, parent_ino, name, len, hash);
   if (entry == NULL) {
@@ -132,6 +133,12 @@ void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent_ino, const char *na
     *head = (uint16_t)(entry - child_cache + 1);
   }
   entry->ino = ino;
+  entry->block_index = block_index;
+}
+
+uint32_t ext2_cache_name_block(struct ext2_fs *fs, uint32_t parent, const char *name, size_t len) {
+  struct child_cache_entry *entry = child_cache_find(fs, parent, name, len, child_name_hash(parent, name, len));
+  return entry != NULL ? entry->block_index : 0;
 }
 
 static bool child_cache_read_entry(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
@@ -163,6 +170,7 @@ struct child_scan {
   size_t name_len;
   uint32_t matched_ino;
   bool fill;
+  uint64_t cursor;
 };
 
 static bool cache_dirent(void *ctx, uint32_t ino, uint8_t type, const char *name, uint8_t len) {
@@ -170,7 +178,7 @@ static bool cache_dirent(void *ctx, uint32_t ino, uint8_t type, const char *name
   struct child_scan *scan = ctx;
   ++ext2_stat_counters.dir_iter_count;
   bool match = scan->name_len == len && kmemcmp(scan->name, name, len) == 0;
-  if (scan->fill || match) { ext2_cache_add_name(scan->fs, scan->parent, name, len, ino); }
+  if (scan->fill || match) { ext2_cache_add_name(scan->fs, scan->parent, name, len, ino, (uint32_t)(scan->cursor / scan->fs->block_size)); }
   if (match) { scan->matched_ino = ino; }
   return match && !scan->fill;
 }
@@ -191,8 +199,7 @@ bool ext2_lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const ch
     return false;
   }
   parent->age = ++child_cache_clock;
-  uint64_t cursor = 0;
   ++ext2_stat_counters.dir_iter_count;
-  if (ext2_visit_dir(fs, dir, &cursor, cache_dirent, &scan) < 0) { parent->complete = false; }
+  if (ext2_visit_dir(fs, dir, &scan.cursor, cache_dirent, &scan) < 0) { parent->complete = false; }
   return scan.matched_ino != 0 && child_cache_read_entry(fs, scan.matched_ino, out);
 }
