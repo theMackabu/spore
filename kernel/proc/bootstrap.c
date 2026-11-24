@@ -1,5 +1,6 @@
 #include "proc/bootstrap.h"
 #include "init/app.h"
+#include "init/program.h"
 #include "lib/kstr.h"
 #include "accounting_internal.h"
 #include "arch/aarch64/platform.h"
@@ -58,7 +59,8 @@ void cell_system_init(void) {
           (unsigned)thread_count, (unsigned)mm_count, (unsigned)open_file_count);
 }
 
-bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp) {
+bool cell_create_init(const struct init_program *program, struct user_address_space *as, struct vma_list *vmas,
+                      uint64_t entry, uint64_t sp) {
   struct thread *thread = cell_alloc_process();
   if (thread == NULL) { return false; }
   struct domain *domain = thread->domain;
@@ -66,8 +68,8 @@ bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint
   domain->pgrp_id = domain->id;
   domain->session_id = domain->id;
   (void)cell_tty_set_foreground_pgrp(domain->pgrp_id);
-  cell_set_domain_identity(domain, launch.path, launch.argv, launch.argc);
-  copy_cstr(domain->cwd, sizeof(domain->cwd), launch.cwd);
+  cell_set_domain_identity(domain, program->path, program->argv, program->argc);
+  copy_cstr(domain->cwd, sizeof(domain->cwd), program->cwd);
   struct process_mm *mm = cell_mm_from_owned(as, vmas);
   if (mm == NULL || !cell_domain_set_mm(domain, mm)) {
     if (mm != NULL) { cell_mm_release(mm); }

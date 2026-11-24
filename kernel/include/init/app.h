@@ -1,28 +1,17 @@
 #pragma once
 
-#include "init/boot_info.h"
-#include "net/net.h"
-
-struct ramfs;
-
-enum { APP_MAX_ARGS = 128, APP_MAX_ENV = 128 };
-
-struct app_launch {
-  const char *path, *cwd;
-  const char *argv[APP_MAX_ARGS], *env[APP_MAX_ENV];
-  unsigned argc, envc;
-  struct net_config network;
-};
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifdef SPORE_USERLAND
 extern bool app_mode;
 #else
 constexpr bool app_mode = true;
 #endif
-extern uint64_t app_entry_pc, app_payload_bytes;
-extern struct app_launch launch;
 
-void app_detect(const struct spore_boot_info *boot);
-bool app_unpack(struct ramfs *fs);
-void app_event(char kind, unsigned value);
-[[noreturn]] void app_finish(char kind, unsigned value);
+enum app_result { APP_EXIT = 'E', APP_SIGNAL = 'S', APP_BOOT_ERROR = 'B' };
+
+uint64_t app_payload_size(void);
+void app_track_entry(uint64_t pc);
+void app_instruction_fetched(uint64_t pc);
+[[noreturn]] void app_finish(enum app_result kind, unsigned value);

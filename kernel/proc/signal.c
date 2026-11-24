@@ -80,7 +80,7 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
       if (thread->running_cpu < 0) { thread->running_cpu = -1; }
     }
   }
-  if (app_mode) { app_finish('S', signal); }
+  if (app_mode) { app_finish(APP_SIGNAL, signal); }
   cell_wake_parent_of(domain);
 }
 

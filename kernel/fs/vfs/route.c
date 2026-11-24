@@ -309,7 +309,7 @@ static bool mount_stats(size_t index, struct vfs_fs_info *out) {
   const struct vfs_mount *mount = vfs_mount_at(index);
   switch (mount->device) {
   case VFS_DEV_RAM0:
-    if (app_mode) { out->block_count = (app_payload_bytes + 1023) / 1024; }
+    if (app_mode) { out->block_count = (app_payload_size() + 1023) / 1024; }
     break;
   case VFS_DEV_EXT2_ROOT:
     if (!vfs_fs_info(out)) { return false; }

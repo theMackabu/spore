@@ -139,18 +139,14 @@ enter_el0:
     isb
     eret
 
-.global switch_stack_and_finish
-.type switch_stack_and_finish, %function
-switch_stack_and_finish:
-    mov x5, #1
-    msr spsel, x5
+.global aarch64_call_on_stack
+.type aarch64_call_on_stack, %function
+aarch64_call_on_stack:
+    msr spsel, #1
     isb
     mov sp, x0
-    mov x0, x1
-    mov x1, x2
-    mov x2, x3
-    mov x3, x4
-    bl finish_enter_el0
+    mov x0, x2
+    blr x1
 1:
     wfe
     b 1b
