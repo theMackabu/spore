@@ -167,7 +167,10 @@ bool ramfs_tmpfile(const struct ramfs_node *dir, uint16_t mode, uint32_t uid, ui
                    struct ramfs_node *out);
 bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path);
 bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path);
-bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path);
+int ramfs_renameat(struct ramfs *fs, const char *old_path, const char *new_path, bool noreplace);
+static inline bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path) {
+  return ramfs_renameat(fs, old_path, new_path, false) == 0;
+}
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len);
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
 int64_t ramfs_writeback(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);

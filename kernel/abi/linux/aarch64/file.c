@@ -535,14 +535,58 @@ int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   return vfs_remove(path);
 }
 
-int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr) {
-  char old_path[CELL_PATH_MAX];
-  char new_path[CELL_PATH_MAX];
-  int64_t old_rc = syscall_copy_resolved_path_at(old_dirfd, old_path_addr, old_path, sizeof(old_path));
-  if (old_rc != 0) { return old_rc; }
-  int64_t new_rc = syscall_copy_resolved_path_at(new_dirfd, new_path_addr, new_path, sizeof(new_path));
-  if (new_rc != 0) { return new_rc; }
-  return vfs_rename(old_path, new_path) ? 0 : -(int64_t)ENOENT;
+static int64_t rename_path(uint64_t dirfd, uint64_t addr, char path[CELL_PATH_MAX], bool *trailing_slash) {
+  char raw[CELL_PATH_MAX];
+  int64_t len = syscall_read_user_string(addr, raw, sizeof(raw));
+  if (len < 0) { return len == -E2BIG ? -ENAMETOOLONG : len; }
+  if (len == 1) { return -ENOENT; }
+  size_t end = len - 1;
+  *trailing_slash = raw[end - 1] == '/';
+  while (end && raw[end - 1] == '/') { --end; }
+  if (!end) { return -EBUSY; }
+  raw[end] = 0;
+  const char *last = base_name(raw);
+  if (str_eq(last, ".") || str_eq(last, "..")) { return -EBUSY; }
+  int64_t rc = syscall_resolve_path_at(dirfd, raw, path, CELL_PATH_MAX);
+  if (rc) { return rc; }
+  const struct vfs_mount *mount;
+  for (size_t i = 0; (mount = vfs_mount_at(i)); ++i) {
+    if (str_eq(path, mount->target)) { return -EBUSY; }
+  }
+  if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(W_OK))) { return -EPERM; }
+
+  size_t name = base_name(path) - path;
+  size_t split = name > 1 ? name - 1 : 1;
+  char saved = path[split];
+  path[split] = 0;
+  struct vfs_node parent;
+  bool found = vfs_lookup(path, &parent);
+  path[split] = saved;
+  if (!found) { return -ENOENT; }
+  if (!parent.is_dir) { return -ENOTDIR; }
+  if (!syscall_node_access_allowed(&parent, W_OK | X_OK)) { return -EACCES; }
+  if ((parent.mode & 01000u) && cell_current_euid() && cell_current_euid() != parent.uid) {
+    struct vfs_node victim;
+    if (vfs_lstat(path, &victim) && victim.uid != cell_current_euid()) { return -EPERM; }
+  }
+  return 0;
+}
+
+int64_t sys_renameat(uint64_t old_dirfd, uint64_t old_addr, uint64_t new_dirfd, uint64_t new_addr, uint64_t flags) {
+  constexpr uint64_t RENAME_NOREPLACE = 1;
+  if (flags & ~RENAME_NOREPLACE) { return -EINVAL; }
+  char old_path[CELL_PATH_MAX], new_path[CELL_PATH_MAX];
+  bool old_slash, new_slash;
+  int64_t rc = rename_path(old_dirfd, old_addr, old_path, &old_slash);
+  if (rc) { return rc; }
+  rc = rename_path(new_dirfd, new_addr, new_path, &new_slash);
+  if (rc) { return rc; }
+  if (old_slash || new_slash) {
+    struct vfs_node src;
+    if (!vfs_lstat(old_path, &src)) { return -ENOENT; }
+    if (!src.is_dir) { return -ENOTDIR; }
+  }
+  return vfs_rename(old_path, new_path, flags & RENAME_NOREPLACE);
 }
 
 int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirfd, uint64_t new_path_addr,

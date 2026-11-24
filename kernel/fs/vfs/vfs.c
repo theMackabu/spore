@@ -235,16 +235,16 @@ bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
   return ok;
 }
 
-bool vfs_rename(const char *old_path, const char *new_path) {
+int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
   vfs_update_time_sources();
-  bool ok = false;
-  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(old_path) && !vfs_path_uses_ramfs(new_path)) {
-    ok = ext2_rename(vfs_root_ext2, old_path, new_path);
-  } else if (vfs_root_ramfs != NULL && vfs_paths_share_ramfs(old_path, new_path)) {
-    ok = ramfs_rename(vfs_root_ramfs, old_path, new_path);
+  int rc = -18;
+  if (vfs_root_ext2 && !vfs_path_uses_ramfs(old_path) && !vfs_path_uses_ramfs(new_path)) {
+    rc = ext2_renameat(vfs_root_ext2, old_path, new_path, noreplace);
+  } else if (vfs_root_ramfs && vfs_paths_share_ramfs(old_path, new_path)) {
+    rc = ramfs_renameat(vfs_root_ramfs, old_path, new_path, noreplace);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
-  return ok;
+  if (!rc) { vfs_lookup_cache_clear(); }
+  return rc;
 }
 
 bool vfs_retain_node(const struct vfs_node *node) {

@@ -295,6 +295,36 @@ static int removal_errors(const char *base, int test_symlink) {
   return ok;
 }
 
+static int rename_entries(const char *base) {
+  if (mkdir(base, 0700) != 0) { return 0; }
+  int dir = open(base, O_RDONLY | O_DIRECTORY);
+  if (dir < 0) { return 0; }
+  int old = openat(dir, "old", O_CREAT | O_EXCL | O_RDWR, 0600);
+  int target = openat(dir, "target", O_CREAT | O_EXCL | O_RDWR, 0600);
+  char byte;
+  struct stat st;
+  int ok = old >= 0 && target >= 0 && write(old, "A", 1) == 1 && write(target, "B", 1) == 1;
+  ok = ok && syscall(SYS_renameat2, dir, "old", dir, "target", 1) == -1 && errno == EEXIST &&
+       renameat(dir, "old", dir, "target") == 0 && pread(target, &byte, 1, 0) == 1 && byte == 'B' &&
+       fstat(target, &st) == 0 && st.st_nlink == 0;
+  int moved = openat(dir, "target", O_RDONLY);
+  ok = ok && moved >= 0 && read(moved, &byte, 1) == 1 && byte == 'A' && mkdirat(dir, "tree", 0700) == 0 &&
+       mkdirat(dir, "tree/child", 0700) == 0 && renameat(dir, "tree", dir, "tree/child/loop") == -1 && errno == EINVAL &&
+       renameat(dir, "target", dir, "tree") == -1 && errno == EISDIR &&
+       renameat(dir, "tree", dir, "target") == -1 && errno == ENOTDIR &&
+       syscall(SYS_renameat2, dir, "tree", dir, "renamed", 1) == 0;
+  if (moved >= 0) { close(moved); }
+  if (old >= 0) { close(old); }
+  if (target >= 0) { close(target); }
+  unlinkat(dir, "renamed/child", AT_REMOVEDIR);
+  unlinkat(dir, "renamed", AT_REMOVEDIR);
+  unlinkat(dir, "target", 0);
+  close(dir);
+  rmdir(base);
+  printf("[spore] rename replacement and ancestry %s: %s\n", base, ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int open_unlinked_ext2(void) {
   const char *path = "/open-unlinked";
   int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
@@ -368,7 +398,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }

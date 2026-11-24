@@ -767,9 +767,9 @@ l_symlinkat:
 l_unlinkat:
   return sys_unlinkat(a0, a1, a2);
 l_renameat:
-  return sys_renameat(a0, a1, a2, a3);
+  return sys_renameat(a0, a1, a2, a3, 0);
 l_renameat2:
-  return a4 == 0 ? sys_renameat(a0, a1, a2, a3) : -(int64_t)EINVAL;
+  return sys_renameat(a0, a1, a2, a3, a4);
 l_statfs:
   return sys_statfs(a0, a1);
 l_fstatfs:

@@ -124,7 +124,7 @@ bool vfs_chmod_node(const struct vfs_node *node, uint32_t mode);
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid);
 bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid);
 int vfs_remove(const char *path);
-bool vfs_rename(const char *old_path, const char *new_path);
+int vfs_rename(const char *old_path, const char *new_path, bool noreplace);
 bool vfs_retain_node(const struct vfs_node *node);
 void vfs_release_node(const struct vfs_node *node);
 bool vfs_set_sealable(const struct vfs_node *node, bool allow_sealing);
