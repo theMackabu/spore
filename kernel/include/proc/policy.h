@@ -23,18 +23,20 @@ struct fs_rule {
   uint8_t rights;
 };
 
+struct egress_rule {
+  uint32_t address;
+  uint32_t mask;
+  uint16_t port;
+  uint8_t protocol;
+};
+
 struct capability_set {
   uint64_t syscall_allow[8];
-  uint64_t fs_rights;
   uint64_t flags;
   uint64_t memory_page_cap;
-  uint64_t max_domains;
   struct fs_rule fs_rules[CELL_FS_RULE_CAP];
   uint8_t fs_rule_count;
-  uint32_t egress_ip;
-  uint16_t egress_port;
-  uint8_t egress_proto;
-  uint8_t egress_prefix;
+  struct egress_rule egress;
 };
 
 struct cpu_budget {

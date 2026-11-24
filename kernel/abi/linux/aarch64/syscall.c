@@ -532,7 +532,7 @@ l_spore_resident:
 l_spore_set_budget:
   return cell_set_budget((int)a0, a1);
 l_spore_apply_policy: {
-  char manifest[64];
+  char manifest[sizeof("fs:/tmp;exec:") + CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(a0, manifest, sizeof(manifest))) { return -(int64_t)EFAULT; }
   int rc = cell_apply_policy(manifest);
   return rc == 0 ? 0 : -(int64_t)EPERM;

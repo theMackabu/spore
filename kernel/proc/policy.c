@@ -1,4 +1,3 @@
-
 #include "proc/policy.h"
 #include "lib/kprintf.h"
 #include "lib/kstr.h"
@@ -6,87 +5,43 @@
 #include "proc/domain.h"
 #include "proc/memory.h"
 
-enum {
-  IPPROTO_TCP = 6,
-  IPPROTO_UDP = 17,
+enum policy_profile { POLICY_COMPUTE, POLICY_FILES, POLICY_MEMORY, POLICY_NETWORK };
+struct policy_request {
+  enum policy_profile profile;
+  struct egress_rule network;
+  const char *executable;
 };
+extern bool spore_parse_manifest(const char *text, struct policy_request *out);
 
-static bool parse_dec(const char **cursor, uint32_t max, uint32_t *out) {
-  uint32_t value = 0;
-  const char *p = *cursor;
-  if (*p < '0' || *p > '9') { return false; }
-  while (*p >= '0' && *p <= '9') {
-    value = value * 10u + (uint32_t)(*p - '0');
-    if (value > max) { return false; }
-    ++p;
-  }
-  *cursor = p;
-  *out = value;
-  return true;
-}
-
-static bool parse_ipv4_port(const char *s, uint32_t *ip, uint8_t *prefix, uint16_t *port) {
-  uint32_t a;
-  uint32_t b;
-  uint32_t c;
-  uint32_t d;
-  uint32_t prefix_value = 32;
-  uint32_t p;
-  if (!parse_dec(&s, 255, &a) || *s++ != '.' || !parse_dec(&s, 255, &b) || *s++ != '.' || !parse_dec(&s, 255, &c) ||
-      *s++ != '.' || !parse_dec(&s, 255, &d)) {
-    return false;
-  }
-  if (*s == '/') {
-    ++s;
-    if (!parse_dec(&s, 32, &prefix_value)) { return false; }
-  }
-  if (*s++ != ':' || !parse_dec(&s, 65535, &p) || *s != '\0') { return false; }
-  *ip = a | (b << 8) | (c << 16) | (d << 24);
-  *prefix = (uint8_t)prefix_value;
-  *port = (uint16_t)p;
-  return true;
-}
-
-static uint32_t egress_mask(uint8_t prefix) {
-  if (prefix == 0) { return 0; }
-  return 0xffffffffu >> (32u - prefix);
-}
-
-static bool egress_match(const struct capability_set *caps, uint8_t proto, uint32_t ip, uint16_t port) {
-  if ((caps->flags & CAP_EGRESS_ENFORCE) == 0) { return true; }
-  uint32_t mask = egress_mask(caps->egress_prefix);
-  return caps->egress_proto == proto && caps->egress_port == port && ((caps->egress_ip ^ ip) & mask) == 0;
+static bool path_matches_rule(const char *path, const struct fs_rule *rule) {
+  if (str_eq(rule->path, "/")) { return true; }
+  size_t len = kstrlen(rule->path);
+  return starts_with(path, rule->path) && (path[len] == '\0' || path[len] == '/');
 }
 
 static bool caps_subset(const struct capability_set *requested, const struct capability_set *parent) {
   for (size_t i = 0; i < sizeof(requested->syscall_allow) / sizeof(requested->syscall_allow[0]); ++i) {
     if ((requested->syscall_allow[i] & ~parent->syscall_allow[i]) != 0) { return false; }
   }
-  if ((requested->flags & CAP_EGRESS_ENFORCE) != 0) {
-    if ((parent->flags & CAP_EGRESS_ENFORCE) == 0) { return true; }
-    uint32_t parent_mask = egress_mask(parent->egress_prefix);
-    uint32_t requested_mask = egress_mask(requested->egress_prefix);
-    bool cidr_subset =
-      parent->egress_proto == requested->egress_proto && parent->egress_port == requested->egress_port &&
-      parent->egress_prefix <= requested->egress_prefix &&
-      ((parent->egress_ip ^ requested->egress_ip) & parent_mask) == 0 &&
-      ((requested->egress_ip & requested_mask) == requested->egress_ip || requested->egress_prefix == 32);
-    if (!cidr_subset) { return false; }
+  if (parent->flags & CAP_EGRESS_ENFORCE) {
+    if (!(requested->flags & CAP_EGRESS_ENFORCE)) { return false; }
+    const struct egress_rule *child = &requested->egress, *limit = &parent->egress;
+    if (child->protocol != 0 &&
+        (child->protocol != limit->protocol || child->port != limit->port ||
+         (child->mask & limit->mask) != limit->mask || (child->address & limit->mask) != limit->address)) {
+      return false;
+    }
   }
-  if ((requested->flags & CAP_EGRESS_ENFORCE) == 0 && (parent->flags & CAP_EGRESS_ENFORCE) != 0) { return false; }
   if (parent->memory_page_cap != 0 &&
       (requested->memory_page_cap == 0 || requested->memory_page_cap > parent->memory_page_cap)) {
     return false;
   }
   if (parent->fs_rule_count != 0) {
+    if (requested->fs_rule_count == 0) { return false; }
     for (uint8_t i = 0; i < requested->fs_rule_count; ++i) {
       bool covered = false;
       for (uint8_t j = 0; j < parent->fs_rule_count; ++j) {
-        size_t parent_len = kstrlen(parent->fs_rules[j].path);
-        bool path_covered =
-          str_eq(parent->fs_rules[j].path, "/") ||
-          (starts_with(requested->fs_rules[i].path, parent->fs_rules[j].path) &&
-           (requested->fs_rules[i].path[parent_len] == '\0' || requested->fs_rules[i].path[parent_len] == '/'));
+        bool path_covered = path_matches_rule(requested->fs_rules[i].path, &parent->fs_rules[j]);
         bool rights_covered = (requested->fs_rules[i].rights & ~parent->fs_rules[j].rights) == 0;
         if (path_covered && rights_covered) {
           covered = true;
@@ -122,17 +77,14 @@ static void cap_allow_files(struct capability_set *caps) {
 }
 
 static bool cap_add_fs_rule(struct capability_set *caps, const char *path, uint8_t rights) {
-  if (caps == NULL || path == NULL || path[0] != '/' || caps->fs_rule_count >= CELL_FS_RULE_CAP) { return false; }
+  if (caps == NULL || path == NULL || path[0] != '/' || kstrlen(path) >= CELL_PATH_MAX ||
+      caps->fs_rule_count >= CELL_FS_RULE_CAP) {
+    return false;
+  }
   struct fs_rule *rule = &caps->fs_rules[caps->fs_rule_count++];
   copy_cstr(rule->path, sizeof(rule->path), path);
   rule->rights = rights;
   return true;
-}
-
-static bool path_matches_rule(const char *path, const struct fs_rule *rule) {
-  if (str_eq(rule->path, "/")) { return true; }
-  size_t len = kstrlen(rule->path);
-  return starts_with(path, rule->path) && (path[len] == '\0' || path[len] == '/');
 }
 
 bool cell_fs_path_allowed(const char *path, uint8_t rights) {
@@ -155,7 +107,8 @@ bool cell_syscall_allowed(uint64_t nr) {
 bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || (domain->caps.flags & CAP_EGRESS_ENFORCE) == 0) { return true; }
-  bool allowed = egress_match(&domain->caps, proto, ip, port);
+  const struct egress_rule *rule = &domain->caps.egress;
+  bool allowed = rule->protocol == proto && rule->port == port && (ip & rule->mask) == rule->address;
   if (!allowed) {
     kprintf("[spore] egress denied domain=%d proto=%u dst=%x:%u\n", domain->id, (unsigned)proto, (unsigned)ip,
             (unsigned)port);
@@ -212,67 +165,37 @@ bool cell_map_resize_allowed(uint64_t old_start, uint64_t old_end, uint64_t new_
 int cell_apply_policy(const char *manifest) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -3; }
-  if (str_eq(manifest, "bad-manifest")) { return -1; }
-
-  struct capability_set caps = {0};
+  struct policy_request request;
+  if (!spore_parse_manifest(manifest, &request)) { return -2; }
+  struct capability_set caps = {.flags = CAP_ENFORCE};
   cap_allow_common(&caps);
-  caps.flags = CAP_ENFORCE;
-
-  if (str_eq(manifest, "compute-only")) {
-    domain->budget.max_ticks = 20;
-    domain->budget.remaining_ticks = 20;
-  } else if (starts_with(manifest, "fs:/tmp")) {
+  switch (request.profile) {
+  case POLICY_COMPUTE:
+    break;
+  case POLICY_FILES:
     cap_allow_files(&caps);
     if (!cap_add_fs_rule(&caps, "/tmp", CELL_FS_READ | CELL_FS_WRITE | CELL_FS_EXEC) ||
         !cap_add_fs_rule(&caps, "/etc/ld-musl-aarch64.path", CELL_FS_READ) ||
         !cap_add_fs_rule(&caps, "/lib", CELL_FS_READ | CELL_FS_EXEC) ||
-        !cap_add_fs_rule(&caps, "/usr/local/lib", CELL_FS_READ | CELL_FS_EXEC)) {
+        !cap_add_fs_rule(&caps, "/usr/local/lib", CELL_FS_READ | CELL_FS_EXEC) ||
+        (request.executable && !cap_add_fs_rule(&caps, request.executable, CELL_FS_READ | CELL_FS_EXEC))) {
       return -2;
     }
-    if (starts_with(manifest, "fs:/tmp;exec:")) {
-      const char *exec_path = manifest + sizeof("fs:/tmp;exec:") - 1;
-      if (!cap_add_fs_rule(&caps, exec_path, CELL_FS_READ | CELL_FS_EXEC)) { return -2; }
-    } else if (!str_eq(manifest, "fs:/tmp")) {
-      return -2;
-    }
-  } else if (str_eq(manifest, "mem:1")) {
+    break;
+  case POLICY_MEMORY:
     caps.memory_page_cap = 1;
-  } else if (str_eq(manifest, "net:none")) {
+    break;
+  case POLICY_NETWORK:
     cap_allow_files(&caps);
     caps.flags |= CAP_EGRESS_ENFORCE;
-    caps.egress_prefix = 32;
-  } else if (str_eq(manifest, "net:dns")) {
-    cap_allow_files(&caps);
-    caps.flags |= CAP_EGRESS_ENFORCE;
-    caps.egress_proto = IPPROTO_UDP;
-    caps.egress_prefix = 0;
-    caps.egress_port = 53;
-  } else if (starts_with(manifest, "net:udp:")) {
-    uint32_t ip = 0;
-    uint8_t prefix = 32;
-    uint16_t port = 0;
-    if (!parse_ipv4_port(manifest + 8, &ip, &prefix, &port)) { return -2; }
-    cap_allow_files(&caps);
-    caps.flags |= CAP_EGRESS_ENFORCE;
-    caps.egress_proto = IPPROTO_UDP;
-    caps.egress_prefix = prefix;
-    caps.egress_ip = ip & egress_mask(prefix);
-    caps.egress_port = port;
-  } else if (starts_with(manifest, "net:tcp:")) {
-    uint32_t ip = 0;
-    uint8_t prefix = 32;
-    uint16_t port = 0;
-    if (!parse_ipv4_port(manifest + 8, &ip, &prefix, &port)) { return -2; }
-    cap_allow_files(&caps);
-    caps.flags |= CAP_EGRESS_ENFORCE;
-    caps.egress_proto = IPPROTO_TCP;
-    caps.egress_prefix = prefix;
-    caps.egress_ip = ip & egress_mask(prefix);
-    caps.egress_port = port;
-  } else {
-    return -2;
+    caps.egress = request.network;
+    break;
   }
   if ((domain->caps.flags & CAP_ENFORCE) != 0 && !caps_subset(&caps, &domain->caps)) { return -1; }
+  if (request.profile == POLICY_COMPUTE && (domain->budget.max_ticks == 0 || domain->budget.max_ticks > 20)) {
+    if (domain->budget.max_ticks == 0 || domain->budget.remaining_ticks > 20) { domain->budget.remaining_ticks = 20; }
+    domain->budget.max_ticks = 20;
+  }
   domain->caps = caps;
   kprintf("[spore] policy applied: %s\n", manifest);
   return 0;

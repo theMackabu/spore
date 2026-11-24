@@ -86,19 +86,16 @@ static int egress_escalation_demo(void) {
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+static int check_egress_profile(const char *manifest, int expect_success) {
+  pid_t child = fork();
+  if (child == 0) { egress_child(manifest, expect_success); }
+  int status;
+  return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 int integration_egress_demo(void) {
-  pid_t deny = fork();
-  if (deny == 0) { egress_child("net:none", 0); }
-  int status_deny = 0;
-  waitpid(deny, &status_deny, 0);
-
-  pid_t allow = fork();
-  if (allow == 0) { egress_child("net:udp:10.0.2.2:5555", 1); }
-  int status_allow = 0;
-  waitpid(allow, &status_allow, 0);
-
-  int ok = WIFEXITED(status_deny) && WEXITSTATUS(status_deny) == 0 && WIFEXITED(status_allow) &&
-           WEXITSTATUS(status_allow) == 0;
+  int ok = check_egress_profile("net:none", 0) && check_egress_profile("net:udp:10.0.2.2:5555", 1) &&
+           check_egress_profile("net:udp:10.0.2.7/29:5555", 1);
   int wrong_port = run_egress_attack(0);
   int cidr_in = run_egress_attack(1);
   int cidr_out = run_egress_attack(2);

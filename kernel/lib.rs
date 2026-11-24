@@ -2,6 +2,8 @@
 
 #[path = "exec/elf.rs"]
 mod elf;
+#[path = "proc/manifest.rs"]
+mod manifest;
 #[path = "net/packet.rs"]
 mod packet;
 #[path = "fs/ext2/records.rs"]
