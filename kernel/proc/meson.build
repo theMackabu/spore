@@ -3,6 +3,7 @@ kernel_sources += files(
   'bootstrap.c',
   'domain.c',
   'fd.c',
+  'flock.c',
   'futex.c',
   'info.c',
   'io.c',

@@ -42,6 +42,7 @@ struct open_file {
   uint64_t offset;
   uint32_t flags;
   uint8_t flock_mode;
+  struct open_file *flock_next;
   char path[CELL_PATH_MAX];
   struct vfs_node node;
   union {
