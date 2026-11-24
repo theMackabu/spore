@@ -114,6 +114,9 @@ static bool find_metadata_region(const struct spore_memmap_entry *memmap, uint32
 }
 
 void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uint32_t memmap_count) {
+#if __STDC_HOSTED__
+  if (!hhdm_base) { free(bitmap); }
+#endif
   hhdm_base = (uint64_t *)(uintptr_t)hhdm_offset;
   bitmap = NULL;
   refcounts = NULL;
@@ -134,13 +137,13 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
 
 #if __STDC_HOSTED__
   if (hhdm_offset == 0) {
-    bitmap = malloc((size_t)bitmap_bytes);
-    refcounts = malloc((size_t)refcount_bytes);
-    if (bitmap == NULL || refcounts == NULL) {
+    bitmap = malloc((size_t)(bitmap_bytes + refcount_bytes));
+    if (!bitmap) {
       tracked_page_count = 0;
       bitmap_word_count = 0;
       return;
     }
+    refcounts = (uint16_t *)((uint8_t *)bitmap + bitmap_bytes);
   } else
 #endif
   {
