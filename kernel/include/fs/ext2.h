@@ -48,6 +48,8 @@ struct ext2_fs {
   uint32_t inode_count;
   uint32_t block_count;
   uint32_t next_alloc_block;
+  uint32_t first_ino;
+  uint32_t next_alloc_inode;
   uint32_t ext2plus_store_ino;
   uint32_t ext2plus_base_ino;
   uint32_t ext2plus_capacity;

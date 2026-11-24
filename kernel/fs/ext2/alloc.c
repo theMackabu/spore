@@ -1,8 +1,23 @@
 #include "internal.h"
 
+extern uint32_t ext2_free_bit(const uint8_t *data, size_t bytes, uint32_t start, uint32_t end);
+
+static bool mark_bit(struct ext2_fs *fs, uint32_t bitmap, uint32_t bit, bool allocated) {
+  uint64_t offset = (uint64_t)bitmap * fs->block_size + bit / 8;
+  uint8_t byte;
+  uint8_t mask = (uint8_t)(1u << (bit % 8));
+  if (!ext2_read_bytes(fs, offset, &byte, 1) || ((byte & mask) != 0) == allocated) { return false; }
+  byte ^= mask;
+  return ext2_write_bytes(fs, offset, &byte, 1);
+}
+
+static uint32_t choose_bit(const uint8_t *map, size_t bytes, uint32_t start, uint32_t first, uint32_t end) {
+  if (start < first || start >= end) { start = first; }
+  uint32_t bit = ext2_free_bit(map, bytes, start, end);
+  return bit == UINT32_MAX && first < start ? ext2_free_bit(map, bytes, first, start) : bit;
+}
+
 static int alloc_block_maybe_zero(struct ext2_fs *fs, uint32_t *out, bool zero_block) {
-  uint8_t bitmap[4096];
-  if (fs->block_size > sizeof(bitmap)) { return -EXT2_EIO; }
   uint32_t start = fs->next_alloc_block;
   if (start < fs->first_data_block || start >= fs->block_count) { start = fs->first_data_block; }
   uint32_t start_group = (start - fs->first_data_block) / fs->blocks_per_group;
@@ -12,33 +27,31 @@ static int alloc_block_maybe_zero(struct ext2_fs *fs, uint32_t *out, bool zero_b
     struct ext2_group_desc gd;
     if (!ext2_read_group_desc(fs, group, &gd)) { return -EXT2_EIO; }
     if (gd.free_blocks_count == 0) { continue; }
-    if (!ext2_read_block(fs, gd.block_bitmap, bitmap)) { return -EXT2_EIO; }
+    const uint8_t *bitmap = ext2_cached_block(fs, gd.block_bitmap);
+    if (bitmap == NULL) { return -EXT2_EIO; }
     uint32_t group_first = fs->first_data_block + group * fs->blocks_per_group;
-    if (group_first >= fs->block_count) { continue; }
-    for (uint32_t bit_step = 0; bit_step < fs->blocks_per_group; ++bit_step) {
-      uint32_t bit = group == start_group ? (start_bit + bit_step) % fs->blocks_per_group : bit_step;
-      uint32_t block = group_first + bit;
-      if (block < fs->first_data_block || block >= fs->block_count) { continue; }
-      if ((bitmap[bit / 8u] & (1u << (bit % 8u))) != 0) { continue; }
-      bitmap[bit / 8u] |= (uint8_t)(1u << (bit % 8u));
-      if (!ext2_write_block(fs, gd.block_bitmap, bitmap)) { return -EXT2_EIO; }
-      if (gd.free_blocks_count > 0) { --gd.free_blocks_count; }
-      if (!ext2_write_group_desc(fs, group, &gd)) { return -EXT2_EIO; }
-      struct ext2_super sb;
-      if (ext2_read_super(fs, &sb) && sb.free_blocks_count > 0) {
-        --sb.free_blocks_count;
-        (void)ext2_write_super(fs, &sb);
-      }
-      if (zero_block) {
-        uint8_t zero[4096];
-        kmemset(zero, 0, fs->block_size);
-        if (!ext2_write_block(fs, block, zero)) { return -EXT2_EIO; }
-      }
-      *out = block;
-      fs->next_alloc_block = block + 1;
-      if (fs->next_alloc_block >= fs->block_count) { fs->next_alloc_block = fs->first_data_block; }
-      return 0;
+    uint32_t end = fs->block_count - group_first;
+    if (end > fs->blocks_per_group) { end = fs->blocks_per_group; }
+    uint32_t bit = choose_bit(bitmap, fs->block_size, group == start_group ? start_bit : 0, group_first == 0, end);
+    if (bit == UINT32_MAX) { continue; }
+    uint32_t block = group_first + bit;
+    if (!mark_bit(fs, gd.block_bitmap, bit, true)) { return -EXT2_EIO; }
+    if (gd.free_blocks_count > 0) { --gd.free_blocks_count; }
+    if (!ext2_write_group_desc(fs, group, &gd)) { return -EXT2_EIO; }
+    struct ext2_super sb;
+    if (ext2_read_super(fs, &sb) && sb.free_blocks_count > 0) {
+      --sb.free_blocks_count;
+      (void)ext2_write_super(fs, &sb);
     }
+    if (zero_block) {
+      uint8_t zero[4096];
+      kmemset(zero, 0, fs->block_size);
+      if (!ext2_write_block(fs, block, zero)) { return -EXT2_EIO; }
+    }
+    *out = block;
+    fs->next_alloc_block = block + 1;
+    if (fs->next_alloc_block >= fs->block_count) { fs->next_alloc_block = fs->first_data_block; }
+    return 0;
   }
   return -EXT2_ENOSPC;
 }
@@ -53,14 +66,7 @@ bool ext2_free_block(struct ext2_fs *fs, uint32_t block) {
   uint32_t bit = (block - fs->first_data_block) % fs->blocks_per_group;
   if (group >= fs->group_count) { return false; }
   struct ext2_group_desc gd;
-  uint8_t bitmap[4096];
-  if (fs->block_size > sizeof(bitmap) || !ext2_read_group_desc(fs, group, &gd) || !ext2_read_block(fs, gd.block_bitmap, bitmap)) {
-    return false;
-  }
-  uint8_t mask = (uint8_t)(1u << (bit % 8u));
-  if ((bitmap[bit / 8u] & mask) == 0) { return false; }
-  bitmap[bit / 8u] &= (uint8_t)~mask;
-  if (!ext2_write_block(fs, gd.block_bitmap, bitmap)) { return false; }
+  if (!ext2_read_group_desc(fs, group, &gd) || !mark_bit(fs, gd.block_bitmap, bit, false)) { return false; }
   ++gd.free_blocks_count;
   (void)ext2_write_group_desc(fs, group, &gd);
   struct ext2_super sb;
@@ -105,28 +111,35 @@ static bool ext2plus_alloc_inode(struct ext2_fs *fs, uint32_t *out) {
 }
 
 static bool alloc_classic_inode(struct ext2_fs *fs, uint32_t *out) {
-  uint8_t bitmap[4096];
-  if (fs->block_size > sizeof(bitmap)) { return false; }
-  for (uint32_t group = 0; group < fs->group_count; ++group) {
+  uint32_t start = fs->next_alloc_inode;
+  if (start < fs->first_ino || start > fs->inode_count) { start = fs->first_ino; }
+  uint32_t start_group = (start - 1) / fs->inodes_per_group;
+  for (uint32_t step = 0; step < fs->group_count; ++step) {
+    uint32_t group = (start_group + step) % fs->group_count;
+    uint64_t group_first = (uint64_t)group * fs->inodes_per_group + 1;
+    if (group_first > fs->inode_count) { continue; }
     struct ext2_group_desc gd;
-    if (!ext2_read_group_desc(fs, group, &gd) || gd.free_inodes_count == 0 || !ext2_read_block(fs, gd.inode_bitmap, bitmap)) {
-      continue;
+    if (!ext2_read_group_desc(fs, group, &gd) || gd.free_inodes_count == 0) { continue; }
+    const uint8_t *bitmap = ext2_cached_block(fs, gd.inode_bitmap);
+    if (bitmap == NULL) { return false; }
+    uint32_t first = fs->first_ino > group_first ? fs->first_ino - (uint32_t)group_first : 0;
+    uint32_t end = fs->inode_count - (uint32_t)group_first + 1;
+    if (end > fs->inodes_per_group) { end = fs->inodes_per_group; }
+    uint32_t bit =
+      choose_bit(bitmap, fs->block_size, group == start_group ? (start - 1) % fs->inodes_per_group : first, first, end);
+    if (bit == UINT32_MAX) { continue; }
+    uint32_t ino = (uint32_t)group_first + bit;
+    if (!mark_bit(fs, gd.inode_bitmap, bit, true)) { return false; }
+    --gd.free_inodes_count;
+    if (!ext2_write_group_desc(fs, group, &gd)) { return false; }
+    struct ext2_super sb;
+    if (ext2_read_super(fs, &sb) && sb.free_inodes_count > 0) {
+      --sb.free_inodes_count;
+      (void)ext2_write_super(fs, &sb);
     }
-    for (uint32_t bit = 0; bit < fs->inodes_per_group; ++bit) {
-      uint32_t ino = group * fs->inodes_per_group + bit + 1;
-      if (ino < 12 || ino > fs->inode_count || (bitmap[bit / 8u] & (1u << (bit % 8u))) != 0) { continue; }
-      bitmap[bit / 8u] |= (uint8_t)(1u << (bit % 8u));
-      if (!ext2_write_block(fs, gd.inode_bitmap, bitmap)) { return false; }
-      --gd.free_inodes_count;
-      if (!ext2_write_group_desc(fs, group, &gd)) { return false; }
-      struct ext2_super sb;
-      if (ext2_read_super(fs, &sb) && sb.free_inodes_count > 0) {
-        --sb.free_inodes_count;
-        (void)ext2_write_super(fs, &sb);
-      }
-      *out = ino;
-      return true;
-    }
+    fs->next_alloc_inode = ino == fs->inode_count ? fs->first_ino : ino + 1;
+    *out = ino;
+    return true;
   }
   return false;
 }
@@ -176,25 +189,21 @@ static bool ext2plus_free_inode(struct ext2_fs *fs, uint32_t ino) {
 
 bool ext2_free_inode(struct ext2_fs *fs, uint32_t ino) {
   if (fs->ext2plus && ino >= fs->ext2plus_base_ino) { return ext2plus_free_inode(fs, ino); }
-  if (ino < 12 || ino > fs->inode_count) { return false; }
+  if (ino < fs->first_ino || ino > fs->inode_count) { return false; }
   uint32_t index = ino - 1;
   uint32_t group = index / fs->inodes_per_group;
   uint32_t bit = index % fs->inodes_per_group;
-  uint32_t local = index % fs->inodes_per_group;
   struct ext2_group_desc gd;
-  uint8_t bitmap[4096];
-  if (fs->block_size > sizeof(bitmap) || !ext2_read_group_desc(fs, group, &gd) || !ext2_read_block(fs, gd.inode_bitmap, bitmap)) {
-    return false;
-  }
-  uint8_t mask = (uint8_t)(1u << (bit % 8u));
-  if ((bitmap[bit / 8u] & mask) == 0) { return false; }
+  if (!ext2_read_group_desc(fs, group, &gd)) { return false; }
+  const uint8_t *bitmap = ext2_cached_block(fs, gd.inode_bitmap);
+  if (bitmap == NULL || !(bitmap[bit / 8] & (1u << (bit % 8)))) { return false; }
   uint8_t zero_inode[256];
   if (fs->inode_size > sizeof(zero_inode)) { return false; }
   kmemset(zero_inode, 0, fs->inode_size);
-  uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)local * fs->inode_size;
+  uint64_t off = (uint64_t)gd.inode_table * fs->block_size + (uint64_t)bit * fs->inode_size;
   if (!ext2_write_bytes(fs, off, zero_inode, fs->inode_size)) { return false; }
-  bitmap[bit / 8u] &= (uint8_t)~mask;
-  if (!ext2_write_block(fs, gd.inode_bitmap, bitmap)) { return false; }
+  if (!mark_bit(fs, gd.inode_bitmap, bit, false)) { return false; }
+  if (ino < fs->next_alloc_inode) { fs->next_alloc_inode = ino; }
   ++gd.free_inodes_count;
   (void)ext2_write_group_desc(fs, group, &gd);
   struct ext2_super sb;
@@ -206,7 +215,7 @@ bool ext2_free_inode(struct ext2_fs *fs, uint32_t ino) {
 }
 
 bool ext2_adjust_group_used_dirs(struct ext2_fs *fs, uint32_t ino, int delta) {
-  if (ino < 12 || ino > fs->inode_count) { return false; }
+  if (ino < fs->first_ino || ino > fs->inode_count) { return false; }
   uint32_t group = (ino - 1) / fs->inodes_per_group;
   struct ext2_group_desc gd;
   if (!ext2_read_group_desc(fs, group, &gd)) { return false; }

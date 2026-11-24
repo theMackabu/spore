@@ -119,6 +119,8 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
       sb.first_data_block != (block_size == 1024 ? 1u : 0u) || sb.blocks_count <= sb.first_data_block ||
       sb.blocks_per_group == 0 || sb.blocks_per_group > block_size * 8 ||
       sb.inodes_per_group == 0 || sb.inodes_per_group > block_size * 8) { return false; }
+  uint32_t first_ino = sb.rev_level == 0 ? 11u : sb.first_ino;
+  if (first_ino < 11 || first_ino - 1 > sb.inodes_count) { return false; }
   uint32_t groups = 1 + (sb.blocks_count - sb.first_data_block - 1) / sb.blocks_per_group;
   if (sb.inodes_count < EXT2_ROOT_INO || sb.inodes_count > (uint64_t)groups * sb.inodes_per_group) { return false; }
   uint32_t supported_incompat = EXT2_INCOMPAT_FILETYPE | EXT2_INCOMPAT_SPORE_EXT2PLUS;
@@ -130,7 +132,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
     .block_size = block_size, .inode_size = inode_size, .group_count = groups,
     .inodes_per_group = sb.inodes_per_group, .blocks_per_group = sb.blocks_per_group,
     .first_data_block = sb.first_data_block, .next_alloc_block = sb.first_data_block,
-    .inode_count = sb.inodes_count, .block_count = sb.blocks_count, .ext2plus_free_head = EXT2PLUS_FREE_NONE,
+    .inode_count = sb.inodes_count, .block_count = sb.blocks_count, .first_ino = first_ino, .next_alloc_inode = first_ino, .ext2plus_free_head = EXT2PLUS_FREE_NONE,
   };
   if ((sb.feature_incompat & EXT2_INCOMPAT_SPORE_EXT2PLUS) != 0 && !ext2plus_mount_init(fs)) { return false; }
   return true;

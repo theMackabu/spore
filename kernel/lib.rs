@@ -1,5 +1,7 @@
 #![no_std]
 
+#[path = "fs/ext2/bitmap.rs"]
+mod bitmap;
 #[path = "exec/elf.rs"]
 mod elf;
 #[path = "proc/manifest.rs"]
