@@ -694,7 +694,7 @@ static void test_mutations(const char *image_path) {
 }
 
 int main(int argc, char **argv) {
-  assert(argc == 2);
+  assert(argc == 1 || argc == 2);
   test_block_group_boundary(1024, 20000, 0, 8500);
   test_block_group_boundary(4096, 8192, 2048, 3000);
   test_full_disk_short_write();
@@ -703,6 +703,14 @@ int main(int argc, char **argv) {
   test_superblock_counter_coherence(true);
   test_cache_flush_retry();
   test_malformed_directory_is_not_empty();
+
+  if (argc == 1) {
+    char image[256];
+    make_ext2_image(image, sizeof(image), 4096, 16384, 0);
+    test_mutations(image);
+    assert(remove(image) == 0);
+    return 0;
+  }
 
   FILE *f = fopen(argv[1], "rb");
   assert(f != NULL);

@@ -69,6 +69,7 @@ and bake to `/home/spore/demos`.
 
 ```sh
 make
+./build/spore build --userland
 ./build/spore boot --snapshot
 ```
 

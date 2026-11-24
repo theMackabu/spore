@@ -19,6 +19,10 @@ foreach line : packages.split('\n')
   endif
 endforeach
 
+if not get_option('userland')
+  subdir_done()
+endif
+
 sdks = {}
 sdk_inputs = run_command(python, manifest, 'sdks', check: true).stdout().strip()
 foreach line : sdk_inputs.split('\n')

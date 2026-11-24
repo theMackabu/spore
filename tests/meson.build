@@ -58,7 +58,7 @@ test_ext2 = executable('test_ext2', 'test_ext2.c',
   include_directories: test_include,
   native: true)
 
-test('ext2', test_ext2, args: [system_root_disk])
+test('ext2', test_ext2, args: get_option('userland') ? [system_root_disk] : [])
 
 bench_ext2_inodes = executable('bench_ext2_inodes', 'bench_ext2_inodes.c',
   link_with: [host_ext2, host_mem],

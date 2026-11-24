@@ -1,3 +1,10 @@
+userland_image_targets = []
+userland_test_targets = []
+subdir('prebuilt')
+if not get_option('userland')
+  subdir_done()
+endif
+
 userland_musl_cc = find_program('aarch64-unknown-linux-musl-gcc')
 guest_rust_target = '--target=aarch64-unknown-linux-musl'
 userland_rust_archive = [rustc, rust_archive_args, guest_rust_target, '-C', 'relocation-model=pic']
@@ -15,8 +22,6 @@ userland_cc = userland_link + [
   '-Wl,-rpath,/lib',
 ]
 userland_static_cc = userland_link + ['-static']
-userland_image_targets = []
-userland_test_targets = []
 
 subdir('etc')
 
@@ -24,7 +29,6 @@ subdir('lib/spore')
 
 subdir('bin/init')
 subdir('bin/msh')
-subdir('prebuilt')
 subdir('bin/myc')
 subdir('bin/shutdown')
 subdir('bin/reboot')

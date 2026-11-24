@@ -7,10 +7,14 @@
 #include "lib/mem.h"
 #include "proc/limits.h"
 
+#ifdef SPORE_USERLAND
 bool app_mode;
+struct app_launch launch = {.path = "/sbin/init", .cwd = "/", .argv = {"/sbin/init"}, .argc = 1};
+#else
+struct app_launch launch = {.path = "/spore.app"};
+#endif
 uint64_t app_payload_bytes;
 uint64_t app_entry_pc;
-struct app_launch launch = {.path = "/sbin/init", .cwd = "/", .argv = {"/sbin/init"}, .argc = 1};
 static const uint8_t *cursor;
 static size_t remaining;
 
@@ -18,7 +22,9 @@ void app_detect(const struct spore_boot_info *boot) {
   for (size_t i = 0; i < boot->module_count; ++i) {
     const struct spore_boot_module *m = &boot->modules[i];
     if (str_eq(m->path, "/spore.app")) {
+#ifdef SPORE_USERLAND
       app_mode = true;
+#endif
       cursor = (const void *)(uintptr_t)(boot->hhdm_offset + m->phys_addr);
       app_payload_bytes = remaining = m->size;
       return;

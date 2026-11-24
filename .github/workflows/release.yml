@@ -271,7 +271,7 @@ jobs:
         run: |
           set -euo pipefail
           meson compile -C build cli
-          ./build/spore build
+          ./build/spore build --userland
           ./build/spore build --tests
           ./build/spore test host
 

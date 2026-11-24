@@ -8,19 +8,26 @@ Build the native CLI once in the development shell. From the checkout:
 
 ```sh
 make
-./build/spore boot                         # interactive Spore shell
 ./build/spore run ant                      # Ant REPL as the only guest process
 ./build/spore run ant -- -e 'console.log(6 * 7)'
 ./build/spore run ./my-aarch64-program -- argument
 ```
 
-`boot` builds the interactive system image on demand and saves changes in `build/run-root.ext2`. Use `boot --snapshot` to start from the current base image and discard guest writes, or `boot --reset` to replace the persistent disk with that base. Rebuilding the base leaves your persistent disk intact. To boot a downloaded system image, pass both files explicitly with `spore boot IMAGE --root ROOT.ext2`.
+By default Spore builds an app-only kernel. It boots a supplied application payload as PID 1. Packages such as Ant are fetched on demand. To enable the full userland for this build directory:
+
+```sh
+./build/spore build --userland
+./build/spore boot                         # interactive Spore shell
+```
+
+The equivalent Meson option is `-Duserland=true`. After opting in, `boot` updates the interactive system image on demand and saves changes in `build/run-root.ext2`. Use `boot --snapshot` to start from the current base image and discard guest writes, or `boot --reset` to replace the persistent disk with that base. Rebuilding the base leaves your persistent disk intact. To boot a downloaded system image, pass both files explicitly with `spore boot IMAGE --root ROOT.ext2`.
 
 `run` accepts a local AArch64 Linux ELF or a prebuilt binary name from the checkout. A local file takes precedence. The CLI packages and starts it directly as PID 1. Arguments after `--` go to the guest. Use `./build/spore --help` for VM and image options.
 
 | Command | Purpose |
 |---|---|
-| `spore build`, `spore build --tests` | Build the interactive or integration image and its base root disk |
+| `spore build` | Build the kernel and host CLI |
+| `spore build --userland`, `spore build --userland --tests` | Build the interactive or integration image and its base root disk |
 | `spore test host` | Run the native Meson tests |
 | `spore test guest` | Boot the guest integration suite |
 | `spore test shell` | Exercise the interactive shell and terminal |

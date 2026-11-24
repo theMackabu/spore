@@ -16,7 +16,8 @@ const HELP: &str = "\
 Usage:
   spore boot [--snapshot | --reset] [--root EXT2] [VM options]
   spore boot SYSTEM_IMAGE --root EXT2 [--snapshot] [VM options]
-  spore build [--tests]               Build the full system or integration image
+  spore build                         Build the kernel and host CLI
+  spore build --userland [--tests]    Enable and build the full system or integration image
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
@@ -152,12 +153,17 @@ fn execute() -> io::Result<i32> {
     let mut cpus = None;
     let mut root = None;
     let mut reset = false;
+    let mut userland = false;
     let mut tests = false;
     let mut app_options = false;
     while let Some(key) = args.next() {
         if key == "-h" || key == "--help" {
             println!("{HELP}");
             return Ok(0);
+        }
+        if build && key == "--userland" {
+            userland = true;
+            continue;
         }
         if build && key == "--tests" {
             tests = true;
@@ -258,15 +264,24 @@ fn execute() -> io::Result<i32> {
         ));
     }
     if build && program.is_none() && pack.is_empty() && output.is_none() {
-        system::compile(
-            artifacts,
-            Path::new(if tests { "test_image.img" } else { "image.img" }),
-        )?;
+        if userland {
+            system::enable_userland(artifacts)?;
+        } else if tests {
+            system::require_userland()?;
+        }
+        let target = if tests {
+            "test_image.img"
+        } else if userland {
+            "image.img"
+        } else {
+            "cli"
+        };
+        system::compile(artifacts, Path::new(target))?;
         return Ok(0);
     }
-    if tests {
+    if tests || userland {
         return Err(io::Error::other(
-            "--tests builds the integration system image",
+            "--userland and --tests apply to full-system builds",
         ));
     }
     let input = program.ok_or_else(|| io::Error::other("missing ELF or image path"))?;

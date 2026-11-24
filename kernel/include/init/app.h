@@ -14,7 +14,11 @@ struct app_launch {
   struct net_config network;
 };
 
+#ifdef SPORE_USERLAND
 extern bool app_mode;
+#else
+constexpr bool app_mode = true;
+#endif
 extern uint64_t app_entry_pc, app_payload_bytes;
 extern struct app_launch launch;
 

@@ -38,6 +38,30 @@ pub fn compile(build: &Path, target: &Path) -> io::Result<()> {
     Ok(())
 }
 
+pub fn enable_userland(build: &Path) -> io::Result<()> {
+    if !cfg!(spore_userland) {
+        let code = status(
+            Command::new(env::var_os("MESON").unwrap_or_else(|| "meson".into()))
+                .args(["configure", "-Duserland=true"])
+                .arg(build),
+        )?;
+        if code != 0 {
+            return Err(io::Error::other("could not enable userland"));
+        }
+    }
+    Ok(())
+}
+
+pub fn require_userland() -> io::Result<()> {
+    if cfg!(spore_userland) {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "full-system support is disabled; run spore build --userland first",
+        ))
+    }
+}
+
 pub fn program(build: &Path, name: &OsStr) -> io::Result<PathBuf> {
     let path = Path::new(name);
     if path.is_file() {
@@ -93,6 +117,7 @@ pub fn boot(
     if let Some(image) = image {
         vm.image = image;
     } else {
+        require_userland()?;
         let (image, root) = if vm.mode == "integration" {
             ("test_image.img", "test_root.ext2")
         } else {

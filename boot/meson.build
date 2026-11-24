@@ -1,6 +1,7 @@
 unpack = files('../userland/prebuilt/unpack.py')
 boot_efi = custom_target('limine-efi',
   output: 'BOOTAA64.EFI',
+  build_by_default: true,
   command: [python, unpack, cache_dir,
     'https://github.com/Limine-Bootloader/Limine/releases/download/v12.11.1/limine-binary.zip',
     '27773b8b974f6ab55d7be5bd15a6914fe70a91f0c56858ca0cbe76c590b60a22',
