@@ -290,18 +290,6 @@ static size_t proc_pid_exe_text(char *dst, size_t cap, int pid) {
   return len;
 }
 
-static int64_t read_generated_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
-                                     size_t (*fill)(char *, size_t)) {
-  char text[4096] = {0};
-  size_t text_len = fill(text, sizeof(text));
-  if (file->offset >= text_len) { return 0; }
-  size_t chunk = text_len - (size_t)file->offset;
-  if (chunk > len) { chunk = (size_t)len; }
-  if (!vmm_copy_to_user(cell_domain_as(domain), buf, text + file->offset, chunk)) { return -14; }
-  file->offset += chunk;
-  return (int64_t)chunk;
-}
-
 static int64_t read_text_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                                 const char *text, size_t text_len) {
   if (file->offset >= text_len) { return 0; }
@@ -310,6 +298,13 @@ static int64_t read_text_device(struct open_file *file, struct domain *domain, u
   if (!vmm_copy_to_user(cell_domain_as(domain), buf, text + file->offset, chunk)) { return -14; }
   file->offset += chunk;
   return (int64_t)chunk;
+}
+
+static int64_t read_generated_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
+                                     size_t (*fill)(char *, size_t)) {
+  char text[4096];
+  size_t text_len = fill(text, sizeof(text));
+  return read_text_device(file, domain, buf, len, text, text_len);
 }
 
 static bool sys_cpu_in_set(uint32_t cpu, enum ramfs_device device) {
@@ -390,14 +385,9 @@ static size_t sys_cpu_core_online_text(char *dst, size_t cap, const char *path) 
 
 static int64_t read_generated_pid_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
                                          size_t (*fill)(char *, size_t, int)) {
-  char text[4096] = {0};
+  char text[4096];
   size_t text_len = fill(text, sizeof(text), file->node.proc.pid);
-  if (file->offset >= text_len) { return 0; }
-  size_t chunk = text_len - (size_t)file->offset;
-  if (chunk > len) { chunk = (size_t)len; }
-  if (!vmm_copy_to_user(cell_domain_as(domain), buf, text + file->offset, chunk)) { return -14; }
-  file->offset += chunk;
-  return (int64_t)chunk;
+  return read_text_device(file, domain, buf, len, text, text_len);
 }
 
 int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len) {
