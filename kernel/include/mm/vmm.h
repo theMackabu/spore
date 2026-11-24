@@ -9,6 +9,7 @@ enum {
   VMM_USER_WRITE = 1u << 1,
   VMM_USER_EXEC = 1u << 2,
   VMM_MAP_SHARED = 1u << 3,
+  VMM_MAP_FILE_CACHE = 1u << 4,
 };
 
 enum vmm_access {
@@ -24,6 +25,7 @@ struct user_address_space {
   uint64_t context_id;
   uint64_t root_pa;
   uint64_t hhdm_offset;
+  bool detached_file_pages;
   uint64_t resident_pages;
   uint64_t peak_resident_pages;
   uint64_t arg_start;
@@ -40,13 +42,13 @@ bool vmm_alloc_page(struct user_address_space *as, uint64_t va, uint32_t flags);
 enum vmm_clone_mode { VMM_FORK, VMM_SNAPSHOT };
 bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, enum vmm_clone_mode mode);
 void vmm_destroy(struct user_address_space *as);
-bool vmm_handle_cow_fault(struct user_address_space *as, uint64_t va);
+bool vmm_handle_write_fault(struct user_address_space *as, uint64_t va);
 bool vmm_is_mapped(const struct user_address_space *as, uint64_t va);
 bool vmm_move_range(struct user_address_space *as, uint64_t from, uint64_t to, uint64_t bytes);
 void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end);
 void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t end, uint32_t flags);
 typedef bool (*vmm_page_visitor)(void *ctx, uint64_t va, uint64_t pa);
-bool vmm_visit_resident(const struct user_address_space *as, uint64_t start, uint64_t end, vmm_page_visitor visit,
+bool vmm_visit_detached(const struct user_address_space *as, uint64_t start, uint64_t end, vmm_page_visitor visit,
                         void *ctx);
 size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t start, uint64_t end);
 uint64_t vmm_user_to_phys(const struct user_address_space *as, uint64_t va);

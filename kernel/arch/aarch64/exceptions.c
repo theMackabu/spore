@@ -50,7 +50,7 @@ void handle_lower_sync(struct trap_frame *frame) {
         cell_handle_translation_fault(far, write ? VMM_ACCESS_WRITE : VMM_ACCESS_READ)) {
       return;
     }
-    if (ec == 0x24 && write && dfsc >= 0x0c && dfsc <= 0x0f && cell_handle_cow_fault(far)) { return; }
+    if (ec == 0x24 && write && dfsc >= 0x0c && dfsc <= 0x0f && cell_handle_write_fault(far)) { return; }
     if (ec == 0x24 && dfsc >= 0x0c && dfsc <= 0x0f &&
         cell_handle_permission_fault(far, write ? VMM_ACCESS_WRITE : VMM_ACCESS_READ)) {
       return;

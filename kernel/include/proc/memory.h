@@ -33,7 +33,7 @@ struct process_mm *cell_mm_clone_cow(struct process_mm *src);
 struct process_mm *cell_mm_retain(struct process_mm *mm);
 void cell_mm_release(struct process_mm *mm);
 bool cell_domain_set_mm(struct domain *domain, struct process_mm *mm);
-bool cell_handle_cow_fault(uint64_t far);
+bool cell_handle_write_fault(uint64_t far);
 bool cell_handle_translation_fault(uint64_t far, enum vmm_access access);
 bool cell_handle_permission_fault(uint64_t far, enum vmm_access access);
 bool cell_ensure_user_range(uint64_t va, size_t len, enum vmm_access access);

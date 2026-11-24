@@ -38,6 +38,59 @@ static int sparse_shared_file(const char *path) {
   return ok;
 }
 
+static int sync_file_aliases(void) {
+  constexpr size_t page = 4096;
+  int fd = open("/mapped-aliases", O_RDWR | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) { return 0; }
+  int ok = ftruncate(fd, 3 * page) == 0;
+  char *writer = mmap(NULL, 3 * page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  char *other = mmap(NULL, 3 * page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  char *reader = mmap(NULL, page, PROT_READ, MAP_SHARED, fd, page);
+  int ready[2], resume[2];
+  if (ok && writer != MAP_FAILED && other != MAP_FAILED && reader != MAP_FAILED &&
+      pipe(ready) == 0 && pipe(resume) == 0) {
+    writer[0] = 'P';
+    other[1] = 'Q';
+    pid_t child = fork();
+    if (child == 0) {
+      close(ready[0]);
+      close(resume[1]);
+      writer[page] = 'C';
+      char byte;
+      _exit(write(ready[1], "!", 1) == 1 && read(resume[0], &byte, 1) == 1 ? 0 : 1);
+    }
+    close(ready[1]);
+    close(resume[0]);
+    char byte;
+    struct stat partial, full;
+    ok = child > 0 && read(ready[0], &byte, 1) == 1 && msync(reader, page, MS_SYNC) == 0 &&
+         fstat(fd, &partial) == 0 && partial.st_blocks > 0 && reader[0] == 'C';
+    if (child > 0) {
+      int status;
+      ok = (write(resume[1], "!", 1) == 1) && ok;
+      ok = (waitpid(child, &status, 0) == child && status == 0) && ok;
+    }
+    close(ready[0]);
+    close(resume[1]);
+    ok = ok && msync(writer, page, MS_SYNC) == 0 && fstat(fd, &full) == 0 && full.st_blocks > partial.st_blocks;
+    ok = ok && pread(fd, writer + 2 * page, 1, page) == 1 && fsync(fd) == 0 &&
+         fstat(fd, &partial) == 0 && partial.st_blocks > full.st_blocks;
+    other[1] = 'R';
+    writer[0] = 'S';
+    ok = ok && msync(other, page, MS_SYNC) == 0;
+  } else { ok = 0; }
+  if (writer != MAP_FAILED) { munmap(writer, 3 * page); }
+  if (other != MAP_FAILED) { munmap(other, 3 * page); }
+  if (reader != MAP_FAILED) { munmap(reader, page); }
+  char data[2];
+  ok = ok && pread(fd, data, 2, 0) == 2 && memcmp(data, "SR", 2) == 0 &&
+       pread(fd, data, 1, 2 * page) == 1 && data[0] == 'C';
+  close(fd);
+  unlink("/mapped-aliases");
+  printf("[spore] shared writeback across aliases and fork: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int shared_mmap_regression(void) {
   int fd = open("/tmp/shared-mmap", O_CREAT | O_RDWR | O_TRUNC, 0666);
   int ok = fd >= 0;
@@ -357,7 +410,7 @@ static int mmap_noreserve_regression(void) {
 }
 
 int integration_memory_suite(void) {
-  return sparse_shared_file("/spore-sparse") && sparse_shared_file("/tmp/spore-sparse") && shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
+  return sync_file_aliases() && sparse_shared_file("/spore-sparse") && sparse_shared_file("/tmp/spore-sparse") && shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
          file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mapping_ranges() && grow_file_mapping() && mmap_past_reservation(false) &&
          mmap_past_reservation(true);

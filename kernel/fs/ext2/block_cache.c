@@ -140,6 +140,11 @@ static struct block_cache_entry *cache_read(struct ext2_fs *fs, uint32_t block) 
   return entry;
 }
 
+const uint8_t *ext2_peek_block(struct ext2_fs *fs, uint32_t block) {
+  struct block_cache_entry *entry = cache_find(fs, block);
+  return entry ? block_data(entry) : NULL;
+}
+
 const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block) {
   struct block_cache_entry *entry = cache_read(fs, block);
   return entry != NULL ? block_data(entry) : NULL;

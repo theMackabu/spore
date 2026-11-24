@@ -187,7 +187,7 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
   return true;
 }
 
-bool ext2_file_matches(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, const void *src, size_t len) {
+bool ext2_cached_data_matches(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, const void *src, size_t len) {
   static const uint8_t zeros[4096];
   const uint8_t *data = src;
   if (off > node->size || len > node->size - off) { return false; }
@@ -197,7 +197,7 @@ bool ext2_file_matches(struct ext2_fs *fs, const struct ext2_node *node, uint64_
     if (chunk > len) { chunk = len; }
     uint32_t block;
     if (!ext2_file_block(fs, node, off / fs->block_size, &block)) { return false; }
-    const uint8_t *bytes = block ? ext2_cached_block(fs, block) : zeros;
+    const uint8_t *bytes = block ? ext2_peek_block(fs, block) : zeros;
     if (!bytes || kmemcmp(bytes + within, data, chunk)) { return false; }
     data += chunk;
     off += chunk;

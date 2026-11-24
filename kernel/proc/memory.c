@@ -151,17 +151,20 @@ static bool writeback_page(void *ctx, uint64_t page, uint64_t pa) {
 
 static bool flush_shared_file_vma_range(struct user_address_space *as, const struct vma *vma, uint64_t start,
                                         uint64_t end) {
-  if (!vma_is_shared_writable_file(vma)) { return true; }
+  if (vma->type != VMA_FILE || !(vma->flags & MAP_SHARED)) { return true; }
   struct vfs_node current;
   if (!vfs_refresh(&vma->file_node, &current)) { return false; }
-  if (current.size <= vma->file_offset) { return true; }
+  if (start < vma->start) { start = vma->start; }
+  if (end > vma->end) { end = vma->end; }
+  uint64_t first = vma->file_offset + (start - vma->file_start);
+  uint64_t limit = vma->file_offset + (end - vma->file_start);
+  if (!vfs_sync_mapped_range(&current, first, limit)) { return false; }
+  if (!as->detached_file_pages || !vma_is_shared_writable_file(vma) || current.size <= vma->file_offset) { return true; }
   uint64_t bytes = current.size - vma->file_offset;
   if (bytes > vma->file_size) { bytes = vma->file_size; }
   struct file_writeback wb = {.vma = vma, .node = &current, .file_end = vma->file_start + bytes};
-  if (start < vma->start) { start = vma->start; }
-  if (end > vma->end) { end = vma->end; }
   if (end > wb.file_end) { end = wb.file_end; }
-  return vmm_visit_resident(as, start, end, writeback_page, &wb);
+  return vmm_visit_detached(as, start, end, writeback_page, &wb);
 }
 
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end) {
@@ -190,7 +193,7 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
     if ((read_off & (PAGE_SIZE - 1)) != 0) { goto private_copy; }
     uint64_t pa = 0;
     if (!vfs_retain_page_cached(&current, read_off, &pa)) { return false; }
-    bool mapped = (vma->flags & MAP_SHARED) ? vmm_map_page(as, page, pa, mapping_flags(vma))
+    bool mapped = (vma->flags & MAP_SHARED) ? vmm_map_page(as, page, pa, mapping_flags(vma) | VMM_MAP_FILE_CACHE)
                                              : vmm_map_page_cow(as, page, pa, vma->prot);
     if (!mapped) {
       pmm_free_page(pa);
@@ -255,7 +258,7 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
       }
     }
     if (access == VMM_ACCESS_WRITE && !vmm_user_range_accessible(as, page, 1, VMM_ACCESS_WRITE)) {
-      if (!vmm_handle_cow_fault(as, page)) { return false; }
+      if (!vmm_handle_write_fault(as, page)) { return false; }
       note_fault(domain, false);
     }
     if (!vmm_user_range_accessible(as, page, 1, access)) { return false; }
@@ -264,10 +267,10 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
   }
 }
 
-bool cell_handle_cow_fault(uint64_t far) {
+bool cell_handle_write_fault(uint64_t far) {
   struct domain *domain = cell_current_domain_internal();
   struct user_address_space *as = cell_domain_as(domain);
-  if (domain == NULL || as == NULL || !vmm_handle_cow_fault(as, far)) { return false; }
+  if (domain == NULL || as == NULL || !vmm_handle_write_fault(as, far)) { return false; }
   note_fault(domain, false);
   return true;
 }
@@ -395,7 +398,7 @@ int cell_sync_shared_vmas(uint64_t start, uint64_t end, bool durable) {
     if (vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && vma->file_node.backend == VFS_EXT2) { disk = true; }
     covered = vma->end;
   }
-  return durable && disk && !vfs_sync() ? -EIO : 0;
+  return durable && disk && !vfs_sync_storage() ? -EIO : 0;
 }
 
 int cell_discard_vma_pages(uint64_t start, uint64_t end, bool lazy_free) {

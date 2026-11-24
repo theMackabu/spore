@@ -31,8 +31,12 @@ struct vfs_stats vfs_get_stats(void) {
   return stats;
 }
 
-bool vfs_sync(void) {
+bool vfs_sync_storage(void) {
   return vfs_root_ext2 == NULL || ext2_flush(vfs_root_ext2);
+}
+
+bool vfs_sync(void) {
+  return vfs_sync_mapped_pages() && vfs_sync_storage();
 }
 
 uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
@@ -294,7 +298,7 @@ static int64_t write_node(const struct vfs_node *node, uint64_t off, const void 
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;
     if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &ext)) { return -5; }
-    if (writeback && ext2_file_matches(vfs_root_ext2, &ext, off, src, len)) { return (int64_t)len; }
+    if (writeback && ext2_cached_data_matches(vfs_root_ext2, &ext, off, src, len)) { return (int64_t)len; }
     written = ext2_write_file(vfs_root_ext2, &ext, off, src, len);
   } else if (node->backend == VFS_RAMFS) {
     written = writeback ? ramfs_writeback(node->ramfs.fs, node->ramfs.index, off, src, len)

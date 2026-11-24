@@ -123,9 +123,9 @@ int main(void) {
 
   vmm_protect_range(&child, 0x500000, 0x501000, 0);
   assert(!vmm_user_range_accessible(&child, 0x500000, 1, VMM_ACCESS_READ));
-  assert(!vmm_handle_cow_fault(&child, 0x500000));
+  assert(!vmm_handle_write_fault(&child, 0x500000));
   vmm_protect_range(&child, 0x500000, 0x501000, VMM_USER_READ | VMM_USER_WRITE);
-  assert(vmm_handle_cow_fault(&child, 0x500000));
+  assert(vmm_handle_write_fault(&child, 0x500000));
   assert(vmm_user_range_accessible(&child, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(refs[page_index(cow_pa)] == 1);
   assert(vmm_copy_to_user(&child, 0x500000, "child", 6));
@@ -137,7 +137,7 @@ int main(void) {
   assert(child_pa != cow_pa);
   assert(strcmp((char *)&phys[child_pa], "child") == 0);
 
-  assert(vmm_handle_cow_fault(&as, 0x500000));
+  assert(vmm_handle_write_fault(&as, 0x500000));
   assert(vmm_user_range_accessible(&as, 0x500000, 1, VMM_ACCESS_WRITE));
   assert(vmm_copy_to_user(&as, 0x500000, "last", 5));
   assert(strcmp((char *)&phys[cow_pa], "last") == 0);

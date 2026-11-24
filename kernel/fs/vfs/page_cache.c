@@ -3,24 +3,35 @@
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "mm/pool.h"
+#include "mm/file_page.h"
 
 enum { CACHE_ENTRIES = 32768, PAGE_BUCKETS = 4096, FILE_BUCKETS = 256, VFS_READAHEAD_PAGES = 2 };
 
 struct vfs_page_cache_entry {
+  struct vmm_file_page mapped;
+  struct vfs_page_cache_entry *dirty_next, **dirty_link;
+  int ramfs_index;
   struct vfs_page_cache_entry *hash_next;
   struct vfs_page_cache_entry *file_next;
   struct vfs_page_cache_entry **file_link;
   struct vfs_page_cache_entry *older, *newer;
-  uint64_t ino, dev_id, off, pa;
+  uint64_t ino, dev_id, off;
   enum vfs_backend backend;
 };
 
 static struct object_pool entries;
 static struct vfs_page_cache_entry *pages[PAGE_BUCKETS], *files[FILE_BUCKETS];
 static struct vfs_page_cache_entry *oldest, *newest;
+static struct vfs_page_cache_entry *dirty_files[FILE_BUCKETS];
+static struct vfs_page_cache_entry **dirty_tails[FILE_BUCKETS];
+
+static void mark_dirty(struct vmm_file_page *page);
 
 void vfs_page_cache_configure(void) {
-  if (!entries.limit) { (void)pool_init(&entries, sizeof(struct vfs_page_cache_entry), CACHE_ENTRIES); }
+  if (!entries.limit) {
+    (void)pool_init(&entries, sizeof(struct vfs_page_cache_entry), CACHE_ENTRIES);
+    vmm_file_pages_init(mark_dirty);
+  }
 }
 
 bool vfs_node_cacheable(const struct vfs_node *node) {
@@ -30,6 +41,23 @@ bool vfs_node_cacheable(const struct vfs_node *node) {
 
 static size_t file_bucket(uint64_t ino, uint64_t dev) {
   return (ino ^ (ino >> 8) ^ dev) % FILE_BUCKETS;
+}
+
+static void mark_dirty(struct vmm_file_page *page) {
+  struct vfs_page_cache_entry *entry = (struct vfs_page_cache_entry *)page;
+  if (entry->dirty_link) { return; }
+  size_t bucket = file_bucket(entry->ino, entry->dev_id);
+  entry->dirty_link = dirty_tails[bucket] ? dirty_tails[bucket] : &dirty_files[bucket];
+  *entry->dirty_link = entry;
+  dirty_tails[bucket] = &entry->dirty_next;
+}
+
+static void mark_clean(struct vfs_page_cache_entry *entry) {
+  *entry->dirty_link = entry->dirty_next;
+  if (entry->dirty_next) { entry->dirty_next->dirty_link = entry->dirty_link; }
+  else { dirty_tails[file_bucket(entry->ino, entry->dev_id)] = entry->dirty_link; }
+  entry->dirty_link = NULL;
+  entry->dirty_next = NULL;
 }
 
 static size_t page_bucket(uint64_t ino, uint64_t dev, uint64_t off) {
@@ -60,6 +88,7 @@ static void link_entry(struct vfs_page_cache_entry *entry) {
   if (newest) { newest->newer = entry; }
   else { oldest = entry; }
   newest = entry;
+  vmm_file_page_register(&entry->mapped);
 }
 
 static void clear_entry(struct vfs_page_cache_entry *entry) {
@@ -72,13 +101,15 @@ static void clear_entry(struct vfs_page_cache_entry *entry) {
   else { oldest = entry->newer; }
   if (entry->newer) { entry->newer->older = entry->older; }
   else { newest = entry->older; }
-  pmm_free_page(entry->pa);
+  if (entry->dirty_link) { mark_clean(entry); }
+  vmm_file_page_unregister(&entry->mapped);
+  pmm_free_page(entry->mapped.pa);
   pool_free(&entries, entry);
 }
 
 static bool evict_page(void) {
   for (struct vfs_page_cache_entry *e = oldest; e; e = e->newer) {
-    if (pmm_is_last_ref(e->pa)) {
+    if (!e->dirty_link && pmm_is_last_ref(e->mapped.pa)) {
       clear_entry(e);
       return true;
     }
@@ -112,8 +143,9 @@ static struct vfs_page_cache_entry *page_cache_load(const struct vfs_node *node,
   entry->ino = node->ino;
   entry->dev_id = node->dev_id;
   entry->backend = node->backend;
+  if (node->backend == VFS_RAMFS) { entry->ramfs_index = node->ramfs.index; }
   entry->off = off;
-  entry->pa = pa;
+  entry->mapped.pa = pa;
   link_entry(entry);
   return entry;
 }
@@ -141,8 +173,8 @@ bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t 
   if (pa_out == NULL || !vfs_node_cacheable(node)) { return false; }
   off &= ~(uint64_t)(PAGE_SIZE - 1);
   struct vfs_page_cache_entry *entry = page_cache_demand(node, off);
-  if (entry == NULL || entry->pa == 0 || !pmm_share_page(entry->pa)) { return false; }
-  *pa_out = entry->pa;
+  if (entry == NULL || entry->mapped.pa == 0 || !pmm_share_page(entry->mapped.pa)) { return false; }
+  *pa_out = entry->mapped.pa;
   page_cache_readahead(node, off);
   return true;
 }
@@ -157,11 +189,53 @@ uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, u
     if (entry == NULL) { return done + vfs_read_uncached(node, off + done, out + done, len - done); }
     uint64_t chunk = PAGE_SIZE - in_page;
     if (chunk > len - done) { chunk = len - done; }
-    kmemcpy(out + done, (const uint8_t *)pmm_phys_to_virt(entry->pa) + in_page, chunk);
+    kmemcpy(out + done, (const uint8_t *)pmm_phys_to_virt(entry->mapped.pa) + in_page, chunk);
     done += chunk;
     page_cache_readahead(node, page_off);
   }
   return done;
+}
+
+static bool flush_entry(struct vfs_page_cache_entry *entry, const struct vfs_node *node) {
+  vmm_file_page_rearm(&entry->mapped);
+  if (entry->off < node->size) {
+    size_t bytes = node->size - entry->off;
+    if (bytes > PAGE_SIZE) { bytes = PAGE_SIZE; }
+    if (vfs_writeback(node, entry->off, pmm_phys_to_virt(entry->mapped.pa), bytes) != (int64_t)bytes) { return false; }
+  }
+  mark_clean(entry);
+  return true;
+}
+
+bool vfs_sync_mapped_range(const struct vfs_node *node, uint64_t start, uint64_t end) {
+  struct vfs_page_cache_entry *entry = dirty_files[file_bucket(node->ino, node->dev_id)];
+  while (entry) {
+    struct vfs_page_cache_entry *next = entry->dirty_next;
+    if (same_file(entry, node) && entry->off >= start && entry->off < end && !flush_entry(entry, node)) { return false; }
+    entry = next;
+  }
+  return true;
+}
+
+bool vfs_sync_mapped_pages(void) {
+  for (size_t i = 0; i < FILE_BUCKETS; ++i) {
+    while (dirty_files[i]) {
+      struct vfs_page_cache_entry *entry = dirty_files[i];
+      struct vfs_node key = {.backend = entry->backend}, node;
+      if (entry->backend == VFS_EXT2) { key.ext2.ino = entry->ino; }
+      else {
+        key.ramfs.fs = vfs_root_ramfs;
+        key.ramfs.index = entry->ramfs_index;
+      }
+      if (!vfs_refresh(&key, &node) || node.ino != entry->ino) {
+        if (entry->backend != VFS_RAMFS || !pmm_is_last_ref(entry->mapped.pa)) { return false; }
+        clear_entry(entry);
+        continue;
+      }
+      if (!vfs_sync_mapped_range(&node, 0, UINT64_MAX)) { return false; }
+    }
+  }
+  return true;
 }
 
 void vfs_page_cache_truncate(const struct vfs_node *node, uint64_t size) {
@@ -170,11 +244,15 @@ void vfs_page_cache_truncate(const struct vfs_node *node, uint64_t size) {
   while (e) {
     struct vfs_page_cache_entry *next = e->file_next;
     if (same_file(e, node) && (size <= e->off || size - e->off < PAGE_SIZE)) {
-      if (e->off >= size && pmm_is_last_ref(e->pa)) {
+      if (e->dirty_link) {
+        vmm_file_page_rearm(&e->mapped);
+        if (e->off >= size) { mark_clean(e); }
+      }
+      if (e->off >= size && pmm_is_last_ref(e->mapped.pa)) {
         clear_entry(e);
       } else {
         size_t tail = size <= e->off ? 0 : size - e->off;
-        kmemset((uint8_t *)pmm_phys_to_virt(e->pa) + tail, 0, PAGE_SIZE - tail);
+        kmemset((uint8_t *)pmm_phys_to_virt(e->mapped.pa) + tail, 0, PAGE_SIZE - tail);
       }
       any = true;
     }
@@ -191,7 +269,7 @@ void vfs_page_cache_write(const struct vfs_node *node, uint64_t off, const void 
     if (chunk > len) { chunk = len; }
     struct vfs_page_cache_entry *entry = page_cache_find(node, off - within);
     if (entry) {
-      uint8_t *dest = (uint8_t *)pmm_phys_to_virt(entry->pa) + within;
+      uint8_t *dest = (uint8_t *)pmm_phys_to_virt(entry->mapped.pa) + within;
       if (dest != data) { kmemcpy(dest, data, chunk); }
     }
     len -= chunk;

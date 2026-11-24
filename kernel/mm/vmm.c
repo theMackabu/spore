@@ -3,6 +3,7 @@
 #include "arch/aarch64/mmu.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "mm/file_page.h"
 
 enum {
   PTE_VALID = 1ull << 0,
@@ -20,6 +21,7 @@ constexpr uint64_t PTE_UXN = 1ull << 54;
 constexpr uint64_t PTE_COW = 1ull << 55;
 constexpr uint64_t PTE_SHARED = 1ull << 56;
 constexpr uint64_t PTE_WRITE_ALLOWED = 1ull << 57;
+constexpr uint64_t PTE_FILE_CACHE = 1ull << 58;
 constexpr uint64_t PTE_ADDR_MASK = 0x0000fffffffff000ull;
 
 static uint64_t *pt_virt(const struct user_address_space *as, uint64_t pa) {
@@ -93,6 +95,7 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   as->context_id = __atomic_add_fetch(&last_context_id, 1, __ATOMIC_RELAXED);
   as->root_pa = root;
   as->hhdm_offset = hhdm_offset;
+  as->detached_file_pages = false;
   as->resident_pages = 0;
   as->peak_resident_pages = 0;
   as->arg_start = 0;
@@ -117,10 +120,11 @@ static bool ensure_table(struct user_address_space *as, uint64_t *table, size_t 
 }
 
 static uint64_t with_protection(uint64_t entry, uint32_t flags) {
+  bool trap_write = (entry & PTE_COW) || ((entry & PTE_FILE_CACHE) && (entry & PTE_AP_MASK) != PTE_AP_USER_RW);
   entry &= ~(PTE_AP_MASK | PTE_UXN | PTE_WRITE_ALLOWED);
   if (!(flags & VMM_USER_EXEC)) { entry |= PTE_UXN; }
   if (flags & VMM_USER_WRITE) {
-    entry |= PTE_WRITE_ALLOWED | ((entry & PTE_COW) ? PTE_AP_USER_RO : PTE_AP_USER_RW);
+    entry |= PTE_WRITE_ALLOWED | (trap_write ? PTE_AP_USER_RO : PTE_AP_USER_RW);
   } else if (flags & (VMM_USER_READ | VMM_USER_EXEC)) {
     entry |= PTE_AP_USER_RO;
   }
@@ -148,6 +152,7 @@ static bool map_user_page(struct user_address_space *as, uint64_t va, uint64_t p
   if (pte == NULL || (*pte & PTE_VALID)) { return false; }
   uint64_t entry = (pa & PTE_ADDR_MASK) | PTE_VALID | PTE_TABLE | PTE_NG | PTE_AF | PTE_SH_INNER | PTE_PXN | permissions;
   if (flags & VMM_MAP_SHARED) { entry |= PTE_SHARED; }
+  if (flags & VMM_MAP_FILE_CACHE) { entry |= PTE_FILE_CACHE; }
   *pte = with_protection(entry, flags);
   ++as->resident_pages;
   if (as->resident_pages > as->peak_resident_pages) { as->peak_resident_pages = as->resident_pages; }
@@ -184,6 +189,17 @@ static uint64_t leaf_with_ap(uint64_t entry, uint64_t ap) {
   return (entry & ~PTE_AP_MASK) | ap;
 }
 
+static void forget_file_writer(uint64_t *pte) {
+  if ((*pte & PTE_FILE_CACHE) && is_writable_leaf(*pte)) {
+    vmm_file_writer_remove(*pte & PTE_ADDR_MASK, pte);
+  }
+}
+
+void vmm_write_protect_file_pte(uint64_t *pte, uint64_t va) {
+  *pte = leaf_with_ap(*pte, PTE_AP_USER_RO);
+  aarch64_tlb_flush_va(va);
+}
+
 static bool clone_table(struct user_address_space *dst, struct user_address_space *src, uint64_t dst_table_pa,
                             uint64_t src_table_pa, unsigned level, enum vmm_clone_mode mode) {
   uint64_t *dst_table = pt_virt(dst, dst_table_pa);
@@ -199,10 +215,17 @@ static bool clone_table(struct user_address_space *dst, struct user_address_spac
         uint64_t copy = pmm_alloc_page();
         if (copy == 0) { return false; }
         kmemcpy(pt_virt(dst, copy), pt_virt(src, pa), PAGE_SIZE);
+        if (entry & PTE_FILE_CACHE) {
+          dst->detached_file_pages = true;
+          entry &= ~PTE_FILE_CACHE;
+          if (entry & PTE_WRITE_ALLOWED) { entry = leaf_with_ap(entry, PTE_AP_USER_RW); }
+        }
         entry = (entry & ~PTE_ADDR_MASK) | copy;
       } else {
         if (!pmm_share_page(pa)) { return false; }
-        if (!(entry & PTE_SHARED)) {
+        if ((entry & PTE_FILE_CACHE) && is_writable_leaf(entry)) {
+          entry = leaf_with_ap(entry, PTE_AP_USER_RO);
+        } else if (!(entry & PTE_SHARED)) {
           entry |= PTE_COW;
           if (is_writable_leaf(entry)) { entry = leaf_with_ap(entry, PTE_AP_USER_RO); }
           src_table[i] = entry;
@@ -227,6 +250,7 @@ bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, e
   dst->brk_base = src->brk_base;
   dst->brk_current = src->brk_current;
   dst->mmap_base = src->mmap_base;
+  dst->detached_file_pages = src->detached_file_pages;
 
   bool ok = clone_table(dst, src, dst->root_pa, src->root_pa, 0, mode);
   if (ok) {
@@ -246,6 +270,7 @@ static void destroy_table(struct user_address_space *as, uint64_t table_pa, unsi
     if ((entry & PTE_VALID) == 0) { continue; }
     uint64_t pa = entry & PTE_ADDR_MASK;
     if (is_leaf_at_level(entry, level)) {
+      forget_file_writer(&table[i]);
       pmm_free_page(pa);
     } else {
       destroy_table(as, pa, level + 1);
@@ -283,8 +308,17 @@ static uint64_t user_to_phys_checked(const struct user_address_space *as, uint64
   return (entry & PTE_ADDR_MASK) | (va & 0xfff);
 }
 
-bool vmm_handle_cow_fault(struct user_address_space *as, uint64_t va) {
+bool vmm_handle_write_fault(struct user_address_space *as, uint64_t va) {
   uint64_t *pte = leaf_for_va(as, va);
+  if (pte && (*pte & (PTE_VALID | PTE_FILE_CACHE | PTE_WRITE_ALLOWED)) ==
+             (PTE_VALID | PTE_FILE_CACHE | PTE_WRITE_ALLOWED)) {
+    if (!is_writable_leaf(*pte)) {
+      if (!vmm_file_writer_add(*pte & PTE_ADDR_MASK, pte, va & ~(uint64_t)(PAGE_SIZE - 1))) { return false; }
+      *pte = leaf_with_ap(*pte, PTE_AP_USER_RW);
+    }
+    aarch64_tlb_flush_va(va);
+    return true;
+  }
   constexpr uint64_t writable_cow = PTE_VALID | PTE_COW | PTE_WRITE_ALLOWED;
   if (pte == NULL || (*pte & writable_cow) != writable_cow) { return false; }
 
@@ -329,7 +363,12 @@ static uint64_t transfer_pages(struct user_address_space *as, uint64_t from, uin
       if (!(range.ptes[i] & PTE_VALID)) { continue; }
       uint64_t *pte = ensure_leaf(as, dest + i * PAGE_SIZE);
       if (!pte || (*pte & PTE_VALID)) { break; }
-      *pte = range.ptes[i];
+      uint64_t entry = range.ptes[i];
+      if ((entry & PTE_FILE_CACHE) && is_writable_leaf(entry)) {
+        forget_file_writer(&range.ptes[i]);
+        entry = leaf_with_ap(entry, PTE_AP_USER_RO);
+      }
+      *pte = entry;
       range.ptes[i] = 0;
       moved |= UINT64_C(1) << i;
     }
@@ -356,6 +395,7 @@ void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end
     uint64_t removed = 0;
     for (size_t i = 0; i < range.count; ++i) {
       if (!(range.ptes[i] & PTE_VALID)) { continue; }
+      forget_file_writer(&range.ptes[i]);
       range.ptes[i] &= ~PTE_VALID;
       removed |= UINT64_C(1) << i;
     }
@@ -380,6 +420,7 @@ void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t e
       if (!(entry & PTE_VALID)) { continue; }
       uint64_t next = with_protection(entry, flags);
       if (next == entry) { continue; }
+      if (!is_writable_leaf(next)) { forget_file_writer(&range.ptes[i]); }
       range.ptes[i] = next;
       changed |= UINT64_C(1) << i;
     }
@@ -387,13 +428,13 @@ void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t e
   }
 }
 
-bool vmm_visit_resident(const struct user_address_space *as, uint64_t start, uint64_t end, vmm_page_visitor visit,
+bool vmm_visit_detached(const struct user_address_space *as, uint64_t start, uint64_t end, vmm_page_visitor visit,
                         void *ctx) {
   struct leaf_range range = leaf_range(start, end);
   while (next_leaf_range(as, &range, 512)) {
     for (size_t i = 0; i < range.count; ++i) {
       uint64_t entry = range.ptes[i];
-      if ((entry & PTE_VALID) && !visit(ctx, range.va + i * PAGE_SIZE, entry & PTE_ADDR_MASK)) { return false; }
+      if ((entry & (PTE_VALID | PTE_FILE_CACHE)) == PTE_VALID && !visit(ctx, range.va + i * PAGE_SIZE, entry & PTE_ADDR_MASK)) { return false; }
     }
   }
   return true;
@@ -441,7 +482,7 @@ bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const v
     uint64_t last = end / PAGE_SIZE;
     for (uint64_t page = first; page <= last; ++page) {
       uint64_t va = page * PAGE_SIZE;
-      if (user_to_phys_checked(as, va, VMM_ACCESS_WRITE) == 0 && !vmm_handle_cow_fault(mutable_as, va)) {
+      if (user_to_phys_checked(as, va, VMM_ACCESS_WRITE) == 0 && !vmm_handle_write_fault(mutable_as, va)) {
         return false;
       }
     }
@@ -457,7 +498,7 @@ bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const v
 
     uint64_t pa = user_to_phys_checked(as, va, VMM_ACCESS_WRITE);
     if (pa == 0) {
-      if (!vmm_handle_cow_fault(mutable_as, va)) { return false; }
+      if (!vmm_handle_write_fault(mutable_as, va)) { return false; }
       pa = user_to_phys_checked(as, va, VMM_ACCESS_WRITE);
       if (pa == 0) { return false; }
     }

@@ -144,4 +144,6 @@ bool vfs_device_fs_info(uint64_t dev_id, struct vfs_fs_info *out);
 const struct vfs_mount *vfs_mount_at(size_t index);
 size_t vfs_mount_info(struct vfs_mount_info *out, size_t cap);
 struct vfs_stats vfs_get_stats(void);
+bool vfs_sync_mapped_range(const struct vfs_node *node, uint64_t start, uint64_t end);
+bool vfs_sync_storage(void);
 bool vfs_sync(void);

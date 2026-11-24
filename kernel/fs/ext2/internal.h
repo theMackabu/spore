@@ -109,6 +109,7 @@ struct ext2plus_header {
 extern struct ext2_stats ext2_stat_counters;
 
 uint32_t ext2_now_sec(void);
+const uint8_t *ext2_peek_block(struct ext2_fs *fs, uint32_t block);
 const uint8_t *ext2_cached_block(struct ext2_fs *fs, uint32_t block);
 bool ext2_read_block(struct ext2_fs *fs, uint32_t block, void *dst);
 bool ext2_write_block(struct ext2_fs *fs, uint32_t block, const void *src);
