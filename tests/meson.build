@@ -127,3 +127,10 @@ test_net = executable('test_net',
   native: true)
 
 test('net', test_net)
+
+test_tcp_tx = executable('test_tcp_transmit', tcp_tx_sources + pmm_sources, 'test_tcp_transmit.c',
+  link_with: host_mem,
+  include_directories: test_include,
+  native: true)
+
+test('tcp-transmit', test_tcp_tx)

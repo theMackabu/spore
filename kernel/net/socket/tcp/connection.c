@@ -24,13 +24,7 @@ enum {
   TCP_RCV_WINDOW_SCALE = 2,
   TCP_DEFAULT_REMOTE_WINDOW = 65535,
   TCP_DEFAULT_MSS = 1460,
-  TCP_SEND_STACK_CHUNK = 1460,
-  TCP_INITIAL_RTO_TICKS = 100,
-  TCP_MIN_RTO_TICKS = 10,
-  TCP_MAX_RTO_TICKS = 6000,
-  TCP_MAX_RTO_SHIFT = 6,
   TCP_SYN_MAX_RETRIES = 5,
-  TCP_DATA_MAX_RETRIES = 8,
   TCP_TICKS_PER_SECOND = 100,
   TCP_DEFAULT_KEEPIDLE_SEC = 7200,
   TCP_DEFAULT_KEEPINTVL_SEC = 75,
@@ -40,18 +34,6 @@ enum {
   TCP_RST = 0x04,
   TCP_PSH = 0x08,
   TCP_ACK = 0x10,
-};
-
-struct tcp_tx_state {
-  uint8_t head;
-  uint8_t count;
-  uint16_t len[CELL_TCP_TX_QUEUE_CAP];
-  uint32_t seq[CELL_TCP_TX_QUEUE_CAP];
-  uint8_t retries[CELL_TCP_TX_QUEUE_CAP];
-  uint64_t deadline_tick[CELL_TCP_TX_QUEUE_CAP];
-  uint64_t sent_tick[CELL_TCP_TX_QUEUE_CAP];
-  uint64_t first_sent_tick[CELL_TCP_TX_QUEUE_CAP];
-  uint8_t payload[CELL_TCP_TX_QUEUE_CAP][CELL_TCP_TX_CAP];
 };
 
 struct tcp_ooo_state {
@@ -160,85 +142,7 @@ static void tcp_free_ooo(struct open_file *file) {
   file->tcp_ooo = NULL;
 }
 
-static uint64_t tcp_tx_state_pages(void) {
-  return ((uint64_t)sizeof(struct tcp_tx_state) + PAGE_SIZE - 1) / PAGE_SIZE;
-}
-
-static bool tcp_alloc_tx(struct open_file *file) {
-  if (file == NULL) { return false; }
-  if (file->tcp_tx != NULL) { return true; }
-  uint64_t pages = tcp_tx_state_pages();
-  uint64_t pa = pmm_alloc_contiguous_pages(pages);
-  if (pa == 0) { return false; }
-  void *ptr = pmm_phys_to_virt(pa);
-  if (ptr == NULL) {
-    for (uint64_t i = 0; i < pages; ++i) {
-      pmm_free_page(pa + i * PAGE_SIZE);
-    }
-    return false;
-  }
-  kmemset(ptr, 0, (size_t)(pages * PAGE_SIZE));
-  file->tcp_tx_pa = pa;
-  file->tcp_tx = ptr;
-  return true;
-}
-
-static void tcp_free_tx(struct open_file *file) {
-  if (file == NULL || file->tcp_tx == NULL || file->tcp_tx_pa == 0) { return; }
-  uint64_t pages = tcp_tx_state_pages();
-  kmemset(file->tcp_tx, 0, (size_t)(pages * PAGE_SIZE));
-  for (uint64_t i = 0; i < pages; ++i) {
-    pmm_free_page(file->tcp_tx_pa + i * PAGE_SIZE);
-  }
-  file->tcp_tx_pa = 0;
-  file->tcp_tx = NULL;
-}
-
-static uint8_t tcp_tx_count(const struct open_file *file) {
-  return file != NULL && file->tcp_tx != NULL ? file->tcp_tx->count : 0;
-}
-
-static uint8_t tcp_tx_queue_index(const struct open_file *file, uint8_t offset) {
-  return (uint8_t)((file->tcp_tx->head + offset) % CELL_TCP_TX_QUEUE_CAP);
-}
-
-static void tcp_tx_drop_head(struct open_file *file) {
-  if (file == NULL || file->tcp_tx == NULL || file->tcp_tx->count == 0) { return; }
-  struct tcp_tx_state *tx = file->tcp_tx;
-  uint8_t index = tx->head;
-  tx->len[index] = 0;
-  tx->seq[index] = 0;
-  tx->retries[index] = 0;
-  tx->deadline_tick[index] = 0;
-  tx->sent_tick[index] = 0;
-  tx->first_sent_tick[index] = 0;
-  tx->head = tcp_tx_queue_index(file, 1);
-  --tx->count;
-  if (tx->count == 0) { tx->head = 0; }
-}
-
-static void tcp_tx_drop_tail(struct open_file *file) {
-  if (file == NULL || file->tcp_tx == NULL || file->tcp_tx->count == 0) { return; }
-  struct tcp_tx_state *tx = file->tcp_tx;
-  uint8_t index = tcp_tx_queue_index(file, (uint8_t)(tx->count - 1));
-  tx->len[index] = 0;
-  tx->seq[index] = 0;
-  tx->retries[index] = 0;
-  tx->deadline_tick[index] = 0;
-  tx->sent_tick[index] = 0;
-  tx->first_sent_tick[index] = 0;
-  --tx->count;
-  if (tx->count == 0) { tx->head = 0; }
-}
-
-static void tcp_tx_clear(struct open_file *file) {
-  if (file == NULL) { return; }
-  while (tcp_tx_count(file) != 0) {
-    tcp_tx_drop_head(file);
-  }
-}
-
-static uint16_t tcp_window(const struct open_file *file) {
+uint16_t tcp_window(const struct open_file *file) {
   uint32_t limit = socket_effective_buffer(file, true);
   uint32_t room = file->tcp_rx_len >= limit ? 0 : limit - file->tcp_rx_len;
   uint32_t scaled = room >> TCP_RCV_WINDOW_SCALE;
@@ -295,53 +199,9 @@ static bool seq_after(uint32_t a, uint32_t b) {
   return (int32_t)(a - b) > 0;
 }
 
-static bool seq_before_or_equal(uint32_t a, uint32_t b) {
-  return !seq_after(a, b);
-}
-
 static uint32_t tcp_scaled_window(uint16_t window, uint8_t scale) {
   if (scale >= 16) { return UINT32_MAX; }
   return (uint32_t)window << scale;
-}
-
-static uint32_t tcp_clamp_rto(uint64_t ticks) {
-  if (ticks < TCP_MIN_RTO_TICKS) { return TCP_MIN_RTO_TICKS; }
-  if (ticks > TCP_MAX_RTO_TICKS) { return TCP_MAX_RTO_TICKS; }
-  return (uint32_t)ticks;
-}
-
-static void tcp_init_rto(struct open_file *file) {
-  if (file == NULL) { return; }
-  file->tcp_srtt_ticks_x8 = 0;
-  file->tcp_rttvar_ticks_x4 = 0;
-  file->tcp_rto_ticks = TCP_INITIAL_RTO_TICKS;
-  file->tcp_syn_sent_tick = 0;
-}
-
-static uint32_t tcp_current_rto(const struct open_file *file) {
-  if (file == NULL || file->tcp_rto_ticks == 0) { return TCP_INITIAL_RTO_TICKS; }
-  return tcp_clamp_rto(file->tcp_rto_ticks);
-}
-
-static uint64_t tcp_backoff_rto(const struct open_file *file, uint8_t retries) {
-  uint32_t rto = tcp_current_rto(file);
-  uint8_t shift = retries < TCP_MAX_RTO_SHIFT ? retries : TCP_MAX_RTO_SHIFT;
-  if (rto > (TCP_MAX_RTO_TICKS >> shift)) { return TCP_MAX_RTO_TICKS; }
-  return (uint64_t)rto << shift;
-}
-
-static uint64_t tcp_user_timeout_ticks(const struct open_file *file) {
-  if (file == NULL || file->tcp_user_timeout_ms == 0) { return 0; }
-  return ((uint64_t)file->tcp_user_timeout_ms + 9u) / 10u;
-}
-
-static bool tcp_user_timeout_expired(const struct open_file *file, uint64_t now_ticks) {
-  if (file == NULL || tcp_tx_count(file) == 0) { return false; }
-  uint64_t timeout = tcp_user_timeout_ticks(file);
-  if (timeout == 0) { return false; }
-  const struct tcp_tx_state *tx = file->tcp_tx;
-  uint64_t first_sent = tx->first_sent_tick[tx->head];
-  return first_sent != 0 && now_ticks >= first_sent + timeout;
 }
 
 static uint64_t tcp_keepalive_ticks(uint32_t seconds) {
@@ -363,99 +223,9 @@ static void tcp_init_keepalive(struct open_file *file, uint64_t now_ticks) {
   tcp_note_activity(file, now_ticks);
 }
 
-static void tcp_note_rtt_sample(struct open_file *file, uint64_t sent_tick, uint64_t now_ticks) {
-  if (file == NULL || sent_tick == 0) { return; }
-  uint64_t raw_sample = now_ticks > sent_tick ? now_ticks - sent_tick : 1;
-  uint32_t sample = raw_sample > TCP_MAX_RTO_TICKS ? TCP_MAX_RTO_TICKS : (uint32_t)raw_sample;
-  if (sample == 0) { sample = 1; }
-
-  if (file->tcp_srtt_ticks_x8 == 0) {
-    file->tcp_srtt_ticks_x8 = sample * 8u;
-    file->tcp_rttvar_ticks_x4 = sample * 2u;
-  } else {
-    uint32_t srtt = file->tcp_srtt_ticks_x8 / 8u;
-    uint32_t err = sample > srtt ? sample - srtt : srtt - sample;
-    file->tcp_rttvar_ticks_x4 = (file->tcp_rttvar_ticks_x4 * 3u) / 4u + err;
-    file->tcp_srtt_ticks_x8 = (file->tcp_srtt_ticks_x8 * 7u) / 8u + sample;
-  }
-
-  uint32_t srtt = file->tcp_srtt_ticks_x8 / 8u;
-  uint32_t variance = file->tcp_rttvar_ticks_x4 == 0 ? 1u : file->tcp_rttvar_ticks_x4;
-  file->tcp_rto_ticks = tcp_clamp_rto((uint64_t)srtt + variance);
-}
-
 static void tcp_update_remote_window(struct open_file *file, uint16_t window) {
   if (file == NULL) { return; }
   file->tcp_remote_window = tcp_scaled_window(window, file->tcp_remote_window_scale);
-}
-
-static uint32_t tcp_tx_inflight(const struct open_file *file) {
-  if (file == NULL || tcp_tx_count(file) == 0) { return 0; }
-  const struct tcp_tx_state *tx = file->tcp_tx;
-  return file->tcp_seq - tx->seq[tx->head];
-}
-
-static uint32_t tcp_send_window_available(const struct open_file *file) {
-  if (file == NULL) { return 0; }
-  uint32_t in_flight = tcp_tx_inflight(file);
-  return file->tcp_remote_window > in_flight ? file->tcp_remote_window - in_flight : 0;
-}
-
-static uint32_t tcp_tx_queued_bytes(const struct open_file *file) {
-  uint32_t total = 0;
-  if (file == NULL || file->tcp_tx == NULL) { return 0; }
-  const struct tcp_tx_state *tx = file->tcp_tx;
-  for (uint8_t i = 0; i < tx->count; ++i) {
-    total += tx->len[tcp_tx_queue_index(file, i)];
-  }
-  return total;
-}
-
-static uint32_t tcp_send_buffer_available(const struct open_file *file) {
-  uint32_t limit = socket_effective_buffer(file, false);
-  uint32_t queued = tcp_tx_queued_bytes(file);
-  return queued >= limit ? 0 : limit - queued;
-}
-
-uint32_t tcp_send_chunk_limit(const struct open_file *file) {
-  uint32_t mss = file == NULL || file->tcp_remote_mss == 0 ? TCP_DEFAULT_MSS : file->tcp_remote_mss;
-  uint32_t limit = mss < TCP_SEND_STACK_CHUNK ? mss : TCP_SEND_STACK_CHUNK;
-  uint32_t sendbuf = tcp_send_buffer_available(file);
-  return sendbuf < limit ? sendbuf : limit;
-}
-
-static bool tcp_tx_track_segment(struct open_file *file, uint32_t seq, const uint8_t *data, uint16_t len) {
-  if (file == NULL || len == 0 || tcp_tx_count(file) >= CELL_TCP_TX_QUEUE_CAP) { return false; }
-  if (!tcp_alloc_tx(file)) { return false; }
-  struct tcp_tx_state *tx = file->tcp_tx;
-  uint8_t index = tcp_tx_queue_index(file, tx->count);
-  tx->len[index] = len;
-  tx->seq[index] = seq;
-  tx->retries[index] = 0;
-  uint64_t now_ticks = cell_uptime_ticks();
-  tx->first_sent_tick[index] = now_ticks;
-  tx->sent_tick[index] = now_ticks;
-  tx->deadline_tick[index] = now_ticks + tcp_current_rto(file);
-  kmemcpy(tx->payload[index], data, len);
-  ++tx->count;
-  return true;
-}
-
-static void tcp_tx_ack(struct open_file *file, uint32_t ack) {
-  uint64_t now_ticks = cell_uptime_ticks();
-  bool ambiguous = false;
-  while (file != NULL && tcp_tx_count(file) != 0) {
-    struct tcp_tx_state *tx = file->tcp_tx;
-    uint8_t index = tx->head;
-    uint32_t end = tx->seq[index] + tx->len[index];
-    if (!seq_before_or_equal(end, ack)) { return; }
-    if (tx->retries[index] == 0 && !ambiguous) {
-      tcp_note_rtt_sample(file, tx->sent_tick[index], now_ticks);
-    } else {
-      ambiguous = true;
-    }
-    tcp_tx_drop_head(file);
-  }
 }
 
 static bool tcp_ack_after_sent(const struct open_file *file, uint32_t ack) {
@@ -605,70 +375,6 @@ static void tcp_drain_ooo(struct open_file *file) {
   }
 }
 
-bool tcp_send_would_block(const struct open_file *file) {
-  return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
-         file->tcp_state == TCP_ESTABLISHED && file->tcp_error == 0 && !file->tcp_fin_sent &&
-         (tcp_tx_count(file) >= CELL_TCP_TX_QUEUE_CAP || tcp_send_window_available(file) == 0 ||
-          tcp_send_buffer_available(file) == 0);
-}
-
-bool cell_tcp_socket_writable(const struct open_file *file) {
-  return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
-         file->tcp_state == TCP_ESTABLISHED && file->tcp_error == 0 && !file->tcp_fin_sent &&
-         tcp_tx_count(file) < CELL_TCP_TX_QUEUE_CAP && tcp_send_window_available(file) != 0 &&
-         tcp_send_buffer_available(file) != 0;
-}
-
-int64_t tcp_write_one_from_kernel(struct open_file *file, const void *buf, uint64_t len) {
-  if (file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
-  if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
-  if (file->tcp_fin_sent) { return -EPIPE; }
-  if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
-  if (len == 0) { return 0; }
-  uint32_t available = tcp_send_window_available(file);
-  uint32_t sendbuf_available = tcp_send_buffer_available(file);
-  if (sendbuf_available < available) { available = sendbuf_available; }
-  if (available == 0) { return -EAGAIN; }
-  uint64_t limit = tcp_send_chunk_limit(file);
-  uint64_t chunk = len > limit ? limit : len;
-  if (chunk > available) { chunk = available; }
-  if (!tcp_tx_track_segment(file, file->tcp_seq, buf, (uint16_t)chunk)) { return -EAGAIN; }
-  if (!net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
-                                    socket_effective_ttl(file), (uint8_t)file->ip_tos, file->tcp_seq, file->tcp_ack,
-                                    tcp_window(file), TCP_PSH | TCP_ACK, buf, (size_t)chunk)) {
-    tcp_tx_drop_tail(file);
-    return -EIO;
-  }
-  file->tcp_seq += (uint32_t)chunk;
-  return (int64_t)chunk;
-}
-
-int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  if (domain == NULL || file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
-  if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
-  if (file->tcp_fin_sent) { return -EPIPE; }
-  if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
-  if (len == 0) { return 0; }
-
-  uint8_t tmp[TCP_SEND_STACK_CHUNK];
-  uint64_t sent = 0;
-  while (sent < len) {
-    uint64_t limit = tcp_send_chunk_limit(file);
-    if (limit == 0) { return sent != 0 ? (int64_t)sent : -EAGAIN; }
-    uint64_t chunk = len - sent;
-    if (chunk > limit) { chunk = limit; }
-    if (!vmm_copy_from_user(cell_domain_as(domain), tmp, buf + sent, (size_t)chunk)) {
-      return sent != 0 ? (int64_t)sent : -EFAULT;
-    }
-    int64_t n = tcp_write_one_from_kernel(file, tmp, chunk);
-    if (n < 0) { return sent != 0 ? (int64_t)sent : n; }
-    if (n == 0) { break; }
-    sent += (uint64_t)n;
-    if ((uint64_t)n < chunk || !cell_tcp_socket_writable(file)) { break; }
-  }
-  return (int64_t)sent;
-}
-
 bool tcp_recv_waitall_pending(const struct open_file *file, uint64_t want, uint32_t flags) {
   return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && (flags & MSG_WAITALL) != 0 &&
          want != 0 && file->tcp_rx_len < want && file->tcp_error == 0 && !file->tcp_fin;
@@ -721,7 +427,6 @@ void tcp_release_file(struct open_file *file) {
     (void)tcp_send_fin_once(file);
   }
   tcp_tx_clear(file);
-  tcp_free_tx(file);
   tcp_set_timer_active(file, false);
   tcp_free_rx(file);
   tcp_free_ooo(file);
@@ -1189,7 +894,7 @@ static void tcp_close_timed_out(struct open_file *file) {
 }
 
 static void tcp_timer_keepalive(struct open_file *file, uint64_t now_ticks) {
-  if (file == NULL || !file->so_keepalive || file->tcp_state != TCP_ESTABLISHED || tcp_tx_count(file) != 0) { return; }
+  if (file == NULL || !file->so_keepalive || file->tcp_state != TCP_ESTABLISHED || file->tcp_tx_count != 0) { return; }
   uint64_t idle_ticks = tcp_keepalive_ticks(file->tcp_keepidle);
   uint64_t interval_ticks = tcp_keepalive_ticks(file->tcp_keepintvl);
   if (idle_ticks == 0 || interval_ticks == 0 || file->tcp_keepcnt == 0) { return; }
@@ -1244,33 +949,17 @@ static void tcp_timer_file(struct open_file *file, uint64_t now_ticks) {
     return;
   }
   if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { return; }
-  if (tcp_tx_count(file) == 0) {
+  if (file->tcp_tx_count == 0) {
     tcp_timer_keepalive(file, now_ticks);
     return;
   }
-  struct tcp_tx_state *tx = file->tcp_tx;
-  uint8_t index = tx->head;
-  if (tcp_user_timeout_expired(file, now_ticks)) {
-    tcp_close_timed_out(file);
-    return;
-  }
-  if (now_ticks < tx->deadline_tick[index]) { return; }
-  if (tx->retries[index] >= TCP_DATA_MAX_RETRIES) {
-    tcp_close_timed_out(file);
-    return;
-  }
-  if (!net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
-                                    socket_effective_ttl(file), (uint8_t)file->ip_tos, tx->seq[index], file->tcp_ack,
-                                    tcp_window(file), TCP_PSH | TCP_ACK, tx->payload[index], tx->len[index])) {
-    file->tcp_error = EIO;
+  int error = tcp_tx_retransmit(file, now_ticks);
+  if (error) {
+    file->tcp_error = error;
     file->tcp_state = TCP_CLOSED;
     tcp_tx_clear(file);
     wake_socket_waiters(file);
-    return;
   }
-  ++tx->retries[index];
-  tx->sent_tick[index] = now_ticks;
-  tx->deadline_tick[index] = now_ticks + tcp_backoff_rto(file, tx->retries[index]);
 }
 
 void tcp_timer_tick(uint64_t now_ticks) {

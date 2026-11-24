@@ -67,9 +67,9 @@ int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint
                              uint64_t addrlen, uint32_t flags);
 int64_t dgram_read_to_kernel(struct domain *domain, struct open_file *file, void *buf, uint64_t len, uint64_t addr,
                              uint64_t addrlen, uint32_t flags, uint16_t *original_len);
-uint32_t tcp_send_chunk_limit(const struct open_file *file);
 bool tcp_send_would_block(const struct open_file *file);
-int64_t tcp_write_one_from_kernel(struct open_file *file, const void *buf, uint64_t len);
+typedef int (*tcp_copy_payload)(void *source, uint8_t *dst, size_t len);
+int64_t tcp_write_stream(struct open_file *file, uint64_t len, tcp_copy_payload copy, void *source);
 int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
                                              uint32_t flags);
 int64_t cell_socket_tcp_read_to_kernel(struct open_file *file, void *buf, uint64_t len, uint32_t flags);

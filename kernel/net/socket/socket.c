@@ -520,34 +520,43 @@ int64_t cell_fd_dgram_readv(int fd, uint64_t iov, int32_t count, struct trap_fra
   return cell_block_current_on_socket_msg_timeout(fd, 0, iov, count, 0, 0, 0, file->so_rcvtimeo_ticks, frame);
 }
 
-static int64_t socket_sendmsg_tcp_from_domain(struct domain *domain, struct open_file *file, uint64_t msg_addr) {
-  if (domain == NULL || file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
-  struct socket_user_message msg;
-  if (aarch64_read_socket_message(domain, msg_addr, &msg) < 0) { return -EFAULT; }
-  uint8_t tmp[CELL_TCP_TX_CAP];
-  uint64_t total_len = 0;
-  int rc = aarch64_iov_capacity(domain, msg.iov, msg.iovlen, &total_len);
-  if (rc < 0) { return rc; }
-  if (total_len == 0) { return 0; }
-  if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
-  if (file->tcp_fin_sent) { return -EPIPE; }
-  if (file->tcp_state != TCP_ESTABLISHED) { return -ENOTCONN; }
+struct socket_user_buffer {
+  const struct user_address_space *as;
+  uint64_t addr;
+};
 
-  uint64_t sent = 0;
-  while (sent < total_len) {
-    uint64_t limit = tcp_send_chunk_limit(file);
-    if (limit == 0) { return sent != 0 ? (int64_t)sent : -EAGAIN; }
-    uint64_t chunk = total_len - sent;
-    if (chunk > limit) { chunk = limit; }
-    rc = aarch64_gather_iov_at(domain, msg.iov, msg.iovlen, sent, tmp, (size_t)chunk);
-    if (rc < 0) { return sent != 0 ? (int64_t)sent : rc; }
-    int64_t n = tcp_write_one_from_kernel(file, tmp, chunk);
-    if (n < 0) { return sent != 0 ? (int64_t)sent : n; }
-    if (n == 0) { break; }
-    sent += (uint64_t)n;
-    if ((uint64_t)n < chunk || !cell_tcp_socket_writable(file)) { break; }
-  }
-  return (int64_t)sent;
+static int copy_user_payload(void *source, uint8_t *dst, size_t len) {
+  struct socket_user_buffer *buf = source;
+  if (!vmm_copy_from_user(buf->as, dst, buf->addr, len)) { return -EFAULT; }
+  buf->addr += len;
+  return 0;
+}
+
+int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
+  struct socket_user_buffer source = {cell_domain_as_const(domain), buf};
+  return source.as ? tcp_write_stream(file, len, copy_user_payload, &source) : -EFAULT;
+}
+
+struct socket_message_source {
+  struct domain *domain;
+  struct socket_user_message msg;
+  uint64_t offset;
+};
+
+static int copy_message_payload(void *source, uint8_t *dst, size_t len) {
+  struct socket_message_source *input = source;
+  int rc = aarch64_gather_iov_at(input->domain, input->msg.iov, input->msg.iovlen, input->offset, dst, len);
+  input->offset += len;
+  return rc;
+}
+
+static int64_t socket_sendmsg_tcp_from_domain(struct domain *domain, struct open_file *file, uint64_t msg_addr) {
+  struct socket_message_source source = {.domain = domain};
+  if (aarch64_read_socket_message(domain, msg_addr, &source.msg) < 0) { return -EFAULT; }
+  uint64_t len;
+  int rc = aarch64_iov_capacity(domain, source.msg.iov, source.msg.iovlen, &len);
+  if (rc || !len) { return rc; }
+  return tcp_write_stream(file, len, copy_message_payload, &source);
 }
 
 int64_t cell_fd_socket_sendmsg(int fd, uint64_t msg_addr, bool dontwait, struct trap_frame *frame) {
