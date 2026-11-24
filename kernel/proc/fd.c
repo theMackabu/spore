@@ -1,5 +1,6 @@
 #include "abi/linux/aarch64/open.h"
 #include "proc/fd.h"
+#include "proc/epoll.h"
 #include "flock.h"
 
 #include "lib/kstr.h"
@@ -71,6 +72,7 @@ void cell_release_open_file(struct open_file *file) {
   if (file == NULL || file->refcount == 0) { return; }
   --file->refcount;
   if (file->refcount == 0) {
+    if (file->epoll_observers || file->type == OPEN_EPOLL) { cell_epoll_release_file(file); }
     cell_flock_release(file);
     if (cell_pipe_release_file(file)) {
       cell_pipe_notify();

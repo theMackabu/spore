@@ -6,6 +6,7 @@
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
+#include "proc/epoll.h"
 #include "proc/thread.h"
 #include "lib/random.h"
 
@@ -89,7 +90,6 @@ void tcp_init_socket(struct open_file *file) {
 int tcp_poll_events(const struct open_file *file, int events) {
   int ready = file->tcp_error ? CELL_POLLERR : 0;
   if (events & CELL_POLLIN) {
-    net_poll();
     if (file->tcp_state == TCP_LISTEN) {
       if (file->tcp_ready_head) { ready |= CELL_POLLIN; }
     } else if (tcp_rx_available(file) >= socket_effective_rcvlowat(file) || file->tcp_fin || file->tcp_error) {
@@ -296,7 +296,11 @@ int cell_fd_socket_shutdown(int fd, int how) {
     tcp_free_rx(file);
     cell_socket_wake_file(file);
   }
-  if (how == 1 || how == 2) { return tcp_send_fin_once(file); }
+  if (how == 1 || how == 2) {
+    int rc = tcp_send_fin_once(file);
+    cell_socket_wake_file(file);
+    return rc;
+  }
   return 0;
 }
 
@@ -408,7 +412,9 @@ static void tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
     return;
   }
   if (len || (flags & TCP_FIN)) {
+    uint32_t before = file->tcp_ack;
     tcp_receive_segment(file, seq, payload, (uint32_t)len, (flags & TCP_FIN) != 0);
+    if (file->tcp_ack != before) { cell_epoll_file_activity(file, CELL_POLLIN); }
     tcp_ack_current_state(file);
   }
   cell_socket_wake_file(file);

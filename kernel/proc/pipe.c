@@ -9,6 +9,7 @@
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
+#include "proc/epoll.h"
 #include "net/unix.h"
 #include "abi/linux/aarch64/unix.h"
 #include "proc/thread.h"
@@ -33,6 +34,7 @@ struct pipe_obj {
   uint64_t pages[PIPE_PAGES];
   struct page_ring ring;
   struct unix_rights_queue rights;
+  struct epoll_source poll_source;
   uint64_t read_offset;
   uint64_t write_offset;
 };
@@ -91,18 +93,20 @@ bool cell_pipe_has_readers(struct pipe_obj *pipe) {
 }
 
 void cell_pipe_add_reader(struct pipe_obj *pipe) {
-  if (pipe != NULL) { ++pipe->readers; }
+  if (pipe) { ++pipe->readers; cell_epoll_source_changed(&pipe->poll_source); }
 }
 
 void cell_pipe_add_writer(struct pipe_obj *pipe) {
   if (pipe != NULL) {
     ++pipe->writers;
     pipe->had_writer = true;
+    cell_epoll_source_changed(&pipe->poll_source);
   }
 }
 
 void cell_pipe_drop_reader(struct pipe_obj *pipe) {
   if (!pipe || !pipe->readers || --pipe->readers) { return; }
+  cell_epoll_source_changed(&pipe->poll_source);
   struct unix_rights_queue abandoned = pipe->rights;
   pipe->rights = (struct unix_rights_queue){0};
   if (!pipe->writers) { cell_pipe_discard(pipe); }
@@ -112,6 +116,7 @@ void cell_pipe_drop_reader(struct pipe_obj *pipe) {
 void cell_pipe_drop_writer(struct pipe_obj *pipe) {
   if (pipe == NULL) { return; }
   if (pipe->writers > 0) { --pipe->writers; }
+  cell_epoll_source_changed(&pipe->poll_source);
   if (pipe->readers == 0 && pipe->writers == 0) { cell_pipe_discard(pipe); }
 }
 
@@ -142,6 +147,7 @@ bool cell_pipe_hup(struct pipe_obj *pipe) {
   return pipe != NULL && pipe->writers == 0;
 }
 
+struct epoll_source *cell_pipe_poll_source(struct pipe_obj *pipe) { return &pipe->poll_source; }
 uint64_t cell_pipe_read_offset(const struct pipe_obj *pipe) { return pipe->read_offset; }
 struct unix_rights_queue *cell_pipe_rights(struct pipe_obj *pipe) { return &pipe->rights; }
 
@@ -225,6 +231,7 @@ int64_t cell_pipe_write_data(struct pipe_obj *pipe, uint64_t len, ring_copy_in c
       unix_queue_rights(&pipe->rights, *rights, start, pipe->write_offset);
       *rights = NULL;
     }
+    cell_epoll_source_activity(&pipe->poll_source, CELL_POLLIN);
     cell_pipe_notify();
   }
   return n;
@@ -241,6 +248,7 @@ void cell_pipe_consume(struct pipe_obj *pipe, uint32_t bytes) {
   page_ring_consume(&pipe->ring, bytes);
   pipe->read_offset += bytes;
   unix_discard_rights(&pipe->rights, pipe->read_offset);
+  cell_epoll_source_activity(&pipe->poll_source, CELL_POLLOUT);
   cell_pipe_notify();
 }
 

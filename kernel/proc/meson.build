@@ -4,6 +4,7 @@ kernel_sources += files(
   'child.c',
   'domain.c',
   'eventfd.c',
+  'epoll.c',
   'fd.c',
   'fdtable.c',
   'flock.c',

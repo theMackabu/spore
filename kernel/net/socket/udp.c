@@ -3,6 +3,7 @@
 #include "lib/mem.h"
 #include "net/net.h"
 #include "proc/domain.h"
+#include "proc/epoll.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
 #include "lib/random.h"
@@ -30,7 +31,6 @@ static void udp_set_local_port(struct open_file *file, uint16_t port) {
 int dgram_poll_events(const struct open_file *file, int events) {
   int ready = file->socket_proto == IPPROTO_UDP && file->udp_error ? CELL_POLLERR : 0;
   if (events & CELL_POLLIN) {
-    net_poll();
     if (file->dgram_rx_count) { ready |= CELL_POLLIN; }
   }
   return ready | (events & CELL_POLLOUT);
@@ -97,6 +97,7 @@ bool cell_fd_udp_connect(int fd, uint32_t ip, uint16_t port) {
   file->udp_remote_port = port;
   file->udp_connected = true;
   file->udp_error = 0;
+  cell_epoll_file_changed(file);
   return true;
 }
 
@@ -108,6 +109,7 @@ int cell_fd_udp_disconnect(int fd) {
   file->udp_remote_port = 0;
   file->udp_connected = false;
   file->udp_error = 0;
+  cell_epoll_file_changed(file);
   return 0;
 }
 

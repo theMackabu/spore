@@ -7,6 +7,7 @@
 struct domain;
 struct open_file;
 struct pipe_obj;
+struct epoll_source;
 struct vfs_node;
 
 struct pipe_obj *cell_pipe_create(void);
@@ -26,6 +27,7 @@ bool cell_pipe_writable(struct pipe_obj *pipe);
 bool cell_pipe_hup(struct pipe_obj *pipe);
 struct unix_rights;
 struct unix_rights_queue;
+struct epoll_source *cell_pipe_poll_source(struct pipe_obj *pipe);
 uint64_t cell_pipe_read_offset(const struct pipe_obj *pipe);
 struct unix_rights_queue *cell_pipe_rights(struct pipe_obj *pipe);
 int64_t cell_pipe_write_data(struct pipe_obj *pipe, uint64_t len, ring_copy_in copy, void *source, struct unix_rights **rights);

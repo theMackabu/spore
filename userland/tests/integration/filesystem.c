@@ -188,24 +188,44 @@ static int fd_limit_regression(void) {
 }
 
 static int epoll_watch_lifetime(void) {
-  int counter = eventfd(1, EFD_NONBLOCK);
-  if (counter < 0) { return 0; }
-  struct epoll_event watch = {.events = EPOLLIN, .data.fd = counter};
-  struct epoll_event event;
-  int ep = epoll_create1(0);
-  int ok = ep >= 0 && epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == 0 &&
-           epoll_wait(ep, &event, 1, 0) == 1 && (event.events & EPOLLIN) && event.data.fd == counter;
-  if (ep >= 0) { close(ep); }
-
-  eventfd_t value;
-  int next = eventfd(2, EFD_NONBLOCK);
-  ok = ok && next >= 0 && eventfd_read(next, &value) == 0 && value == 2;
-  if (next >= 0) { close(next); }
-  ep = epoll_create1(0);
-  ok = ok && ep >= 0 && epoll_wait(ep, &event, 1, 0) == 0;
-  if (ep >= 0) { close(ep); }
-  ok = ok && eventfd_read(counter, &value) == 0 && value == 1;
+  int ep = epoll_create1(0), counter = eventfd(0, EFD_NONBLOCK), alias = dup(counter);
+  struct epoll_event watch = {.events = EPOLLIN, .data.u64 = 42}, event;
+  int ok = ep >= 0 && alias >= 0 && epoll_ctl(ep, EPOLL_CTL_MOD, counter, &watch) == -1 && errno == ENOENT &&
+           epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == 0 &&
+           epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == -1 && errno == EEXIST;
   close(counter);
+  int replacement = eventfd(0, EFD_NONBLOCK);
+  ok = ok && replacement == counter && eventfd_write(replacement, 1) == 0 && epoll_wait(ep, &event, 1, 0) == 0 &&
+       eventfd_write(alias, 1) == 0 && epoll_wait(ep, &event, 1, 0) == 1 && event.data.u64 == 42;
+  close(alias);
+  ok = ok && epoll_wait(ep, &event, 1, 0) == 0 && epoll_ctl(ep, EPOLL_CTL_DEL, replacement, NULL) == -1 && errno == ENOENT;
+  close(replacement); close(ep);
+  return ok;
+}
+
+static int epoll_ready_queue(void) {
+  int ep = epoll_create1(0), outer = epoll_create1(0), p[2];
+  if (ep < 0 || outer < 0 || pipe(p)) { return 0; }
+  struct epoll_event w = {.events = EPOLLIN, .data.u64 = 42}, e;
+  int ok = epoll_ctl(outer, EPOLL_CTL_ADD, ep, &w) == 0;
+  w.events |= EPOLLET;
+  char byte;
+  ok = ok && epoll_ctl(ep, EPOLL_CTL_ADD, p[0], &w) == 0 && write(p[1], "ab", 2) == 2 &&
+       epoll_wait(outer, &e, 1, 0) == 1 && epoll_wait(ep, &e, 1, 0) == 1 && read(p[0], &byte, 1) == 1 &&
+       epoll_wait(ep, &e, 1, 0) == 0 && epoll_wait(outer, &e, 1, 0) == 0 && read(p[0], &byte, 1) == 1 &&
+       write(p[1], "c", 1) == 1 && epoll_wait(ep, &e, 1, 0) == 1;
+  w.events = EPOLLIN | EPOLLONESHOT;
+  ok = ok && epoll_ctl(ep, EPOLL_CTL_MOD, p[0], &w) == 0 && epoll_wait(ep, &e, 1, 0) == 1 &&
+       epoll_wait(ep, &e, 1, 0) == 0 && epoll_ctl(ep, EPOLL_CTL_MOD, p[0], &w) == 0 &&
+       epoll_wait(ep, &e, 1, 0) == 1;
+  int counter = eventfd(0, EFD_NONBLOCK);
+  w.events = EPOLLIN | EPOLLET;
+  ok = ok && counter >= 0 && epoll_ctl(ep, EPOLL_CTL_ADD, counter, &w) == 0 &&
+       eventfd_write(counter, 1) == 0 && epoll_wait(ep, &e, 1, 0) == 1 && epoll_wait(ep, &e, 1, 0) == 0 &&
+       eventfd_write(counter, 1) == 0 && epoll_wait(ep, &e, 1, 0) == 1;
+  if (counter >= 0) { close(counter); }
+  close(p[0]); close(p[1]); close(outer); close(ep);
+  printf("[spore] nested epoll, edge transitions and one-shot rearm: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
@@ -436,7 +456,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }

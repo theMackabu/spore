@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "proc/epoll.h"
+#include "proc/poll.h"
 #include "lib/mem.h"
 #include "mm/pool.h"
 #include "proc/memory.h"
@@ -45,6 +47,7 @@ bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t po
   file->dgram_rx_tail = packet;
   file->dgram_rx_bytes += len;
   ++file->dgram_rx_count;
+  cell_epoll_file_activity(file, CELL_POLLIN);
   return true;
 }
 
@@ -65,6 +68,7 @@ int64_t dgram_read(struct domain *domain, struct open_file *file, uint64_t len, 
   if (file->udp_error) {
     int error = file->udp_error;
     file->udp_error = 0;
+    cell_epoll_file_changed(file);
     return -error;
   }
   struct socket_datagram *packet = file->dgram_rx_head;
@@ -74,6 +78,6 @@ int64_t dgram_read(struct domain *domain, struct open_file *file, uint64_t len, 
   int rc = copy(destination, packet->data, bytes);
   if (rc) { return rc; }
   if (!dgram_copy_source_to_domain(domain, packet->ip, packet->port, addr, addrlen)) { return -EFAULT; }
-  if (!(flags & MSG_PEEK)) { dgram_drop_head(file); }
+  if (!(flags & MSG_PEEK)) { dgram_drop_head(file); cell_epoll_file_changed(file); }
   return flags & MSG_TRUNC ? packet_len : (int64_t)bytes;
 }

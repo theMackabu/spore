@@ -2,6 +2,7 @@
 #include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/poll.h"
+#include "proc/epoll.h"
 #include "proc/thread.h"
 
 static void wake_socket_timeout_waiters(uint64_t now_ticks) {
@@ -47,6 +48,7 @@ static int64_t resume_socket_wait(struct open_file *file, struct thread *thread)
 }
 
 void cell_socket_wake_file(struct open_file *file) {
+  cell_epoll_file_changed(file);
   if (file->socket_waiters) {
     cell_retain_open_file(file);
     size_t cursor = 0;

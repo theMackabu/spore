@@ -3,6 +3,7 @@
 #include "proc/accounting.h"
 #include "net/net.h"
 #include "proc/domain.h"
+#include "proc/epoll.h"
 #include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
@@ -115,12 +116,12 @@ int cell_fd_socket_error(int fd, bool clear) {
   if (file == NULL) { return -9; }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
     int err = file->tcp_error;
-    if (clear) { file->tcp_error = 0; }
+    if (clear && err) { file->tcp_error = 0; cell_epoll_file_changed(file); }
     return err;
   }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_UDP) {
     int err = file->udp_error;
-    if (clear) { file->udp_error = 0; }
+    if (clear && err) { file->udp_error = 0; cell_epoll_file_changed(file); }
     return err;
   }
   if (file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) { return 0; }
@@ -250,6 +251,7 @@ int cell_fd_socket_set_int_option(int fd, int level, int optname, int32_t value)
       if (value <= 0) { return -EINVAL; }
       file->so_sndbuf =
         (uint32_t)value > socket_buffer_cap(file, false) ? socket_buffer_cap(file, false) : (uint32_t)value;
+      cell_socket_wake_file(file);
       return 0;
     case SO_RCVBUF:
       if (value <= 0) { return -EINVAL; }
@@ -259,6 +261,7 @@ int cell_fd_socket_set_int_option(int fd, int level, int optname, int32_t value)
     case SO_RCVLOWAT:
       if (value <= 0) { return -EINVAL; }
       file->so_rcvlowat = (uint32_t)value;
+      cell_socket_wake_file(file);
       return 0;
     default:
       return -ENOPROTOOPT;
@@ -430,6 +433,7 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, 
   if (file->socket_proto == IPPROTO_UDP && file->udp_error != 0) {
     int err = file->udp_error;
     file->udp_error = 0;
+    cell_epoll_file_changed(file);
     return -(int64_t)err;
   }
   if (file->dgram_rx_count == 0) {

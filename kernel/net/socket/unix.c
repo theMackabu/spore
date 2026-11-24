@@ -2,6 +2,7 @@
 
 #include "net/unix.h"
 #include "proc/domain.h"
+#include "proc/epoll.h"
 #include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
@@ -119,6 +120,7 @@ static struct open_file *take_head(struct open_file *listener) {
   server->unix_pending_next = NULL;
   server->unix_pending_owned = false;
   --listener->unix_pending_count;
+  cell_epoll_file_changed(listener);
   return server;
 }
 
@@ -225,6 +227,8 @@ int cell_fd_unix_connect(int fd, const char *path) {
   else { listener->unix_pending_head = server; }
   listener->unix_pending_tail = server;
   ++listener->unix_pending_count;
+  cell_epoll_sources_changed(client);
+  cell_epoll_file_activity(listener, CELL_POLLIN);
   cell_socket_wake_file(listener);
   return 0;
 }

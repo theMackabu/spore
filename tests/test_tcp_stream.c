@@ -2,6 +2,7 @@
 #include "mm/pmm.h"
 #include "net/net.h"
 #include "proc/accounting.h"
+#include "proc/epoll.h"
 #include <assert.h>
 #include <string.h>
 
@@ -61,6 +62,7 @@ static int fill(void *source, uint8_t *dst, size_t len) {
 static int64_t send_text(const char *s) { return tcp_write_stream(&sender, strlen(s), fill, &s); }
 
 void tcp_ack_current_state(struct open_file *) {}
+void cell_epoll_file_changed(struct open_file *) {}
 
 static int collect(void *destination, const uint8_t *src, size_t len) {
   char **dst = destination;

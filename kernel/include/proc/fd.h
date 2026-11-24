@@ -30,14 +30,7 @@ enum open_file_type {
   OPEN_PTY,
 };
 
-constexpr int CELL_EPOLL_WATCH_CAP = 16;
-
-struct epoll_watch {
-  bool used;
-  int32_t fd;
-  uint32_t events;
-  uint64_t data;
-};
+struct epoll_watch;
 
 struct open_file {
   uint32_t refcount;
@@ -46,6 +39,7 @@ struct open_file {
   uint32_t flags;
   uint8_t flock_mode;
   struct open_file *flock_next;
+  struct epoll_watch *epoll_observers;
   char path[CELL_PATH_MAX];
   struct vfs_node node;
   union {
@@ -150,7 +144,12 @@ struct open_file {
         };
       };
     };
-    struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
+    struct {
+      struct epoll_watch *epoll_interests, *epoll_ready_head, *epoll_ready_tail;
+      uint32_t epoll_ready_count;
+      uint64_t epoll_scan;
+      unsigned epoll_depth;
+    };
     struct {
       uint64_t eventfd_value;
       uint16_t eventfd_waiters;

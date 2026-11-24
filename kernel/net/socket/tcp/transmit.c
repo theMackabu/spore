@@ -2,6 +2,7 @@
 #include "mm/pool.h"
 #include "net/net.h"
 #include "proc/accounting.h"
+#include "proc/epoll.h"
 
 enum { MAX_DATA_RETRIES = 8, ETIMEDOUT = 110 };
 
@@ -126,6 +127,7 @@ static int64_t write_segment(struct open_file *file, uint64_t len, tcp_copy_payl
     recycle(file, seg);
     return -EIO;
   }
+  cell_epoll_file_changed(file);
   return chunk;
 }
 

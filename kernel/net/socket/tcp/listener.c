@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "proc/accounting.h"
 #include "proc/domain.h"
+#include "proc/epoll.h"
+#include "proc/poll.h"
 
 static void insert_half_open(struct open_file *listener, struct open_file *server) {
   server->tcp_pending_next = listener->tcp_half_open;
@@ -24,6 +26,7 @@ static void unlink_pending(struct open_file *server) {
 static void detach(struct open_file *server) {
   unlink_pending(server);
   --server->tcp_listener->tcp_pending_count;
+  cell_epoll_file_changed(server->tcp_listener);
   server->tcp_listener = NULL;
 }
 
@@ -34,6 +37,7 @@ void tcp_ready_pending(struct open_file *server) {
   server->tcp_pending_link = listener->tcp_ready_tail;
   *listener->tcp_ready_tail = server;
   listener->tcp_ready_tail = &server->tcp_pending_next;
+  cell_epoll_file_activity(listener, CELL_POLLIN);
   cell_socket_wake_file(listener);
 }
 

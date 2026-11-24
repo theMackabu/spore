@@ -1,5 +1,7 @@
 #include "abi/linux/aarch64/layout.h"
 #include "proc/poll.h"
+#include "poll_internal.h"
+#include "net/net.h"
 #include "proc/signal.h"
 
 #include "arch/aarch64/regs.h"
@@ -14,23 +16,12 @@
 #include "proc/thread.h"
 #include "tty/tty.h"
 
-enum {
-  CELL_O_CLOEXEC = 02000000,
-  EFAULT = 14,
-  EINVAL = 22,
-  EINTR = 4,
-  EPOLL_CTL_ADD = 1,
-  EPOLL_CTL_DEL = 2,
-  EPOLL_CTL_MOD = 3,
-};
+enum { EFAULT = 14, EINVAL = 22 };
 
 static bool poll_waking;
-static bool epoll_waking;
 
-static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) {
-  if (cell_file_at(domain, fd) == NULL) { return CELL_POLLNVAL; }
-
-  struct open_file *file = cell_file_at(domain, fd);
+int cell_file_poll_events(struct open_file *file, int events) {
+  if (!file) { return CELL_POLLNVAL; }
   if (file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
     return cell_socket_poll_events(file, events);
   }
@@ -49,21 +40,14 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
     } else if (file->type == OPEN_VFS) {
       revents |= CELL_POLLIN;
     } else if (file->type == OPEN_EPOLL) {
-      for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP; ++i) {
-        if (!file->epoll_watches[i].used) { continue; }
-        int ready = fd_poll_events_for_domain(domain, file->epoll_watches[i].fd, (int)file->epoll_watches[i].events);
-        if ((ready & (CELL_POLLIN | CELL_POLLOUT | CELL_POLLERR | CELL_POLLHUP | CELL_POLLNVAL)) != 0) {
-          revents |= CELL_POLLIN;
-          break;
-        }
-      }
+      if (file->epoll_ready_head) { revents |= CELL_POLLIN; }
     } else if (file->type == OPEN_EVENTFD) {
       if (file->eventfd_value != 0) { revents |= CELL_POLLIN; }
     }
   }
 
   if ((events & CELL_POLLOUT) != 0) {
-    if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_VFS || file->type == OPEN_EPOLL ||
+    if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_VFS ||
         (file->type == OPEN_EVENTFD && file->eventfd_value < UINT64_MAX - 1)) {
       revents |= CELL_POLLOUT;
     } else if (file->type == OPEN_PIPE) {
@@ -84,7 +68,7 @@ static int64_t ppoll_check(struct thread *thread, bool commit) {
     if (!vmm_copy_from_user(cell_domain_as(thread->domain), &pfd, addr, sizeof(pfd))) { return -EFAULT; }
 
     int revents = 0;
-    if (pfd.fd >= 0) { revents = fd_poll_events_for_domain(thread->domain, pfd.fd, pfd.events); }
+    if (pfd.fd >= 0) { revents = cell_file_poll_events(cell_file_at(thread->domain, pfd.fd), pfd.events); }
     if (revents != 0) { ++ready; }
     if (commit) {
       pfd.revents = (int16_t)revents;
@@ -114,7 +98,7 @@ static int64_t pselect_check(struct thread *thread, bool commit) {
       unsigned pos = (unsigned)__builtin_ctzll(bits);
       uint64_t bit = UINT64_C(1) << pos;
       int events = (read & bit ? CELL_POLLIN : 0) | (write & bit ? CELL_POLLOUT : 0);
-      int revents = fd_poll_events_for_domain(thread->domain, (int)(64 * i + pos), events);
+      int revents = cell_file_poll_events(cell_file_at(thread->domain, 64 * i + pos), events);
       if (revents & CELL_POLLNVAL) { return -9; }
       if ((read & bit) && (revents & (CELL_POLLIN | CELL_POLLHUP | CELL_POLLERR))) { sets[0][i] |= bit; ++ready; }
       if ((write & bit) && (revents & (CELL_POLLOUT | CELL_POLLERR))) { sets[1][i] |= bit; ++ready; }
@@ -135,11 +119,10 @@ static int64_t poll_wait_check(struct thread *thread, bool commit) {
   return -EINVAL;
 }
 
-static void wake_epoll_waiters(void);
-
 static void wake_poll_waiters(void) {
   if (poll_waking) { return; }
   poll_waking = true;
+  cell_epoll_sample_terminals();
   size_t cursor = 0;
   struct thread *thread;
   while ((thread = cell_next_waiter(WAIT_POLL, &cursor))) {
@@ -151,56 +134,14 @@ static void wake_poll_waiters(void) {
     }
   }
   poll_waking = false;
-  wake_epoll_waiters();
+  cell_wake_epoll_waiters();
 }
 
 void cell_wake_poll_waiters_internal(void) {
   wake_poll_waiters();
 }
 
-static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t events_addr, int maxevents, bool commit) {
-  if (maxevents <= 0) { return -EINVAL; }
-  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || cell_file_at(domain, epfd) == NULL ||
-      cell_file_at(domain, epfd)->type != OPEN_EPOLL) {
-    return -9;
-  }
-  struct open_file *ep = cell_file_at(domain, epfd);
-  int written = 0;
-  for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP && written < maxevents; ++i) {
-    if (!ep->epoll_watches[i].used) { continue; }
-    int ready = fd_poll_events_for_domain(domain, ep->epoll_watches[i].fd, (int)ep->epoll_watches[i].events);
-    if ((ready & (CELL_POLLIN | CELL_POLLOUT | CELL_POLLERR | CELL_POLLHUP | CELL_POLLNVAL)) == 0) { continue; }
-    if (commit) {
-      struct epoll_event64 out = {.events = (uint32_t)ready, .data = ep->epoll_watches[i].data};
-      uint64_t dst = events_addr + (uint64_t)written * sizeof(out);
-      if (!vmm_copy_to_user(cell_domain_as(domain), dst, &out, sizeof(out))) { return -EFAULT; }
-    }
-    ++written;
-  }
-  return written;
-}
-
-static void wake_epoll_waiters(void) {
-  if (epoll_waking) { return; }
-  epoll_waking = true;
-  size_t cursor = 0;
-  struct thread *thread;
-  while ((thread = cell_next_waiter(WAIT_EPOLL, &cursor))) {
-    int ready =
-      epoll_wait_for_domain(thread->domain, thread->wait.target, thread->wait.epoll_events, thread->wait.epoll_maxevents, false);
-    bool expired = thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick;
-    if (ready == 0 && !expired) { continue; }
-    if (ready > 0) {
-      ready =
-        epoll_wait_for_domain(thread->domain, thread->wait.target, thread->wait.epoll_events, thread->wait.epoll_maxevents, true);
-    }
-    if (ready < 0) { ready = -EINTR; }
-    cell_finish_wait(thread, ready);
-  }
-  epoll_waking = false;
-}
-
-static int sleep_poll(struct thread *thread, struct trap_frame *frame, const uint64_t *mask,
+int cell_sleep_poll(struct thread *thread, struct trap_frame *frame, const uint64_t *mask,
                       bool has_timeout, uint64_t timeout_ticks) {
   if (mask != NULL) {
     thread->wait.saved_signal_mask = thread->signal_mask;
@@ -227,6 +168,8 @@ int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t t
                        const uint64_t *mask, struct trap_frame *frame) {
   struct thread *thread = cell_current_thread_internal();
   if (thread == NULL || cell_current_domain_internal() == NULL || nfds > MAX_FDS) { return -EINVAL; }
+  net_poll();
+  cell_epoll_sample_terminals();
   thread->wait.poll_kind = 1;
   thread->wait.poll_fds = fds;
   thread->wait.poll_nfds = nfds;
@@ -236,7 +179,7 @@ int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t t
     return (int)ready;
   }
   thread->wait.reason = WAIT_POLL;
-  return sleep_poll(thread, frame, mask, has_timeout, timeout_ticks);
+  return cell_sleep_poll(thread, frame, mask, has_timeout, timeout_ticks);
 }
 
 int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, uint64_t exceptfds, bool has_timeout,
@@ -248,6 +191,8 @@ int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, ui
   for (unsigned i = 0; i < 3; ++i) {
     if (sets[i] && !cell_domain_ensure_user_range(thread->domain, sets[i], bytes, VMM_ACCESS_WRITE)) { return -EFAULT; }
   }
+  net_poll();
+  cell_epoll_sample_terminals();
   thread->wait.poll_kind = 2;
   thread->wait.poll_nfds = nfds;
   thread->wait.poll_readfds = readfds;
@@ -260,62 +205,5 @@ int cell_pselect6_current(uint64_t nfds, uint64_t readfds, uint64_t writefds, ui
     return (int)ready;
   }
   thread->wait.reason = WAIT_POLL;
-  return sleep_poll(thread, frame, mask, has_timeout, timeout_ticks);
-}
-
-int cell_fd_epoll_create(int flags) {
-  if ((flags & ~CELL_O_CLOEXEC) != 0) { return -EINVAL; }
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) { return -12; }
-  struct open_file *file = cell_alloc_open_file();
-  if (file == NULL) { return -12; }
-  file->type = OPEN_EPOLL;
-  file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
-  return cell_install_fd(domain, file, (flags & CELL_O_CLOEXEC));
-}
-
-int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || cell_file_at(domain, epfd) == NULL ||
-      cell_file_at(domain, epfd)->type != OPEN_EPOLL || cell_file_at(domain, fd) == NULL) {
-    return -9;
-  }
-  struct open_file *ep = cell_file_at(domain, epfd);
-  int free_slot = -1;
-  for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP; ++i) {
-    if (ep->epoll_watches[i].used && ep->epoll_watches[i].fd == fd) {
-      if (op == EPOLL_CTL_DEL) {
-        ep->epoll_watches[i] = (struct epoll_watch){0};
-        return 0;
-      }
-      if (op == EPOLL_CTL_MOD || op == EPOLL_CTL_ADD) {
-        ep->epoll_watches[i].events = events;
-        ep->epoll_watches[i].data = data;
-        return 0;
-      }
-      return -EINVAL;
-    }
-    if (!ep->epoll_watches[i].used && free_slot < 0) { free_slot = (int)i; }
-  }
-  if (op == EPOLL_CTL_DEL) { return -9; }
-  if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_MOD) { return -EINVAL; }
-  if (free_slot < 0) { return -12; }
-  ep->epoll_watches[free_slot] = (struct epoll_watch){.used = true, .fd = fd, .events = events, .data = data};
-  return 0;
-}
-
-int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, const uint64_t *mask, struct trap_frame *frame) {
-  if (maxevents <= 0) { return -EINVAL; }
-  if (!cell_ensure_user_range(events_addr, (size_t)maxevents * sizeof(struct epoll_event64), VMM_ACCESS_WRITE)) {
-    return -EFAULT;
-  }
-  struct domain *domain = cell_current_domain_internal();
-  int ready = epoll_wait_for_domain(domain, epfd, events_addr, maxevents, true);
-  if (ready != 0 || timeout_ms == 0 || frame == NULL) { return ready; }
-
-  struct thread *thread = cell_current_thread_internal();
-  thread->wait = (struct thread_wait){.reason = WAIT_EPOLL, .target = epfd, .epoll_events = events_addr,
-                                      .epoll_maxevents = maxevents};
-  uint64_t ticks = timeout_ms > 0 ? ((uint64_t)timeout_ms + 9) / 10 : 0;
-  return sleep_poll(thread, frame, mask, timeout_ms > 0, ticks);
+  return cell_sleep_poll(thread, frame, mask, has_timeout, timeout_ticks);
 }

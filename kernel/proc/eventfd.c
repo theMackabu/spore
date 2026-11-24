@@ -4,6 +4,7 @@
 #include "proc/fd.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
+#include "proc/epoll.h"
 #include "proc/thread.h"
 
 enum { EAGAIN = 11, ENOMEM = 12, EFAULT = 14, EINVAL = 22, EMFILE = 24 };
@@ -35,7 +36,7 @@ static int transfer(struct domain *domain, struct open_file *file, bool write, u
   return sizeof(uint64_t);
 }
 
-static void wake_waiters(struct open_file *file) {
+static void wake_waiters(struct open_file *file, unsigned activity) {
   bool progress;
   do {
     progress = false;
@@ -45,11 +46,13 @@ static void wake_waiters(struct open_file *file) {
       if (t->wait.held_file != file) { continue; }
       int rc = transfer(t->domain, file, t->wait.event_write, t->wait.event_arg);
       if (rc != -EAGAIN) {
+        if (rc >= 0) { activity |= t->wait.event_write ? CELL_POLLIN : CELL_POLLOUT; }
         cell_finish_wait(t, rc);
         progress = true;
       }
     }
   } while (progress && file->eventfd_waiters);
+  cell_epoll_file_activity(file, activity);
   cell_wake_poll_waiters_internal();
 }
 
@@ -62,7 +65,7 @@ int64_t cell_eventfd_io(struct domain *domain, struct open_file *file, uint64_t 
     if (arg == UINT64_MAX) { return -EINVAL; }
   }
   int rc = transfer(domain, file, write, arg);
-  if (rc >= 0) { wake_waiters(file); }
+  if (rc >= 0) { wake_waiters(file, write ? CELL_POLLIN : CELL_POLLOUT); }
   if (rc != -EAGAIN || (file->flags & O_NONBLOCK) != 0 || frame == NULL) { return rc; }
   cell_retain_open_file(file);
   ++file->eventfd_waiters;

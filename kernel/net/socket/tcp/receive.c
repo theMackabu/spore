@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "proc/epoll.h"
 #include "lib/mem.h"
 #include "mm/page_ring.h"
 #include "mm/pmm.h"
@@ -59,6 +60,7 @@ int64_t tcp_read_stream(struct open_file *file, uint64_t len, uint32_t flags, so
   int rc = page_ring_read(&file->tcp_rx->ring, len < used ? (uint32_t)len : used, peek, copy, destination);
   if (rc > 0 && !peek) {
     tcp_drain_ooo(file);
+    cell_epoll_file_changed(file);
     tcp_ack_current_state(file);
   }
   return rc;
