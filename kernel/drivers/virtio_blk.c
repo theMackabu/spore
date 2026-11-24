@@ -203,7 +203,7 @@ static bool select_device(uint64_t base) {
 static bool rw_sectors(uint64_t sector, void *buf, uint32_t bytes, bool write) {
   if (!blk_ready || bytes == 0 || bytes > MAX_IO_SIZE || (bytes % SECTOR_SIZE) != 0) { return false; }
 
-  if (write) { kmemcpy(sector_buf, buf, bytes); }
+  if (write && buf != sector_buf) { kmemcpy(sector_buf, buf, bytes); }
   *req = (struct virtio_blk_req){.type = write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN, .reserved = 0, .sector = sector};
   *status_buf = 0xff;
 
@@ -231,7 +231,7 @@ static bool rw_sectors(uint64_t sector, void *buf, uint32_t bytes, bool write) {
     if (used->idx != used_idx) {
       ++used_idx;
       if (*status_buf != 0) { return false; }
-      if (!write) { kmemcpy(buf, sector_buf, bytes); }
+      if (!write && buf != sector_buf) { kmemcpy(buf, sector_buf, bytes); }
       uint32_t isr = read32(VIRTIO_MMIO_INTERRUPT_STATUS);
       if (isr != 0) { write32(VIRTIO_MMIO_INTERRUPT_ACK, isr); }
       return true;
