@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
-Ant.serve({
+console.log(`started server on :${process.env.PORT}`)
+
+export default {
   hostname: '0.0.0.0',
   port: Number(process.env.PORT ?? 8080),
   fetch(req) {
@@ -21,4 +23,4 @@ Ant.serve({
         return new Response(process.env.REVISION);
     }
   }
-});
+}

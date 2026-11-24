@@ -1,7 +1,6 @@
 /build/
 wasm/
 
-/.cache
 /.nova
 /.direnv/
 
@@ -9,6 +8,7 @@ wasm/
 *.iso
 *.img
 
+.cache
 .DS_Store
 __pycache__
 
