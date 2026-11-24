@@ -28,18 +28,66 @@ fn be16(data: &[u8], at: usize) -> u16 {
 fn octets(data: &[u8], at: usize) -> [u8; 4] {
     [data[at], data[at + 1], data[at + 2], data[at + 3]]
 }
-fn checksum_valid(mut sum: u32, data: &[u8]) -> bool {
-    let mut words = data.chunks_exact(2);
-    for w in &mut words {
-        sum += u16::from_be_bytes([w[0], w[1]]) as u32;
+fn sum_bytes(data: &[u8]) -> u32 {
+    let (pairs, tail) = data.as_chunks::<2>();
+    let mut sum = 0;
+    for pair in pairs {
+        sum += u32::from(u16::from_be_bytes(*pair));
     }
-    if let [last] = words.remainder() {
-        sum += (*last as u32) << 8;
+    if let [last] = tail {
+        sum += u32::from(*last) << 8;
     }
+    sum
+}
+
+fn fold(mut sum: u64) -> u16 {
     while sum > 0xffff {
         sum = (sum & 0xffff) + (sum >> 16);
     }
-    sum == 0xffff
+    sum as u16
+}
+
+fn checksum(data: &[u8], initial: u64) -> u16 {
+    if data.len() <= 32 {
+        return !fold(initial + u64::from(sum_bytes(data)));
+    }
+    let (prefix, words, suffix) = unsafe { data.align_to::<u32>() };
+    let native_sum: u64 = words.iter().map(|&word| u64::from(word)).sum();
+    let middle = u16::from_be(fold(native_sum));
+    let mut rest = fold(u64::from(middle) + u64::from(sum_bytes(suffix)));
+    if prefix.len() % 2 != 0 {
+        rest = rest.swap_bytes();
+    }
+    !fold(initial + u64::from(sum_bytes(prefix)) + u64::from(rest))
+}
+
+fn transport_checksum(src: u32, dst: u32, protocol: u8, segment: &[u8]) -> u16 {
+    let pseudo = u64::from(src.swap_bytes())
+        + u64::from(dst.swap_bytes())
+        + u64::from(protocol)
+        + segment.len() as u64;
+    checksum(segment, pseudo)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn net_checksum(data: *const u8, len: u16) -> u16 {
+    checksum(
+        unsafe { core::slice::from_raw_parts(data, usize::from(len)) },
+        0,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn net_transport_checksum(
+    src: u32,
+    dst: u32,
+    protocol: u8,
+    data: *const u8,
+    len: u16,
+) -> u16 {
+    transport_checksum(src, dst, protocol, unsafe {
+        core::slice::from_raw_parts(data, usize::from(len))
+    })
 }
 
 fn ip_header(data: &[u8]) -> Option<&[u8]> {
@@ -47,7 +95,7 @@ fn ip_header(data: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let header = data.get(..(data[0] & 15) as usize * 4)?;
-    (header.len() >= 20 && checksum_valid(0, header)).then_some(header)
+    (header.len() >= 20 && checksum(header, 0) == 0).then_some(header)
 }
 
 fn decode_frame(frame: &[u8]) -> Option<RxHeader> {
@@ -80,14 +128,9 @@ fn decode_frame(frame: &[u8]) -> Option<RxHeader> {
     h.transport_len = segment.len() as u16;
     h.src_ip = u32::from_le_bytes(octets(ip, 12));
     h.dst_ip = u32::from_le_bytes(octets(ip, 16));
-    let pseudo = [12, 14, 16, 18]
-        .iter()
-        .map(|&i| u32::from(be16(ip, i)))
-        .sum::<u32>()
-        + u32::from(h.ip_protocol);
     match h.ip_protocol {
         1 => {
-            if segment.len() < 8 || !checksum_valid(0, segment) {
+            if segment.len() < 8 || checksum(segment, 0) != 0 {
                 return None;
             }
             h.icmp_type = segment[0];
@@ -103,7 +146,9 @@ fn decode_frame(frame: &[u8]) -> Option<RxHeader> {
             }
         }
         6 => {
-            if segment.len() < 20 || !checksum_valid(pseudo + segment.len() as u32, segment) {
+            if segment.len() < 20
+                || transport_checksum(h.src_ip, h.dst_ip, h.ip_protocol, segment) != 0
+            {
                 return None;
             }
             let header_len = (segment[12] >> 4) as usize * 4;
@@ -131,7 +176,8 @@ fn decode_frame(frame: &[u8]) -> Option<RxHeader> {
             }
             let udp = segment.get(..be16(segment, 4) as usize)?;
             if udp.len() < 8
-                || (be16(udp, 6) != 0 && !checksum_valid(pseudo + udp.len() as u32, udp))
+                || (be16(udp, 6) != 0
+                    && transport_checksum(h.src_ip, h.dst_ip, h.ip_protocol, udp) != 0)
             {
                 return None;
             }

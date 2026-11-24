@@ -73,10 +73,6 @@ uint32_t net_ipv4(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   return (uint32_t)a | ((uint32_t)b << 8) | ((uint32_t)c << 16) | ((uint32_t)d << 24);
 }
 
-static uint16_t load_be16(const uint8_t *p) {
-  return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
-}
-
 static void store_be16(uint8_t *p, uint16_t v) {
   p[0] = (uint8_t)(v >> 8);
   p[1] = (uint8_t)v;
@@ -94,48 +90,6 @@ static void store_ip(uint8_t *p, uint32_t ip) {
   p[1] = (uint8_t)(ip >> 8);
   p[2] = (uint8_t)(ip >> 16);
   p[3] = (uint8_t)(ip >> 24);
-}
-
-static uint32_t checksum_sum(uint32_t sum, const void *data, size_t len) {
-  const uint8_t *p = data;
-  while (len >= 2) {
-    sum += load_be16(p);
-    p += 2;
-    len -= 2;
-  }
-  if (len != 0) { sum += (uint32_t)p[0] << 8; }
-  return sum;
-}
-
-static uint16_t checksum_finish(uint32_t sum) {
-  while ((sum >> 16) != 0) {
-    sum = (sum & 0xffffu) + (sum >> 16);
-  }
-  return (uint16_t)~sum;
-}
-
-static uint16_t checksum(const void *data, size_t len) {
-  return checksum_finish(checksum_sum(0, data, len));
-}
-
-static uint16_t ip_payload_checksum(uint8_t proto, uint32_t src_ip, uint32_t dst_ip, const void *payload, size_t len) {
-  if (len > UINT16_MAX) { return 0; }
-  uint32_t sum = 0;
-  sum += (uint32_t)(src_ip & 0xffu) << 8 | ((src_ip >> 8) & 0xffu);
-  sum += (uint32_t)((src_ip >> 16) & 0xffu) << 8 | ((src_ip >> 24) & 0xffu);
-  sum += (uint32_t)(dst_ip & 0xffu) << 8 | ((dst_ip >> 8) & 0xffu);
-  sum += (uint32_t)((dst_ip >> 16) & 0xffu) << 8 | ((dst_ip >> 24) & 0xffu);
-  sum += proto;
-  sum += (uint16_t)len;
-  return checksum_finish(checksum_sum(sum, payload, len));
-}
-
-static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, const void *tcp, size_t len) {
-  return ip_payload_checksum(NET_IP_TCP, src_ip, dst_ip, tcp, len);
-}
-
-static uint16_t udp_checksum(uint32_t src_ip, uint32_t dst_ip, const void *udp, size_t len) {
-  return ip_payload_checksum(NET_IP_UDP, src_ip, dst_ip, udp, len);
 }
 
 static bool mac_is_for_us(const uint8_t *dst) {
@@ -333,7 +287,7 @@ static uint32_t build_ipv4_frame(uint8_t *frame, const uint8_t dst_mac[6], uint8
   store_be16(ip + 10, 0);
   store_ip(ip + 12, local_ip);
   store_ip(ip + 16, dst_ip);
-  store_be16(ip + 10, checksum(ip, IPV4_HEADER_LEN));
+  store_be16(ip + 10, net_checksum(ip, IPV4_HEADER_LEN));
   kmemcpy(ip + IPV4_HEADER_LEN, payload, len);
   return (uint32_t)(ETH_HEADER_LEN + IPV4_HEADER_LEN + len);
 }
@@ -379,7 +333,7 @@ static void send_icmp_port_unreachable(uint32_t dst_ip, const uint8_t *original_
   if (quoted_payload_len != 0) {
     kmemcpy(packet + ICMP_HEADER_LEN + original_ihl, original_payload, quoted_payload_len);
   }
-  store_be16(packet + 2, checksum(packet, ICMP_HEADER_LEN + quoted_len));
+  store_be16(packet + 2, net_checksum(packet, ICMP_HEADER_LEN + quoted_len));
   (void)send_ipv4(NET_IP_ICMP, dst_ip, packet, ICMP_HEADER_LEN + quoted_len);
 }
 
@@ -406,7 +360,7 @@ bool net_udp_send_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
   store_be16(packet + 4, (uint16_t)(UDP_HEADER_LEN + len));
   store_be16(packet + 6, 0);
   kmemcpy(packet + UDP_HEADER_LEN, payload, len);
-  uint16_t sum = udp_checksum(local_ip, dst_ip, packet, UDP_HEADER_LEN + len);
+  uint16_t sum = net_transport_checksum(local_ip, dst_ip, NET_IP_UDP, packet, UDP_HEADER_LEN + len);
   store_be16(packet + 6, sum == 0 ? 0xffffu : sum);
   return send_ipv4_ttl_tos(NET_IP_UDP, ttl, tos, dst_ip, packet, UDP_HEADER_LEN + len);
 }
@@ -465,7 +419,7 @@ bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, ui
   store_be16(packet + 18, 0);
   if (options_len != 0) { kmemcpy(packet + TCP_HEADER_LEN, options, options_len); }
   if (len != 0) { kmemcpy(packet + header_len, payload, len); }
-  store_be16(packet + 16, tcp_checksum(local_ip, dst_ip, packet, header_len + len));
+  store_be16(packet + 16, net_transport_checksum(local_ip, dst_ip, NET_IP_TCP, packet, header_len + len));
   return send_ipv4_ttl_tos(NET_IP_TCP, ttl, tos, dst_ip, packet, header_len + len);
 }
 
@@ -486,7 +440,7 @@ bool net_icmp_send_echo(uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, 
   packet[1] = 0;
   store_be16(packet + 2, 0);
   store_be16(packet + 4, id);
-  store_be16(packet + 2, checksum(packet, packet_len));
+  store_be16(packet + 2, net_checksum(packet, packet_len));
   if (loopback) {
     cell_net_deliver_icmp(dst_ip, 64, packet, packet_len);
     return true;
@@ -516,7 +470,7 @@ static void handle_icmp(const struct net_rx_header *h, const uint8_t *icmp) {
     kmemcpy(reply, icmp, len);
     reply[0] = ICMP_ECHO_REPLY;
     store_be16(reply + 2, 0);
-    store_be16(reply + 2, checksum(reply, len));
+    store_be16(reply + 2, net_checksum(reply, len));
     (void)send_ipv4(NET_IP_ICMP, h->src_ip, reply, len);
   } else if (h->icmp_type == ICMP_ECHO_REPLY) {
     cell_net_deliver_icmp(h->src_ip, h->ttl, icmp, len);

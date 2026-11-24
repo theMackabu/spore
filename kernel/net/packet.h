@@ -31,5 +31,7 @@ struct net_rx_header {
   uint32_t quoted_dst;
 };
 
+uint16_t net_checksum(const void *data, uint16_t len);
+uint16_t net_transport_checksum(uint32_t src, uint32_t dst, uint8_t protocol, const void *data, uint16_t len);
 bool spore_net_decode_ethernet(const uint8_t *frame, size_t len, struct net_rx_header *out);
 struct net_tcp_options spore_net_decode_tcp_options(const uint8_t *options, size_t len);
