@@ -92,7 +92,10 @@ userland/prebuilt/uptime /bin/uptime
 userland/prebuilt/whoami /bin/whoami
 userland/bin/hostname.sh /bin/hostname
 userland/bin/dhcpc/dhcpc /bin/dhcpc
-userland/prebuilt/busybox /bin/nslookup
+userland/prebuilt/busybox /libexec/busybox
+symlink /libexec/busybox /bin/nslookup
+symlink /libexec/busybox /bin/gzip
+symlink /libexec/busybox /bin/gunzip
 symlink dbclient /bin/ssh
 userland/prebuilt/dbclient /bin/dbclient
 userland/prebuilt/dropbearkey /bin/dropbearkey
