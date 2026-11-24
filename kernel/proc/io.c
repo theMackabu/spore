@@ -132,6 +132,13 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   }
 }
 
+static int64_t write_regular(struct domain *domain, struct open_file *file, uint64_t off, uint64_t buf, uint64_t len) {
+  uint64_t chunk = bounded_io_len(len);
+  if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
+  int64_t wrote = vfs_write(&file->node, off, file_io_tmp, chunk);
+  return wrote == 0 && chunk ? -28 : wrote;
+}
+
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
@@ -165,17 +172,14 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   if (file->type != OPEN_STDOUT && file->type != OPEN_STDIN) {
     if (file->type != OPEN_VFS) { return -22; }
     if (file->node.device != RAMFS_DEV_NONE) { return write_device(file, domain, buf, len); }
-    if ((file->flags & CELL_O_APPEND) != 0) {
+    uint64_t off = file->offset;
+    if (file->flags & CELL_O_APPEND) {
       struct vfs_node fresh;
-      if (vfs_refresh(&file->node, &fresh)) { file->offset = fresh.size; }
+      if (!vfs_refresh(&file->node, &fresh)) { return -5; }
+      off = fresh.size;
     }
-    uint64_t chunk = bounded_io_len(len);
-    if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
-    int64_t wrote = vfs_write(&file->node, file->offset, file_io_tmp, chunk);
-    if (wrote < 0) { return wrote; }
-    if (wrote == 0) { return -28; }
-    file->offset += (uint64_t)wrote;
-    (void)vfs_refresh(&file->node, &file->node);
+    int64_t wrote = write_regular(domain, file, off, buf, len);
+    if (wrote > 0) { file->offset = off + (uint64_t)wrote; }
     return wrote;
   }
   return write_console_from_user(domain, buf, len);
@@ -265,11 +269,5 @@ int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct 
   if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
   if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir) { return -22; }
   if (!len) { return 0; }
-  uint64_t chunk = bounded_io_len(len);
-  if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
-  int64_t wrote = vfs_write(&file->node, off, file_io_tmp, chunk);
-  if (wrote < 0) { return wrote; }
-  if (wrote == 0) { return -28; }
-  (void)vfs_refresh(&file->node, &file->node);
-  return wrote;
+  return write_regular(domain, file, off, buf, len);
 }
