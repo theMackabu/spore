@@ -136,7 +136,7 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
   return next;
 }
 
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved) {
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved, struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
   bool path_only = (flags & LINUX_O_PATH) != 0;
@@ -176,9 +176,17 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   cell_copy_open_path(file, path);
   bool pipe = file->type == OPEN_PIPE;
+  fsnotify_track_open(file, resolved);
+  if (pipe && !(flags & CELL_O_NONBLOCK) && !cell_fifo_has_peer(file)) {
+    if (!frame) { cell_release_open_file(file); return -EINVAL; }
+    int slot = cell_reserve_fd(domain);
+    if (slot < 0) { cell_release_open_file(file); return slot; }
+    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FIFO_OPEN, .target = slot, .held_file = file,
+                                                         .fifo_cloexec = (flags & CELL_O_CLOEXEC) != 0});
+  }
   int fd = cell_install_fd(domain, file, flags & CELL_O_CLOEXEC);
   if (fd >= 0) {
-    fsnotify_opened(file, resolved);
+    fsnotify_opened(file);
     if (pipe) { cell_pipe_notify(); }
   }
   return fd;

@@ -49,7 +49,7 @@ struct open_file {
   union {
     struct {
       struct pipe_obj *pipe;
-      bool name_unlinked, name_unresolved;
+      bool name_unlinked, name_unresolved, open_notified;
       struct fsnotify_name notify_name;
       struct open_file *name_next, **name_link;
     };
@@ -166,6 +166,8 @@ struct open_file {
 };
 
 bool cell_fd_table_reset(size_t capacity);
+int cell_reserve_fd(struct domain *domain);
+void cell_cancel_fd_reservation(struct domain *domain, int fd);
 int cell_find_free_fd(struct domain *domain, int start);
 int cell_install_fd(struct domain *domain, struct open_file *file, bool cloexec);
 void cell_assign_fd(struct domain *domain, int fd, struct open_file *file, bool cloexec);
@@ -180,7 +182,7 @@ bool cell_init_stdio(struct domain *domain);
 bool cell_copy_fd_table(struct domain *dst, const struct domain *src);
 void cell_copy_open_path(struct open_file *file, const char *path);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved);
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved, struct trap_frame *frame);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);

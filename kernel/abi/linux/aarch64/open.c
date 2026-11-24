@@ -30,7 +30,7 @@ static size_t append_u64(char *dst, size_t cap, size_t len, uint64_t value) {
   return len;
 }
 
-int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode) {
+int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t mode) {
   struct syscall_path name;
   int64_t rc = syscall_read_path_at(dirfd, path_addr, &name);
   if (rc) { return rc; }
@@ -59,7 +59,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
     len = append_literal(name.visible, sizeof(name.visible), len, len == 1 ? "#" : "/#");
     len = append_u64(name.visible, sizeof(name.visible), len, tmp.ino);
     append_literal(name.visible, sizeof(name.visible), len, " (deleted)");
-    int fd = cell_fd_open_node(&tmp, flags, name.visible, NULL);
+    int fd = cell_fd_open_node(&tmp, flags, name.visible, NULL, NULL);
     vfs_release_node(&tmp);
     return fd;
   }
@@ -105,7 +105,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
       fsnotify_path_event(path, FS_MODIFY);
     }
   }
-  return cell_fd_open_node(&node, (uint32_t)flags, display, path);
+  return cell_fd_open_node(&node, (uint32_t)flags, display, path, frame);
 }
 
 int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
@@ -122,7 +122,7 @@ int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
   int rc = vfs_tmpfile(&dir, 0777, cell_current_euid(), cell_current_egid(), false, &node);
   if (rc) { return rc; }
   uint32_t open_flags = LINUX_O_RDWR | ((flags & MFD_CLOEXEC) ? O_CLOEXEC : 0);
-  int fd = vfs_set_sealable(&node, flags & MFD_ALLOW_SEALING) ? cell_fd_open_node(&node, open_flags, display, NULL) : -EINVAL;
+  int fd = vfs_set_sealable(&node, flags & MFD_ALLOW_SEALING) ? cell_fd_open_node(&node, open_flags, display, NULL, NULL) : -EINVAL;
   vfs_release_node(&node);
   return fd;
 }

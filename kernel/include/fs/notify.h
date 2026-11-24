@@ -36,7 +36,8 @@ struct fsnotify_entry {
   bool is_dir;
 };
 
-void fsnotify_opened(struct open_file *file, const char *resolved);
+void fsnotify_track_open(struct open_file *file, const char *resolved);
+void fsnotify_opened(struct open_file *file);
 void fsnotify_closed(struct open_file *file);
 void fsnotify_file_event(struct open_file *file, uint32_t mask);
 bool fsnotify_hold_watched(const char *path, struct vfs_node *node);

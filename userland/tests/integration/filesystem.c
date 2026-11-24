@@ -229,52 +229,6 @@ static int epoll_ready_queue(void) {
   return ok;
 }
 
-static int fifo_without_reader(void) {
-  for (int i = 0; i < 32; ++i) {
-    char path[32];
-    snprintf(path, sizeof(path), "fifo-%d", i);
-    if (mkfifo(path, 0600) != 0) { return 0; }
-    int writer = open(path, O_WRONLY | O_NONBLOCK);
-    if (writer >= 0) {
-      close(writer);
-      return 0;
-    }
-    if (errno != ENXIO) { return 0; }
-  }
-  int reader = open("fifo-0", O_RDONLY | O_NONBLOCK);
-  int writer = open("fifo-0", O_WRONLY | O_NONBLOCK);
-  char byte;
-  int ok = reader >= 0 && writer >= 0 && write(writer, "x", 1) == 1 && read(reader, &byte, 1) == 1 && byte == 'x';
-  if (writer >= 0) { close(writer); }
-  if (reader >= 0) { close(reader); }
-  for (int i = 0; i < 32; ++i) {
-    char path[32];
-    snprintf(path, sizeof(path), "fifo-%d", i);
-    unlink(path);
-  }
-  return ok;
-}
-
-static int disk_fifo(void) {
-  const char *name = "/spore-fifo", *link_name = "/spore-fifo-link";
-  if (mkfifo(name, 0600) || link(name, link_name)) { return 0; }
-  struct stat named, opened;
-  int rd = open(name, O_RDONLY | O_NONBLOCK);
-  char c;
-  int ok = rd >= 0 && read(rd, &c, 1) == 0 && fstat(rd, &opened) == 0 && stat(link_name, &named) == 0 &&
-           S_ISFIFO(named.st_mode) && named.st_ino == opened.st_ino && named.st_dev == opened.st_dev;
-  int both = open(link_name, O_RDWR | O_NONBLOCK);
-  ok = ok && both >= 0 && unlink(name) == 0 && unlink(link_name) == 0 && write(both, "ab", 2) == 2 &&
-       read(rd, &c, 1) == 1 && c == 'a' && read(both, &c, 1) == 1 && c == 'b' &&
-       fstat(rd, &opened) == 0 && opened.st_nlink == 0;
-  if (both >= 0) { close(both); }
-  struct pollfd p = {.fd = rd, .events = POLLIN};
-  ok = ok && poll(&p, 1, 0) == 1 && (p.revents & POLLHUP) && read(rd, &c, 1) == 0;
-  if (rd >= 0) { close(rd); }
-  printf("[spore] ext2 FIFO aliases and read/write endpoints: %s\n", ok ? "PASS" : "FAIL");
-  return ok;
-}
-
 static int pathname_page_boundary(void) {
   size_t page = (size_t)sysconf(_SC_PAGESIZE);
   char *buf = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -476,7 +430,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !fifo_without_reader() || !integration_open_suite() || !disk_fifo() || !pathname_page_boundary() ||
+  if (!rename_entries("/rename-check") || !rename_entries("/tmp/rename-check") || !open_unlinked_ext2() || !removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !integration_notify_suite() || !fd_limit_regression() || !eventfd_counter() || !epoll_watch_lifetime() || !epoll_ready_queue() || !integration_fifo_suite() || !integration_open_suite() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }

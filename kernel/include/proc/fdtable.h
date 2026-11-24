@@ -9,7 +9,7 @@ enum { FDS_PER_CHUNK = 32, FD_CHUNKS = (MAX_FDS + FDS_PER_CHUNK - 1) / FDS_PER_C
 static_assert(FD_CHUNKS <= 32);
 
 struct fd_chunk {
-  uint32_t occupied, cloexec;
+  uint32_t occupied, cloexec, reserved;
   struct open_file *files[FDS_PER_CHUNK];
 };
 

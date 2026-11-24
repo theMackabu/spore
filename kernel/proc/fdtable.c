@@ -16,7 +16,7 @@ static struct fd_chunk *prepare(struct fd_table *table, unsigned index) {
 
 static void trim(struct fd_table *table, unsigned index) {
   struct fd_chunk *chunk = fd_chunk_at(table, index);
-  if (index && chunk && !chunk->occupied) {
+  if (index && chunk && !(chunk->occupied | chunk->reserved)) {
     table->more[index - 1] = NULL;
     pool_free(&chunks, chunk);
   }
@@ -28,7 +28,7 @@ int cell_find_free_fd(struct domain *domain, int start) {
   for (unsigned fd = (unsigned)start; fd < limit;) {
     unsigned index = fd / FDS_PER_CHUNK;
     struct fd_chunk *chunk = fd_chunk_at(&domain->files, index);
-    uint32_t free = ~(chunk ? chunk->occupied : 0U) & (UINT32_MAX << (fd % FDS_PER_CHUNK));
+    uint32_t free = ~(chunk ? chunk->occupied | chunk->reserved : 0U) & (UINT32_MAX << (fd % FDS_PER_CHUNK));
     if (free) {
       fd = index * FDS_PER_CHUNK + (unsigned)__builtin_ctz(free);
       if (fd >= limit) { break; }
@@ -37,6 +37,19 @@ int cell_find_free_fd(struct domain *domain, int start) {
     fd = (index + 1) * FDS_PER_CHUNK;
   }
   return -EMFILE;
+}
+
+int cell_reserve_fd(struct domain *domain) {
+  int fd = cell_find_free_fd(domain, 0);
+  if (fd >= 0) { fd_chunk_at(&domain->files, fd / FDS_PER_CHUNK)->reserved |= UINT32_C(1) << (fd % FDS_PER_CHUNK); }
+  return fd;
+}
+
+void cell_cancel_fd_reservation(struct domain *domain, int fd) {
+  unsigned index = (unsigned)fd / FDS_PER_CHUNK;
+  struct fd_chunk *chunk = fd_chunk_at(&domain->files, index);
+  chunk->reserved &= ~(UINT32_C(1) << (fd % FDS_PER_CHUNK));
+  trim(&domain->files, index);
 }
 
 int cell_next_open_fd(struct domain *domain, unsigned start) {
@@ -60,6 +73,7 @@ void cell_assign_fd(struct domain *domain, int fd, struct open_file *file, bool 
   struct fd_chunk *chunk = fd_chunk_at(table, index);
   struct open_file *old = chunk->files[slot];
   uint32_t bit = UINT32_C(1) << slot;
+  chunk->reserved &= ~bit;
   chunk->files[slot] = file;
   if (file) {
     chunk->occupied |= bit;
@@ -147,6 +161,7 @@ bool cell_copy_fd_table(struct domain *dst, const struct domain *src) {
     struct fd_chunk *chunk = prepare(&dst->files, i);
     if (!chunk) { cell_close_all_fds(dst); return false; }
     *chunk = i ? *src->files.more[i - 1] : src->files.first;
+    chunk->reserved = 0;
     dst->files.nonempty |= UINT32_C(1) << i;
     for (uint32_t bits = chunk->occupied; bits; bits &= bits - 1) {
       cell_retain_open_file(chunk->files[__builtin_ctz(bits)]);
@@ -173,7 +188,9 @@ int cell_fd_dup3(int oldfd, int newfd, int flags) {
   struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_file_at(domain, oldfd);
   if (!file || (unsigned)newfd >= domain->nofile_soft) { return -EBADF; }
-  if (!prepare(&domain->files, (unsigned)newfd / FDS_PER_CHUNK)) { return -ENOMEM; }
+  struct fd_chunk *chunk = prepare(&domain->files, (unsigned)newfd / FDS_PER_CHUNK);
+  if (!chunk) { return -ENOMEM; }
+  if (chunk->reserved & (UINT32_C(1) << (newfd % FDS_PER_CHUNK))) { return -16; }
   cell_retain_open_file(file);
   cell_assign_fd(domain, newfd, file, flags & O_CLOEXEC);
   return newfd;

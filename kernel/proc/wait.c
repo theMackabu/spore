@@ -52,6 +52,7 @@ void cell_wait_reset(void) {
 
 void cell_clear_wait(struct thread *thread) {
   remove_waiter(thread);
+  if (thread->wait.reason == WAIT_FIFO_OPEN) { cell_cancel_fd_reservation(thread->domain, thread->wait.target); }
   if (thread->wait.restore_signal_mask) { thread->signal_mask = thread->wait.saved_signal_mask; }
   struct open_file *file = thread->wait.held_file;
   if (thread->wait.reason == WAIT_EVENTFD) { --file->eventfd_waiters; }

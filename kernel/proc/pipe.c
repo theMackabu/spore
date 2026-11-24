@@ -89,6 +89,10 @@ struct pipe_obj *cell_fifo_open(const struct vfs_node *node, bool create) {
 
 uint64_t cell_pipe_ino(const struct pipe_obj *pipe) { return pipe->ino; }
 
+bool cell_fifo_has_peer(const struct open_file *file) {
+  return linux_open_readable(file->flags) ? file->pipe->writers != 0 : file->pipe->readers != 0;
+}
+
 bool cell_pipe_has_readers(struct pipe_obj *pipe) {
   return pipe != NULL && pipe->readers != 0;
 }
@@ -171,6 +175,16 @@ static void wake_pipe_waiters(void) {
     pipe_rescan = false;
     size_t cursor = 0;
     struct thread *thread;
+    while ((thread = cell_next_waiter(WAIT_FIFO_OPEN, &cursor))) {
+      struct open_file *file = thread->wait.held_file;
+      if (thread->domain->zombie || !cell_fifo_has_peer(file)) { continue; }
+      cell_retain_open_file(file);
+      int fd = thread->wait.target;
+      cell_assign_fd(thread->domain, fd, file, thread->wait.fifo_cloexec);
+      fsnotify_opened(file);
+      cell_finish_wait(thread, fd);
+    }
+    cursor = 0;
     while ((thread = cell_next_waiter(WAIT_PIPE, &cursor))) {
       struct open_file *file = thread->wait.held_file;
       int64_t rc;

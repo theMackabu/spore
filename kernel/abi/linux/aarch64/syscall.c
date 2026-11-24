@@ -650,7 +650,7 @@ l_getsockopt:
 l_shutdown:
   return sys_shutdown(a0, a1);
 l_openat:
-  return sys_openat(a0, a1, a2, a3);
+  return sys_openat(f, a0, a1, a2, a3);
 l_close:
   return cell_fd_close((int)a0);
 l_close_range: {

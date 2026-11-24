@@ -14,6 +14,7 @@ struct pipe_obj *cell_pipe_create(void);
 struct pipe_obj *cell_fifo_open(const struct vfs_node *node, bool create);
 void cell_pipe_discard(struct pipe_obj *pipe);
 uint64_t cell_pipe_ino(const struct pipe_obj *pipe);
+bool cell_fifo_has_peer(const struct open_file *file);
 bool cell_pipe_has_readers(struct pipe_obj *pipe);
 void cell_pipe_add_reader(struct pipe_obj *pipe);
 void cell_pipe_add_writer(struct pipe_obj *pipe);

@@ -50,6 +50,8 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "sleep";
   case WAIT_VFORK:
     return "vfork";
+  case WAIT_FIFO_OPEN:
+    return "fifo-open";
   case WAIT_PIPE:
     return "pipe";
   case WAIT_EPOLL:

@@ -59,7 +59,7 @@ void fsnotify_file_event(struct open_file *file, uint32_t mask) {
   inotify_flush();
 }
 
-void fsnotify_opened(struct open_file *file, const char *resolved) {
+void fsnotify_track_open(struct open_file *file, const char *resolved) {
   if (file->flags & LINUX_O_PATH) { return; }
   if (resolved && resolved[0] && !str_eq(resolved, "/")) {
     copy_cstr(file->notify_name.name, sizeof(file->notify_name.name), resolved);
@@ -71,12 +71,17 @@ void fsnotify_opened(struct open_file *file, const char *resolved) {
     *head = file;
     ++open_names;
   }
+}
+
+void fsnotify_opened(struct open_file *file) {
+  if (file->flags & LINUX_O_PATH) { return; }
+  file->open_notified = true;
   fsnotify_file_event(file, FS_OPEN);
 }
 
 void fsnotify_closed(struct open_file *file) {
   if (!file->node.ino || (file->flags & LINUX_O_PATH)) { return; }
-  fsnotify_file_event(file, linux_open_writable(file->flags) ? FS_CLOSE_WRITE : FS_CLOSE_NOWRITE);
+  if (file->open_notified) { fsnotify_file_event(file, linux_open_writable(file->flags) ? FS_CLOSE_WRITE : FS_CLOSE_NOWRITE); }
   if (file->name_link) {
     *file->name_link = file->name_next;
     if (file->name_next) { file->name_next->name_link = file->name_link; }

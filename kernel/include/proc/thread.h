@@ -29,6 +29,7 @@ enum wait_reason {
   WAIT_SLEEP,
   WAIT_VFORK,
   WAIT_PIPE,
+  WAIT_FIFO_OPEN,
   WAIT_EPOLL,
   WAIT_INOTIFY,
   WAIT_PTY,
@@ -73,6 +74,7 @@ struct thread_wait {
       int epoll_maxevents;
       uint8_t poll_kind;
     };
+    bool fifo_cloexec;
     uint64_t futex_addr;
     struct {
       uint64_t child_status, child_usage;
