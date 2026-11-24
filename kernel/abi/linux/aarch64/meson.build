@@ -1,4 +1,5 @@
 kernel_sources += files(
+  'attributes.c',
   'context.c',
   'dirent.c',
   'exec.c',
@@ -9,10 +10,12 @@ kernel_sources += files(
   'message.c',
   'misc.c',
   'net.c',
+  'open.c',
   'path.c',
   'poll.c',
   'process.c',
   'signal.c',
+  'stat.c',
   'syscall.c',
   'time.c',
   'usage.c',

@@ -1,10 +1,10 @@
-#include "handlers.h"
+#include "file_abi.h"
+#include "fs/vfs.h"
+#include "lib/kstr.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/policy.h"
-
-enum { AT_FDCWD = -100, EPERM = 1, ENOENT = 2, E2BIG = 7, EBADF = 9, ENOTDIR = 20, ENAMETOOLONG = 36 };
 
 size_t spore_normalize_path(const char *base, size_t base_len, const char *raw, size_t len, char *out, size_t cap);
 
@@ -55,4 +55,42 @@ int64_t syscall_read_path_at(uint64_t dirfd, uint64_t addr, struct syscall_path 
 int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t addr, char *out, size_t cap) {
   char visible[CELL_PATH_MAX];
   return copy_path_at(dirfd, addr, visible, out, cap, NULL);
+}
+
+bool syscall_proc_fd_number(const char *path, int *fd_out) {
+  const char *prefix = "/proc/self/fd/";
+  if (!starts_with(path, prefix)) { return false; }
+  const char *p = path + kstrlen(prefix);
+  if (*p == '\0') { return false; }
+  int fd = 0;
+  while (*p != '\0') {
+    if (*p < '0' || *p > '9') { return false; }
+    if (fd > (INT32_MAX - (*p - '0')) / 10) { return false; }
+    fd = fd * 10 + (*p - '0');
+    ++p;
+  }
+  *fd_out = fd;
+  return true;
+}
+
+int syscall_lookup_at(uint64_t dirfd, uint64_t addr, uint64_t flags, uint8_t rights, struct vfs_node *node,
+                      char *resolved) {
+  char raw[CELL_PATH_MAX], local[CELL_PATH_MAX];
+  char *path = resolved ? resolved : local;
+  path[0] = 0;
+  int64_t size = addr || !(flags & AT_EMPTY_PATH) ? syscall_read_user_string(addr, raw, sizeof(raw)) : 1;
+  if (size < 0) { return size == -E2BIG ? -ENAMETOOLONG : (int)size; }
+  if (size == 1) {
+    if (!(flags & AT_EMPTY_PATH)) { return -ENOENT; }
+    if ((int)dirfd != AT_FDCWD) { return cell_fd_stat((int)dirfd, node) ? 0 : -EBADF; }
+    raw[0] = '.';
+    raw[1] = 0;
+  }
+  int rc = syscall_resolve_path_at(dirfd, raw, path, CELL_PATH_MAX);
+  if (rc) { return rc; }
+  if (rights && !cell_fs_path_allowed(path, rights)) { return -EPERM; }
+  bool directory = size > 1 && raw[size - 2] == '/';
+  bool found = flags & AT_SYMLINK_NOFOLLOW && !directory ? vfs_lstat(path, node) : vfs_lookup(path, node);
+  if (!found) { return -ENOENT; }
+  return directory && !node->is_dir ? -ENOTDIR : 0;
 }
