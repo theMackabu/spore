@@ -29,9 +29,6 @@ enum {
   EXEC_ARG_MAX_BYTES = USER_STACK_SIZE / 16,
 };
 
-constexpr uint64_t INTERP_LOAD_BASE = 0x0000006000000000ull;
-constexpr uint64_t EXEC_LOAD_BASE = 0x0000004000000000ull;
-
 static bool streq(const char *a, const char *b) {
   while (*a != '\0' && *b != '\0') {
     if (*a++ != *b++) { return false; }
@@ -339,8 +336,7 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     }
     argc = new_argc;
   }
-  char interp_path[128];
-  bool has_interp = elf_find_interp_aarch64(&exec_reader, interp_path, sizeof(interp_path));
+  char interp_path[CELL_PATH_MAX];
 
   struct user_address_space new_as;
   struct loaded_elf elf;
@@ -351,25 +347,12 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     ret = -(int64_t)ENOMEM;
     goto out_scratch;
   }
-  if (!elf_load_aarch64(&new_as, &new_vmas, &exec_reader, EXEC_LOAD_BASE, &elf)) {
+  enum elf_load_status status = elf_load_program(&new_as, &new_vmas, &exec_reader, &elf, interp_path, sizeof(interp_path));
+  if (status != ELF_LOADED) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
-    ret = -(int64_t)EINVAL;
+    ret = status == ELF_BAD_INTERPRETER ? -(int64_t)ENOENT : -(int64_t)EINVAL;
     goto out_scratch;
-  }
-  if (has_interp) {
-    struct vfs_node interp_node;
-    struct elf_reader interp_reader;
-    struct loaded_elf interp;
-    if (!vfs_lookup(interp_path, &interp_node) || !elf_reader_from_vfs(&interp_node, &interp_reader) ||
-        !elf_load_aarch64(&new_as, &new_vmas, &interp_reader, INTERP_LOAD_BASE, &interp)) {
-      vmm_destroy(&new_as);
-      vma_list_destroy(&new_vmas);
-      ret = -(int64_t)ENOENT;
-      goto out_scratch;
-    }
-    elf.runtime_entry = interp.entry;
-    elf.at_base = interp.load_base;
   }
   struct exec_stack_credentials creds = {
     .uid = cell_current_uid(),

@@ -28,6 +28,10 @@ struct loaded_elf {
 };
 
 bool elf_reader_from_vfs(const struct vfs_node *node, struct elf_reader *reader);
-bool elf_load_aarch64(struct user_address_space *as, struct vma_list *vmas, const struct elf_reader *reader,
-                      uint64_t load_base, struct loaded_elf *out);
-bool elf_find_interp_aarch64(const struct elf_reader *reader, char *out, size_t out_cap);
+bool elf_map_image(struct vma_list *vmas, const struct elf_reader *reader, uint64_t load_base, struct loaded_elf *out,
+                   char *interp_path, size_t path_cap);
+
+enum elf_load_status { ELF_LOADED, ELF_BAD_EXECUTABLE, ELF_BAD_INTERPRETER };
+enum elf_load_status elf_load_program(struct user_address_space *as, struct vma_list *vmas,
+                                      const struct elf_reader *reader, struct loaded_elf *out,
+                                      char *interp_path, size_t path_cap);

@@ -98,22 +98,27 @@ pub struct Segment {
 #[repr(C)]
 pub struct Loaded {
     entry: u64,
+    runtime_entry: u64,
     load_base: u64,
+    at_base: u64,
     phdr: u64,
-    brk_base: u64,
     phent: u16,
     phnum: u16,
+    brk_base: u64,
 }
 
 fn load(
     reader: &Reader,
     load_base: u64,
     mut map: impl FnMut(&Segment, u64, u64, u64) -> bool,
-) -> Option<Loaded> {
+) -> Option<(Loaded, Option<Segment>)> {
     let h = Header::read(reader)?;
     let base = if h.kind == ET_DYN { load_base } else { 0 };
+    let entry = base.checked_add(h.entry)?;
     let mut out = Loaded {
-        entry: base.checked_add(h.entry)?,
+        entry,
+        runtime_entry: entry,
+        at_base: 0,
         load_base: base,
         phdr: 0,
         brk_base: 0,
@@ -121,8 +126,15 @@ fn load(
         phnum: h.count,
     };
     let table_end = h.table_end()?;
+    let mut interpreter = None;
     for segment in h.segments(reader) {
         let p = segment?;
+        if p.kind == PT_INTERP {
+            if interpreter.replace(p).is_some() {
+                return None;
+            }
+            continue;
+        }
         if p.kind != PT_LOAD {
             continue;
         }
@@ -143,7 +155,7 @@ fn load(
             out.phdr = addr.checked_add(h.table - p.offset)?;
         }
     }
-    (out.brk_base != 0).then_some(out)
+    (out.brk_base != 0).then_some((out, interpreter))
 }
 
 #[unsafe(no_mangle)]
@@ -155,6 +167,8 @@ pub unsafe extern "C" fn spore_elf_load(
     map: Option<Map>,
     map_ctx: *mut c_void,
     out: *mut Loaded,
+    path: *mut u8,
+    cap: usize,
 ) -> bool {
     let (Some(read), Some(map)) = (read, map) else {
         return false;
@@ -163,44 +177,34 @@ pub unsafe extern "C" fn spore_elf_load(
         return false;
     }
     let r = Reader { read, ctx, size };
-    match load(&r, base, |p, a, s, e| unsafe { map(map_ctx, p, a, s, e) }) {
-        Some(value) => {
-            unsafe { out.write(value) };
-            true
-        }
-        None => false,
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn spore_elf_find_interp(
-    read: Option<Read>,
-    ctx: *mut c_void,
-    size: u64,
-    out: *mut u8,
-    cap: usize,
-) -> bool {
-    let Some(read) = read else { return false };
-    if out.is_null() || cap == 0 {
-        return false;
-    }
-    let reader = Reader { read, ctx, size };
-    let Some(header) = Header::read(&reader) else {
+    let Some((loaded, interpreter)) =
+        load(&r, base, |p, a, s, e| unsafe { map(map_ctx, p, a, s, e) })
+    else {
         return false;
     };
-    for segment in header.segments(&reader) {
-        let Some(p) = segment else { return false };
-        if p.kind != PT_INTERP {
-            continue;
-        }
-        if p.filesz == 0
-            || p.filesz >= cap as u64
-            || p.offset.checked_add(p.filesz).is_none_or(|end| end > size)
-        {
+    if !path.is_null() {
+        if cap == 0 {
             return false;
         }
-        let count = p.filesz as usize;
-        return unsafe { read(ctx, p.offset, out, count) && out.add(count - 1).read() == 0 };
+        if let Some(p) = interpreter {
+            if p.filesz < 2
+                || p.filesz > cap as u64
+                || p.offset.checked_add(p.filesz).is_none_or(|end| end > size)
+            {
+                return false;
+            }
+            let bytes = p.filesz as usize;
+            if !unsafe { read(ctx, p.offset, path, bytes) } {
+                return false;
+            }
+            let name = unsafe { core::slice::from_raw_parts(path, bytes) };
+            if core::ffi::CStr::from_bytes_with_nul(name).is_err() {
+                return false;
+            }
+        } else {
+            unsafe { path.write(0) };
+        }
     }
-    false
+    unsafe { out.write(loaded) };
+    true
 }

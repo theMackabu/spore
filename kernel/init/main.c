@@ -61,29 +61,21 @@ static void start_init(uint64_t hhdm_offset) {
     aarch64_halt();
   }
   kprintf("[kernel] loading /sbin/init\n");
-  char interp_path[128];
-  bool has_interp = elf_find_interp_aarch64(&init_reader, interp_path, sizeof(interp_path));
+  char interp_path[CELL_PATH_MAX];
 
   struct user_address_space as;
   struct vma_list vmas;
   struct loaded_elf elf;
   uint64_t user_sp;
   vma_list_init(&vmas);
-  if (!vmm_user_init(&as, hhdm_offset) || !elf_load_aarch64(&as, &vmas, &init_reader, 0x0000004000000000ull, &elf)) {
+  if (!vmm_user_init(&as, hhdm_offset)) {
     kprintf("[kernel] failed to prepare /sbin/init\n");
     aarch64_halt();
   }
-  if (has_interp) {
-    struct vfs_node interp_node;
-    struct elf_reader interp_reader;
-    struct loaded_elf interp;
-    if (!vfs_lookup(interp_path, &interp_node) || !elf_reader_from_vfs(&interp_node, &interp_reader) ||
-        !elf_load_aarch64(&as, &vmas, &interp_reader, 0x0000006000000000ull, &interp)) {
-      kprintf("[kernel] failed to load %s\n", interp_path);
-      aarch64_halt();
-    }
-    elf.runtime_entry = interp.entry;
-    elf.at_base = interp.load_base;
+  enum elf_load_status status = elf_load_program(&as, &vmas, &init_reader, &elf, interp_path, sizeof(interp_path));
+  if (status != ELF_LOADED) {
+    kprintf("[kernel] failed to load %s\n", status == ELF_BAD_INTERPRETER ? interp_path : "/sbin/init");
+    aarch64_halt();
   }
   if (!build_initial_stack(&as, &elf, &user_sp)) {
     kprintf("[kernel] failed to prepare /sbin/init\n");
