@@ -38,7 +38,7 @@ static bool resize_table(struct ramfs *fs, int capacity, int high) {
     } else {
       ++t->live;
       if (i && node->parent >= 0) {
-        int *bucket = &t->slots[node->name_hash % capacity].bucket;
+        int *bucket = &t->slots[node->name_hash & (capacity - 1)].bucket;
         node->hash_next = *bucket;
         *bucket = i + 1;
       }

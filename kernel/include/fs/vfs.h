@@ -40,7 +40,7 @@ struct vfs_node {
   bool is_dir;
   enum ramfs_device device;
   uint16_t mode;
-  uint16_t links_count;
+  uint32_t links_count;
   uint32_t uid;
   uint32_t gid;
   uint64_t dev_id;

@@ -40,6 +40,33 @@ static void many_names_and_mounts(void) {
   ramfs_destroy(&second);
 }
 
+static void directory_cookies(struct ramfs *fs) {
+  struct ramfs_node dir, file;
+  struct vfs_dirent entry;
+  assert(ramfs_mkdir(fs, "/tmp/cookies", 0700) && ramfs_lookup_node(fs, "/tmp/cookies", &dir));
+  assert(dir.links_count == 2);
+  assert(ramfs_create(fs, "/tmp/cookies/a", 0600, &file));
+  assert(ramfs_create(fs, "/tmp/cookies/b", 0600, &file));
+  assert(ramfs_create(fs, "/tmp/cookies/c", 0600, &file));
+  uint64_t cursor = 0;
+  assert(ramfs_next_dirent(fs, dir.index, &cursor, &entry));
+  uint64_t saved = cursor;
+  assert(ramfs_next_dirent(fs, dir.index, &cursor, &entry));
+  char remove[300];
+  snprintf(remove, sizeof(remove), "/tmp/cookies/%s", entry.name);
+  uint64_t last = cursor;
+  assert(ramfs_next_dirent(fs, dir.index, &last, &entry));
+  uint64_t last_ino = entry.ino;
+  assert(ramfs_unlink(fs, remove) && ramfs_create(fs, "/tmp/reused", 0600, &file));
+  assert(ramfs_next_dirent(fs, dir.index, &cursor, &entry) && entry.ino == last_ino);
+  assert(!ramfs_next_dirent(fs, dir.index, &cursor, &entry));
+  assert(ramfs_next_dirent(fs, dir.index, &saved, &entry) && entry.ino == last_ino);
+  assert(ramfs_mkdir(fs, "/tmp/cookies/sub", 0700));
+  assert(ramfs_refresh_node(fs, dir.index, &dir) && dir.links_count == 3);
+  assert(ramfs_rename(fs, "/tmp/cookies/sub", "/tmp/sub"));
+  assert(ramfs_refresh_node(fs, dir.index, &dir) && dir.links_count == 2);
+}
+
 int main(void) {
   const char init_data[] = "init";
   struct spore_boot_module modules[] = {{
@@ -236,6 +263,7 @@ int main(void) {
   assert(ramfs_unlink(&fs, "/tmp/d/sealed"));
   assert(ramfs_unlink(&fs, "/tmp/d/busy-seal"));
   assert(ramfs_unlink(&fs, "/tmp/d"));
+  directory_cookies(&fs);
   ramfs_destroy(&fs);
   many_names_and_mounts();
   return 0;

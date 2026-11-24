@@ -11,7 +11,7 @@ struct ramfs_mem_node {
   uint32_t uid;
   uint32_t gid;
   uint32_t refs;
-  uint16_t links_count;
+  uint32_t links_count;
   uint32_t seals;
   uint32_t shared_write_mappings;
   bool sealable;
@@ -22,7 +22,8 @@ struct ramfs_mem_node {
   int parent;
   int hash_next;
   uint32_t name_hash;
-  unsigned children;
+  int first_child, last_child;
+  int prev_sibling, next_sibling;
   uint8_t name_len;
   char name[RAMFS_NAME_MAX + 1];
   const void *ro_data;

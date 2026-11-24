@@ -101,7 +101,7 @@ struct ramfs_node {
   uint16_t mode;
   uint32_t uid;
   uint32_t gid;
-  uint16_t links_count;
+  uint32_t links_count;
   uint64_t atime;
   uint64_t ctime;
   uint64_t mtime;
