@@ -17,10 +17,8 @@ struct io_buffer {
   bool direct;
 };
 
-static struct io_buffer io_buffer(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access) {
+static struct io_buffer staging_buffer(size_t len) {
   if (len > FILE_IO_CHUNK) { len = FILE_IO_CHUNK; }
-  void *direct = vmm_direct_user_buffer(as, va, len, access);
-  if (direct) { return (struct io_buffer){direct, len, true}; }
   static uint8_t *large;
   if (len > PAGE_SIZE) {
     if (!large) { large = table_alloc(1, FILE_IO_CHUNK); }
@@ -29,6 +27,12 @@ static struct io_buffer io_buffer(const struct user_address_space *as, uint64_t 
   }
   alignas(64) static uint8_t small[PAGE_SIZE];
   return (struct io_buffer){small, len, false};
+}
+
+static struct io_buffer io_buffer(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access) {
+  if (len > FILE_IO_CHUNK) { len = FILE_IO_CHUNK; }
+  void *direct = vmm_direct_user_buffer(as, va, len, access);
+  return direct ? (struct io_buffer){direct, len, true} : staging_buffer(len);
 }
 
 int64_t cell_read_regular(struct domain *domain, struct open_file *file, uint64_t off, uint64_t buf, uint64_t len) {
@@ -46,8 +50,8 @@ int64_t cell_read_regular(struct domain *domain, struct open_file *file, uint64_
 
 int64_t cell_write_regular(struct domain *domain, struct open_file *file, uint64_t off, uint64_t buf, uint64_t len) {
   struct user_address_space *as = cell_domain_as(domain);
-  struct io_buffer io = io_buffer(as, buf, len, VMM_ACCESS_READ);
-  if (!io.direct && !vmm_copy_from_user(as, io.data, buf, io.len)) { return -14; }
+  struct io_buffer io = staging_buffer(len);
+  if (!vmm_copy_from_user(as, io.data, buf, io.len)) { return -14; }
   int64_t wrote = vfs_write(&file->node, off, io.data, io.len);
   if (wrote > 0) { fsnotify_file_event(file, FS_MODIFY); }
   return wrote == 0 && io.len ? -28 : wrote;
