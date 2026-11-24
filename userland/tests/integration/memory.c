@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -281,7 +282,7 @@ static int mapping_ranges(void) {
   if (p == MAP_FAILED) { return 0; }
   p[0] = 'A';
   int ok = munmap(p + 1, page) == -1 && errno == EINVAL &&
-           mprotect(p + 1, page, PROT_READ) == -1 && errno == EINVAL &&
+           syscall(SYS_mprotect, p + 1, page, PROT_READ) == -1 && errno == EINVAL &&
            madvise(p + 1, page, MADV_DONTNEED) == -1 && errno == EINVAL && p[0] == 'A';
   ok = ok && munmap(p + page, page) == 0 && mprotect(p, 3 * page, PROT_READ) == -1 && errno == ENOMEM &&
        msync(p, 3 * page, MS_SYNC) == -1 && errno == ENOMEM;
