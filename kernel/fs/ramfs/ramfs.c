@@ -1,19 +1,6 @@
 #include "internal.h"
 
 #include "lib/mem.h"
-#include "tty/pty.h"
-
-#if __STDC_HOSTED__
-static uint32_t ramfs_smp_possible_cpu_count(void) {
-  return 1;
-}
-#else
-#include "arch/aarch64/smp.h"
-static uint32_t ramfs_smp_possible_cpu_count(void) {
-  return smp_possible_cpu_count();
-}
-#endif
-
 uint64_t ramfs_now_sec;
 
 void ramfs_set_now(uint64_t epoch_sec) {
@@ -69,7 +56,7 @@ static void free_node(struct ramfs *fs, int node) {
   fs->nodes[node] = (struct ramfs_mem_node){.parent = -1, .first_page = -1};
 }
 
-static int find_child(const struct ramfs *fs, int parent, const char *name) {
+int ramfs_find_child(const struct ramfs *fs, int parent, const char *name) {
   for (int i = 0; i < RAMFS_MAX_NODES; ++i) {
     if (fs->nodes[i].used && fs->nodes[i].parent == parent && streq(fs->nodes[i].name, name)) { return i; }
   }
@@ -90,7 +77,7 @@ static int lookup_entry(const struct ramfs *fs, const char *path) {
       ++len;
     }
     component[len] = '\0';
-    current = find_child(fs, current, component);
+    current = ramfs_find_child(fs, current, component);
     if (current < 0) { return -1; }
     p += len;
     if (*p == '/') { ++p; }
@@ -128,8 +115,8 @@ static bool split_parent(const struct ramfs *fs, const char *path, int *parent, 
   return true;
 }
 
-static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir, bool writable) {
-  if (parent < 0 || !fs->nodes[parent].is_dir || find_child(fs, parent, name) >= 0) { return -1; }
+int ramfs_add_node(struct ramfs *fs, int parent, const char *name, bool is_dir, bool writable) {
+  if (parent < 0 || !fs->nodes[parent].is_dir || ramfs_find_child(fs, parent, name) >= 0) { return -1; }
   int index = alloc_node(fs);
   if (index < 0) { return -1; }
   if (!copy_name(fs->nodes[index].name, name)) {
@@ -148,140 +135,6 @@ static int add_node(struct ramfs *fs, int parent, const char *name, bool is_dir,
   return index;
 }
 
-static bool device_is_block(enum ramfs_device device) {
-  return device == RAMFS_DEV_BLK_ROOT || device == RAMFS_DEV_BLK_BOOT;
-}
-
-static bool device_is_readonly_text(enum ramfs_device device) {
-  return device == RAMFS_DEV_FS_ROOT || device == RAMFS_DEV_FS_BOOT || device == RAMFS_DEV_FS_RAM0 ||
-         device == RAMFS_DEV_FS_TMP || device == RAMFS_DEV_PROCINFO || device == RAMFS_DEV_MEMINFO ||
-         device == RAMFS_DEV_CPUINFO || device == RAMFS_DEV_UPTIME || device == RAMFS_DEV_MOUNTS ||
-         device == RAMFS_DEV_STAT || device == RAMFS_DEV_KMSG || device == RAMFS_DEV_FILESYSTEMS ||
-         device == RAMFS_DEV_PARTITIONS || device == RAMFS_DEV_DEVICES || device == RAMFS_DEV_FSSTATS ||
-         device == RAMFS_DEV_PROC_PID_STAT || device == RAMFS_DEV_PROC_PID_STATUS ||
-         device == RAMFS_DEV_PROC_PID_CMDLINE || device == RAMFS_DEV_PROC_PID_STATM ||
-         device == RAMFS_DEV_PROC_PID_COMM || device == RAMFS_DEV_PROC_PID_MOUNTS ||
-         device == RAMFS_DEV_PROC_PID_MOUNTINFO || device == RAMFS_DEV_PROC_PID_CWD ||
-         device == RAMFS_DEV_PROC_PID_EXE || device == RAMFS_DEV_SYS_CPU_POSSIBLE ||
-         device == RAMFS_DEV_SYS_CPU_PRESENT || device == RAMFS_DEV_SYS_CPU_ONLINE ||
-         device == RAMFS_DEV_SYS_CPU_CORE_ONLINE;
-}
-
-static void set_mount(struct ramfs *fs, int index, enum ramfs_mount mount) {
-  if (index >= 0) { fs->nodes[index].mount = mount; }
-}
-
-static bool add_ro_file(struct ramfs *fs, const char *path, const void *data, uint64_t size) {
-  if (path == NULL || path[0] != '/' || path[1] == '\0') { return false; }
-  int parent = 0;
-  const char *p = path + 1;
-  const char *name = p;
-  while (*p != '\0') {
-    const char *start = p;
-    while (*p != '\0' && *p != '/') {
-      ++p;
-    }
-    size_t len = (size_t)(p - start);
-    if (len == 0 || len > RAMFS_NAME_MAX) { return false; }
-    while (*p == '/') {
-      ++p;
-    }
-    if (*p == '\0') {
-      name = start;
-      break;
-    }
-    char component[RAMFS_NAME_MAX + 1];
-    kmemcpy(component, start, len);
-    component[len] = '\0';
-    int next = find_child(fs, parent, component);
-    if (next < 0) {
-      next = add_node(fs, parent, component, true, true);
-      if (next < 0) { return false; }
-    }
-    if (!fs->nodes[next].is_dir) { return false; }
-    parent = next;
-  }
-  int index = add_node(fs, parent, name, false, false);
-  if (index < 0) { return false; }
-  fs->nodes[index].ro_data = data;
-  fs->nodes[index].size = size;
-  fs->nodes[index].mode = 0100444u;
-  return true;
-}
-
-static bool add_device(struct ramfs *fs, const char *path, enum ramfs_device device) {
-  int parent;
-  const char *name;
-  if (!split_parent(fs, path, &parent, &name)) { return false; }
-  int index = add_node(fs, parent, name, false, false);
-  if (index < 0) { return false; }
-  fs->nodes[index].device = device;
-  uint16_t perms = device_is_readonly_text(device) ? 0444u : (device_is_block(device) ? 0660u : 0666u);
-  fs->nodes[index].mode = (uint16_t)((device_is_block(device) ? 0060000u :
-                                      (device_is_readonly_text(device) ? 0100000u : 0020000u)) |
-                                     perms);
-  return true;
-}
-
-static size_t append_dec(char *dst, size_t cap, size_t len, uint64_t value) {
-  char tmp[20];
-  size_t n = 0;
-  if (value == 0) {
-    tmp[n++] = '0';
-  } else {
-    while (value != 0 && n < sizeof(tmp)) {
-      tmp[n++] = (char)('0' + (value % 10));
-      value /= 10;
-    }
-  }
-  while (n > 0 && len + 1 < cap) {
-    dst[len++] = tmp[--n];
-  }
-  if (cap != 0) { dst[len] = '\0'; }
-  return len;
-}
-
-static int ensure_child_dir(struct ramfs *fs, int parent, const char *name) {
-  int index = find_child(fs, parent, name);
-  if (index >= 0) { return fs->nodes[index].is_dir ? index : -1; }
-  return add_node(fs, parent, name, true, true);
-}
-
-static void add_sys_cpu_topology(struct ramfs *fs) {
-  uint32_t possible = ramfs_smp_possible_cpu_count();
-  if (possible == 0) { possible = 1; }
-  if (possible > SPORE_BOOT_CPU_MAX) { possible = SPORE_BOOT_CPU_MAX; }
-
-  int sys = lookup_index(fs, "/sys");
-  if (sys < 0) { return; }
-  int devices = ensure_child_dir(fs, sys, "devices");
-  int system = ensure_child_dir(fs, devices, "system");
-  int cpu_root = ensure_child_dir(fs, system, "cpu");
-  if (cpu_root < 0) { return; }
-
-  (void)add_device(fs, "/sys/devices/system/cpu/possible", RAMFS_DEV_SYS_CPU_POSSIBLE);
-  (void)add_device(fs, "/sys/devices/system/cpu/present", RAMFS_DEV_SYS_CPU_PRESENT);
-  (void)add_device(fs, "/sys/devices/system/cpu/online", RAMFS_DEV_SYS_CPU_ONLINE);
-
-  for (uint32_t cpu = 0; cpu < possible; ++cpu) {
-    char path[96] = "/sys/devices/system/cpu/cpu";
-    size_t path_len = kstrlen(path);
-    path_len = append_dec(path, sizeof(path), path_len, cpu);
-    path[path_len] = '\0';
-    const char *name = path + sizeof("/sys/devices/system/cpu/") - 1;
-    if (ensure_child_dir(fs, cpu_root, name) < 0) { continue; }
-
-    size_t cpu_path_len = path_len;
-    const char *suffix = "/online";
-    for (size_t i = 0; suffix[i] != '\0' && path_len + 1 < sizeof(path); ++i) {
-      path[path_len++] = suffix[i];
-    }
-    path[path_len] = '\0';
-    (void)add_device(fs, path, RAMFS_DEV_SYS_CPU_CORE_ONLINE);
-    path[cpu_path_len] = '\0';
-  }
-}
-
 void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
                 uint64_t hhdm_offset) {
   kmemset(fs, 0, sizeof(*fs));
@@ -294,73 +147,8 @@ void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
   fs->nodes[root].mode = 0040777u;
   fs->nodes[root].parent = root;
   fs->nodes[root].mount = RAMFS_MOUNT_RAM0;
-  (void)copy_name(fs->nodes[root].name, "");
 
-  int dev = add_node(fs, root, "dev", true, true);
-  int proc = add_node(fs, root, "proc", true, true);
-  int sys = add_node(fs, root, "sys", true, true);
-  int tmp = add_node(fs, root, "tmp", true, true);
-  int run = add_node(fs, root, "run", true, true);
-
-  set_mount(fs, dev, RAMFS_MOUNT_DEV);
-  set_mount(fs, proc, RAMFS_MOUNT_PROC);
-  set_mount(fs, sys, RAMFS_MOUNT_SYS);
-  set_mount(fs, tmp, RAMFS_MOUNT_TMP);
-  set_mount(fs, run, RAMFS_MOUNT_RUN);
-
-  (void)add_node(fs, dev, "fs", true, true);
-  (void)add_node(fs, dev, "blk", true, true);
-  (void)add_node(fs, dev, "shm", true, true);
-  (void)add_node(fs, dev, "pts", true, true);
-  (void)add_node(fs, run, "memfd", true, true);
-  (void)add_node(fs, proc, "net", true, true);
-  add_sys_cpu_topology(fs);
-
-  (void)add_device(fs, "/dev/null", RAMFS_DEV_NULL);
-  (void)add_device(fs, "/dev/zero", RAMFS_DEV_ZERO);
-  (void)add_device(fs, "/dev/full", RAMFS_DEV_FULL);
-  (void)add_device(fs, "/dev/random", RAMFS_DEV_RANDOM);
-  (void)add_device(fs, "/dev/urandom", RAMFS_DEV_URANDOM);
-  (void)add_device(fs, "/dev/console", RAMFS_DEV_CONSOLE);
-  (void)add_device(fs, "/dev/tty", RAMFS_DEV_TTY);
-  (void)add_device(fs, "/dev/ttys0", RAMFS_DEV_TTY);
-  (void)add_device(fs, "/dev/ptmx", RAMFS_DEV_PTMX);
-  for (uint32_t pty = 0; pty < CELL_PTY_CAP; ++pty) {
-    char path[32] = "/dev/pts/";
-    size_t len = kstrlen(path);
-    len = append_dec(path, sizeof(path), len, pty);
-    path[len] = '\0';
-    (void)add_device(fs, path, RAMFS_DEV_PTS);
-  }
-  (void)add_device(fs, "/dev/procinfo", RAMFS_DEV_PROCINFO);
-  (void)add_device(fs, "/dev/fs/root", RAMFS_DEV_FS_ROOT);
-  (void)add_device(fs, "/dev/fs/boot", RAMFS_DEV_FS_BOOT);
-  (void)add_device(fs, "/dev/fs/ram0", RAMFS_DEV_FS_RAM0);
-  (void)add_device(fs, "/dev/fs/tmp", RAMFS_DEV_FS_TMP);
-  (void)add_device(fs, "/dev/blk/root", RAMFS_DEV_BLK_ROOT);
-  (void)add_device(fs, "/dev/blk/boot", RAMFS_DEV_BLK_BOOT);
-  (void)add_device(fs, "/proc/procinfo", RAMFS_DEV_PROCINFO);
-  (void)add_device(fs, "/proc/meminfo", RAMFS_DEV_MEMINFO);
-  (void)add_device(fs, "/proc/cpuinfo", RAMFS_DEV_CPUINFO);
-  (void)add_device(fs, "/proc/uptime", RAMFS_DEV_UPTIME);
-  (void)add_device(fs, "/proc/loadavg", RAMFS_DEV_LOADAVG);
-  (void)add_device(fs, "/proc/mounts", RAMFS_DEV_MOUNTS);
-  (void)add_device(fs, "/proc/stat", RAMFS_DEV_STAT);
-  (void)add_device(fs, "/proc/net/dev", RAMFS_DEV_NET_DEV);
-  (void)add_device(fs, "/proc/kmsg", RAMFS_DEV_KMSG);
-  (void)add_device(fs, "/proc/filesystems", RAMFS_DEV_FILESYSTEMS);
-  (void)add_device(fs, "/proc/partitions", RAMFS_DEV_PARTITIONS);
-  (void)add_device(fs, "/proc/devices", RAMFS_DEV_DEVICES);
-  (void)add_device(fs, "/proc/fsstats", RAMFS_DEV_FSSTATS);
-
-  if (modules == NULL) { return; }
-  for (uint32_t i = 0; i < module_count; ++i) {
-    const struct spore_boot_module *file = &modules[i];
-    const char *path = file->path;
-    if (path != NULL && path[0] == '/') {
-      (void)add_ro_file(fs, path, (const void *)(uintptr_t)(hhdm_offset + file->phys_addr), file->size);
-    }
-  }
+  ramfs_populate(fs, root, modules, module_count);
 }
 
 bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
@@ -485,7 +273,7 @@ bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, 
 bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode) {
   int parent;
   const char *name;
-  int index = split_parent(fs, path, &parent, &name) ? add_node(fs, parent, name, true, true) : -1;
+  int index = split_parent(fs, path, &parent, &name) ? ramfs_add_node(fs, parent, name, true, true) : -1;
   if (index < 0) { return false; }
   fs->nodes[index].mode = (uint16_t)(0040000u | (mode & 07777u));
   return true;
@@ -497,7 +285,7 @@ bool ramfs_create(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
   int parent;
   const char *name;
   if (!split_parent(fs, path, &parent, &name)) { return false; }
-  int index = add_node(fs, parent, name, false, true);
+  int index = ramfs_add_node(fs, parent, name, false, true);
   if (index < 0) { return false; }
   fs->nodes[index].mode = (uint16_t)(0100000u | (mode & 07777u));
   return ramfs_refresh_node(fs, index, out);
@@ -508,7 +296,7 @@ bool ramfs_mkfifo(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
   int parent;
   const char *name;
   if (!split_parent(fs, path, &parent, &name)) { return false; }
-  int index = add_node(fs, parent, name, false, true);
+  int index = ramfs_add_node(fs, parent, name, false, true);
   if (index < 0) { return false; }
   fs->nodes[index].mode = (uint16_t)(0010000u | (mode & 0777u));
   return ramfs_refresh_node(fs, index, out);
@@ -519,7 +307,7 @@ bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
   int parent;
   const char *name;
   if (!split_parent(fs, path, &parent, &name)) { return false; }
-  int index = add_node(fs, parent, name, false, true);
+  int index = ramfs_add_node(fs, parent, name, false, true);
   if (index < 0) { return false; }
   fs->nodes[index].mode = (uint16_t)(0140000u | (mode & 0777u));
   return ramfs_refresh_node(fs, index, out);
@@ -588,14 +376,14 @@ bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path) {
   int parent;
   const char *name;
   if (!split_parent(fs, new_path, &parent, &name) || fs->nodes[parent].mount != node->mount ||
-      find_child(fs, parent, name) >= 0) {
+      ramfs_find_child(fs, parent, name) >= 0) {
     return false;
   }
   if (node->parent < 0) {
     if (!copy_name(node->name, name)) { return false; }
     node->parent = parent;
   } else {
-    int entry = add_node(fs, parent, name, false, false);
+    int entry = ramfs_add_node(fs, parent, name, false, false);
     if (entry < 0) { return false; }
     fs->nodes[entry].link_target = index;
   }
