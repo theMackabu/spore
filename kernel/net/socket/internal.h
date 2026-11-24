@@ -62,6 +62,15 @@ bool cell_tcp_socket_writable(const struct open_file *file);
 int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listener, int flags);
 uint32_t socket_effective_rcvlowat(const struct open_file *file);
 
+struct socket_datagram {
+  struct socket_datagram *next;
+  uint32_t ip;
+  uint16_t port, len;
+  uint8_t ttl;
+  uint8_t data[CELL_DGRAM_RX_CAP];
+};
+
+bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const void *data, size_t len);
 void dgram_clear_rx(struct open_file *file);
 void udp_release_file(struct open_file *file);
 int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, uint64_t addr,

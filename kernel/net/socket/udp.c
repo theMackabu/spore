@@ -10,13 +10,8 @@
 enum {
   EMSGSIZE = 90,
   EACCES = 13,
-  DGRAM_RX_BUFFER_SLOTS = 64,
   UDP_PORT_BUCKETS = 64,
 };
-
-static uint8_t dgram_rx_buffers[DGRAM_RX_BUFFER_SLOTS][CELL_DGRAM_RX_CAP];
-
-static bool dgram_rx_used[DGRAM_RX_BUFFER_SLOTS];
 
 static uint16_t next_udp_port = 49152;
 
@@ -41,73 +36,9 @@ int dgram_poll_events(const struct open_file *file, int events) {
   return ready | (events & CELL_POLLOUT);
 }
 
-static int dgram_alloc_rx_slot(void) {
-  for (size_t i = 0; i < DGRAM_RX_BUFFER_SLOTS; ++i) {
-    if (dgram_rx_used[i]) { continue; }
-    dgram_rx_used[i] = true;
-    return (int)i;
-  }
-  return -1;
-}
-
-static void dgram_free_rx_slot(uint8_t slot) {
-  if (slot < DGRAM_RX_BUFFER_SLOTS) { dgram_rx_used[slot] = false; }
-}
-
-static uint8_t dgram_queue_index(const struct open_file *file, uint8_t offset) {
-  return (uint8_t)((file->dgram_rx_head + offset) % CELL_DGRAM_RX_QUEUE_CAP);
-}
-
-static uint32_t dgram_rx_queued_bytes(const struct open_file *file) {
-  uint32_t total = 0;
-  if (file == NULL) { return 0; }
-  for (uint8_t i = 0; i < file->dgram_rx_count; ++i) {
-    total += file->dgram_rx_len[dgram_queue_index(file, i)];
-  }
-  return total;
-}
-
-static void dgram_drop_head(struct open_file *file) {
-  if (file == NULL || file->dgram_rx_count == 0) { return; }
-  uint8_t index = file->dgram_rx_head;
-  dgram_free_rx_slot(file->dgram_rx_slot[index]);
-  file->dgram_rx_slot[index] = 0;
-  file->dgram_rx_len[index] = 0;
-  file->dgram_rx_ip[index] = 0;
-  file->dgram_rx_port[index] = 0;
-  file->dgram_rx_head = dgram_queue_index(file, 1);
-  --file->dgram_rx_count;
-  if (file->dgram_rx_count == 0) { file->dgram_rx_head = 0; }
-}
-
-void dgram_clear_rx(struct open_file *file) {
-  if (file == NULL) { return; }
-  while (file->dgram_rx_count != 0) {
-    dgram_drop_head(file);
-  }
-}
-
 void udp_release_file(struct open_file *file) {
+  dgram_clear_rx(file);
   socket_index_remove(udp_port_bucket(file->udp_local_port), file);
-}
-
-static bool dgram_push_rx(struct open_file *file, uint32_t src_ip, uint8_t ttl, uint16_t src_port, const void *payload, size_t len) {
-  if (file == NULL || file->dgram_rx_count >= CELL_DGRAM_RX_QUEUE_CAP) { return false; }
-  if (len > CELL_DGRAM_RX_CAP) { len = CELL_DGRAM_RX_CAP; }
-  uint32_t limit = socket_effective_buffer(file, true);
-  uint32_t queued = dgram_rx_queued_bytes(file);
-  if (queued >= limit || len > limit - queued) { return false; }
-  int slot = dgram_alloc_rx_slot();
-  if (slot < 0) { return false; }
-  uint8_t index = dgram_queue_index(file, file->dgram_rx_count);
-  file->dgram_rx_slot[index] = (uint8_t)slot;
-  file->dgram_rx_len[index] = (uint16_t)len;
-  file->dgram_rx_ip[index] = src_ip;
-  file->dgram_rx_ttl[index] = ttl;
-  file->dgram_rx_port[index] = src_port;
-  kmemcpy(dgram_rx_buffers[slot], payload, len);
-  ++file->dgram_rx_count;
-  return true;
 }
 
 static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
@@ -236,38 +167,6 @@ int64_t cell_fd_udp_send(int fd, uint32_t ip, uint16_t port, uint64_t buf, uint6
 
 int64_t cell_fd_udp_send_kernel(int fd, uint32_t ip, uint16_t port, const void *buf, uint64_t len) {
   return udp_send_payload(udp_socket_for_fd(cell_current_domain_internal(), fd), ip, port, buf, len);
-}
-
-static bool dgram_copy_source_to_domain(struct domain *domain, uint32_t src_ip, uint16_t src_port, uint64_t addr,
-                                        uint64_t addrlen) {
-  if (!addr) { return true; }
-  struct user_address_space *as = cell_domain_as(domain);
-  uint32_t size;
-  if (!addrlen || !vmm_copy_from_user(as, &size, addrlen, sizeof(size))) { return false; }
-  struct sockaddr_in_cell sa = {.sin_family = 2, .sin_port = net_bswap16(src_port), .sin_addr = src_ip};
-  if (size > sizeof(sa)) { size = sizeof(sa); }
-  uint32_t actual = sizeof(sa);
-  return vmm_copy_to_user(as, addr, &sa, size) && vmm_copy_to_user(as, addrlen, &actual, sizeof(actual));
-}
-
-int64_t dgram_read(struct domain *domain, struct open_file *file, uint64_t len, uint64_t addr, uint64_t addrlen,
-                   uint32_t flags, socket_copy_out copy, void *destination) {
-  if (file->udp_error) {
-    int error = file->udp_error;
-    file->udp_error = 0;
-    return -error;
-  }
-  if (!file->dgram_rx_count) { return -EAGAIN; }
-  uint8_t head = file->dgram_rx_head;
-  uint16_t packet_len = file->dgram_rx_len[head];
-  size_t bytes = packet_len < len ? packet_len : len;
-  int rc = copy(destination, dgram_rx_buffers[file->dgram_rx_slot[head]], bytes);
-  if (rc) { return rc; }
-  if (!dgram_copy_source_to_domain(domain, file->dgram_rx_ip[head], file->dgram_rx_port[head], addr, addrlen)) {
-    return -EFAULT;
-  }
-  if (!(flags & MSG_PEEK)) { dgram_drop_head(file); }
-  return flags & MSG_TRUNC ? packet_len : (int64_t)bytes;
 }
 
 static bool socket_matches_udp(struct open_file *file, uint32_t src_ip, uint16_t src_port, uint16_t dst_port) {

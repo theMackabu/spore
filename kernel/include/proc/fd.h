@@ -11,6 +11,7 @@ struct domain;
 struct trap_frame;
 struct tcp_ooo_state;
 struct tcp_segment;
+struct socket_datagram;
 struct tcp_rx_state;
 
 enum open_file_type {
@@ -91,13 +92,9 @@ struct open_file {
       uint32_t ip_tos;
       uint32_t ip_mtu_discover;
       bool ip_bind_address_no_port;
-      uint8_t dgram_rx_head;
+      uint16_t dgram_rx_bytes;
       uint8_t dgram_rx_count;
-      uint8_t dgram_rx_slot[CELL_DGRAM_RX_QUEUE_CAP];
-      uint8_t dgram_rx_ttl[CELL_DGRAM_RX_QUEUE_CAP];
-      uint16_t dgram_rx_len[CELL_DGRAM_RX_QUEUE_CAP];
-      uint32_t dgram_rx_ip[CELL_DGRAM_RX_QUEUE_CAP];
-      uint16_t dgram_rx_port[CELL_DGRAM_RX_QUEUE_CAP];
+      struct socket_datagram *dgram_rx_head, *dgram_rx_tail, *dgram_rx_spare;
       uint32_t tcp_remote_ip;
       uint32_t tcp_seq;
       uint32_t tcp_ack;

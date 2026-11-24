@@ -53,11 +53,11 @@ int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *file, uin
   int32_t msg_flags = 0;
   if (!tcp && !file->udp_error && !file->dgram_rx_count) { return -EAGAIN; }
   if (msg_addr && (tcp || !file->udp_error)) {
-    unsigned head = file->dgram_rx_head;
-    bool truncated = !tcp && file->dgram_rx_len[head] > cursor.capacity;
+    const struct socket_datagram *packet = tcp ? NULL : file->dgram_rx_head;
+    bool truncated = packet && packet->len > cursor.capacity;
     msg_flags = truncated ? MSG_TRUNC : 0;
     if (aarch64_recv_ip_control(domain, msg_addr, !tcp && file->ip_recvttl,
-                                tcp ? 0 : file->dgram_rx_ttl[head], &msg_flags) < 0 ||
+                                packet ? packet->ttl : 0, &msg_flags) < 0 ||
         aarch64_write_msg_flags(domain, msg_addr, msg_flags) < 0) { return -EFAULT; }
   }
   if (tcp) { return tcp_read_stream(file, cursor.capacity, flags, aarch64_scatter_iov, &cursor); }
