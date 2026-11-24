@@ -15,6 +15,8 @@ struct pmm_stats {
 };
 
 void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uint32_t memmap_count);
+typedef size_t (*pmm_reclaim_fn)(size_t pages);
+void pmm_set_reclaimer(pmm_reclaim_fn reclaim);
 uint64_t pmm_alloc_page(void);
 uint64_t pmm_alloc_zero_page(void);
 uint64_t pmm_alloc_contiguous_pages(uint64_t count);

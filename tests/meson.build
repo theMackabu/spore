@@ -143,3 +143,11 @@ test_page_ring = executable('test_page_ring', page_ring_sources + pmm_sources, '
   native: true)
 
 test('page-ring', test_page_ring)
+
+test_page_cache = executable('test_page_cache', 'test_page_cache.c',
+  vfs_page_cache_sources + pmm_sources + vmm_sources + aarch64_mmu_sources,
+  link_with: host_mem,
+  include_directories: test_include + [include_directories('../kernel')],
+  native: true)
+
+test('page-cache', test_page_cache)

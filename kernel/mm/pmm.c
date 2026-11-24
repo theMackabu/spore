@@ -20,6 +20,7 @@ static uint64_t first_candidate_word;
 static uint64_t metadata_start_page;
 static uint64_t metadata_page_count;
 static struct pmm_stats stats;
+static pmm_reclaim_fn reclaim_pages;
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
   return value & ~(align - 1);
@@ -129,6 +130,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   metadata_start_page = 0;
   metadata_page_count = 0;
   stats = (struct pmm_stats){0};
+  reclaim_pages = NULL;
   if (tracked_page_count == 0 || bitmap_word_count == 0) { return; }
 
   uint64_t bitmap_bytes = bitmap_word_count * sizeof(uint64_t);
@@ -192,10 +194,22 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   }
 }
 
+void pmm_set_reclaimer(pmm_reclaim_fn reclaim) {
+  reclaim_pages = reclaim;
+}
+
+static bool pages_available(uint64_t count) {
+  if (count > free_page_count && reclaim_pages) {
+    size_t need = count - free_page_count;
+    reclaim_pages(need < 32 ? 32 : need);
+  }
+  return count <= free_page_count;
+}
+
 uint64_t pmm_alloc_page(void) {
   const uint64_t first = 0x100000 / PAGE_SIZE;
   ++stats.alloc_attempts;
-  if (free_page_count == 0) {
+  if (!pages_available(1)) {
     ++stats.alloc_failures;
     return 0;
   }
@@ -219,7 +233,7 @@ uint64_t pmm_alloc_zero_page(void) {
 uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
   if (count == 0 || count > tracked_page_count) { return 0; }
   ++stats.alloc_attempts;
-  if (count > free_page_count) {
+  if (!pages_available(count)) {
     ++stats.alloc_failures;
     return 0;
   }

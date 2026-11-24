@@ -26,11 +26,13 @@ static struct vfs_page_cache_entry *dirty_files[FILE_BUCKETS];
 static struct vfs_page_cache_entry **dirty_tails[FILE_BUCKETS];
 
 static void mark_dirty(struct vmm_file_page *page);
+static size_t evict_pages(size_t count);
 
 void vfs_page_cache_configure(void) {
   if (!entries.limit) {
     (void)pool_init(&entries, sizeof(struct vfs_page_cache_entry), CACHE_ENTRIES);
     vmm_file_pages_init(mark_dirty);
+    pmm_set_reclaimer(evict_pages);
   }
 }
 
@@ -107,27 +109,30 @@ static void clear_entry(struct vfs_page_cache_entry *entry) {
   pool_free(&entries, entry);
 }
 
-static bool evict_page(void) {
-  for (struct vfs_page_cache_entry *e = oldest; e; e = e->newer) {
-    if (!e->dirty_link && pmm_is_last_ref(e->mapped.pa)) {
-      clear_entry(e);
-      return true;
+static size_t evict_pages(size_t count) {
+  size_t freed = 0;
+  struct vfs_page_cache_entry *entry = oldest;
+  while (entry && freed < count) {
+    struct vfs_page_cache_entry *next = entry->newer;
+    if (!entry->dirty_link && pmm_is_last_ref(entry->mapped.pa)) {
+      clear_entry(entry);
+      ++freed;
     }
+    entry = next;
   }
-  return false;
+  return freed;
 }
 
 static struct vfs_page_cache_entry *allocate_entry(void) {
   if (!entries.limit) { return NULL; }
   struct vfs_page_cache_entry *entry;
   while (!(entry = pool_alloc(&entries))) {
-    if (!evict_page()) { return NULL; }
+    if (!evict_pages(1)) { return NULL; }
   }
-  while (!(entry->mapped.pa = pmm_alloc_page())) {
-    if (!evict_page()) {
-      pool_free(&entries, entry);
-      return NULL;
-    }
+  entry->mapped.pa = pmm_alloc_page();
+  if (!entry->mapped.pa) {
+    pool_free(&entries, entry);
+    return NULL;
   }
   return entry;
 }
