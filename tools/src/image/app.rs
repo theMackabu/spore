@@ -151,6 +151,7 @@ fn string(out: &mut impl Write, s: &str) -> io::Result<()> {
 pub fn payload(
     program: &Path,
     opts: &[PathBuf],
+    default_port: Option<u16>,
     stage: &Path,
     bundle: &Path,
 ) -> io::Result<[Ipv4Addr; 4]> {
@@ -220,6 +221,11 @@ pub fn payload(
         }
     }
     crate::app_network::user_network(net)?;
+    if let Some(port) = default_port
+        && !env.iter().any(|item| item.starts_with("PORT="))
+    {
+        env.push(format!("PORT={port}"));
+    }
     argv.insert(0, argv0.unwrap_or_else(|| exe.clone()));
     if argv.len() > 128 || env.len() > 128 {
         return Err(bad("maximum 128 arguments and 128 environment entries"));
@@ -275,13 +281,18 @@ pub fn payload(
     Ok(net)
 }
 
-pub fn build(output: &Path, program: &Path, opts: &[PathBuf]) -> io::Result<()> {
+pub fn build(
+    output: &Path,
+    program: &Path,
+    opts: &[PathBuf],
+    default_port: Option<u16>,
+) -> io::Result<()> {
     build_image(output, |image| {
         let stage = image.with_extension("app-stage");
         fs::create_dir(&stage)?;
         let result = (|| {
             let bundle = stage.join("payload");
-            let net = payload(program, opts, &stage, &bundle)?;
+            let net = payload(program, opts, default_port, &stage, &bundle)?;
             let config = stage.join("limine.conf");
             fs::write(
                 &config,

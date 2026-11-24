@@ -54,6 +54,17 @@ def contract(d, disk):
     assert p.returncode == 125 and json.loads(result.read_text())["kind"] == "boot-error"
 
 
+def forwarded_port():
+    with socket.socket() as available:
+        available.bind(("127.0.0.1", 0))
+        host = available.getsockname()[1]
+    guest = 9000
+    for flags, expected in [([], guest), (["--env", "PORT=7000"], 7000)]:
+        app = invoke(CLI, "run", "ant", "-p", f"{host}:{guest}", *flags,
+                     "--", "-e", "console.log(process.env.PORT)", capture_output=True, timeout=10)
+        assert app.stdout.strip() == str(expected).encode(), app.stdout
+
+
 def repl_prompt():
     master, slave = os.openpty()
     try:
@@ -146,6 +157,7 @@ def main():
         if not args.skip_contract:
             contract(d, disk)
             repl_prompt()
+            forwarded_port()
         images = []
         for rev in ("one","two"):
             img=d/(rev+".img")

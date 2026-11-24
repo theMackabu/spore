@@ -280,11 +280,16 @@ fn execute() -> io::Result<i32> {
         } else {
             tmp.0.join("app.img")
         };
+        let default_port = vm
+            .forwards
+            .first()
+            .map(|&(_, port)| port)
+            .filter(|port| vm.forwards.iter().all(|(_, guest)| guest == port));
         let result = system::program(&input).and_then(|program| {
             if !build && let Some(ram) = runner::qemu::DirectBoot::memory(&vm) {
                 let kernel = tmp.0.join("spore.bin");
                 fs::write(&kernel, spore_kernel::DIRECT)?;
-                let network = image::app::payload(&program, &pack, &tmp.0, &image)?;
+                let network = image::app::payload(&program, &pack, default_port, &tmp.0, &image)?;
                 vm.direct = Some(runner::qemu::DirectBoot {
                     kernel,
                     ram,
@@ -292,7 +297,7 @@ fn execute() -> io::Result<i32> {
                 });
                 Ok(())
             } else {
-                image::app::build(&image, &program, &pack)
+                image::app::build(&image, &program, &pack, default_port)
             }
         });
         if let Err(e) = result {
