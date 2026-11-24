@@ -68,7 +68,7 @@ static struct leaf_range leaf_range(uint64_t start, uint64_t end) {
   return (struct leaf_range){.next_page = first, .limit = first + pages};
 }
 
-static bool next_leaf_range(const struct user_address_space *as, struct leaf_range *range) {
+static bool next_leaf_range(const struct user_address_space *as, struct leaf_range *range, size_t max_pages) {
   while (range->next_page < range->limit) {
     uint64_t page = range->next_page;
     range->va = page * PAGE_SIZE;
@@ -76,6 +76,7 @@ static bool next_leaf_range(const struct user_address_space *as, struct leaf_ran
     range->ptes = walk_to_leaf(as, range->va, &shift);
     uint64_t span = 1ull << (shift - 12);
     uint64_t next = (page & ~(span - 1)) + span;
+    if (range->ptes != NULL && next - page > max_pages) { next = page + max_pages; }
     range->next_page = next < range->limit ? next : range->limit;
     if (range->ptes != NULL) {
       range->count = range->next_page - page;
@@ -337,34 +338,45 @@ bool vmm_move_page(struct user_address_space *as, uint64_t old_va, uint64_t new_
 
 void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end) {
   struct leaf_range range = leaf_range(start, end);
-  while (next_leaf_range(as, &range)) {
+  while (next_leaf_range(as, &range, 64)) {
+    uint64_t removed = 0;
     for (size_t i = 0; i < range.count; ++i) {
-      uint64_t entry = range.ptes[i];
-      if ((entry & PTE_VALID) == 0) { continue; }
+      if (!(range.ptes[i] & PTE_VALID)) { continue; }
+      range.ptes[i] &= ~PTE_VALID;
+      removed |= UINT64_C(1) << i;
+    }
+    aarch64_tlb_flush_pages(range.va, removed);
+    as->resident_pages -= (unsigned)__builtin_popcountll(removed);
+    while (removed) {
+      size_t i = (size_t)__builtin_ctzll(removed);
+      uint64_t pa = range.ptes[i] & PTE_ADDR_MASK;
       range.ptes[i] = 0;
-      --as->resident_pages;
-      aarch64_tlb_flush_va(range.va + i * PAGE_SIZE);
-      pmm_free_page(entry & PTE_ADDR_MASK);
+      pmm_free_page(pa);
+      removed &= removed - 1;
     }
   }
 }
 
 void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t end, uint32_t flags) {
   struct leaf_range range = leaf_range(start, end);
-  while (next_leaf_range(as, &range)) {
+  while (next_leaf_range(as, &range, 64)) {
+    uint64_t changed = 0;
     for (size_t i = 0; i < range.count; ++i) {
       uint64_t entry = range.ptes[i];
-      if ((entry & PTE_VALID) == 0) { continue; }
-      range.ptes[i] = with_protection(entry, flags);
-      aarch64_tlb_flush_va(range.va + i * PAGE_SIZE);
+      if (!(entry & PTE_VALID)) { continue; }
+      uint64_t next = with_protection(entry, flags);
+      if (next == entry) { continue; }
+      range.ptes[i] = next;
+      changed |= UINT64_C(1) << i;
     }
+    aarch64_tlb_flush_pages(range.va, changed);
   }
 }
 
 size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t start, uint64_t end) {
   size_t pages = 0;
   struct leaf_range range = leaf_range(start, end);
-  while (next_leaf_range(as, &range)) {
+  while (next_leaf_range(as, &range, 512)) {
     for (size_t i = 0; i < range.count; ++i) {
       pages += (range.ptes[i] & PTE_VALID) != 0;
     }

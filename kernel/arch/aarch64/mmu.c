@@ -58,18 +58,23 @@ void vmm_install_user(const struct user_address_space *as) {
 #endif
 }
 
-void aarch64_tlb_flush_va(uint64_t va) {
+void aarch64_tlb_flush_pages(uint64_t first_va, uint64_t mask) {
 #if defined(__STDC_HOSTED__) && __STDC_HOSTED__
-  (void)va;
-  return;
+  (void)first_va;
+  (void)mask;
 #else
-  uint64_t op = va >> 12;
-  __asm__ volatile("dsb ishst\n"
-                   "tlbi vaae1is, %0\n"
-                   "dsb ish\n"
-                   "isb\n"
-                   :
-                   : "r"(op)
-                   : "memory");
+  if (mask == 0) { return; }
+  __asm__ volatile("dsb ishst" ::: "memory");
+  uint64_t first_page = first_va >> 12;
+  do {
+    uint64_t page = first_page + (unsigned)__builtin_ctzll(mask);
+    __asm__ volatile("tlbi vaae1is, %0" :: "r"(page) : "memory");
+    mask &= mask - 1;
+  } while (mask);
+  __asm__ volatile("dsb ish\nisb" ::: "memory");
 #endif
+}
+
+void aarch64_tlb_flush_va(uint64_t va) {
+  aarch64_tlb_flush_pages(va, 1);
 }
