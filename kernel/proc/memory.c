@@ -226,6 +226,11 @@ private_copy:
 
 static void note_fault(struct domain *domain, bool major) {
   if (domain == NULL) { return; }
+  struct thread *thread = cell_current_thread_internal();
+  if (thread && thread->domain == domain) {
+    if (major) { ++thread->major_faults; }
+    else { ++thread->minor_faults; }
+  }
   if (major) {
     ++domain->major_faults;
   } else {

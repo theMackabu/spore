@@ -14,5 +14,6 @@ kernel_sources += files(
   'signal.c',
   'syscall.c',
   'time.c',
+  'usage.c',
   'unix_msg.c',
 )

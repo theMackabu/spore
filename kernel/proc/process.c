@@ -14,10 +14,8 @@
 
 enum {
   EAGAIN = 11,
-  ECHILD = 10,
   EFAULT = 14,
   ENOMEM = 12,
-  WNOHANG = 1,
   CLONE_SETTLS = 0x00080000,
   CLONE_PARENT_SETTID = 0x00100000,
   CLONE_CHILD_CLEARTID = 0x00200000,
@@ -26,44 +24,6 @@ enum {
 
 static struct domain *current_domain(void) {
   return cell_current_domain_internal();
-}
-
-static bool domain_has_running_thread(const struct domain *domain) {
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread != NULL && thread->domain == domain && thread->running_cpu >= 0) { return true; }
-  }
-  return false;
-}
-
-void cell_wake_parent_of(struct domain *child) {
-  cell_wake_vfork_parent_of(child->id);
-  struct domain *parent_domain = cell_find_domain(child->parent_id);
-  struct thread *parent = parent_domain == NULL ? NULL : cell_thread_for_domain(parent_domain);
-  if (parent != NULL && parent->state == THREAD_BLOCKED && parent->wait.reason == WAIT_CHILD &&
-      (parent->wait.target < 0 || parent->wait.target == child->id)) {
-    bool child_is_current = child == current_domain();
-    bool child_is_running = domain_has_running_thread(child);
-    int status = child->exit_status << 8;
-    if (child->term_signal != 0) { status = child->term_signal; }
-    uint64_t status_addr = trap_syscall_arg(&parent->tf, 1);
-    struct user_address_space *parent_as = cell_domain_as(parent_domain);
-    if (status_addr != 0 && parent_as != NULL) {
-      (void)vmm_copy_to_user(parent_as, status_addr, &status, sizeof(status));
-    }
-    int child_id = child->id;
-    struct thread *child_thread = cell_thread_for_domain(child);
-    if (child_thread != NULL) {
-      child_thread->state = (child_is_current || child_is_running) ? THREAD_ZOMBIE : THREAD_UNUSED;
-    }
-    if (child_is_current || child_is_running) {
-      child->parent_id = 0;
-    } else {
-      cell_destroy_domain(child);
-    }
-    cell_finish_wait(parent, child_id);
-    smp_notify();
-  }
 }
 
 void cell_exit_thread_current(int status, struct trap_frame *frame) {
@@ -253,63 +213,6 @@ int cell_set_tid_address_current(uint64_t clear_child_tid) {
   if (cell_current_thread_internal() == NULL) { return 0; }
   cell_current_thread_internal()->clear_child_tid = clear_child_tid;
   return cell_current_thread_internal()->tid;
-}
-
-static struct domain *find_waitable_child(int parent_id, int pid) {
-  for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
-    struct domain *domain = cell_domain_slot(i);
-    if (domain != NULL && domain->used && domain->zombie && domain->parent_id == parent_id &&
-        (pid <= 0 || domain->id == pid)) {
-      return domain;
-    }
-  }
-  return NULL;
-}
-
-static bool has_child(int parent_id, int pid) {
-  for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
-    struct domain *domain = cell_domain_slot(i);
-    if (domain != NULL && domain->used && domain->parent_id == parent_id && (pid <= 0 || domain->id == pid)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-int cell_wait4_options(int pid, uint64_t status_addr, int options, struct trap_frame *frame) {
-  struct domain *domain = current_domain();
-  if (domain == NULL) { return -ECHILD; }
-  struct domain *child = find_waitable_child(domain->id, pid);
-  if (child == NULL) {
-    if (!has_child(domain->id, pid)) { return -ECHILD; }
-    if ((options & WNOHANG) != 0) { return 0; }
-    cell_save_current(frame);
-    cell_current_thread_internal()->running_cpu = -1;
-    cell_current_thread_internal()->wait.reason = WAIT_CHILD;
-    cell_current_thread_internal()->wait.target = pid;
-    cell_mark_blocked(cell_current_thread_internal());
-    cell_schedule(frame);
-    return CELL_SWITCHED;
-  }
-
-  int status = child->exit_status << 8;
-  if (child->term_signal != 0) { status = child->term_signal; }
-  struct user_address_space *as = cell_domain_as(domain);
-  if (status_addr != 0 && (as == NULL || !vmm_copy_to_user(as, status_addr, &status, sizeof(status)))) { return -14; }
-  int child_id = child->id;
-  struct thread *child_thread = cell_thread_for_domain(child);
-  if (domain_has_running_thread(child)) {
-    if (child_thread != NULL) { child_thread->state = THREAD_ZOMBIE; }
-    child->parent_id = 0;
-  } else {
-    if (child_thread != NULL) { child_thread->state = THREAD_UNUSED; }
-    cell_destroy_domain(child);
-  }
-  return child_id;
-}
-
-int cell_wait4(int pid, uint64_t status_addr, struct trap_frame *frame) {
-  return cell_wait4_options(pid, status_addr, 0, frame);
 }
 
 bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp,

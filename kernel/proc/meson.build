@@ -1,6 +1,7 @@
 kernel_sources += files(
   'accounting.c',
   'bootstrap.c',
+  'child.c',
   'domain.c',
   'eventfd.c',
   'fd.c',

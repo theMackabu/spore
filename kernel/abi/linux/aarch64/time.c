@@ -3,7 +3,6 @@
 #include "handlers.h"
 #include "proc/accounting.h"
 #include "lib/mem.h"
-#include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/thread.h"
@@ -68,13 +67,6 @@ int64_t sys_setitimer(uint64_t which, uint64_t new_addr, uint64_t old_addr) {
 struct timezone32 {
   int32_t tz_minuteswest;
   int32_t tz_dsttime;
-};
-
-struct tms64 {
-  int64_t tms_utime;
-  int64_t tms_stime;
-  int64_t tms_cutime;
-  int64_t tms_cstime;
 };
 
 int64_t sys_getrandom(uint64_t buf, uint64_t len) {
@@ -153,10 +145,17 @@ int64_t sys_gettimeofday(uint64_t tv_addr, uint64_t tz_addr) {
   return 0;
 }
 
+struct tms64 {
+  int64_t tms_utime;
+  int64_t tms_stime;
+  int64_t tms_cutime;
+  int64_t tms_cstime;
+};
+
 int64_t sys_times(uint64_t buf_addr) {
   if (buf_addr != 0) {
     const struct domain *domain = cell_current_domain_internal();
-    struct tms64 tms = {.tms_utime = domain->cpu_ticks};
+    struct tms64 tms = {.tms_utime = domain->cpu_ticks, .tms_cutime = domain->children_usage.user_ticks};
     if (!syscall_user_writable(buf_addr, sizeof(tms)) ||
         !vmm_copy_to_user(syscall_active_as(), buf_addr, &tms, sizeof(tms))) {
       return -(int64_t)EFAULT;
@@ -164,30 +163,4 @@ int64_t sys_times(uint64_t buf_addr) {
   }
   struct timespec64 ts = wall_time(false);
   return ts.tv_sec * 100 + ts.tv_nsec / 10000000;
-}
-
-int64_t sys_getrusage(int who, uint64_t usage_addr) {
-  enum {
-    RUSAGE_SELF = 0,
-    RUSAGE_CHILDREN = -1,
-    RUSAGE_THREAD = 1,
-  };
-  if (usage_addr == 0 || !syscall_user_writable(usage_addr, sizeof(struct rusage64))) { return -(int64_t)EFAULT; }
-  if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN && who != RUSAGE_THREAD) { return -(int64_t)EINVAL; }
-
-  struct rusage64 usage;
-  kmemset(&usage, 0, sizeof(usage));
-  if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
-    const struct thread *thread = cell_current_thread_internal();
-    if (thread != NULL && thread->domain != NULL) {
-      const struct domain *d = thread->domain;
-      const struct user_address_space *as = cell_domain_as_const(d);
-      uint64_t peak = as && as->peak_resident_pages > d->previous_peak_rss ? as->peak_resident_pages : d->previous_peak_rss;
-      usage.ru_utime = ticks_to_timeval(who == RUSAGE_THREAD ? thread->cpu_ticks : d->cpu_ticks);
-      usage.ru_maxrss = (int64_t)(peak * (PAGE_SIZE / 1024));
-      usage.ru_minflt = (int64_t)d->minor_faults;
-      usage.ru_majflt = (int64_t)d->major_faults;
-    }
-  }
-  return vmm_copy_to_user(syscall_active_as(), usage_addr, &usage, sizeof(usage)) ? 0 : -(int64_t)EFAULT;
 }

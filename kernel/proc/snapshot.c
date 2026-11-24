@@ -102,5 +102,5 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
 }
 
 int snapshot_reap(int pid, uint64_t status_addr, struct trap_frame *frame) {
-  return cell_wait4(pid, status_addr, frame);
+  return cell_wait4_options(pid, status_addr, 0, 0, frame);
 }

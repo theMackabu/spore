@@ -1,6 +1,7 @@
 #pragma once
 
 #include "proc/limits.h"
+#include "proc/accounting.h"
 #include "proc/policy.h"
 #include "proc/signal.h"
 
@@ -33,6 +34,7 @@ struct domain {
   unsigned group_count;
   uint64_t start_ticks;
   uint64_t cpu_ticks;
+  struct resource_usage children_usage;
   uint64_t alarm_deadline;
   uint64_t alarm_interval;
   uint64_t previous_peak_rss;

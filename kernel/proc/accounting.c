@@ -3,6 +3,7 @@
 #include "arch/aarch64/smp.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
+#include "proc/memory.h"
 
 static struct {
   uint64_t busy_ticks;
@@ -104,4 +105,19 @@ void cell_loadavg_scaled(uint64_t out[3]) {
 
 uint64_t cell_boot_epoch_seconds(void) {
   return boot_epoch_sec;
+}
+
+struct resource_usage cell_process_usage(const struct domain *domain) {
+  const struct user_address_space *as = cell_domain_as_const(domain);
+  uint64_t peak = domain->previous_peak_rss;
+  if (as && as->peak_resident_pages > peak) { peak = as->peak_resident_pages; }
+  return (struct resource_usage){.user_ticks = domain->cpu_ticks, .peak_pages = peak,
+                                 .minor_faults = domain->minor_faults, .major_faults = domain->major_faults};
+}
+
+void cell_merge_usage(struct resource_usage *total, const struct resource_usage *usage) {
+  total->user_ticks += usage->user_ticks;
+  total->minor_faults += usage->minor_faults;
+  total->major_faults += usage->major_faults;
+  if (usage->peak_pages > total->peak_pages) { total->peak_pages = usage->peak_pages; }
 }

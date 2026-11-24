@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#include <sys/times.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -483,6 +485,49 @@ static int fork_pressure_regression(void) {
   return ok;
 }
 
+struct waited_child {
+  pid_t pid, result;
+  int status;
+  struct rusage usage;
+};
+
+static void *wait_for_child(void *arg) {
+  struct waited_child *child = arg;
+  child->result = wait4(child->pid, &child->status, 0, &child->usage);
+  return NULL;
+}
+
+static int64_t usage_usec(struct timeval t) { return (int64_t)t.tv_sec * 1000000 + t.tv_usec; }
+
+static int child_usage_regression(void) {
+  struct rusage before, after;
+  struct tms clocks;
+  if (getrusage(RUSAGE_CHILDREN, &before)) { return 0; }
+  pid_t pid = fork();
+  if (pid == 0) {
+    struct timespec cpu;
+    usleep(30000);
+    uint64_t deadline = integration_usec_now() + 2000000;
+    do {
+      for (volatile unsigned i = 0; i < 10000; ++i) {}
+      if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu) || integration_usec_now() >= deadline) { _exit(1); }
+    } while (cpu.tv_sec == 0 && cpu.tv_nsec < 20000000);
+    _exit(17);
+  }
+  if (pid < 0) { return 0; }
+  struct waited_child child = {.pid = pid};
+  pthread_t waiter;
+  if (pthread_create(&waiter, NULL, wait_for_child, &child)) { waitpid(pid, NULL, 0); return 0; }
+  pthread_join(waiter, NULL);
+  int64_t used = usage_usec(child.usage.ru_utime);
+  int ok = child.result == pid && WIFEXITED(child.status) && WEXITSTATUS(child.status) == 17 &&
+           used >= 20000 && child.usage.ru_maxrss > 0 && getrusage(RUSAGE_CHILDREN, &after) == 0 &&
+           usage_usec(after.ru_utime) - usage_usec(before.ru_utime) == used &&
+           times(&clocks) >= 0 && clocks.tms_cutime == usage_usec(after.ru_utime) / 10000;
+  printf("[spore] child resource usage: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_fork_suite(void) {
-  return fork_latency_profile() && fork_pressure_regression();
+  return fork_latency_profile() && fork_pressure_regression() && child_usage_regression();
 }

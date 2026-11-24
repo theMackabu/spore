@@ -73,6 +73,10 @@ struct thread_wait {
     };
     uint64_t futex_addr;
     struct {
+      uint64_t child_status, child_usage;
+      bool child_servicing;
+    };
+    struct {
       union {
         uint8_t flock_mode;
         struct {
@@ -87,7 +91,7 @@ struct thread_wait {
 struct thread {
   int tid;
   int running_cpu;
-  uint64_t cpu_ticks;
+  uint64_t cpu_ticks, minor_faults, major_faults;
   uint64_t start_ticks;
   struct domain *domain;
   enum thread_state state;

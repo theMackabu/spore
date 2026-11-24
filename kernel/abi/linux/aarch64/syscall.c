@@ -486,7 +486,7 @@ l_futex: {
 l_execve:
   return sys_execve(f, a0, a1, a2);
 l_wait4: {
-  int rc = cell_wait4_options((int)a0, a1, (int)a2, f);
+  int rc = cell_wait4_options((int)a0, a1, (int)a2, a3, f);
   return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
 }
 l_kill:
