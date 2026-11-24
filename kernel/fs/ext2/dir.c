@@ -78,28 +78,18 @@ static int read_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uin
     if (!ext2_file_block(fs, dir, file_block_index, &disk_block) || disk_block == 0) { return -EXT2_EIO; }
     const uint8_t *block = ext2_cached_block(fs, disk_block);
     if (block == NULL) { return -EXT2_EIO; }
-    const uint8_t *record = block + within;
-    struct spore_ext2_dir_record parsed;
     size_t available = fs->block_size - within;
     if (available > dir->size - *cursor) { available = dir->size - *cursor; }
-    if (!spore_ext2_parse_dir_record(record, available, &parsed)) {
-      return -EXT2_EIO;
-    }
-    uint32_t ino = parsed.ino;
-    uint16_t rec_len = parsed.rec_len;
-    uint8_t name_len = parsed.name_len;
-    *cursor += rec_len;
-    if (!ino) { continue; }
-    const char *name = (const char *)(record + 8);
-    if ((name_len == 1 && name[0] == '.') || (name_len == 2 && name[0] == '.' && name[1] == '.') ||
-        ext2plus_hidden_name(fs, dir, name, name_len)) {
-      continue;
-    }
+    struct spore_ext2_dir_next next;
+    if (!spore_ext2_next_visible_dirent(block + within, available, fs->ext2plus && dir->ino == EXT2_ROOT_INO, &next) ||
+        next.consumed == 0) { return -EXT2_EIO; }
+    *cursor += next.consumed;
+    if (!next.found) { continue; }
     if (out != NULL) {
-      kmemcpy(out->name, name, name_len);
-      out->name[name_len] = '\0';
-      out->ino = ino;
-      out->type = record[7];
+      kmemcpy(out->name, next.name, next.name_len);
+      out->name[next.name_len] = '\0';
+      out->ino = next.ino;
+      out->type = next.type;
     }
     return 1;
   }
