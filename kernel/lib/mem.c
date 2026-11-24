@@ -27,18 +27,17 @@ void *kmemset(void *dst, int value, size_t len) {
 void *kmemcpy(void *dst, const void *src, size_t len) {
   uint8_t *d = dst;
   const uint8_t *s = src;
-  if (len >= sizeof(word_t) && ((uintptr_t)d ^ (uintptr_t)s) % sizeof(word_t) == 0) {
-    while ((uintptr_t)d % sizeof(word_t) != 0) {
-      *d++ = *s++;
-      --len;
-    }
-#pragma GCC unroll 4
-    while (len >= sizeof(word_t)) {
-      *(word_t *)d = *(const word_t *)s;
-      d += sizeof(word_t);
-      s += sizeof(word_t);
-      len -= sizeof(word_t);
-    }
+  while (len >= 32) {
+    __builtin_memcpy(d, s, 32);
+    d += 32;
+    s += 32;
+    len -= 32;
+  }
+  while (len >= sizeof(word_t)) {
+    __builtin_memcpy(d, s, sizeof(word_t));
+    d += sizeof(word_t);
+    s += sizeof(word_t);
+    len -= sizeof(word_t);
   }
   for (size_t i = 0; i < len; ++i) {
     d[i] = s[i];
@@ -59,6 +58,15 @@ void *memset(void *dst, int value, size_t len) {
 int kmemcmp(const void *a, const void *b, size_t len) {
   const uint8_t *aa = a;
   const uint8_t *bb = b;
+  while (len >= sizeof(word_t)) {
+    word_t x, y;
+    __builtin_memcpy(&x, aa, sizeof(x));
+    __builtin_memcpy(&y, bb, sizeof(y));
+    if (x != y) { len = sizeof(word_t); break; }
+    aa += sizeof(word_t);
+    bb += sizeof(word_t);
+    len -= sizeof(word_t);
+  }
   for (size_t i = 0; i < len; ++i) {
     if (aa[i] != bb[i]) { return (int)aa[i] - (int)bb[i]; }
   }

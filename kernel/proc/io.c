@@ -34,7 +34,7 @@ enum {
   ENOTCONN = 107,
 };
 
-static uint8_t file_io_tmp[FILE_IO_CHUNK];
+alignas(64) static uint8_t file_io_tmp[FILE_IO_CHUNK];
 
 static struct domain *current_domain(void) {
   return cell_current_domain_internal();
