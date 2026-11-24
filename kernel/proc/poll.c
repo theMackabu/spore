@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/layout.h"
 #include "proc/poll.h"
 #include "proc/signal.h"
 
@@ -21,17 +22,6 @@ enum {
   EPOLL_CTL_ADD = 1,
   EPOLL_CTL_DEL = 2,
   EPOLL_CTL_MOD = 3,
-};
-
-struct epoll_event64 {
-  uint32_t events;
-  uint64_t data;
-};
-
-struct pollfd64 {
-  int32_t fd;
-  int16_t events;
-  int16_t revents;
 };
 
 static bool poll_waking;

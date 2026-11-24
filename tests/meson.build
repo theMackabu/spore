@@ -85,6 +85,7 @@ test('vma', test_vma)
 
 test_abi = executable('test_abi',
   files('test_abi.c'),
+  include_directories: test_include,
   native: true)
 
 test('abi', test_abi)

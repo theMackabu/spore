@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/layout.h"
 #include "arch/aarch64/regs.h"
 #include "handlers.h"
 #include "lib/kprintf.h"
@@ -30,11 +31,6 @@ enum {
   FUTEX_WAKE = 1,
   FUTEX_PRIVATE_FLAG = 128,
   FUTEX_CMD_MASK = 127,
-};
-
-struct timespec64 {
-  int64_t tv_sec;
-  int64_t tv_nsec;
 };
 
 static bool futex_timeout_ticks(const struct timespec64 *timeout, uint64_t *out) {

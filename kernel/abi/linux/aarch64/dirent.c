@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/layout.h"
 #include "handlers.h"
 
 #include "fs/vfs.h"
@@ -6,13 +7,6 @@
 #include "proc/fd.h"
 
 enum { EFAULT = 14, EINVAL = 22 };
-
-struct linux_dirent64_header {
-  uint64_t d_ino;
-  int64_t d_off;
-  uint16_t d_reclen;
-  uint8_t d_type;
-} __attribute__((packed));
 
 int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
   struct vfs_node dir;

@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/layout.h"
 #include "handlers.h"
 #include "socket_msg.h"
 
@@ -67,7 +68,6 @@ enum {
   O_CLOEXEC = 02000000,
 };
 
-
 struct sockaddr_in64 {
   uint16_t sin_family;
   uint16_t sin_port;
@@ -89,11 +89,6 @@ struct ucred64 {
 struct linger64 {
   int32_t onoff;
   int32_t linger;
-};
-
-struct timeval64 {
-  int64_t sec;
-  int64_t usec;
 };
 
 static uint16_t bswap16(uint16_t x) {
@@ -514,13 +509,13 @@ static int socket_option_timeval_ticks(uint64_t optval, uint64_t optlen, uint64_
   if (optlen != 16 || !socket_option_readable(optval, 16)) { return -EINVAL; }
   struct timeval64 tv;
   if (!vmm_copy_from_user(syscall_active_as(), &tv, optval, sizeof(tv))) { return -EFAULT; }
-  if (tv.sec < 0 || tv.usec < 0 || tv.usec >= 1000000) { return -EINVAL; }
-  if (tv.sec == 0 && tv.usec == 0) {
+  if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000) { return -EINVAL; }
+  if (tv.tv_sec == 0 && tv.tv_usec == 0) {
     *ticks = 0;
     return 0;
   }
-  if ((uint64_t)tv.sec > (UINT64_MAX - 99) / 100) { return -EINVAL; }
-  *ticks = (uint64_t)tv.sec * 100 + ((uint64_t)tv.usec + 9999) / 10000;
+  if ((uint64_t)tv.tv_sec > (UINT64_MAX - 99) / 100) { return -EINVAL; }
+  *ticks = (uint64_t)tv.tv_sec * 100 + ((uint64_t)tv.tv_usec + 9999) / 10000;
   if (*ticks == 0) { *ticks = 1; }
   return 0;
 }
@@ -528,8 +523,8 @@ static int socket_option_timeval_ticks(uint64_t optval, uint64_t optlen, uint64_
 static int socket_copy_timeout_to_user(uint64_t optval, uint64_t optlen_addr, uint64_t ticks) {
   uint32_t out_len = sizeof(struct timeval64);
   struct timeval64 tv = {
-    .sec = (int64_t)(ticks / 100),
-    .usec = (int64_t)((ticks % 100) * 10000),
+    .tv_sec = (int64_t)(ticks / 100),
+    .tv_usec = (int64_t)((ticks % 100) * 10000),
   };
   return vmm_copy_to_user(syscall_active_as(), optval, &tv, sizeof(tv)) &&
              vmm_copy_to_user(syscall_active_as(), optlen_addr, &out_len, sizeof(out_len))

@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/layout.h"
 #include "arch/aarch64/timer.h"
 #include "handlers.h"
 #include "proc/accounting.h"
@@ -16,16 +17,6 @@ enum {
   EINVAL = 22,
   CLOCK_REALTIME = 0,
   CLOCK_MONOTONIC = 1,
-};
-
-struct timespec64 {
-  int64_t tv_sec;
-  int64_t tv_nsec;
-};
-
-struct timeval64 {
-  int64_t tv_sec;
-  int64_t tv_usec;
 };
 
 struct itimerval64 {
@@ -82,25 +73,6 @@ struct tms64 {
   int64_t tms_stime;
   int64_t tms_cutime;
   int64_t tms_cstime;
-};
-
-struct rusage64 {
-  struct timeval64 ru_utime;
-  struct timeval64 ru_stime;
-  int64_t ru_maxrss;
-  int64_t ru_ixrss;
-  int64_t ru_idrss;
-  int64_t ru_isrss;
-  int64_t ru_minflt;
-  int64_t ru_majflt;
-  int64_t ru_nswap;
-  int64_t ru_inblock;
-  int64_t ru_oublock;
-  int64_t ru_msgsnd;
-  int64_t ru_msgrcv;
-  int64_t ru_nsignals;
-  int64_t ru_nvcsw;
-  int64_t ru_nivcsw;
 };
 
 int64_t sys_getrandom(uint64_t buf, uint64_t len) {
@@ -208,7 +180,6 @@ int64_t sys_times(uint64_t buf_addr) {
   }
   return ticks;
 }
-
 
 int64_t sys_getrusage(int who, uint64_t usage_addr) {
   enum {

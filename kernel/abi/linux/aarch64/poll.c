@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/layout.h"
 #include "arch/aarch64/regs.h"
 #include "handlers.h"
 #include "proc/accounting.h"
@@ -12,22 +13,6 @@ enum {
   EINVAL = 22,
   MAX_POLL_FDS = 64,
   TIMER_ABSTIME = 1,
-};
-
-struct timespec64 {
-  int64_t tv_sec;
-  int64_t tv_nsec;
-};
-
-struct pollfd64 {
-  int32_t fd;
-  int16_t events;
-  int16_t revents;
-};
-
-struct epoll_event64 {
-  uint32_t events;
-  uint64_t data;
 };
 
 struct pselect6_sigmask64 {
