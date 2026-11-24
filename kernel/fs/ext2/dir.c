@@ -5,7 +5,7 @@ static uint16_t rec_len_for(uint8_t name_len) {
   return (uint16_t)((8u + name_len + 3u) & ~3u);
 }
 
-static void write_dir_record(uint8_t *p, uint32_t ino, uint16_t rec_len, uint8_t name_len, uint8_t type,
+static void write_dir_record(const struct ext2_fs *fs, uint8_t *p, uint32_t ino, uint16_t rec_len, uint8_t name_len, uint8_t type,
                              const char *name) {
   p[0] = (uint8_t)ino;
   p[1] = (uint8_t)(ino >> 8);
@@ -14,7 +14,7 @@ static void write_dir_record(uint8_t *p, uint32_t ino, uint16_t rec_len, uint8_t
   p[4] = (uint8_t)rec_len;
   p[5] = (uint8_t)(rec_len >> 8);
   p[6] = name_len;
-  p[7] = type;
+  p[7] = fs->dirent_filetype ? type : 0;
   kmemcpy(p + 8, name, name_len);
 }
 
@@ -109,94 +109,106 @@ static bool split_parent_path(const char *path, char *parent, size_t parent_cap,
   return true;
 }
 
-static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *name, uint32_t ino, uint8_t type) {
-  uint8_t name_len = (uint8_t)kstrlen(name);
-  uint16_t need = rec_len_for(name_len);
-  uint8_t block[4096];
-  if (fs->block_size > sizeof(block) || ext2plus_hidden_name(fs, dir, name, name_len)) { return false; }
-  uint32_t blocks = (dir->size + fs->block_size - 1) / fs->block_size;
+struct record_location {
+  uint64_t block_off;
+  uint32_t index;
+  struct spore_ext2_dir_match record;
+};
+
+static int find_record(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t len,
+                       struct record_location *loc) {
+  uint32_t blocks = dir->size / fs->block_size;
+  if (!ext2_is_dir(dir) || dir->size % fs->block_size) { return -EXT2_EIO; }
+  uint32_t hint = ext2_cache_name_block(fs, dir->ino, name, len);
+  if (hint >= blocks) { hint = 0; }
   for (uint32_t step = 0; step < blocks; ++step) {
-    uint32_t bi = step == 0 ? blocks - 1 : step - 1;
-    uint32_t disk_block = 0;
-    if (!ext2_file_block(fs, dir, bi, &disk_block) || disk_block == 0) { continue; }
-    const uint8_t *data = ext2_cached_block(fs, disk_block);
-    if (data == NULL) { continue; }
-    struct spore_ext2_dir_slot slot;
-    int slot_result = spore_ext2_find_dir_slot(data, fs->block_size, need, &slot);
-    if (slot_result < 0) { return false; }
-    if (slot_result > 0) {
-      kmemcpy(block, data, fs->block_size);
-      uint32_t off = slot.offset;
-      uint16_t rec_len = slot.rec_len;
-      uint16_t used = slot.used;
-      if (used == 0) {
-        write_dir_record(block + off, ino, rec_len, name_len, type, name);
-      } else {
-        block[off + 4] = (uint8_t)used;
-        block[off + 5] = (uint8_t)(used >> 8);
-        write_dir_record(block + off + used, ino, (uint16_t)(rec_len - used), name_len, type, name);
-      }
-      uint32_t now = ext2_now_sec();
-      dir->mtime = now;
-      dir->ctime = now;
-      bool ok = ext2_write_block(fs, disk_block, block) && ext2_write_inode(fs, dir);
-      if (ok) { ext2_cache_add_name(fs, dir->ino, name, name_len, ino, bi); }
-      return ok;
+    uint32_t i = step == 0 ? hint : (step <= hint ? step - 1 : step);
+    uint32_t block;
+    if (!ext2_file_block(fs, dir, i, &block) || !block) { return -EXT2_EIO; }
+    const uint8_t *data = ext2_cached_block(fs, block);
+    if (!data) { return -EXT2_EIO; }
+    int rc = spore_ext2_find_dir_name(data, fs->block_size, (const uint8_t *)name, len, &loc->record);
+    if (rc < 0) { return -EXT2_EIO; }
+    if (rc) {
+      loc->block_off = (uint64_t)block * fs->block_size;
+      loc->index = i;
+      return 1;
     }
   }
-
-  uint32_t new_block = 0;
-  if (ext2_file_block_for_write(fs, dir, blocks, &new_block, true) != 0 || !ext2_read_block(fs, new_block, block)) {
-    return false;
-  }
-  kmemset(block, 0, fs->block_size);
-  write_dir_record(block, ino, (uint16_t)fs->block_size, name_len, type, name);
-  dir->size += fs->block_size;
-  uint32_t now = ext2_now_sec();
-  dir->mtime = now;
-  dir->ctime = now;
-  bool ok = ext2_write_block(fs, new_block, block) && ext2_write_inode(fs, dir);
-  if (ok) { ext2_cache_add_name(fs, dir->ino, name, name_len, ino, blocks); }
-  return ok;
+  return 0;
 }
 
-static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *name, uint32_t *ino_out) {
-  uint8_t block[4096];
-  if (fs->block_size > sizeof(block)) { return false; }
-  uint32_t blocks = (dir->size + fs->block_size - 1) / fs->block_size;
-  size_t name_len = kstrlen(name);
-  uint32_t preferred = ext2_cache_name_block(fs, dir->ino, name, name_len);
-  if (preferred >= blocks) { preferred = 0; }
+static bool update_dir(struct ext2_fs *fs, struct ext2_node *dir) {
+  dir->mtime = dir->ctime = ext2_now_sec();
+  return ext2_write_inode(fs, dir);
+}
+
+static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *name, uint32_t ino, uint8_t type) {
+  uint8_t len = (uint8_t)kstrlen(name);
+  if (!ext2_is_dir(dir) || dir->size % fs->block_size || ext2plus_hidden_name(fs, dir, name, len)) { return false; }
+  uint32_t blocks = dir->size / fs->block_size;
+  uint8_t record[8 + EXT2_NAME_MAX];
   for (uint32_t step = 0; step < blocks; ++step) {
-    uint32_t bi = step == 0 ? preferred : (step <= preferred ? step - 1 : step);
-    uint32_t disk_block = 0;
-    if (!ext2_file_block(fs, dir, bi, &disk_block) || disk_block == 0) { continue; }
-    const uint8_t *data = ext2_cached_block(fs, disk_block);
-    if (data == NULL) { continue; }
-    struct spore_ext2_dir_match match;
-    int match_result = spore_ext2_find_dir_name(data, fs->block_size, (const uint8_t *)name, name_len, &match);
-    if (match_result < 0) { return false; }
-    if (match_result > 0) {
-      kmemcpy(block, data, fs->block_size);
-      uint32_t off = match.offset;
-      if (ino_out != NULL) { *ino_out = match.ino; }
-      if (match.prev_offset != UINT32_MAX) {
-        uint16_t prev_rec_len = (uint16_t)(off - match.prev_offset);
-        uint16_t merged = (uint16_t)(prev_rec_len + match.rec_len);
-        block[match.prev_offset + 4] = (uint8_t)merged;
-        block[match.prev_offset + 5] = (uint8_t)(merged >> 8);
-      } else {
-        block[off] = block[off + 1] = block[off + 2] = block[off + 3] = 0;
+    uint32_t i = step == 0 ? blocks - 1 : step - 1;
+    uint32_t block;
+    if (!ext2_file_block(fs, dir, i, &block) || !block) { return false; }
+    const uint8_t *data = ext2_cached_block(fs, block);
+    if (!data) { return false; }
+    struct spore_ext2_dir_slot slot;
+    int rc = spore_ext2_find_dir_slot(data, fs->block_size, rec_len_for(len), &slot);
+    if (rc < 0) { return false; }
+    if (!rc) { continue; }
+    uint64_t off = (uint64_t)block * fs->block_size + slot.offset;
+    write_dir_record(fs, record, ino, slot.rec_len - slot.used, len, type, name);
+    if (!ext2_write_bytes(fs, off + slot.used, record, 8u + len)) { return false; }
+    if (slot.used && !ext2_write_bytes(fs, off + 4, &slot.used, sizeof(slot.used))) { return false; }
+    if (!update_dir(fs, dir)) {
+      if (slot.used) { (void)ext2_write_bytes(fs, off + 4, &slot.rec_len, sizeof(slot.rec_len)); }
+      else {
+        uint32_t empty = 0;
+        (void)ext2_write_bytes(fs, off, &empty, sizeof(empty));
       }
-      uint32_t now = ext2_now_sec();
-      dir->mtime = now;
-      dir->ctime = now;
-      bool ok = ext2_write_block(fs, disk_block, block) && ext2_write_inode(fs, dir);
-      if (ok) { ext2_dir_cache_remove_name(fs, dir->ino, name); }
-      return ok;
+      return false;
     }
+    ext2_cache_add_name(fs, dir->ino, name, len, ino, i);
+    return true;
   }
-  return false;
+
+  uint32_t block;
+  if (dir->size > UINT32_MAX - fs->block_size || ext2_file_block_for_write(fs, dir, blocks, &block, true)) {
+    return false;
+  }
+  write_dir_record(fs, record, ino, fs->block_size, len, type, name);
+  dir->size += fs->block_size;
+  if (!ext2_write_bytes(fs, (uint64_t)block * fs->block_size, record, 8u + len) || !update_dir(fs, dir)) {
+    dir->size -= fs->block_size;
+    (void)ext2_trim_blocks(fs, dir, blocks);
+    (void)ext2_write_inode(fs, dir);
+    return false;
+  }
+  ext2_cache_add_name(fs, dir->ino, name, len, ino, blocks);
+  return true;
+}
+
+static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *name) {
+  struct record_location loc;
+  if (find_record(fs, dir, name, kstrlen(name), &loc) != 1) { return false; }
+  uint64_t off = loc.block_off + loc.record.offset;
+  uint32_t old = loc.record.ino, replacement = 0;
+  size_t bytes = sizeof(uint32_t);
+  if (loc.record.prev_offset != UINT32_MAX) {
+    off = loc.block_off + loc.record.prev_offset + 4;
+    old = loc.record.offset - loc.record.prev_offset;
+    replacement = old + loc.record.rec_len;
+    bytes = sizeof(uint16_t);
+  }
+  if (!ext2_write_bytes(fs, off, &replacement, bytes)) { return false; }
+  if (!update_dir(fs, dir)) {
+    (void)ext2_write_bytes(fs, off, &old, bytes);
+    return false;
+  }
+  ext2_dir_cache_remove_name(fs, dir->ino, name);
+  return true;
 }
 
 bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out) {
@@ -232,8 +244,8 @@ bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, 
     }
     node.size = fs->block_size;
     kmemset(buf, 0, fs->block_size);
-    write_dir_record(buf, ino, rec_len_for(1), 1, EXT2_FT_DIR, ".");
-    write_dir_record(buf + rec_len_for(1), parent.ino, (uint16_t)(fs->block_size - rec_len_for(1)), 2, EXT2_FT_DIR,
+    write_dir_record(fs, buf, ino, rec_len_for(1), 1, EXT2_FT_DIR, ".");
+    write_dir_record(fs, buf + rec_len_for(1), parent.ino, (uint16_t)(fs->block_size - rec_len_for(1)), 2, EXT2_FT_DIR,
                      "..");
     if (!ext2_write_block(fs, block, buf)) {
       node.blocks[0] = 0;
@@ -349,7 +361,7 @@ int ext2_remove(struct ext2_fs *fs, const char *path) {
     if (rc < 0) { return rc; }
     if (rc > 0) { return -EXT2_ENOTEMPTY; }
   }
-  if (!remove_dirent(fs, &parent, name, NULL)) { return -EXT2_EIO; }
+  if (!remove_dirent(fs, &parent, name)) { return -EXT2_EIO; }
   if (ext2_is_dir(&node)) {
     if (parent.links_count > 2) { --parent.links_count; }
     parent.mtime = parent.ctime = ext2_now_sec();
@@ -397,7 +409,7 @@ bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path)
   if (!add_dirent(fs, &new_parent, new_name, node.ino, dirent_type_for_node(&node))) { return false; }
   node.ctime = ext2_now_sec();
   (void)ext2_write_inode(fs, &node);
-  if (remove_dirent(fs, &old_parent, old_name, NULL)) { return true; }
+  if (remove_dirent(fs, &old_parent, old_name)) { return true; }
   (void)ext2_unlink(fs, new_path);
   return false;
 }

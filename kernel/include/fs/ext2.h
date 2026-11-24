@@ -30,6 +30,7 @@ struct ext2_fs {
   ext2_read_fn read;
   ext2_write_fn write;
   void *ctx;
+  bool dirent_filetype;
   bool ext2plus;
   bool ext2plus_store_valid;
   uint32_t block_size;

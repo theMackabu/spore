@@ -129,6 +129,7 @@ bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, v
   if (!ext2_check_refs(fs, true) || !ext2_drop_cache(fs)) { return false; }
   *fs = (struct ext2_fs){
     .read = read, .write = write, .ctx = ctx,
+    .dirent_filetype = (sb.feature_incompat & EXT2_INCOMPAT_FILETYPE) != 0,
     .block_size = block_size, .inode_size = inode_size, .group_count = groups,
     .inodes_per_group = sb.inodes_per_group, .blocks_per_group = sb.blocks_per_group,
     .first_data_block = sb.first_data_block, .next_alloc_block = sb.first_data_block,
