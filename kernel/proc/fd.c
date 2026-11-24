@@ -1,4 +1,4 @@
-#include "abi/linux/aarch64/open.h"
+#include "abi/linux/shared/open.h"
 #include "proc/fd.h"
 #include "proc/epoll.h"
 #include "flock.h"

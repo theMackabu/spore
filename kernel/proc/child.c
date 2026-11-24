@@ -1,5 +1,5 @@
 #include "proc/process.h"
-#include "abi/linux/aarch64/usage.h"
+#include "abi/linux/shared/usage.h"
 #include "arch/aarch64/smp.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
@@ -28,7 +28,7 @@ static int reap(struct domain *parent, struct domain *child, uint64_t status_add
                       !vmm_copy_to_user(cell_domain_as(parent), status_addr, &status, sizeof(status)))) { return -EFAULT; }
   struct resource_usage usage = cell_process_usage(child);
   cell_merge_usage(&usage, &child->children_usage);
-  if (usage_addr && aarch64_write_rusage(parent, usage_addr, &usage) < 0) { return -EFAULT; }
+  if (usage_addr && linux_write_rusage(parent, usage_addr, &usage) < 0) { return -EFAULT; }
   cell_merge_usage(&parent->children_usage, &usage);
   int id = child->id;
   child->parent_id = 0;

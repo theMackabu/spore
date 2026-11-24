@@ -1,4 +1,6 @@
 #include "user.h"
+#include "abi/linux/shared/fd/write.h"
+#include "proc/io.h"
 #include "init/event.h"
 #include "platform.h"
 #include "exec/elf.h"
@@ -117,9 +119,15 @@ static bool load_segment(void *ctx, const struct spore_elf_program *p, uint64_t 
   user_enter(elf.entry, sp);
 }
 
-int64_t user_write(uint64_t fd, uint64_t va, uint64_t n) {
+int linux_check_write_buffer(uint64_t fd, uint64_t va, uint64_t n) {
   if (fd != 1 && fd != 2) { return -9; }
   if (n && (va >= USER_TOP || n > USER_TOP - va)) { return -14; }
+  return 0;
+}
+
+int64_t cell_fd_write(int fd, uint64_t va, uint64_t n, struct trap_frame *frame) {
+  (void)fd;
+  (void)frame;
   for (uint64_t i = 0; i < n;) {
     const uint8_t *p = user_pointer(va + i, PAGE_READ);
     if (!p) { return i ? (int64_t)i : -14; }

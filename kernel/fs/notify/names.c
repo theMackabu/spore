@@ -1,5 +1,5 @@
 #include "internal.h"
-#include "abi/linux/aarch64/open.h"
+#include "abi/linux/shared/open.h"
 #include "fs/vfs.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"

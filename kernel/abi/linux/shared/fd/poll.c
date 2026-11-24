@@ -1,8 +1,7 @@
-#include "../usercopy.h"
-#include "abi/linux/aarch64/layout.h"
-#include "arch/aarch64/regs.h"
+#include "abi/linux/shared/usercopy.h"
+#include "abi/linux/shared/layout.h"
 #include "handlers.h"
-#include "../time/ticks.h"
+#include "abi/linux/shared/time/ticks.h"
 #include "proc/domain.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
@@ -77,21 +76,6 @@ int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, 
   if (rc < 0) { return rc; }
   return cell_pselect6_current(nfds, readfds, writefds, exceptfds, has_timeout, timeout_ticks,
                                signal_data.sigmask ? &mask : NULL, frame);
-}
-
-int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr) {
-  uint32_t events = 0;
-  uint64_t data = 0;
-  if ((int)op != 2) {
-    struct epoll_event64 event;
-    if (!syscall_user_readable(event_addr, sizeof(event)) ||
-        !vmm_copy_from_user(syscall_active_as(), &event, event_addr, sizeof(event))) {
-      return -(int64_t)EFAULT;
-    }
-    events = event.events;
-    data = event.data;
-  }
-  return cell_fd_epoll_ctl((int)epfd, (int)op, (int)fd, events, data);
 }
 
 int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events_addr, uint64_t maxevents,

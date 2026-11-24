@@ -1,5 +1,5 @@
 #include "proc/pipe.h"
-#include "abi/linux/aarch64/open.h"
+#include "abi/linux/shared/open.h"
 
 #include "mm/pmm.h"
 #include "mm/pool.h"

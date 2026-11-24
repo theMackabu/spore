@@ -20,4 +20,3 @@ void status_write(const uint8_t *bytes, size_t n);
 [[noreturn]] void user_enter(uint64_t pc, uint64_t sp);
 [[noreturn]] void user_start(const struct spore_boot_info *boot);
 [[noreturn]] void user_finish(char kind, unsigned value);
-int64_t user_write(uint64_t fd, uint64_t va, uint64_t n);

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/layout.h"
 
 static inline uint64_t timespec_to_scheduler_ticks(const struct timespec64 *timeout) {
   uint64_t ticks =

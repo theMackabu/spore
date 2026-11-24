@@ -4,14 +4,19 @@
 #include "arch/aarch64/signal_frame.h"
 #include "numbers.h"
 #include "init/app.h"
-#include "usercopy.h"
+#include "abi/linux/shared/usercopy.h"
 #include "fd/handlers.h"
+#include "abi/linux/shared/fd/handlers.h"
 #include "fs/handlers.h"
-#include "mm/handlers.h"
+#include "abi/linux/shared/fs/handlers.h"
+#include "abi/linux/shared/mm/handlers.h"
 #include "net/handlers.h"
+#include "abi/linux/shared/net/handlers.h"
 #include "proc/handlers.h"
-#include "system/handlers.h"
+#include "abi/linux/shared/proc/handlers.h"
+#include "abi/linux/shared/system/handlers.h"
 #include "time/handlers.h"
+#include "abi/linux/shared/time/handlers.h"
 #include "lib/kprintf.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
@@ -495,7 +500,7 @@ l_getgroups:
 l_setgroups:
   return sys_setgroups(a0, a1);
 l_uname:
-  return sys_uname(a0);
+  return sys_uname(a0, "aarch64");
 l_sethostname:
   return sys_sethostname(a0, a1);
 l_umask:

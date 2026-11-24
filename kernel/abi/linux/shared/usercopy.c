@@ -1,5 +1,5 @@
 #include "usercopy.h"
-#include "abi/linux/aarch64/syscall.h"
+#include "fd/write.h"
 #include "mm/pmm.h"
 #include "proc/memory.h"
 #include "proc/domain.h"
@@ -26,6 +26,11 @@ static bool user_accessible(uint64_t addr, size_t len, enum vmm_access access) {
 
 bool syscall_user_readable(uint64_t buf, uint64_t len) {
   return user_accessible(buf, len, VMM_ACCESS_READ);
+}
+
+int linux_check_write_buffer(uint64_t fd, uint64_t buf, uint64_t len) {
+  (void)fd;
+  return syscall_user_readable(buf, len) ? 0 : -EFAULT;
 }
 
 bool syscall_user_writable(uint64_t buf, uint64_t len) {

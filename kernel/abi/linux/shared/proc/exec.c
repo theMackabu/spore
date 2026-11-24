@@ -1,7 +1,6 @@
 #include "../fs/path.h"
 #include "../usercopy.h"
 #include "init/app.h"
-#include "arch/aarch64/regs.h"
 #include "handlers.h"
 #include "exec/elf.h"
 #include "exec/stack.h"

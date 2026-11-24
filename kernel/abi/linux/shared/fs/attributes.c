@@ -1,7 +1,7 @@
 #include "../usercopy.h"
 #include "file_abi.h"
-#include "abi/linux/aarch64/layout.h"
-#include "abi/linux/aarch64/open.h"
+#include "abi/linux/shared/layout.h"
+#include "abi/linux/shared/open.h"
 #include "fs/notify.h"
 #include "fs/vfs.h"
 #include "proc/accounting.h"
@@ -127,4 +127,13 @@ int64_t sys_fsync(uint64_t fd) {
   if (!file) { return -EBADF; }
   if (file->type == OPEN_VFS && !vfs_sync_mapped_range(&file->node, 0, UINT64_MAX)) { return -EIO; }
   return vfs_sync_storage() ? 0 : -EIO;
+}
+
+int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_t flags) {
+  if ((mode & ~(uint64_t)(R_OK | W_OK | X_OK)) != 0) { return -EINVAL; }
+  if ((flags & ~(uint64_t)(AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH)) != 0) { return -EINVAL; }
+  struct vfs_node node;
+  int rc = syscall_lookup_at(dirfd, path_addr, flags, syscall_fs_rights_from_access(mode), &node, NULL);
+  if (rc) { return rc; }
+  return syscall_node_access_allowed(&node, mode) ? 0 : -EACCES;
 }

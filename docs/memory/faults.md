@@ -9,4 +9,4 @@ an anonymous page or load bytes from the mapped file. On a write to a private co
 page, it resolves the write for that process. An access it cannot resolve raises `SIGSEGV`.
 [Process fault handling](../../kernel/proc/memory.c) · [Exception dispatch](../../kernel/arch/aarch64/exceptions.c)
 
-[Shared file writeback](../files/cache.md) · [Linux mapping calls](../../kernel/abi/linux/aarch64/mm/mmap.c) · [Physical pages](pages.md)
+[Shared file writeback](../files/cache.md) · [Linux mapping calls](../../kernel/abi/linux/shared/mm/mmap.c) · [Physical pages](pages.md)

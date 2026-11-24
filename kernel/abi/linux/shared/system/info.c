@@ -44,14 +44,14 @@ static void uts_copy(char dst[65], const char *src) {
 
 static char kernel_hostname[65] = "spore.local";
 
-int64_t sys_uname(uint64_t buf) {
+int64_t sys_uname(uint64_t buf, const char *machine) {
   struct utsname64 u;
   kmemset(&u, 0, sizeof(u));
   uts_copy(u.sysname, "Spore");
   uts_copy(u.nodename, kernel_hostname);
   uts_copy(u.release, SPORE_VERSION);
   uts_copy(u.version, "Spore Kernel Version " SPORE_VERSION ": " __DATE__ ";");
-  uts_copy(u.machine, "aarch64");
+  uts_copy(u.machine, machine);
   uts_copy(u.domainname, "Spore");
   return syscall_user_writable(buf, sizeof(u)) && vmm_copy_to_user(syscall_active_as(), buf, &u, sizeof(u)) ? 0 : -(int64_t)EFAULT;
 }

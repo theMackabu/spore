@@ -54,7 +54,7 @@ fn build_port(arch: &str, flags: &[&str], out: &Path) {
         .files(["init/limine.c", "init/event.c", "mm/pmm.c", "lib/mem.c"])
         .files(files(Path::new("arch/bringup"), &["c", "S"]))
         .files(abi_sources(arch))
-        .file("abi/freebsd/console.c")
+        .files(["abi/freebsd/console.c", "abi/linux/shared/fd/write.c"])
         .include(".")
         .files(files(&Path::new("arch").join(arch), &["c", "S"]))
         .out_dir(out.join(arch));
@@ -129,6 +129,7 @@ fn main() {
         .files(
             [
                 "arch/aarch64",
+                "abi/linux/shared",
                 "drivers",
                 "exec",
                 "fs",

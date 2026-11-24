@@ -1,5 +1,6 @@
-#include "../usercopy.h"
-#include "file_abi.h"
+#include "handlers.h"
+#include "abi/linux/shared/usercopy.h"
+#include "abi/linux/shared/fs/file_abi.h"
 #include "abi/linux/aarch64/layout.h"
 #include "fs/vfs.h"
 #include "lib/mem.h"
@@ -172,13 +173,4 @@ int64_t sys_newfstatat(uint64_t dirfd, uint64_t path_addr, uint64_t stat_addr, u
   struct vfs_node node;
   int rc = syscall_lookup_at(dirfd, path_addr, flags, 0, &node, NULL);
   return rc ? rc : copy_stat(stat_addr, &node);
-}
-
-int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_t flags) {
-  if ((mode & ~(uint64_t)(R_OK | W_OK | X_OK)) != 0) { return -EINVAL; }
-  if ((flags & ~(uint64_t)(AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH)) != 0) { return -EINVAL; }
-  struct vfs_node node;
-  int rc = syscall_lookup_at(dirfd, path_addr, flags, syscall_fs_rights_from_access(mode), &node, NULL);
-  if (rc) { return rc; }
-  return syscall_node_access_allowed(&node, mode) ? 0 : -EACCES;
 }

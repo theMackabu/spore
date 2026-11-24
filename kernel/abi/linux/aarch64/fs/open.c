@@ -1,6 +1,7 @@
-#include "../usercopy.h"
-#include "file_abi.h"
-#include "abi/linux/aarch64/open.h"
+#include "handlers.h"
+#include "abi/linux/shared/usercopy.h"
+#include "abi/linux/shared/fs/file_abi.h"
+#include "abi/linux/shared/open.h"
 #include "fs/notify.h"
 #include "fs/vfs.h"
 #include "lib/kstr.h"
@@ -8,6 +9,14 @@
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/policy.h"
+
+enum {
+  O_CREAT = 0100,
+  O_EXCL = 0200,
+  O_TRUNC = 01000,
+  O_DIRECTORY = 040000,
+  O_NOFOLLOW = 0100000,
+};
 
 static size_t append_literal(char *dst, size_t cap, size_t len, const char *text) {
   while (*text != '\0' && len + 1 < cap) {
@@ -38,7 +47,7 @@ int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr,
   char *path = name.resolved;
   const char *display = name.visible;
   bool path_only = flags & LINUX_O_PATH;
-  if (path_only) { flags &= LINUX_O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC; }
+  if (path_only) { flags &= LINUX_O_PATH | O_DIRECTORY | O_NOFOLLOW | LINUX_O_CLOEXEC; }
   uint64_t access = linux_open_readable(flags) ? R_OK : 0;
   if (linux_open_writable(flags) || (flags & O_TRUNC)) { access |= W_OK; }
   uint8_t rights = syscall_fs_rights_from_access(access);
@@ -79,7 +88,7 @@ int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr,
     if (target->type != OPEN_VFS) {
       if (path_only) { return -6; }
       int fd = cell_fd_dup(proc_fd, 0);
-      if (fd >= 0 && (flags & O_CLOEXEC)) { cell_fd_set_fd_flags(fd, 1); }
+      if (fd >= 0 && (flags & LINUX_O_CLOEXEC)) { cell_fd_set_fd_flags(fd, 1); }
       return fd;
     }
     if (!cell_fd_stat(proc_fd, &node)) { return -ENOENT; }
@@ -110,23 +119,4 @@ int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr,
     }
   }
   return cell_fd_open_node(&node, (uint32_t)flags, display, path, frame);
-}
-
-int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
-  if (flags & ~(uint64_t)(MFD_CLOEXEC | MFD_ALLOW_SEALING)) { return -EINVAL; }
-  constexpr size_t NAME_CAP = 250;
-  char display[FD_PATH_MAX] = "/memfd:";
-  size_t prefix = sizeof("/memfd:") - 1;
-  int64_t len = syscall_read_user_string(name_addr, display + prefix, NAME_CAP);
-  if (len < 0) { return len == -E2BIG ? -EINVAL : len; }
-  static_assert(sizeof("/memfd:") - 1 + NAME_CAP - 1 + sizeof(" (deleted)") <= FD_PATH_MAX);
-  kmemcpy(display + prefix + len - 1, " (deleted)", sizeof(" (deleted)"));
-  struct vfs_node dir, node;
-  if (!vfs_lookup("/run", &dir)) { return -ENOENT; }
-  int rc = vfs_tmpfile(&dir, 0777, cell_current_euid(), cell_current_egid(), false, &node);
-  if (rc) { return rc; }
-  uint32_t open_flags = LINUX_O_RDWR | ((flags & MFD_CLOEXEC) ? O_CLOEXEC : 0);
-  int fd = vfs_set_sealable(&node, flags & MFD_ALLOW_SEALING) ? cell_fd_open_node(&node, open_flags, display, NULL, NULL) : -EINVAL;
-  vfs_release_node(&node);
-  return fd;
 }

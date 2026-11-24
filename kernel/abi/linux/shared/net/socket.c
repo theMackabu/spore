@@ -1,6 +1,5 @@
-#include "../fs/path.h"
-#include "../usercopy.h"
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/fs/path.h"
+#include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
 #include "socket_abi.h"
 
@@ -21,23 +20,11 @@ enum {
   AF_UNSPEC = 0,
   SOCK_STREAM = 1,
   SOCK_DGRAM = 2,
-  IPPROTO_ICMP = 1,
-  IPPROTO_UDP = 17,
   EPERM = 1,
-  EMSGSIZE = 90,
   EAFNOSUPPORT = 97,
   EPROTONOSUPPORT = 93,
-  MAX_IOVCNT = 1024,
-  SENDMSG_SCRATCH_CAP = 1472,
   O_NONBLOCK = 04000,
   O_CLOEXEC = 02000000,
-};
-
-struct sockaddr_in64 {
-  uint16_t sin_family;
-  uint16_t sin_port;
-  uint32_t sin_addr;
-  uint8_t sin_zero[8];
 };
 
 struct sockaddr_un64 {
@@ -45,11 +32,7 @@ struct sockaddr_un64 {
   char sun_path[108];
 };
 
-static uint16_t bswap16(uint16_t x) {
-  return (uint16_t)((x << 8) | (x >> 8));
-}
-
-static bool copy_sockaddr_in(uint64_t addr, uint64_t len, struct sockaddr_in64 *out) {
+bool linux_copy_sockaddr_in(uint64_t addr, uint64_t len, struct sockaddr_in64 *out) {
   if (addr == 0 || len < sizeof(*out) || !syscall_user_readable(addr, sizeof(*out))) { return false; }
   return vmm_copy_from_user(syscall_active_as(), out, addr, sizeof(*out)) && out->sin_family == AF_INET;
 }
@@ -123,9 +106,9 @@ int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
     return rc ? rc : cell_fd_unix_bind((int)fd, path);
   }
   struct sockaddr_in64 sa;
-  if (!copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
-  int rc = cell_fd_tcp_bind((int)fd, bswap16(sa.sin_port));
-  if (rc == -EBADF) { rc = cell_fd_udp_bind((int)fd, bswap16(sa.sin_port)); }
+  if (!linux_copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
+  int rc = cell_fd_tcp_bind((int)fd, __builtin_bswap16(sa.sin_port));
+  if (rc == -EBADF) { rc = cell_fd_udp_bind((int)fd, __builtin_bswap16(sa.sin_port)); }
   return rc < 0 ? (int64_t)rc : 0;
 }
 
@@ -142,12 +125,12 @@ int64_t sys_connect(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64
     return rc ? rc : cell_fd_unix_connect((int)fd, path);
   }
   struct sockaddr_in64 sa;
-  if (!copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
-  int rc = cell_fd_tcp_connect((int)fd, sa.sin_addr, bswap16(sa.sin_port), frame);
+  if (!linux_copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
+  int rc = cell_fd_tcp_connect((int)fd, sa.sin_addr, __builtin_bswap16(sa.sin_port), frame);
   if (rc == CELL_SWITCHED) { return CELL_SWITCHED; }
   if (rc != -9) { return (int64_t)rc; }
-  if (!cell_egress_allowed(IPPROTO_UDP, sa.sin_addr, bswap16(sa.sin_port))) { return -(int64_t)EPERM; }
-  return cell_fd_udp_connect((int)fd, sa.sin_addr, bswap16(sa.sin_port)) ? 0 : -(int64_t)EBADF;
+  if (!cell_egress_allowed(IPPROTO_UDP, sa.sin_addr, __builtin_bswap16(sa.sin_port))) { return -(int64_t)EPERM; }
+  return cell_fd_udp_connect((int)fd, sa.sin_addr, __builtin_bswap16(sa.sin_port)) ? 0 : -(int64_t)EBADF;
 }
 
 int64_t sys_listen(uint64_t fd, uint64_t backlog) {
@@ -186,9 +169,9 @@ int64_t sys_sendto(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t
   uint32_t ip = 0;
   uint16_t port = 0;
   struct sockaddr_in64 sa;
-  if (!copy_sockaddr_in(addr, addrlen, &sa)) { return -(int64_t)EINVAL; }
+  if (!linux_copy_sockaddr_in(addr, addrlen, &sa)) { return -(int64_t)EINVAL; }
   ip = sa.sin_addr;
-  port = bswap16(sa.sin_port);
+  port = __builtin_bswap16(sa.sin_port);
   return cell_fd_udp_send((int)fd, ip, port, buf, len);
 }
 
@@ -198,104 +181,6 @@ int64_t sys_recvfrom(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64
   int64_t rc =
     cell_fd_socket_recv((int)fd, buf, len, (uint32_t)flags, (flags & MSG_DONTWAIT) != 0, frame, addr, addrlen);
   return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
-}
-
-int aarch64_copy_socket_iov(uint64_t iov_addr, int32_t iovlen, int32_t index, struct iovec64 *out) {
-  if (iovlen < 0 || iovlen > MAX_IOVCNT || index < 0 || index >= iovlen || out == NULL) { return -EINVAL; }
-  if (iov_addr == 0 || !syscall_user_readable(iov_addr + (uint64_t)index * sizeof(*out), sizeof(*out))) {
-    return -EFAULT;
-  }
-  return vmm_copy_from_user(syscall_active_as(), out, iov_addr + (uint64_t)index * sizeof(*out), sizeof(*out))
-           ? 0
-           : -EFAULT;
-}
-
-static int gather_iovecs(uint64_t iov_addr, int32_t iovlen, uint8_t *dst, size_t cap, uint64_t *total_len,
-                         size_t *copied) {
-  if (iovlen < 0 || iovlen > MAX_IOVCNT || dst == NULL || total_len == NULL || copied == NULL) { return -EINVAL; }
-  if (iovlen > 0 && iov_addr == 0) { return -EFAULT; }
-  *total_len = 0;
-  *copied = 0;
-  for (int32_t i = 0; i < iovlen; ++i) {
-    struct iovec64 iov;
-    int rc = aarch64_copy_socket_iov(iov_addr, iovlen, i, &iov);
-    if (rc < 0) { return rc; }
-    if (iov.len != 0 && !syscall_user_readable(iov.base, iov.len)) { return -EFAULT; }
-    if (UINT64_MAX - *total_len < iov.len) { return -EINVAL; }
-    *total_len += iov.len;
-    if (*copied >= cap || iov.len == 0) { continue; }
-    uint64_t room = cap - *copied;
-    size_t n = (size_t)(iov.len < room ? iov.len : room);
-    if (!vmm_copy_from_user(syscall_active_as(), dst + *copied, iov.base, n)) { return -EFAULT; }
-    *copied += n;
-  }
-  return 0;
-}
-
-int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, uint64_t flags) {
-  if (msg_addr == 0 || !syscall_user_readable(msg_addr, sizeof(struct msghdr64))) { return -(int64_t)EFAULT; }
-  struct msghdr64 msg;
-  if (!vmm_copy_from_user(syscall_active_as(), &msg, msg_addr, sizeof(msg))) { return -(int64_t)EFAULT; }
-  int32_t proto = 0;
-  bool is_socket = cell_fd_socket_info((int)fd, NULL, &proto);
-  if (is_socket && proto == IPPROTO_TCP) {
-    int64_t rc = cell_fd_socket_sendmsg((int)fd, msg_addr, (flags & MSG_DONTWAIT) != 0, frame);
-    if (rc == -(int64_t)EPIPE && (flags & MSG_NOSIGNAL) == 0 && frame != NULL && cell_signal_current(SIGPIPE, frame)) {
-      return CELL_SWITCHED;
-    }
-    return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
-  }
-  if (is_socket && proto == 0 && msg.name == 0) { return aarch64_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, true); }
-  uint8_t tmp[SENDMSG_SCRATCH_CAP];
-  uint64_t total_len = 0;
-  size_t copied = 0;
-  int rc = gather_iovecs(msg.iov, msg.iovlen, tmp, sizeof(tmp), &total_len, &copied);
-  if (rc < 0) { return (int64_t)rc; }
-
-  if (msg.name != 0) {
-    if (total_len > sizeof(tmp)) { return -(int64_t)EMSGSIZE; }
-    struct sockaddr_in64 sa;
-    if (!copy_sockaddr_in(msg.name, msg.namelen, &sa)) { return -(int64_t)EINVAL; }
-    return cell_fd_udp_send_kernel((int)fd, sa.sin_addr, bswap16(sa.sin_port), tmp, total_len);
-  }
-  if (is_socket && (proto == IPPROTO_UDP || proto == IPPROTO_ICMP)) {
-    if (total_len > sizeof(tmp)) { return -(int64_t)EMSGSIZE; }
-    return cell_fd_udp_send_kernel((int)fd, 0, 0, tmp, total_len);
-  }
-
-  if (msg.iovlen == 0) { return 0; }
-  struct iovec64 first;
-  rc = aarch64_copy_socket_iov(msg.iov, msg.iovlen, 0, &first);
-  if (rc < 0) { return (int64_t)rc; }
-  return sys_sendto(frame, fd, first.base, first.len, flags, msg.name, msg.namelen);
-}
-
-int64_t sys_recvmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, uint64_t flags) {
-  if (msg_addr == 0 || !syscall_user_readable(msg_addr, sizeof(struct msghdr64)) ||
-      !syscall_user_writable(msg_addr, sizeof(struct msghdr64))) {
-    return -(int64_t)EFAULT;
-  }
-  int32_t proto = 0;
-  if (cell_fd_socket_info((int)fd, NULL, &proto) &&
-      (proto == IPPROTO_TCP || proto == IPPROTO_UDP || proto == IPPROTO_ICMP)) {
-    int64_t rc = cell_fd_socket_recvmsg((int)fd, msg_addr, (uint32_t)flags, (flags & MSG_DONTWAIT) != 0, frame);
-    return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
-  }
-  struct msghdr64 msg;
-  if (!vmm_copy_from_user(syscall_active_as(), &msg, msg_addr, sizeof(msg))) { return -(int64_t)EFAULT; }
-  if (cell_fd_socket_info((int)fd, NULL, &proto) && proto == 0) {
-    int64_t rc = aarch64_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, false);
-    return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
-  }
-  struct iovec64 iov;
-  int rc_iov = aarch64_copy_socket_iov(msg.iov, msg.iovlen, 0, &iov);
-  if (rc_iov < 0) { return (int64_t)rc_iov; }
-  int64_t rc = sys_recvfrom(frame, fd, iov.base, iov.len, flags, msg.name, msg_addr + 8);
-  if (rc >= 0) {
-    msg.flags = 0;
-    (void)vmm_copy_to_user(syscall_active_as(), msg_addr, &msg, sizeof(msg));
-  }
-  return rc;
 }
 
 int64_t sys_getsockname(uint64_t fd, uint64_t addr, uint64_t addrlen) {
@@ -308,7 +193,7 @@ int64_t sys_getsockname(uint64_t fd, uint64_t addr, uint64_t addrlen) {
   if (!cell_fd_socket_local_addr((int)fd, &ip, &port)) { return -(int64_t)EBADF; }
   struct sockaddr_in64 sa = {
     .sin_family = AF_INET,
-    .sin_port = bswap16(port),
+    .sin_port = __builtin_bswap16(port),
     .sin_addr = ip,
   };
   return vmm_copy_to_user(syscall_active_as(), addr, &sa, sizeof(sa)) ? 0 : -(int64_t)EFAULT;
@@ -324,7 +209,7 @@ int64_t sys_getpeername(uint64_t fd, uint64_t addr, uint64_t addrlen) {
   if (!cell_fd_socket_peer_addr((int)fd, &ip, &port)) { return -(int64_t)ENOTCONN; }
   struct sockaddr_in64 sa = {
     .sin_family = AF_INET,
-    .sin_port = bswap16(port),
+    .sin_port = __builtin_bswap16(port),
     .sin_addr = ip,
   };
   return vmm_copy_to_user(syscall_active_as(), addr, &sa, sizeof(sa)) ? 0 : -(int64_t)EFAULT;

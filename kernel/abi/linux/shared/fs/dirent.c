@@ -1,5 +1,5 @@
 #include "../usercopy.h"
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/layout.h"
 #include "handlers.h"
 
 #include "fs/vfs.h"

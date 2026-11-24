@@ -1,7 +1,7 @@
-#include "../usercopy.h"
+#include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
 #include "socket_abi.h"
-#include "abi/linux/aarch64/layout.h"
+#include "abi/linux/shared/layout.h"
 #include "net/socket.h"
 
 enum {

@@ -1,6 +1,5 @@
 #include "../usercopy.h"
 #include "../iovec.h"
-#include "arch/aarch64/regs.h"
 #include "handlers.h"
 #include "proc/fd.h"
 #include "proc/io.h"
@@ -15,11 +14,6 @@ enum {
   EINVAL = 22,
   MAX_IOVCNT = 1024,
 };
-
-int64_t sys_write(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len) {
-  if (!syscall_user_readable(buf, len)) { return -(int64_t)EFAULT; }
-  return cell_fd_write((int)fd, buf, len, frame);
-}
 
 int64_t sys_read(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len) {
   if (!syscall_user_writable(buf, len)) { return -(int64_t)EFAULT; }

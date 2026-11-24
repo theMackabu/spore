@@ -1,6 +1,6 @@
 #include "boot.h"
 #include "init/app.h"
-#include "abi/linux/aarch64/syscall.h"
+#include "abi/linux/shared/usercopy.h"
 #include "arch/aarch64/exceptions.h"
 #include "arch/aarch64/mmu.h"
 #include "arch/aarch64/smp.h"

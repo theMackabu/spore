@@ -5,6 +5,6 @@ CompileFlags:
 
 ---
 If:
-  PathMatch: kernel/abi/linux/aarch64/system/info\.c
+  PathMatch: kernel/abi/linux/shared/system/info\.c
 CompileFlags:
   Add: ['-DSPORE_VERSION="dev"']
