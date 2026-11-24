@@ -43,10 +43,13 @@ pub(super) fn drive(prefix: &str, path: &OsStr, suffix: &str) -> OsString {
     value
 }
 
-fn default_accelerator() -> &'static str {
-    if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+fn default_accelerator(guest: Arch) -> &'static str {
+    if guest.name() != std::env::consts::ARCH {
+        return "tcg";
+    }
+    if cfg!(target_os = "macos") {
         "hvf"
-    } else if cfg!(all(target_arch = "aarch64", target_os = "linux"))
+    } else if cfg!(target_os = "linux")
         && fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -240,13 +243,7 @@ fn launch(config: Config) -> io::Result<i32> {
         net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-{guest}:{port}"));
     }
     let qemu = qemu.unwrap_or_else(|| crate::qemu_default(arch));
-    let accel = accel.unwrap_or_else(|| {
-        if arch == Arch::Aarch64 {
-            default_accelerator().into()
-        } else {
-            "tcg".into()
-        }
-    });
+    let accel = accel.unwrap_or_else(|| default_accelerator(arch).into());
     let machine = match arch {
         Arch::Aarch64 => "virt,gic-version=3,virtualization=off",
         Arch::Riscv64 => "virt",
