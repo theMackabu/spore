@@ -2,7 +2,7 @@ use super::{build_esp, build_image, gcc_file};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter, Seek, Write},
     net::Ipv4Addr,
     path::{Path, PathBuf},
 };
@@ -254,7 +254,7 @@ pub fn payload(
         pkg.file(&resolv, "/etc/resolv.conf")?;
     }
     let mut out = BufWriter::new(File::create(bundle)?);
-    out.write_all(b"SPOREAP1")?;
+    out.write_all(b"SPOREAP2")?;
     for count in [argv.len(), env.len(), pkg.files.len() + pkg.dirs.len()] {
         out.write_all(
             &u32::try_from(count)
@@ -283,6 +283,10 @@ pub fn payload(
             continue;
         }
         out.write_all(&n.to_le_bytes())?;
+        if n >= 4096 {
+            let padding = out.stream_position()?.wrapping_neg() % 4096;
+            out.write_all(&[0; 4096][..padding as usize])?;
+        }
         if io::copy(&mut f, &mut out)? != n {
             return Err(bad(format!(
                 "file changed while packaging: {}",

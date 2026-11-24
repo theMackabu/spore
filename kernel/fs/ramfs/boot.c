@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "lib/mem.h"
+#include "mm/pmm.h"
 #include "tty/pty.h"
 
 #if __STDC_HOSTED__
@@ -12,6 +13,13 @@ static uint32_t ramfs_smp_possible_cpu_count(void) {
   return smp_possible_cpu_count();
 }
 #endif
+
+uint64_t ramfs_boot_page(const struct ramfs_node *node, uint64_t off) {
+  const struct ramfs_mem_node *inode = ramfs_inode_at(node->fs, node->index);
+  if (!inode || !inode->ro_data || inode->writable || off > inode->size || inode->size - off < PAGE_SIZE) { return 0; }
+  uintptr_t pa = (uintptr_t)inode->ro_data - node->fs->hhdm_offset + off;
+  return pa % PAGE_SIZE ? 0 : pa;
+}
 
 bool ramfs_add_boot_file(struct ramfs *fs, const char *path, const void *data, uint64_t size, uint16_t mode) {
   if (path == NULL || path[0] != '/' || path[1] == '\0') { return false; }

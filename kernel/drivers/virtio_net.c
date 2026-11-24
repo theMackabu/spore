@@ -62,6 +62,20 @@ static int tx_free_desc(void) {
   return -1;
 }
 
+constexpr unsigned FRAMES_PER_PAGE = PAGE_SIZE / FRAME_BUFFER_SIZE;
+static_assert(PAGE_SIZE % FRAME_BUFFER_SIZE == 0 && QUEUE_SIZE % FRAMES_PER_PAGE == 0);
+
+static bool allocate_frames(uint64_t *physical, uint8_t **buffers, unsigned id) {
+  unsigned first = id - id % FRAMES_PER_PAGE;
+  uint64_t page = pmm_alloc_page();
+  if (!page) { return false; }
+  for (unsigned i = 0; i < FRAMES_PER_PAGE; ++i) {
+    physical[first + i] = page + i * FRAME_BUFFER_SIZE;
+    buffers[first + i] = pmm_phys_to_virt(physical[first + i]);
+  }
+  return true;
+}
+
 bool virtio_net_init(uint64_t hhdm_offset) {
   hhdm = hhdm_offset;
   net_ready = false;
@@ -84,21 +98,12 @@ bool virtio_net_init(uint64_t hhdm_offset) {
     kprintf("[spore] virtio-net: queue allocation failed\n");
     return false;
   }
-  for (uint16_t i = 0; i < QUEUE_SIZE; ++i) {
-    rx_pa[i] = virtio_alloc_page(hhdm, (void **)&rx_buf[i]);
-    if (rx_pa[i] == 0) {
-      kprintf("[spore] virtio-net: rx buffer allocation failed\n");
+  for (unsigned i = 0; i < QUEUE_SIZE; i += FRAMES_PER_PAGE) {
+    if ((!rx_pa[i] && !allocate_frames(rx_pa, rx_buf, i)) || (!tx_pa[i] && !allocate_frames(tx_pa, tx_buf, i))) {
+      kprintf("[spore] virtio-net: frame buffer allocation failed\n");
       return false;
     }
   }
-  for (uint16_t i = 0; i < QUEUE_SIZE; ++i) {
-    tx_pa[i] = virtio_alloc_page(hhdm, (void **)&tx_buf[i]);
-    if (tx_pa[i] == 0) {
-      kprintf("[spore] virtio-net: tx buffer allocation failed\n");
-      return false;
-    }
-  }
-
   if (!virtq_setup(mmio_base, RX_QUEUE, QUEUE_SIZE, &rxq) || !virtq_setup(mmio_base, TX_QUEUE, QUEUE_SIZE, &txq)) {
     kprintf("[spore] virtio-net: queue too small\n");
     return false;

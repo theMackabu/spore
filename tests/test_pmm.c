@@ -32,6 +32,24 @@ static void test_object_pool(void) {
   assert(pmm_free_pages() == free_pages);
 }
 
+static void test_refcount_regions(void) {
+  alignas(PAGE_SIZE) static uint8_t memory[3 * PAGE_SIZE * 2048];
+  struct spore_memmap_entry region = {.base = 16ull << 20, .length = sizeof(memory), .type = SPORE_MEMMAP_USABLE};
+  pmm_init((uintptr_t)memory - region.base, &region, 1);
+  const size_t n = 2100;
+  uint64_t run = pmm_alloc_contiguous_pages(n);
+  assert(run);
+  for (size_t i = 0; i < n; ++i) {
+    uint64_t page = run + i * PAGE_SIZE;
+    assert(pmm_share_page(page) && pmm_refcount(page) == 2);
+    pmm_free_page(page);
+    assert(pmm_is_last_ref(page));
+    pmm_free_page(page);
+    assert(!pmm_refcount(page));
+  }
+  assert(pmm_alloc_contiguous_pages(n) == run);
+}
+
 int main(void) {
   struct spore_memmap_entry memmap[] = {{
     .base = 0x100000,
@@ -113,5 +131,6 @@ int main(void) {
   assert(pmm_alloc_contiguous_pages(3) == fragments[0].base);
 
   test_object_pool();
+  test_refcount_regions();
   return 0;
 }

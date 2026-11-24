@@ -4,10 +4,13 @@
 #include "lib/mem.h"
 #include "proc/limits.h"
 #include "net/net.h"
+#include "mm/pmm.h"
 
 struct payload_reader {
   const uint8_t *next;
   size_t remaining;
+  const uint8_t *start;
+  bool aligned_files;
 };
 
 static const void *take(struct payload_reader *reader, size_t n) {
@@ -48,18 +51,24 @@ static bool unpack_entry(struct payload_reader *reader, struct ramfs *fs, const 
     const char *source = take_string(reader);
     return path_ok(source) && ramfs_link(fs, source, path);
   }
+  if (reader->aligned_files && n >= PAGE_SIZE) {
+    size_t offset = reader->next - reader->start;
+    if (!take(reader, -offset % PAGE_SIZE)) { return false; }
+  }
   const void *data = take(reader, n);
   return data && ramfs_add_boot_file(fs, path, data, n, str_eq(path, executable) ? 0555 : 0444);
 }
 
 bool app_unpack(const void *data, size_t size, struct ramfs *fs, struct init_program *program, struct net_config *network) {
-  struct payload_reader reader = {data, size};
+  struct payload_reader reader = {.next = data, .remaining = size, .start = data};
   const char *magic = take(&reader, 8);
   struct {
     uint32_t argc, envc, entries, ip, gateway, mask, dns;
   } header;
   const void *bytes = take(&reader, sizeof(header));
-  if (!magic || kmemcmp(magic, "SPOREAP1", 8) || !bytes) { return false; }
+  if (!magic || !bytes) { return false; }
+  reader.aligned_files = kmemcmp(magic, "SPOREAP2", 8) == 0;
+  if (!reader.aligned_files && kmemcmp(magic, "SPOREAP1", 8)) { return false; }
   kmemcpy(&header, bytes, sizeof(header));
   if (!header.argc || header.argc > INIT_MAX_ARGS || header.envc > INIT_MAX_ENV) { return false; }
   program->path = take_string(&reader);

@@ -10,7 +10,9 @@ constexpr int BITS_PER_WORD = 64;
 
 static uint64_t *hhdm_base;
 static uint64_t *bitmap;
-static uint16_t *refcounts;
+constexpr size_t REFS_PER_PAGE = PAGE_SIZE / sizeof(uint16_t);
+static uint16_t **refcounts;
+static uint16_t empty_counts[REFS_PER_PAGE];
 static uint64_t tracked_page_count;
 static uint64_t bitmap_word_count;
 static uint64_t total_page_count;
@@ -35,29 +37,19 @@ static uint64_t div_round_up(uint64_t value, uint64_t divisor) {
 }
 
 static bool valid_page(uint64_t page) {
-  return bitmap != NULL && refcounts != NULL && page < tracked_page_count;
+  return page < tracked_page_count;
 }
 
-static void set_used(uint64_t page) {
-  if (!valid_page(page)) { return; }
-  uint64_t mask = 1ull << (page % BITS_PER_WORD);
-  uint64_t *word = &bitmap[page / BITS_PER_WORD];
-  if ((*word & mask) == 0) {
-    *word |= mask;
-    if (free_page_count > 0) { --free_page_count; }
-  }
-  if (refcounts[page] == 0) { refcounts[page] = 1; }
+static void claim_page(uint64_t page) {
+  bitmap[page / BITS_PER_WORD] |= 1ull << (page % BITS_PER_WORD);
+  --free_page_count;
 }
 
-static void set_free(uint64_t page) {
-  if (!valid_page(page)) { return; }
-  uint64_t mask = 1ull << (page % BITS_PER_WORD);
-  uint64_t *word = &bitmap[page / BITS_PER_WORD];
-  if ((*word & mask) != 0) {
-    *word &= ~mask;
-    ++free_page_count;
-  }
-  refcounts[page] = 0;
+static void release_page(uint64_t page) {
+  bitmap[page / BITS_PER_WORD] &= ~(1ull << (page % BITS_PER_WORD));
+  ++free_page_count;
+  if (page / BITS_PER_WORD < first_candidate_word) { first_candidate_word = page / BITS_PER_WORD; }
+  if (page < next_free_page) { next_free_page = page; }
 }
 
 static uint64_t alloc_page_in_range(uint64_t start_page, uint64_t end_page) {
@@ -79,11 +71,43 @@ static uint64_t alloc_page_in_range(uint64_t start_page, uint64_t end_page) {
     }
     if (free_bits == 0) { continue; }
     uint64_t page = word_index * BITS_PER_WORD + (uint64_t)__builtin_ctzll(free_bits);
-    set_used(page);
+    claim_page(page);
     next_free_page = page + 1;
     return page * PAGE_SIZE;
   }
   return 0;
+}
+
+static uint64_t take_page(void) {
+  const uint64_t first = 0x100000 / PAGE_SIZE;
+  if (next_free_page < first || next_free_page >= tracked_page_count) { next_free_page = first; }
+  uint64_t pa = alloc_page_in_range(next_free_page, tracked_page_count);
+  if (pa == 0) { pa = alloc_page_in_range(first, next_free_page); }
+  return pa;
+}
+
+static uint16_t *counts_for(uint64_t page) {
+  return refcounts[page / REFS_PER_PAGE];
+}
+
+static __attribute__((cold)) uint16_t *allocate_counts(uint64_t page) {
+  uint16_t *counts;
+#if __STDC_HOSTED__
+  if (!hhdm_base) { counts = calloc(1, PAGE_SIZE); }
+  else
+#endif
+  {
+    uint64_t pa = take_page();
+    if (!pa) { return NULL; }
+    counts = kmemset(pmm_phys_to_virt(pa), 0, PAGE_SIZE);
+  }
+  if (counts) { refcounts[page / REFS_PER_PAGE] = counts; }
+  return counts;
+}
+
+static inline uint16_t *prepare_counts(uint64_t page) {
+  uint16_t *counts = counts_for(page);
+  return counts != empty_counts ? counts : allocate_counts(page);
 }
 
 static uint64_t highest_usable_end(const struct spore_memmap_entry *memmap, uint32_t memmap_count) {
@@ -116,7 +140,12 @@ static bool find_metadata_region(const struct spore_memmap_entry *memmap, uint32
 
 void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uint32_t memmap_count) {
 #if __STDC_HOSTED__
-  if (!hhdm_base) { free(bitmap); }
+  if (!hhdm_base && refcounts) {
+    for (size_t i = 0; i < div_round_up(tracked_page_count, REFS_PER_PAGE); ++i) {
+      if (refcounts[i] != empty_counts) { free(refcounts[i]); }
+    }
+    free(bitmap);
+  }
 #endif
   hhdm_base = (uint64_t *)(uintptr_t)hhdm_offset;
   bitmap = NULL;
@@ -134,7 +163,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   if (tracked_page_count == 0 || bitmap_word_count == 0) { return; }
 
   uint64_t bitmap_bytes = bitmap_word_count * sizeof(uint64_t);
-  uint64_t refcount_bytes = tracked_page_count * sizeof(uint16_t);
+  uint64_t refcount_bytes = div_round_up(tracked_page_count, REFS_PER_PAGE) * sizeof(*refcounts);
   uint64_t metadata_bytes = align_up(bitmap_bytes + refcount_bytes, PAGE_SIZE);
 
 #if __STDC_HOSTED__
@@ -145,7 +174,7 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
       bitmap_word_count = 0;
       return;
     }
-    refcounts = (uint16_t *)((uint8_t *)bitmap + bitmap_bytes);
+    refcounts = (uint16_t **)((uint8_t *)bitmap + bitmap_bytes);
   } else
 #endif
   {
@@ -158,11 +187,11 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
     metadata_start_page = metadata_pa / PAGE_SIZE;
     metadata_page_count = metadata_bytes / PAGE_SIZE;
     bitmap = (uint64_t *)(uintptr_t)(hhdm_offset + metadata_pa);
-    refcounts = (uint16_t *)(uintptr_t)((uint8_t *)bitmap + bitmap_bytes);
+    refcounts = (uint16_t **)(uintptr_t)((uint8_t *)bitmap + bitmap_bytes);
   }
 
   kmemset(bitmap, 0xff, bitmap_bytes);
-  kmemset(refcounts, 0, refcount_bytes);
+  for (size_t i = 0; i < refcount_bytes / sizeof(*refcounts); ++i) { refcounts[i] = empty_counts; }
 
   for (uint32_t i = 0; i < memmap_count; ++i) {
     const struct spore_memmap_entry *entry = &memmap[i];
@@ -186,12 +215,13 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
     }
   }
 
-  for (uint64_t pa = 0; pa < 0x100000; pa += PAGE_SIZE) {
-    set_used(pa / PAGE_SIZE);
+  for (uint64_t page = 0; page < 0x100000 / PAGE_SIZE && page < tracked_page_count; ++page) {
+    if (!(bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD)))) { claim_page(page); }
   }
   for (uint64_t page = metadata_start_page; page < metadata_start_page + metadata_page_count; ++page) {
-    set_used(page);
+    claim_page(page);
   }
+  if (metadata_page_count) { (void)prepare_counts(metadata_start_page); }
 }
 
 void pmm_set_reclaimer(pmm_reclaim_fn reclaim) {
@@ -207,19 +237,20 @@ static bool pages_available(uint64_t count) {
 }
 
 uint64_t pmm_alloc_page(void) {
-  const uint64_t first = 0x100000 / PAGE_SIZE;
   ++stats.alloc_attempts;
   if (!pages_available(1)) {
     ++stats.alloc_failures;
     return 0;
   }
-  if (next_free_page < first || next_free_page >= tracked_page_count) { next_free_page = first; }
-  uint64_t pa = alloc_page_in_range(next_free_page, tracked_page_count);
-  if (pa == 0) { pa = alloc_page_in_range(first, next_free_page); }
+  uint64_t pa = take_page();
   if (pa == 0) {
     ++stats.alloc_failures;
     return 0;
   }
+  uint64_t page = pa / PAGE_SIZE;
+  uint16_t *counts = prepare_counts(page);
+  if (!counts) { release_page(page); ++stats.alloc_failures; return 0; }
+  counts[page % REFS_PER_PAGE] = 1;
   ++stats.alloc_successes;
   return pa;
 }
@@ -260,8 +291,18 @@ uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
       if (run_len >= count) {
         uint64_t start = page - run_len;
         for (uint64_t i = 0; i < count; ++i) {
-          set_used(start + i);
+          claim_page(start + i);
         }
+        for (uint64_t page = start; page < start + count;) {
+          uint16_t *counts = prepare_counts(page);
+          if (!counts) {
+            for (uint64_t i = 0; i < count; ++i) { release_page(start + i); }
+            ++stats.alloc_failures;
+            return 0;
+          }
+          page = (page / REFS_PER_PAGE + 1) * REFS_PER_PAGE;
+        }
+        for (uint64_t i = start; i < start + count; ++i) { counts_for(i)[i % REFS_PER_PAGE] = 1; }
         next_free_page = start + count;
         ++stats.alloc_successes;
         return start * PAGE_SIZE;
@@ -284,15 +325,17 @@ void pmm_free_page(uint64_t pa) {
 
   uint64_t page = pa / PAGE_SIZE;
   if (!valid_page(page)) { return; }
-  if (refcounts[page] == 0) { return; }
-  --refcounts[page];
-  if (refcounts[page] == 0) {
-    set_free(page);
-    if (page / BITS_PER_WORD < first_candidate_word && page >= 0x100000 / PAGE_SIZE) {
-      first_candidate_word = page / BITS_PER_WORD;
-    }
-    if (page < next_free_page) { next_free_page = page; }
-  }
+  uint16_t *counts = counts_for(page);
+  if (counts[page % REFS_PER_PAGE] && !--counts[page % REFS_PER_PAGE]) { release_page(page); }
+}
+
+bool pmm_retain_boot_page(uint64_t pa) {
+  uint64_t page = pa / PAGE_SIZE;
+  if (!pa || pa % PAGE_SIZE || !valid_page(page) || !(bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD)))) { return false; }
+  uint16_t *counts = prepare_counts(page);
+  if (!counts) { return false; }
+  if (!counts[page % REFS_PER_PAGE]) { counts[page % REFS_PER_PAGE] = 1; }
+  return pmm_share_page(pa);
 }
 
 bool pmm_share_page(uint64_t pa) {
@@ -300,8 +343,10 @@ bool pmm_share_page(uint64_t pa) {
 
   uint64_t page = pa / PAGE_SIZE;
   if (!valid_page(page)) { return false; }
-  if (refcounts[page] == 0 || refcounts[page] == UINT16_MAX) { return false; }
-  ++refcounts[page];
+  uint16_t *counts = counts_for(page);
+  uint16_t n = counts[page % REFS_PER_PAGE];
+  if (!n || n == UINT16_MAX) { return false; }
+  counts[page % REFS_PER_PAGE] = n + 1;
   return true;
 }
 
@@ -312,7 +357,9 @@ bool pmm_is_last_ref(uint64_t pa) {
 uint16_t pmm_refcount(uint64_t pa) {
   if ((pa % PAGE_SIZE) != 0) { return 0; }
   if (!valid_page(pa / PAGE_SIZE)) { return 0; }
-  return refcounts[pa / PAGE_SIZE];
+  uint64_t page = pa / PAGE_SIZE;
+  uint16_t *counts = counts_for(page);
+  return counts[page % REFS_PER_PAGE];
 }
 
 uint64_t pmm_total_pages(void) {
