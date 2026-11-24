@@ -1,5 +1,12 @@
 #include "mycelium.h"
 
+extern int mycelium_parse_unit_line(void *unit, char *section, size_t section_cap, const char *line);
+void set_key(struct unit *unit, const char *section, const char *key, const char *value);
+
+void mycelium_unit_apply_key(void *unit, const char *section, const char *key, const char *value) {
+  set_key(unit, section, key, value);
+}
+
 struct unit *unit_by_name(const char *name) {
   for (size_t i = 0; i < UNIT_CAP; ++i) {
     if (units[i].used && streq(units[i].name, name)) { return &units[i]; }
@@ -178,20 +185,7 @@ bool parse_unit_file(const char *path, const char *name) {
   char section[32] = "Unit";
   char line[512];
   while (fgets(line, sizeof(line), f) != NULL) {
-    char *p = trim(line);
-    if (*p == '\0' || *p == '#') { continue; }
-    if (*p == '[') {
-      char *end = strchr(p, ']');
-      if (end != NULL) {
-        *end = '\0';
-        copy_text(section, sizeof(section), p + 1);
-      }
-      continue;
-    }
-    char *eq = strchr(p, '=');
-    if (eq == NULL) { continue; }
-    *eq = '\0';
-    set_key(unit, section, trim(p), trim(eq + 1));
+    (void)mycelium_parse_unit_line(unit, section, sizeof(section), line);
   }
   fclose(f);
   return true;
