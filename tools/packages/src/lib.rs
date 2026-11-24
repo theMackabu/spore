@@ -20,6 +20,7 @@ pub struct Package {
     #[serde(flatten)]
     pub archive: Archive,
     pub files: Vec<PathBuf>,
+    pub manpages: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -99,8 +100,38 @@ impl Archive {
 
 pub fn prepare_userland(cache: &Path, dest: &Path) -> io::Result<()> {
     let catalog = catalog();
-    for package in catalog.packages {
-        package.archive.extract(cache, dest, &package.files)?;
+    for package in &catalog.packages {
+        if !package.files.is_empty() {
+            package.archive.extract(cache, dest, &package.files)?;
+        }
+    }
+    let manuals = dest.join("manuals");
+    let stamp = dest.join("manuals.stamp");
+    let sources: Vec<_> = catalog
+        .packages
+        .iter()
+        .filter_map(|p| p.manpages.as_ref().map(|dir| (&p.archive, dir)))
+        .collect();
+    let pins: String = sources
+        .iter()
+        .map(|(a, dir)| format!("{} {}\n", a.sha256, dir.display()))
+        .collect();
+    if !manuals.is_dir() || fs::read_to_string(&stamp).ok().as_ref() != Some(&pins) {
+        let tmp = tempdir_in(dest)?;
+        for (archive, dir) in sources {
+            run(Command::new("bsdtar")
+                .arg("-xf")
+                .arg(archive.fetch(cache)?)
+                .arg("-C")
+                .arg(tmp.path())
+                .arg("--")
+                .arg(dir))?;
+        }
+        if manuals.exists() {
+            fs::remove_dir_all(&manuals)?;
+        }
+        fs::rename(tmp.path().join("usr/share/man"), &manuals)?;
+        fs::write(stamp, pins)?;
     }
     for (name, archives) in catalog.sdks {
         let stamp = dest.join(format!("{name}-sdk.stamp"));

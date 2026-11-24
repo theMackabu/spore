@@ -14,4 +14,6 @@ The first boot copies the base filesystem from `target/release/root.ext2` to
 session on the base image, run `./target/release/spore boot --snapshot`. Inside the shell,
 `sudo shutdown` ends the session. To use an existing disk, pass its path with `--root`, for example `./target/release/spore boot --root build/run-root.ext2`.
 
+The full image includes offline manuals. Try `man ls`, `man 2 mmap`, or `man myc`. Press `q` to quit the pager.
+
 [Disk selection](../tools/src/system.rs) · [Guest commands and services](../userland/README.md) · [QEMU runner](host/qemu.md)

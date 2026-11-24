@@ -339,3 +339,9 @@ symlink /etc/ssl/certs/ca-certificates.crt /usr/lib/ssl/cert.pem
 
 userland/etc/fastfetch/config.jsonc /etc/fastfetch/config.jsonc
 userland/etc/fastfetch/spore.logo /etc/fastfetch/spore.logo
+
+userland/prebuilt/mandoc /usr/bin/mandoc
+userland/prebuilt/libmandoc.so /usr/lib/libmandoc.so
+symlink mandoc /usr/bin/man
+userland/prebuilt/manuals /usr/share/man
+userland/usr/share/man /usr/share/man

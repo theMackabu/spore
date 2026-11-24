@@ -1,0 +1,30 @@
+.Dd November 24, 2026
+.Dt MSH 1
+.Os Spore
+.Sh NAME
+.Nm msh
+.Nd run commands in the Spore shell
+.Sh SYNOPSIS
+.Nm
+.Nm
+.Fl c Ar command
+.Nm
+.Ar script
+.Sh DESCRIPTION
+With no arguments,
+.Nm
+starts an interactive shell, reads
+.Pa /etc/profile
+and the user's
+.Pa .profile ,
+and accepts commands at the prompt.
+.Fl c
+runs a command string.
+A script path runs commands from that file.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+msh -c 'pwd'
+msh /tmp/setup.sh
+.Ed
+.Sh SEE ALSO
+.Xr myc 1

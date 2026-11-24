@@ -52,7 +52,8 @@
         "./usr/bin/who",
         "./usr/bin/whoami",
         "./usr/bin/yes"
-      ]
+      ],
+      "manpages": "./usr/share/man"
     },
     {
       "url": "https://repo-default.voidlinux.org/current/aarch64/acl-2.4.0_1.aarch64-musl.xbps",
@@ -581,6 +582,26 @@
       "files": [
         "bin/busybox"
       ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/mandoc-1.14.6-r14.apk",
+      "sha256": "a1c25092a1603f5c0694fbec757aff5afac26ffae0d45597c49731ef9b8bcb86",
+      "files": [
+        "usr/bin/mandoc",
+        "usr/lib/libmandoc.so"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/mandoc-doc-1.14.6-r14.apk",
+      "sha256": "9db885a1c52884634a7d04be5d164275858359c4509c72e1e0c3b61f746b3a9b",
+      "files": [],
+      "manpages": "usr/share/man"
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/man-pages-6.16-r1.apk",
+      "sha256": "7e69733605f5570febc1559b3cf69e045fd921f36afdcc1d32e09ff7ae5cc01d",
+      "files": [],
+      "manpages": "usr/share/man"
     }
   ],
   "sdks": {

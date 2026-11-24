@@ -1,0 +1,28 @@
+.Dd November 24, 2026
+.Dt MYCELIUM 8
+.Os Spore
+.Sh NAME
+.Nm mycelium
+.Nd initialize the Spore full system and supervise services
+.Sh DESCRIPTION
+The kernel starts Mycelium as
+.Pa /sbin/init .
+It reads units from
+.Pa /etc/mycelium ,
+starts the dependencies of
+.Pa multi-user.target ,
+and supervises the interactive console.
+.Pp
+Services and oneshot commands can send standard output and standard error
+to the journal with
+.Cm StandardOutput=journal
+and
+.Cm StandardError=journal .
+The interactive console uses the terminal directly.
+.Pp
+Use
+.Xr myc 1
+to inspect units, read logs or request an orderly shutdown.
+.Sh SEE ALSO
+.Xr myc 1 ,
+.Xr msh 1

@@ -1,0 +1,54 @@
+.Dd November 24, 2026
+.Dt MYC 1
+.Os Spore
+.Sh NAME
+.Nm myc
+.Nd inspect and control Mycelium units
+.Sh SYNOPSIS
+.Nm
+.Ar command
+.Op Ar unit
+.Nm
+.Cm logs
+.Op Fl f
+.Op Ar unit
+.Sh DESCRIPTION
+.Nm
+sends service management commands to Mycelium on its control socket.
+Use
+.Cm list-units
+to list loaded services, targets and timers.
+.Cm status
+shows the manager state or the status of a named unit.
+.Cm cat
+prints a unit's configuration.
+.Pp
+.Cm logs
+shows the latest 50 system log lines.
+Give a unit name to read its log, or use
+.Fl f
+to follow new lines.
+For log queries a bare name such as
+.Ar network
+selects
+.Pa network.service .
+.Pp
+Use
+.Cm start , stop , restart
+or
+.Cm reload
+with a full unit name to control it.
+These operations require root.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+myc list-units
+myc logs network
+myc logs -f trustd.service
+sudo myc restart network.service
+.Ed
+.Sh FILES
+.Pa /etc/mycelium ,
+.Pa /run/mycelium.sock ,
+.Pa /var/log/syslog
+.Sh SEE ALSO
+.Xr mycelium 8
