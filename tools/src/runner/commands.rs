@@ -50,6 +50,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "ls\n",
     "exit\n",
     "msh -c 'echo msh-c-ok'\n",
+    "msh -c 'v=first; export v=second; false; test \"$?-$v\" = 1-second' || echo __SPORE\"\"_SHELL_CHECK_FAIL_EXPANSION__\n",
     "alias match='grep -x'\n",
     "echo 'two words' | match 'two words' || echo __SPORE\"\"_SHELL_CHECK_FAIL_ALIAS_PIPE__\n",
     "unalias match || echo __SPORE\"\"_SHELL_CHECK_FAIL_UNALIAS__\n",

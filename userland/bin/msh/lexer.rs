@@ -30,7 +30,7 @@ pub struct Token {
     literal: bool,
     after_alias_blank: bool,
     expanded_aliases: u64,
-    text: [u8; WORD_CAP],
+    text: *mut c_char,
 }
 
 struct Word {
@@ -82,9 +82,8 @@ fn environment(name: &CStr) -> &[u8] {
     }
 }
 
-fn variable(word: &mut Word, input: &mut &[u8], status: c_int, quoted: bool) -> Result<(), ()> {
-    let s = *input;
-    let (name, consumed) = match s.first() {
+fn variable_name(s: &[u8]) -> (&[u8], usize) {
+    match s.first() {
         Some(b'?') => (&s[..1], 1),
         Some(b'{') => {
             let n = s[1..].iter().take(63).take_while(|&&c| c != b'}').count();
@@ -101,11 +100,10 @@ fn variable(word: &mut Word, input: &mut &[u8], status: c_int, quoted: bool) -> 
                 .count();
             (&s[..n], n)
         }
-    };
-    *input = &s[consumed..];
-    if consumed == 0 && !quoted {
-        return word.push(b"$");
     }
+}
+
+fn expand_variable(word: &mut Word, name: &[u8], status: c_int) -> Result<(), ()> {
     if name == b"?" {
         return write!(word, "{status}").map_err(|_| ());
     }
@@ -137,11 +135,69 @@ fn operator(s: &[u8]) -> Option<(Kind, usize)> {
     })
 }
 
-fn lex(
-    mut s: &[u8],
-    status: c_int,
-    mut emit: impl FnMut(Kind, bool, &[u8]) -> Result<(), ()>,
-) -> Result<(), ()> {
+enum Piece<'a> {
+    Text(&'a [u8]),
+    Variable(&'a [u8]),
+    Tilde,
+}
+
+fn walk_word<'a>(
+    input: &'a [u8],
+    mut emit: impl FnMut(Piece<'a>) -> Result<(), ()>,
+) -> Result<(usize, bool), ()> {
+    let mut i = 0;
+    let mut start = 0;
+    let mut quote = 0;
+    let mut literal = true;
+    while let Some(&c) = input.get(i) {
+        if quote == 0 && separator(c) {
+            break;
+        }
+        match c {
+            b'\'' | b'"' if quote == 0 || quote == c => {
+                emit(Piece::Text(&input[start..i]))?;
+                quote = if quote == 0 { c } else { 0 };
+                literal = false;
+            }
+            b'\\' if quote != b'\'' && i + 1 < input.len() => {
+                emit(Piece::Text(&input[start..i]))?;
+                i += 1;
+                start = i;
+                i += 1;
+                literal = false;
+                continue;
+            }
+            b'$' if quote != b'\'' => {
+                emit(Piece::Text(&input[start..i]))?;
+                let (name, consumed) = variable_name(&input[i + 1..]);
+                if consumed == 0 && quote == 0 {
+                    emit(Piece::Text(&input[i..i + 1]))?;
+                } else {
+                    emit(Piece::Variable(name))?;
+                }
+                i += consumed;
+                literal = false;
+            }
+            b'~' if quote == 0 => {
+                emit(Piece::Text(&input[start..i]))?;
+                emit(Piece::Tilde)?;
+                if i == 0 {
+                    literal = false;
+                }
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+        start = i;
+    }
+    emit(Piece::Text(&input[start..i]))?;
+    Ok((i, literal))
+}
+
+fn lex(mut s: &[u8], mut emit: impl FnMut(Kind, bool, &[u8]) -> Result<(), ()>) -> Result<(), ()> {
     while let Some(&c) = s.first() {
         if whitespace(c) {
             s = &s[1..];
@@ -166,56 +222,31 @@ fn lex(
                 continue;
             }
         }
-        let mut word = Word {
-            bytes: [0; WORD_CAP],
-            len: 0,
-        };
-        let mut literal = true;
-        let mut tilde = false;
-        while let Some((&c, tail)) = s.split_first() {
-            if separator(c) {
-                break;
-            }
-            s = tail;
-            match c {
-                b'\'' | b'"' => {
-                    literal = false;
-                    while let Some((&ch, tail)) = s.split_first() {
-                        s = tail;
-                        if ch == c {
-                            break;
-                        }
-                        if c == b'"' && ch == b'$' {
-                            variable(&mut word, &mut s, status, true)?;
-                        } else if c == b'"' && ch == b'\\' && !s.is_empty() {
-                            word.push(&s[..1])?;
-                            s = &s[1..];
-                        } else {
-                            word.push(core::slice::from_ref(&ch))?;
-                        }
-                    }
-                }
-                b'\\' if !s.is_empty() => {
-                    literal = false;
-                    word.push(&s[..1])?;
-                    s = &s[1..];
-                }
-                b'$' => {
-                    literal = false;
-                    variable(&mut word, &mut s, status, false)?;
-                }
-                _ => {
-                    tilde |= word.len == 0 && c == b'~';
-                    word.push(core::slice::from_ref(&c))?;
-                }
-            }
+        let (len, literal) = walk_word(s, |_| Ok(()))?;
+        if literal && len >= WORD_CAP {
+            return Err(());
         }
-        if tilde {
-            word.tilde()?;
-        }
-        emit(Kind::Word, literal && !tilde, &word.bytes[..word.len])?;
+        emit(Kind::Word, literal, &s[..len])?;
+        s = &s[len..];
     }
     Ok(())
+}
+
+unsafe extern "C" {
+    fn malloc(size: usize) -> *mut c_char;
+    fn free(ptr: *mut c_char);
+}
+
+fn copy_word(bytes: &[u8]) -> Result<*mut c_char, ()> {
+    let dest = unsafe { malloc(bytes.len() + 1) };
+    if dest.is_null() {
+        return Err(());
+    }
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), dest.cast(), bytes.len());
+        dest.add(bytes.len()).write(0);
+    }
+    Ok(dest)
 }
 
 #[unsafe(no_mangle)]
@@ -224,28 +255,27 @@ pub unsafe extern "C" fn sh_tokenize(
     tokens: *mut Token,
     capacity: usize,
     count: *mut usize,
-    status: c_int,
 ) -> c_int {
-    if line.is_null() || count.is_null() || (tokens.is_null() && capacity != 0) {
-        return -1;
-    }
     let mut n = 0;
     let result = lex(
         unsafe { CStr::from_ptr(line) }.to_bytes(),
-        status,
-        |kind, literal, text| {
+        |kind, literal, raw| {
             if n >= capacity {
                 return Err(());
             }
+            let text = if matches!(kind, Kind::Word | Kind::IoNumber) {
+                copy_word(raw)?
+            } else {
+                ptr::null_mut()
+            };
             unsafe {
-                let token = tokens.add(n);
-                ptr::addr_of_mut!((*token).kind).write(kind as c_int);
-                ptr::addr_of_mut!((*token).literal).write(literal);
-                ptr::addr_of_mut!((*token).after_alias_blank).write(false);
-                ptr::addr_of_mut!((*token).expanded_aliases).write(0);
-                let dest = ptr::addr_of_mut!((*token).text).cast::<u8>();
-                ptr::copy_nonoverlapping(text.as_ptr(), dest, text.len());
-                dest.add(text.len()).write(0);
+                tokens.add(n).write(Token {
+                    kind: kind as c_int,
+                    literal,
+                    after_alias_blank: false,
+                    expanded_aliases: 0,
+                    text,
+                });
             }
             n += 1;
             Ok(())
@@ -255,4 +285,40 @@ pub unsafe extern "C" fn sh_tokenize(
         count.write(n);
     }
     if result.is_ok() { 0 } else { -1 }
+}
+
+fn expand(raw: &[u8], status: c_int) -> Result<*mut c_char, ()> {
+    let mut word = Word {
+        bytes: [0; WORD_CAP],
+        len: 0,
+    };
+    let mut tilde = false;
+    walk_word(raw, |piece| match piece {
+        Piece::Text(bytes) => word.push(bytes),
+        Piece::Variable(name) => expand_variable(&mut word, name, status),
+        Piece::Tilde => {
+            tilde |= word.len == 0;
+            word.push(b"~")
+        }
+    })?;
+    if tilde {
+        word.tilde()?;
+    }
+    copy_word(&word.bytes[..word.len])
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sh_expand_word(token: &mut Token, status: c_int) -> c_int {
+    if token.literal || token.kind != Kind::Word as c_int {
+        return 0;
+    }
+    let raw = unsafe { CStr::from_ptr(token.text) }.to_bytes();
+    let Ok(text) = expand(raw, status) else {
+        return -1;
+    };
+    unsafe {
+        free(token.text);
+    }
+    token.text = text;
+    0
 }

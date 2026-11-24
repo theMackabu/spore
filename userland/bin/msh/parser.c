@@ -43,19 +43,16 @@ static int add_redir(struct command *cmd, enum redir_op op, int fd, const char *
   return 0;
 }
 
-// Keep already parsed argv and redirection pointers stable while replacing the command word.
 static int expand_alias(struct parser *p, int index) {
   const char *value = sh_aliases[index].value;
   uint64_t expanded = p->tokens[p->pos].expanded_aliases | (UINT64_C(1) << index);
   bool after_blank = p->tokens[p->pos].after_alias_blank;
+  free(p->tokens[p->pos].text);
   size_t tail = p->count - p->pos - 1;
   struct token *saved = &p->tokens[TOKEN_CAP - tail];
   memmove(saved, &p->tokens[p->pos + 1], tail * sizeof(*saved));
   size_t added;
-  if (sh_tokenize(value, &p->tokens[p->pos], TOKEN_CAP - tail - p->pos, &added, p->last_status) != 0) {
-    eprintf("msh: alias expansion exceeds token limit\n");
-    return -1;
-  }
+  int rc = sh_tokenize(value, &p->tokens[p->pos], TOKEN_CAP - tail - p->pos, &added);
   for (size_t i = 0; i < added; ++i) {
     p->tokens[p->pos + i].expanded_aliases = expanded;
   }
@@ -64,10 +61,11 @@ static int expand_alias(struct parser *p, int index) {
   if (tail && len && (value[len - 1] == ' ' || value[len - 1] == '\t')) { saved->after_alias_blank = true; }
   memmove(&p->tokens[p->pos + added], saved, tail * sizeof(*saved));
   p->count = p->pos + added + tail;
-  return 0;
+  if (rc != 0) { eprintf("msh: alias expansion exceeds token limit\n"); }
+  return rc;
 }
 
-int sh_parse_command(struct parser *p, struct command *cmd) {
+int sh_parse_command(struct parser *p, struct command *cmd, bool execute) {
   memset(cmd, 0, sizeof(*cmd));
   while (sh_parser_peek(p) != TOK_END && sh_parser_peek(p) != TOK_AND && sh_parser_peek(p) != TOK_OR &&
          sh_parser_peek(p) != TOK_PIPE && sh_parser_peek(p) != TOK_SEMI && sh_parser_peek(p) != TOK_BG) {
@@ -80,6 +78,10 @@ int sh_parse_command(struct parser *p, struct command *cmd) {
       }
     }
     sh_parser_take(p);
+    if (execute && sh_expand_word(tok, p->last_status) < 0) {
+      eprintf("msh: word expansion too large\n");
+      return -1;
+    }
     if (tok->type == TOK_WORD) {
       if (cmd->argc == 0 && assignment_syntax(tok->text)) {
         if (cmd->envc + 1 >= ARG_CAP) {
@@ -112,7 +114,7 @@ int sh_parse_command(struct parser *p, struct command *cmd) {
       if (sh_parser_peek(p) == TOK_BG && tok->type != TOK_LT) {
         (void)sh_parser_take(p);
         struct token *target = sh_parser_take(p);
-        if (target == NULL || target->type != TOK_WORD || !decimal_word(target->text)) {
+        if (target == NULL || target->type != TOK_WORD || (execute && (sh_expand_word(target, p->last_status) < 0 || !decimal_word(target->text)))) {
           eprintf("sh: redirection missing fd\n");
           return -1;
         }
@@ -120,7 +122,7 @@ int sh_parse_command(struct parser *p, struct command *cmd) {
         continue;
       }
       struct token *path = sh_parser_take(p);
-      if (path == NULL || path->type != TOK_WORD) {
+      if (path == NULL || path->type != TOK_WORD || (execute && sh_expand_word(path, p->last_status) < 0)) {
         eprintf("sh: redirection missing path\n");
         return -1;
       }

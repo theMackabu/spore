@@ -11,7 +11,6 @@ constexpr int SYS_SPORE_APPLY_POLICY = 0x4005;
 
 enum {
   LINE_CAP = 8192,
-  WORD_CAP = 4096,
   TOKEN_CAP = 256,
   ARG_CAP = 128,
   HISTORY_CAP = 16,
@@ -48,7 +47,7 @@ struct token {
   bool literal;
   bool after_alias_blank;
   uint64_t expanded_aliases;
-  char text[WORD_CAP];
+  char *text;
 };
 
 enum redir_op {
@@ -95,10 +94,11 @@ void sh_history_add(const char *line);
 size_t sh_history_count(void);
 const char *sh_history_get(size_t index);
 void sh_reap_jobs(bool verbose);
-int sh_tokenize(const char *line, struct token *tokens, size_t capacity, size_t *count, int last_status);
+int sh_tokenize(const char *line, struct token *tokens, size_t capacity, size_t *count);
+int sh_expand_word(struct token *token, int last_status);
 enum token_type sh_parser_peek(struct parser *p);
 struct token *sh_parser_take(struct parser *p);
-int sh_parse_command(struct parser *p, struct command *cmd);
+int sh_parse_command(struct parser *p, struct command *cmd, bool execute);
 int sh_execute_line(const char *line, int last_status);
 int sh_source_file(const char *path, int last_status, bool complain);
 void sh_job_child_setup(pid_t pgrp);

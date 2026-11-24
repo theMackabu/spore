@@ -874,9 +874,11 @@ static int execute_tokens(struct parser *parser, int last_status) {
   int status = last_status;
   while (sh_parser_peek(parser) != TOK_END) {
     parser->last_status = status;
+    bool should_run =
+      previous == TOK_SEMI || (previous == TOK_AND && status == 0) || (previous == TOK_OR && status != 0);
     struct command stages[8];
     size_t stage_count = 0;
-    if (sh_parse_command(parser, &stages[stage_count]) != 0) { return 2; }
+    if (sh_parse_command(parser, &stages[stage_count], should_run) != 0) { return 2; }
     ++stage_count;
     while (sh_parser_peek(parser) == TOK_PIPE) {
       (void)sh_parser_take(parser);
@@ -884,7 +886,7 @@ static int execute_tokens(struct parser *parser, int last_status) {
         eprintf("sh: pipeline too long\n");
         return 2;
       }
-      if (sh_parse_command(parser, &stages[stage_count]) != 0) { return 2; }
+      if (sh_parse_command(parser, &stages[stage_count], should_run) != 0) { return 2; }
       if (stages[stage_count].argc == 0) {
         eprintf("sh: syntax error near '|'\n");
         return 2;
@@ -898,8 +900,6 @@ static int execute_tokens(struct parser *parser, int last_status) {
       }
     }
 
-    bool should_run =
-      previous == TOK_SEMI || (previous == TOK_AND && status == 0) || (previous == TOK_OR && status != 0);
     if ((stages[0].argc > 0 || stages[0].envc > 0) && should_run) {
       trace_command(&stages[0]);
       if (stage_count > 1) {
@@ -929,11 +929,12 @@ int sh_execute_line(const char *line, int last_status) {
     return 1;
   }
   int status = 2;
-  if (sh_tokenize(line, parser.tokens, TOKEN_CAP, &parser.count, last_status) == 0) {
+  if (sh_tokenize(line, parser.tokens, TOKEN_CAP, &parser.count) == 0) {
     status = execute_tokens(&parser, last_status);
   } else {
     eprintf("sh: parse buffer exhausted\n");
   }
+  for (size_t i = 0; i < parser.count; ++i) { free(parser.tokens[i].text); }
   free(parser.tokens);
   return status;
 }
