@@ -69,19 +69,31 @@ impl Header {
     fn table_end(&self) -> Option<u64> {
         self.table.checked_add(u64::from(self.count) * PHDR as u64)
     }
-    fn segments<'a>(&'a self, r: &'a Reader) -> impl Iterator<Item = Option<Segment>> + 'a {
-        (0..u64::from(self.count)).map(|i| {
-            let b = r.bytes::<PHDR>(self.table + i * PHDR as u64)?;
-            Some(Segment {
-                kind: le32(&b, 0),
-                flags: le32(&b, 4),
-                offset: le64(&b, 8),
-                vaddr: le64(&b, 16),
-                filesz: le64(&b, 32),
-                memsz: le64(&b, 40),
-                align: le64(&b, 48),
-            })
-        })
+    fn visit_segments(
+        &self,
+        r: &Reader,
+        mut visit: impl FnMut(Segment) -> Option<()>,
+    ) -> Option<()> {
+        let mut offset = self.table;
+        let end = self.table_end()?;
+        let mut batch = [0; PHDR * 8];
+        while offset < end {
+            let n = (end - offset).min(batch.len() as u64) as usize;
+            r.read_at(offset, &mut batch[..n])?;
+            for b in batch[..n].as_chunks::<PHDR>().0 {
+                visit(Segment {
+                    kind: le32(b, 0),
+                    flags: le32(b, 4),
+                    offset: le64(b, 8),
+                    vaddr: le64(b, 16),
+                    filesz: le64(b, 32),
+                    memsz: le64(b, 40),
+                    align: le64(b, 48),
+                })?;
+            }
+            offset += n as u64;
+        }
+        Some(())
     }
 }
 
@@ -127,16 +139,15 @@ fn load(
     };
     let table_end = h.table_end()?;
     let mut interpreter = None;
-    for segment in h.segments(reader) {
-        let p = segment?;
+    h.visit_segments(reader, |p| {
         if p.kind == PT_INTERP {
             if interpreter.replace(p).is_some() {
                 return None;
             }
-            continue;
+            return Some(());
         }
         if p.kind != PT_LOAD {
-            continue;
+            return Some(());
         }
         let file_end = p.offset.checked_add(p.filesz)?;
         if p.memsz < p.filesz
@@ -154,7 +165,8 @@ fn load(
         if h.table >= p.offset && table_end <= file_end {
             out.phdr = addr.checked_add(h.table - p.offset)?;
         }
-    }
+        Some(())
+    })?;
     (out.brk_base != 0).then_some((out, interpreter))
 }
 
