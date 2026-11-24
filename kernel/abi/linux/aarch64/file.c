@@ -127,13 +127,6 @@ struct statx64 {
 
 static_assert(sizeof(struct statx64) == 256, "Linux statx ABI size");
 
-struct linux_dirent64_header {
-  uint64_t d_ino;
-  int64_t d_off;
-  uint16_t d_reclen;
-  uint8_t d_type;
-} __attribute__((packed));
-
 static bool proc_self_fd_number(const char *path, int *fd_out) {
   const char *prefix = "/proc/self/fd/";
   if (!starts_with(path, prefix)) { return false; }
@@ -462,43 +455,6 @@ int64_t sys_faccessat(uint64_t dirfd, uint64_t path_addr, uint64_t mode, uint64_
   if (!(nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node))) { return -(int64_t)ENOENT; }
   if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(mode))) { return -(int64_t)EPERM; }
   return syscall_node_access_allowed(&node, mode) ? 0 : -(int64_t)EACCES;
-}
-
-static uint16_t dirent_reclen(size_t name_len) {
-  return (uint16_t)((sizeof(struct linux_dirent64_header) + name_len + 1 + 7) & ~7ull);
-}
-
-int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
-  struct vfs_node dir;
-  int dir_rc = cell_fd_get_dir_node((int)fd, &dir);
-  if (dir_rc != 0) { return dir_rc; }
-  uint64_t written = 0;
-  uint64_t cursor = cell_fd_dir_offset((int)fd);
-  for (;;) {
-    struct vfs_dirent ent;
-    int next = vfs_next_dirent(&dir, &cursor, &ent);
-    if (next <= 0) { return written ? (int64_t)written : next; }
-    size_t name_len = ent.name_len;
-    uint16_t reclen = dirent_reclen(name_len);
-    if (written + reclen > len) {
-      if (written == 0) { return -(int64_t)EINVAL; }
-      break;
-    }
-    if (!syscall_user_writable(buf + written, reclen)) { return written == 0 ? -(int64_t)EFAULT : (int64_t)written; }
-    struct linux_dirent64_header hdr = {
-      .d_ino = ent.ino,
-      .d_off = (int64_t)cursor,
-      .d_reclen = reclen,
-      .d_type = ent.type,
-    };
-    if (!vmm_copy_to_user(syscall_active_as(), buf + written, &hdr, sizeof(hdr)) ||
-        !vmm_copy_to_user(syscall_active_as(), buf + written + sizeof(hdr), ent.name, name_len + 1)) {
-      return written == 0 ? -(int64_t)EFAULT : (int64_t)written;
-    }
-    written += reclen;
-    cell_fd_set_dir_offset((int)fd, cursor);
-  }
-  return (int64_t)written;
 }
 
 int64_t sys_getcwd(uint64_t buf, uint64_t len) {

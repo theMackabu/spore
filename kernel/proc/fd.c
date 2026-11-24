@@ -635,12 +635,13 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
   return vfs_refresh(&file->node, out);
 }
 
-int cell_fd_get_dir_node(int fd, struct vfs_node *out) {
+int cell_fd_get_dir_node(int fd, struct vfs_node *out, uint64_t *cursor) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
   if (file->type != OPEN_RAMFS || !file->node.is_dir) { return -20; }
   *out = file->node;
+  *cursor = file->offset;
   return 0;
 }
 
@@ -658,12 +659,6 @@ bool cell_fd_path(int fd, char *out, size_t cap) {
   if (len >= cap) { return false; }
   kmemcpy(out, file->path, len + 1);
   return true;
-}
-
-uint64_t cell_fd_dir_offset(int fd) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return 0; }
-  return domain->fds[fd]->offset;
 }
 
 void cell_fd_set_dir_offset(int fd, uint64_t offset) {

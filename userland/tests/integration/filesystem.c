@@ -84,6 +84,32 @@ static int getdents_proc_batches(void) {
   return seen == 7;
 }
 
+static int getdents_fault_resume(void) {
+  size_t page = (size_t)sysconf(_SC_PAGESIZE);
+  char *buf = mmap(NULL, page * 2, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  if (buf == MAP_FAILED) { return 0; }
+  int reference = open("/proc/self", O_RDONLY | O_DIRECTORY);
+  int fd = open("/proc/self", O_RDONLY | O_DIRECTORY);
+  char expected[512], resumed[512];
+  long size = reference < 0 ? -1 : syscall(SYS_getdents64, reference, expected, sizeof(expected));
+  int ok = size > 0 && fd >= 0 && munmap(buf + page, page) == 0;
+  if (ok) {
+    struct linux_dirent64 *first = (struct linux_dirent64 *)expected;
+    size_t len = first->d_reclen;
+    char *split = buf + page - len;
+    ok = len < (size_t)size && syscall(SYS_getdents64, fd, split, sizeof(expected)) == (long)len &&
+         strcmp(((struct linux_dirent64 *)split)->d_name, first->d_name) == 0;
+    ok = ok && syscall(SYS_getdents64, fd, buf + page - 1, sizeof(resumed)) == -1 && errno == EFAULT;
+    long bytes = syscall(SYS_getdents64, fd, resumed, sizeof(resumed));
+    ok = ok && bytes == size - (long)len &&
+         strcmp(((struct linux_dirent64 *)resumed)->d_name, ((struct linux_dirent64 *)(expected + len))->d_name) == 0;
+  }
+  if (fd >= 0) { close(fd); }
+  if (reference >= 0) { close(reference); }
+  munmap(buf, page * 2);
+  return ok;
+}
+
 static int epoll_watch_lifetime(void) {
   int counter = eventfd(1, EFD_NONBLOCK);
   if (counter < 0) { return 0; }
@@ -272,7 +298,7 @@ int integration_fs_demo(void) {
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
   if (!removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
-      !getdents_proc_batches()) {
+      !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }
   if (unlink("b") != 0) { ok = 0; }

@@ -1,5 +1,6 @@
 kernel_sources += files(
   'context.c',
+  'dirent.c',
   'exec.c',
   'file.c',
   'io.c',
