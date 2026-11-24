@@ -99,7 +99,7 @@ int sh_tokenize(const char *line, struct token *tokens, size_t capacity, size_t 
 enum token_type sh_parser_peek(struct parser *p);
 struct token *sh_parser_take(struct parser *p);
 int sh_parse_command(struct parser *p, struct command *cmd);
-int sh_execute_line(char *line, int last_status);
+int sh_execute_line(const char *line, int last_status);
 int sh_source_file(const char *path, int last_status, bool complain);
 void sh_job_child_setup(pid_t pgrp);
 void sh_job_parent_setup(pid_t pid, pid_t pgrp);

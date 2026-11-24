@@ -5,7 +5,7 @@ lexer_archive = custom_target('msh-lexer-rust',
   command: userland_rust_archive + ['@INPUT@', '-o', '@OUTPUT@'])
 
 userland_msh = custom_target('userland-msh',
-  input: files('main.c', 'alias.c', 'input.c', 'history.c', 'parser.c', 'eval.c', 'job.c') + userland_libspore + [lexer_archive],
+  input: files('main.c', 'alias.c', 'input.c', 'history.c', 'parser.c', 'script.c', 'eval.c', 'job.c') + userland_libspore + [lexer_archive],
   depend_files: files('msh.h'),
   output: 'msh',
   command: userland_cc + ['@INPUT@', '-o', '@OUTPUT@'])

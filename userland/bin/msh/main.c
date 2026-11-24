@@ -14,9 +14,7 @@ int main(int argc, char **argv) {
   if (argc > 1) {
     if (streq(argv[1], "-c")) {
       if (argc < 3) { return usage("msh", "-c COMMAND"); }
-      char line[LINE_CAP];
-      snprintf(line, sizeof(line), "%s", argv[2]);
-      return sh_execute_line(line, 0);
+      return sh_execute_line(argv[2], 0);
     }
     return sh_source_file(argv[1], 0, true);
   }
