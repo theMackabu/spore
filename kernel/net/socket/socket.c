@@ -1,4 +1,3 @@
-#include "abi/linux/aarch64/message.h"
 #include "internal.h"
 
 #include "proc/accounting.h"
@@ -10,12 +9,10 @@
 #include "proc/thread.h"
 
 enum {
-  SOCKET_RECVMSG_SCRATCH_CAP = 1472,
   SOL_SOCKET = 1,
   SOCK_STREAM = 1,
   SOCK_DGRAM = 2,
   IPPROTO_IP = 0,
-  MSG_TRUNC = 0x20,
   SO_REUSEADDR = 2,
   SO_DONTROUTE = 5,
   SO_BROADCAST = 6,
@@ -461,119 +458,9 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, 
   return dgram_read_to_domain(domain, file, buf, len, addr, addrlen, flags);
 }
 
-static int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *file, uint64_t msg_addr, uint64_t iov,
-                                     int32_t iovlen, uint64_t addr, uint64_t addrlen, uint32_t recv_flags) {
-  struct aarch64_iov_cursor cursor;
-  int rc = aarch64_iov_init(&cursor, domain, iov, iovlen);
-  if (rc < 0) { return rc; }
-  uint64_t capacity = cursor.capacity;
-  if (capacity == 0) { return 0; }
-  uint8_t tmp[SOCKET_RECVMSG_SCRATCH_CAP];
-  uint64_t want = capacity < sizeof(tmp) ? capacity : sizeof(tmp);
-  int64_t got = -EAGAIN;
-  int32_t msg_flags = 0;
-  if (file->socket_proto == IPPROTO_TCP) {
-    if (tcp_recv_waitall_pending(file, want, recv_flags)) { return -EAGAIN; }
-    got = cell_socket_tcp_read_to_kernel(file, tmp, want, recv_flags);
-  } else if ((file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) &&
-             (file->dgram_rx_count != 0 || file->udp_error != 0)) {
-    if (msg_addr && !file->udp_error &&
-        aarch64_recv_ip_control(domain, msg_addr, file->ip_recvttl, file->dgram_rx_ttl[file->dgram_rx_head],
-                                &msg_flags) < 0) { return -EFAULT; }
-    uint16_t packet_len = 0;
-    got = dgram_read_to_kernel(domain, file, tmp, want, addr, addrlen, recv_flags, &packet_len);
-    if (got >= 0 && packet_len > capacity) {
-      msg_flags |= MSG_TRUNC;
-      if ((recv_flags & MSG_TRUNC) != 0) { got = packet_len; }
-    }
-  }
-  if (got < 0) { return got; }
-  uint64_t scatter_len = (uint64_t)got < capacity ? (uint64_t)got : capacity;
-  rc = aarch64_scatter_iov(&cursor, tmp, scatter_len);
-  if (rc < 0) { return rc; }
-  if (msg_addr && aarch64_write_msg_flags(domain, msg_addr, msg_flags) < 0) { return -EFAULT; }
-  return got;
-}
-
 bool cell_fd_is_datagram(int fd) {
   int32_t type;
   return cell_fd_socket_info(fd, &type, NULL) && type == SOCK_DGRAM;
-}
-
-int64_t cell_fd_dgram_writev(int fd, uint64_t iov, int32_t count) {
-  struct domain *domain = cell_current_domain_internal();
-  uint8_t packet[CELL_DGRAM_RX_CAP];
-  struct aarch64_iov_cursor cursor;
-  int rc = aarch64_iov_init(&cursor, domain, iov, count);
-  if (rc < 0) { return rc; }
-  uint64_t len = cursor.capacity;
-  if (len > sizeof(packet)) { return -90; }
-  rc = aarch64_gather_iov(&cursor, packet, (size_t)len);
-  if (rc < 0) { return rc; }
-  return cell_fd_udp_send_kernel(fd, 0, 0, packet, len);
-}
-
-int64_t cell_fd_dgram_readv(int fd, uint64_t iov, int32_t count, struct trap_frame *frame) {
-  struct domain *domain = cell_current_domain_internal();
-  struct open_file *file = domain->fds[fd];
-  net_poll();
-  int64_t got = socket_recvmsg_to_iov(domain, file, 0, iov, count, 0, 0, 0);
-  if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) || frame == NULL) { return got; }
-  return cell_block_current_on_socket_msg_timeout(fd, 0, iov, count, 0, 0, 0, file->so_rcvtimeo_ticks, frame);
-}
-
-struct socket_user_buffer {
-  const struct user_address_space *as;
-  uint64_t addr;
-};
-
-static int copy_user_payload(void *source, uint8_t *dst, size_t len) {
-  struct socket_user_buffer *buf = source;
-  if (!vmm_copy_from_user(buf->as, dst, buf->addr, len)) { return -EFAULT; }
-  buf->addr += len;
-  return 0;
-}
-
-int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  struct socket_user_buffer source = {cell_domain_as_const(domain), buf};
-  return source.as ? tcp_write_stream(file, len, copy_user_payload, &source) : -EFAULT;
-}
-
-static int64_t socket_sendmsg_tcp_from_domain(struct domain *domain, struct open_file *file, uint64_t msg_addr) {
-  struct socket_user_message msg;
-  if (aarch64_read_socket_message(domain, msg_addr, &msg) < 0) { return -EFAULT; }
-  struct aarch64_iov_cursor cursor;
-  int rc = aarch64_iov_init(&cursor, domain, msg.iov, msg.iovlen);
-  if (rc || !cursor.capacity) { return rc; }
-  return tcp_write_stream(file, cursor.capacity, aarch64_gather_iov, &cursor);
-}
-
-int64_t cell_fd_socket_sendmsg(int fd, uint64_t msg_addr, bool dontwait, struct trap_frame *frame) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
-  if (file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
-  net_poll();
-  int64_t sent = socket_sendmsg_tcp_from_domain(domain, file, msg_addr);
-  if (sent != -EAGAIN || dontwait || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return sent; }
-  if (!tcp_send_would_block(file)) { return sent; }
-  return cell_block_current_on_socket_sendmsg_timeout(fd, msg_addr, file->so_sndtimeo_ticks, frame);
-}
-
-int64_t cell_fd_socket_recvmsg(int fd, uint64_t msg_addr, uint32_t flags, bool dontwait, struct trap_frame *frame) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
-  if (file->type != OPEN_SOCKET) { return -9; }
-  struct socket_user_message msg;
-  if (aarch64_read_socket_message(domain, msg_addr, &msg) < 0) { return -EFAULT; }
-  net_poll();
-  bool can_block = !dontwait && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL;
-  uint32_t recv_flags = can_block ? flags : (flags & ~((uint32_t)MSG_WAITALL));
-  int64_t got = socket_recvmsg_to_iov(domain, file, msg_addr, msg.iov, msg.iovlen, msg.name, msg.namelen_addr, recv_flags);
-  if (got != -EAGAIN || !can_block) { return got; }
-  return cell_block_current_on_socket_msg_timeout(fd, msg_addr, msg.iov, (uint64_t)msg.iovlen, msg.name, msg.namelen_addr,
-                                                  flags, file->so_rcvtimeo_ticks, frame);
 }
 
 static void wake_socket_timeout_waiters(uint64_t now_ticks) {
@@ -641,7 +528,7 @@ void wake_socket_waiters(struct open_file *file) {
           cell_finish_wait(thread, rc);
         }
       } else if (file->type == OPEN_SOCKET && (file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) &&
-                 (file->dgram_rx_count != 0 || file->udp_error != 0) && thread->wait.buf != 0) {
+                 (file->dgram_rx_count != 0 || file->udp_error != 0)) {
         int64_t rc = dgram_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len, thread->wait.socket_addr,
                                           thread->wait.socket_addrlen, thread->wait.socket_flags);
         if (rc == -EAGAIN) { continue; }

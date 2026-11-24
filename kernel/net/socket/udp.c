@@ -240,58 +240,34 @@ int64_t cell_fd_udp_send_kernel(int fd, uint32_t ip, uint16_t port, const void *
 
 static bool dgram_copy_source_to_domain(struct domain *domain, uint32_t src_ip, uint16_t src_port, uint64_t addr,
                                         uint64_t addrlen) {
-  if (addr == 0 && addrlen == 0) { return true; }
-  if (addrlen != 0) {
-    uint32_t len = sizeof(struct sockaddr_in_cell);
-    if (!vmm_copy_to_user(cell_domain_as(domain), addrlen, &len, sizeof(len))) { return false; }
-  }
-  if (addr == 0) { return true; }
-  struct sockaddr_in_cell sa;
-  kmemset(&sa, 0, sizeof(sa));
-  sa.sin_family = 2;
-  sa.sin_port = net_bswap16(src_port);
-  sa.sin_addr = src_ip;
-  return vmm_copy_to_user(cell_domain_as(domain), addr, &sa, sizeof(sa));
+  if (!addr) { return true; }
+  struct user_address_space *as = cell_domain_as(domain);
+  uint32_t size;
+  if (!addrlen || !vmm_copy_from_user(as, &size, addrlen, sizeof(size))) { return false; }
+  struct sockaddr_in_cell sa = {.sin_family = 2, .sin_port = net_bswap16(src_port), .sin_addr = src_ip};
+  if (size > sizeof(sa)) { size = sizeof(sa); }
+  uint32_t actual = sizeof(sa);
+  return vmm_copy_to_user(as, addr, &sa, size) && vmm_copy_to_user(as, addrlen, &actual, sizeof(actual));
 }
 
-int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, uint64_t addr,
-                             uint64_t addrlen, uint32_t flags) {
-  if (file != NULL && file->udp_error != 0) {
-    int err = file->udp_error;
+int64_t dgram_read(struct domain *domain, struct open_file *file, uint64_t len, uint64_t addr, uint64_t addrlen,
+                   uint32_t flags, socket_copy_out copy, void *destination) {
+  if (file->udp_error) {
+    int error = file->udp_error;
     file->udp_error = 0;
-    return -(int64_t)err;
+    return -error;
   }
-  if (file == NULL || file->dgram_rx_count == 0) { return -EAGAIN; }
-  uint8_t index = file->dgram_rx_head;
-  uint8_t slot = file->dgram_rx_slot[index];
-  uint64_t n = file->dgram_rx_len[index] < len ? file->dgram_rx_len[index] : len;
-  if (!vmm_copy_to_user(cell_domain_as(domain), buf, dgram_rx_buffers[slot], (size_t)n)) { return -EFAULT; }
-  if (!dgram_copy_source_to_domain(domain, file->dgram_rx_ip[index], file->dgram_rx_port[index], addr, addrlen)) {
+  if (!file->dgram_rx_count) { return -EAGAIN; }
+  uint8_t head = file->dgram_rx_head;
+  uint16_t packet_len = file->dgram_rx_len[head];
+  size_t bytes = packet_len < len ? packet_len : len;
+  int rc = copy(destination, dgram_rx_buffers[file->dgram_rx_slot[head]], bytes);
+  if (rc) { return rc; }
+  if (!dgram_copy_source_to_domain(domain, file->dgram_rx_ip[head], file->dgram_rx_port[head], addr, addrlen)) {
     return -EFAULT;
   }
-  if ((flags & MSG_PEEK) == 0) { dgram_drop_head(file); }
-  return (int64_t)n;
-}
-
-int64_t dgram_read_to_kernel(struct domain *domain, struct open_file *file, void *buf, uint64_t len, uint64_t addr,
-                             uint64_t addrlen, uint32_t flags, uint16_t *original_len) {
-  if (file != NULL && file->udp_error != 0) {
-    int err = file->udp_error;
-    file->udp_error = 0;
-    return -(int64_t)err;
-  }
-  if (file == NULL || file->dgram_rx_count == 0) { return -EAGAIN; }
-  uint8_t index = file->dgram_rx_head;
-  uint8_t slot = file->dgram_rx_slot[index];
-  uint16_t packet_len = file->dgram_rx_len[index];
-  if (original_len != NULL) { *original_len = packet_len; }
-  uint64_t n = packet_len < len ? packet_len : len;
-  if (n != 0) { kmemcpy(buf, dgram_rx_buffers[slot], (size_t)n); }
-  if (!dgram_copy_source_to_domain(domain, file->dgram_rx_ip[index], file->dgram_rx_port[index], addr, addrlen)) {
-    return -EFAULT;
-  }
-  if ((flags & MSG_PEEK) == 0) { dgram_drop_head(file); }
-  return (int64_t)n;
+  if (!(flags & MSG_PEEK)) { dgram_drop_head(file); }
+  return flags & MSG_TRUNC ? packet_len : (int64_t)bytes;
 }
 
 static bool socket_matches_udp(struct open_file *file, uint32_t src_ip, uint16_t src_port, uint16_t dst_port) {

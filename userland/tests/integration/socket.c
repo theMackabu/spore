@@ -218,6 +218,15 @@ static int udp_recvmsg_trunc_regression(void) {
   ok = ok && sent == (ssize_t)(sizeof(payload) - 1) && got == (ssize_t)(sizeof(payload) - 1) &&
        strcmp(small, "trun") == 0 && (msg.msg_flags & MSG_TRUNC) != 0;
 
+  unsigned char name[sizeof(struct sockaddr_in)];
+  memset(name, 0x5a, sizeof(name));
+  msg = (struct msghdr){.msg_name = name, .msg_namelen = 1};
+  sent = sendto(fd, payload, sizeof(payload) - 1, 0, (struct sockaddr *)&sa, sizeof(sa));
+  got = recvmsg(fd, &msg, MSG_TRUNC);
+  ok = ok && sent == (ssize_t)sizeof(payload) - 1 && got == sent && (msg.msg_flags & MSG_TRUNC) &&
+       msg.msg_namelen == sizeof(struct sockaddr_in) && name[0] == AF_INET && name[1] == 0x5a;
+  ok = ok && recv(fd, small, sizeof(small), MSG_DONTWAIT) == -1 && errno == EAGAIN;
+
   close(fd);
   printf("[spore] udp recvmsg trunc: %s got=%zd flags=0x%x\n", ok ? "PASS" : "FAIL", got, msg.msg_flags);
   return ok;
@@ -987,10 +996,15 @@ static int tcp_bulk_send_regression(void) {
       };
       struct msghdr msg = {.msg_iov = iov, .msg_iovlen = 2};
       msg_first = sendmsg(msg_client, &msg, 0);
-      while (msg_first > 0 && msg_received < (size_t)msg_first) {
-        ssize_t n = recv(msg_accepted, msg_recv + msg_received, (size_t)msg_first - msg_received, 0);
-        if (n <= 0) { break; }
-        msg_received += (size_t)n;
+      if (msg_first > 1460) {
+        struct iovec pieces[] = {{msg_recv, 997}, {NULL, 0}, {msg_recv + 997, (size_t)msg_first - 997}};
+        struct msghdr in = {.msg_iov = pieces, .msg_iovlen = 3};
+        ssize_t n = recvmsg(msg_accepted, &in, MSG_WAITALL | MSG_PEEK);
+        if (n == msg_first && memcmp(msg_send, msg_recv, (size_t)n) == 0) {
+          memset(msg_recv, 0, (size_t)n);
+          n = recvmsg(msg_accepted, &in, MSG_WAITALL);
+          if (n > 0) { msg_received = (size_t)n; }
+        }
       }
       ok = msg_first > 1460 && msg_received == (size_t)msg_first && memcmp(msg_send, msg_recv, msg_received) == 0;
     }

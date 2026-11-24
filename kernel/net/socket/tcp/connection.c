@@ -376,8 +376,9 @@ static void tcp_drain_ooo(struct open_file *file) {
 }
 
 bool tcp_recv_waitall_pending(const struct open_file *file, uint64_t want, uint32_t flags) {
-  return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && (flags & MSG_WAITALL) != 0 &&
-         want != 0 && file->tcp_rx_len < want && file->tcp_error == 0 && !file->tcp_fin;
+  if (!(flags & MSG_WAITALL) || file->tcp_fin || file->tcp_error) { return false; }
+  uint32_t limit = socket_effective_buffer(file, true);
+  return file->tcp_rx_len < want && file->tcp_rx_len < limit;
 }
 
 void tcp_init_socket(struct open_file *file) {

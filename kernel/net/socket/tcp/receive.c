@@ -2,7 +2,6 @@
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "mm/pool.h"
-#include "proc/memory.h"
 
 enum { RX_PAGES = CELL_TCP_RX_CAP / PAGE_SIZE };
 
@@ -87,8 +86,7 @@ static void consume(struct open_file *file, uint32_t bytes) {
   }
 }
 
-static int64_t read_rx(struct open_file *file, struct user_address_space *as, uint64_t dst,
-                       uint64_t len, uint32_t flags) {
+int64_t tcp_read_stream(struct open_file *file, uint64_t len, uint32_t flags, socket_copy_out copy, void *destination) {
   if (!file || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
   if (!len) { return 0; }
   if (!file->tcp_rx_len) {
@@ -104,11 +102,8 @@ static int64_t read_rx(struct open_file *file, struct user_address_space *as, ui
     uint32_t chunk = PAGE_SIZE - within;
     if (chunk > bytes - done) { chunk = bytes - done; }
     const uint8_t *src = (const uint8_t *)pmm_phys_to_virt(rx->pages[offset / PAGE_SIZE]) + within;
-    if (as) {
-      if (!vmm_copy_to_user(as, dst + done, src, chunk)) { return -EFAULT; }
-    } else {
-      kmemcpy((void *)(uintptr_t)(dst + done), src, chunk);
-    }
+    int rc = copy(destination, src, chunk);
+    if (rc) { return rc; }
     offset = (offset + chunk) % CELL_TCP_RX_CAP;
     done += chunk;
   }
@@ -117,14 +112,4 @@ static int64_t read_rx(struct open_file *file, struct user_address_space *as, ui
     tcp_ack_current_state(file);
   }
   return bytes;
-}
-
-int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
-                                             uint32_t flags) {
-  struct user_address_space *as = cell_domain_as(domain);
-  return as ? read_rx(file, as, buf, len, flags) : -EFAULT;
-}
-
-int64_t cell_socket_tcp_read_to_kernel(struct open_file *file, void *buf, uint64_t len, uint32_t flags) {
-  return read_rx(file, NULL, (uintptr_t)buf, len, flags);
 }
