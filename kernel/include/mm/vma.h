@@ -10,6 +10,7 @@ enum vma_type {
   VMA_ANON,
   VMA_STACK,
   VMA_FILE,
+  VMA_RING,
 };
 
 struct vma {

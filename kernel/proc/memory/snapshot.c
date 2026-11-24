@@ -49,6 +49,10 @@ int snapshot_create_current(void) {
   if (app_mode) { return -1; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
+  const struct vma_list *mappings = cell_domain_vmas_const(domain);
+  for (size_t i = 0; mappings && i < vma_count(mappings); ++i) {
+    if (vma_at(mappings, i)->type == VMA_RING) { return -95; }
+  }
   struct snapshot *snap = alloc_snapshot();
   if (snap == NULL) { return -12; }
   struct user_address_space *as = cell_domain_as(domain);

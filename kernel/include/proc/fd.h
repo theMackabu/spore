@@ -1,6 +1,7 @@
 #pragma once
 
 #include "proc/limits.h"
+#include "proc/uring.h"
 #include "fs/vfs.h"
 #include "fs/notify.h"
 
@@ -29,6 +30,7 @@ enum open_file_type {
   OPEN_EPOLL,
   OPEN_EVENTFD,
   OPEN_INOTIFY,
+  OPEN_URING,
   OPEN_PTY,
 };
 
@@ -162,6 +164,7 @@ struct open_file {
       bool eventfd_semaphore;
     };
     struct inotify_state *inotify;
+    struct uring ring;
   };
 };
 

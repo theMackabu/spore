@@ -111,6 +111,13 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   if (!anon) {
     struct open_file *file = cell_fd_file(fd);
     if (!file || (file->flags & LINUX_O_PATH)) { return -EBADF; }
+    if (file->type == OPEN_URING) {
+      if (!shared || fixed || (flags & MAP_GROWSDOWN)) { return -EINVAL; }
+      if (!cell_map_add_allowed(base, end, false)) { return -ENOMEM; }
+      int64_t result = uring_map(&file->ring, base, size, off, prot_to_vmm(prot), flags);
+      if (result >= 0 && end > as->mmap_base) { as->mmap_base = end; }
+      return result;
+    }
     if (!linux_open_readable(file->flags)) { return -EACCES; }
     if (shared && (prot & PROT_WRITE) && !linux_open_writable(file->flags)) { return -EACCES; }
     if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir ||
@@ -197,6 +204,7 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   struct vma old_vma;
   if (!cell_vma_lookup_range(old_addr, old_end, &old_vma)) { return -(int64_t)EFAULT; }
 
+  if (old_vma.type == VMA_RING && new_size > old_size) { return -EINVAL; }
   if (old_vma.type == VMA_STACK && new_size > old_size && (flags & (MREMAP_MAYMOVE | MREMAP_FIXED)) == 0) {
     return -(int64_t)ENOMEM;
   }

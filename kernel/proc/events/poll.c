@@ -23,6 +23,7 @@ static bool poll_waking;
 
 int cell_file_poll_events(struct open_file *file, int events) {
   if (!file) { return CELL_POLLNVAL; }
+  if (file->type == OPEN_URING) { return uring_poll(&file->ring, events); }
   if (file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
     return cell_socket_poll_events(file, events);
   }

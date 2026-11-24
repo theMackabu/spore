@@ -10,7 +10,7 @@ constexpr size_t VMAS_PER_CHUNK = PAGE_SIZE / sizeof(struct vma);
 
 static bool compatible(const struct vma *a, const struct vma *b) {
   if (a->prot != b->prot || a->flags != b->flags || a->type != b->type || a->shared_may_write != b->shared_may_write) { return false; }
-  if (a->type != VMA_FILE) { return true; }
+  if (a->type != VMA_FILE) { return a->type != VMA_RING; }
   return a->file_node.backend == b->file_node.backend && a->file_node.ino == b->file_node.ino &&
          a->file_node.dev_id == b->file_node.dev_id && a->file_start == b->file_start &&
          a->file_offset == b->file_offset && a->file_size == b->file_size;

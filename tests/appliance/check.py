@@ -26,6 +26,9 @@ def invoke(*args, **kwargs):
 
 def contract(d, disk):
     cc = "aarch64-unknown-linux-musl-gcc"
+    ring = d / "uring"
+    invoke(cc, "-O2", "-static", "-pthread", HERE / "uring.c", "-o", ring)
+    invoke(CLI, "run", ring, timeout=15)
     lib = d / "libfixture.so"
     src = d / "library.c"
     src.write_text("int fixture(void) { return 42; }\n")

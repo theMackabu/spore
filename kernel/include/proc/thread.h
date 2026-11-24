@@ -35,6 +35,7 @@ enum wait_reason {
   WAIT_PTY,
   WAIT_FLOCK,
   WAIT_EVENTFD,
+  WAIT_URING,
   WAIT_REASON_COUNT,
 };
 
@@ -73,6 +74,7 @@ struct thread_wait {
       uint64_t epoll_events;
       int epoll_maxevents;
       uint8_t poll_kind;
+      uint32_t uring_submitted;
     };
     bool fifo_cloexec;
     struct {

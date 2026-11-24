@@ -196,9 +196,9 @@ int64_t linux_aarch64_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t
     [SYS_MEMBARRIER] = &&l_membarrier,
     [SYS_STATX] = &&l_statx,
     [SYS_RSEQ] = &&l_rseq,
-    [SYS_IO_URING_SETUP] = &&l_probe_enosys,
-    [SYS_IO_URING_ENTER] = &&l_probe_enosys,
-    [SYS_IO_URING_REGISTER] = &&l_probe_enosys,
+    [SYS_IO_URING_SETUP] = &&l_uring_setup,
+    [SYS_IO_URING_ENTER] = &&l_uring_enter,
+    [SYS_IO_URING_REGISTER] = &&l_uring_register,
     [SYS_CLONE3] = &&l_enosys,
     [SYS_CLOSE_RANGE] = &&l_close_range,
     [SYS_FACCESSAT2] = &&l_faccessat2,
@@ -573,9 +573,12 @@ l_membarrier:
 l_rseq:
   cell_note_unsupported_syscall(nr);
   return -(int64_t)ENOSYS;
-l_probe_enosys:
-  cell_note_unsupported_syscall(nr);
-  return -(int64_t)ENOSYS;
+l_uring_setup:
+  return sys_io_uring_setup(a0, a1);
+l_uring_enter:
+  return sys_io_uring_enter(f, a0, a1, a2, a3, a4, a5, cell_syscall_allowed(SYS_EPOLL_CTL));
+l_uring_register:
+  return sys_io_uring_register(a0, a1, a2, a3);
 l_enosys:
   cell_note_unsupported_syscall(nr);
   return -(int64_t)ENOSYS;

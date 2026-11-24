@@ -18,3 +18,9 @@ int64_t sys_pselect6(struct trap_frame *frame, uint64_t nfds, uint64_t readfds, 
                      uint64_t timeout_addr, uint64_t sigmask_data);
 int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
                         uint64_t timeout_ms, uint64_t sigmask, uint64_t sigsetsize);
+
+int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr);
+
+int64_t sys_io_uring_setup(uint32_t entries, uint64_t params);
+int64_t sys_io_uring_enter(struct trap_frame *frame, int fd, uint32_t submit, uint32_t minimum, uint32_t flags, uint64_t sigmask, uint64_t sigsize, bool allow_epoll_ctl);
+int64_t sys_io_uring_register(int fd, uint32_t op, uint64_t arg, uint32_t count);

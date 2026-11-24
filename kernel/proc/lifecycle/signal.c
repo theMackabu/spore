@@ -134,7 +134,9 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
         aarch64_restart_syscall(&thread->tf)) {
       cell_resume_wait(thread);
     } else {
-      cell_finish_wait(thread, -EINTR);
+      int64_t result = -EINTR;
+      if (thread->wait.reason == WAIT_URING && thread->wait.uring_submitted) { result = thread->wait.uring_submitted; }
+      cell_finish_wait(thread, result);
     }
   }
 
