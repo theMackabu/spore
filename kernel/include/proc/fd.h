@@ -88,7 +88,9 @@ struct open_file {
           int unix_peer_pid;
           uint32_t unix_peer_uid;
           uint32_t unix_peer_gid;
-          char unix_path[108];
+          bool unix_bound;
+          uint16_t unix_backlog, unix_pending_count;
+          struct open_file *unix_pending_head, *unix_pending_tail, *unix_pending_next;
         };
         struct {
           uint32_t udp_remote_ip;

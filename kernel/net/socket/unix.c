@@ -1,6 +1,5 @@
 #include "internal.h"
 
-#include "lib/kstr.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/pipe.h"
@@ -21,13 +20,11 @@ struct unix_right {
   struct open_file *file;
 };
 
-struct unix_pending_conn {
-  bool used;
-  struct open_file *listener;
-  struct open_file *server_end;
-};
+static struct open_file *listeners[32];
 
-static struct unix_pending_conn unix_pending[16];
+static struct open_file **listener_bucket(const struct vfs_node *node) {
+  return &listeners[node->ino % (sizeof(listeners) / sizeof(*listeners))];
+}
 
 static struct unix_right unix_rights[32];
 
@@ -124,28 +121,16 @@ static struct open_file *unix_file_for_fd(struct domain *domain, int fd) {
   return file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER ? file : NULL;
 }
 
-static struct open_file *unix_listener_for_path(const char *path) {
-  for (size_t d = 0, limit = cell_domain_slot_limit(); d < limit; ++d) {
-    struct domain *domain = cell_domain_slot(d);
-    if (domain == NULL || !domain->used) { continue; }
-    for (size_t fd = 0; fd < MAX_FDS; ++fd) {
-      struct open_file *file = domain->fds[fd];
-      if (file != NULL && file->type == OPEN_UNIX_LISTENER && str_eq(file->unix_path, path)) { return file; }
-    }
+static struct open_file *unix_listener_for_node(const struct vfs_node *node) {
+  for (struct open_file *file = *listener_bucket(node); file; file = file->socket_index_next) {
+    if (file->node.dev_id == node->dev_id && file->node.ino == node->ino) { return file; }
   }
   return NULL;
 }
 
-static bool unix_listener_readable(const struct open_file *listener) {
-  for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
-    if (unix_pending[i].used && unix_pending[i].listener == listener) { return true; }
-  }
-  return false;
-}
-
 int unix_poll_events(const struct open_file *file, int events) {
   if (file->type == OPEN_UNIX_LISTENER) {
-    return (events & CELL_POLLIN) && unix_listener_readable(file) ? CELL_POLLIN : 0;
+    return (events & CELL_POLLIN) && file->unix_pending_head ? CELL_POLLIN : 0;
   }
   if (!file->unix_connected) { return 0; }
   int ready = cell_pipe_id_hup(file->unix_rx_pipe) ? CELL_POLLHUP : 0;
@@ -154,46 +139,60 @@ int unix_poll_events(const struct open_file *file, int events) {
   return ready;
 }
 
-void cell_socket_release_listener(struct open_file *file) {
-  for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
-    if (unix_pending[i].used && unix_pending[i].listener == file) {
-      cell_release_open_file(unix_pending[i].server_end);
-      unix_pending[i] = (struct unix_pending_conn){0};
-    }
+static struct open_file *take_head(struct open_file *listener) {
+  struct open_file *server = listener->unix_pending_head;
+  listener->unix_pending_head = server->unix_pending_next;
+  if (!listener->unix_pending_head) { listener->unix_pending_tail = NULL; }
+  server->unix_pending_next = NULL;
+  --listener->unix_pending_count;
+  return server;
+}
+
+void cell_unix_release_file(struct open_file *file) {
+  if (file->type == OPEN_UNIX_LISTENER) {
+    socket_index_remove(listener_bucket(&file->node), file);
+    while (file->unix_pending_head) { cell_release_open_file(take_head(file)); }
   }
+  if (file->unix_connected) {
+    cell_pipe_drop_reader(file->unix_rx_pipe);
+    cell_pipe_drop_writer(file->unix_tx_pipe);
+    cell_pipe_notify();
+  }
+  if (file->unix_bound) { vfs_release_node(&file->node); }
 }
 
 int cell_fd_unix_bind(int fd, const char *path) {
   struct open_file *file = unix_file_for_fd(cell_current_domain_internal(), fd);
   if (file == NULL || file->type != OPEN_UNIX_STREAM || path == NULL || path[0] == '\0') { return -EINVAL; }
   struct vfs_node node;
+  if (file->unix_bound) { return -EINVAL; }
   if (vfs_lookup(path, &node)) { return -EADDRINUSE; }
   if (!vfs_mksock(path, 0666, &node)) { return -EINVAL; }
-  copy_cstr(file->unix_path, sizeof(file->unix_path), path);
+  if (!vfs_retain_node(&node)) { (void)vfs_remove(path); return -12; }
+  file->unix_bound = true;
   file->node = node;
   return 0;
 }
 
 int cell_fd_unix_listen(int fd, int backlog) {
-  (void)backlog;
   struct open_file *file = unix_file_for_fd(cell_current_domain_internal(), fd);
-  if (file == NULL || file->type != OPEN_UNIX_STREAM || file->unix_path[0] == '\0') { return -EINVAL; }
-  file->type = OPEN_UNIX_LISTENER;
+  if (!file || !file->unix_bound || file->unix_connected) { return -EINVAL; }
+  if (file->type != OPEN_UNIX_LISTENER) {
+    file->type = OPEN_UNIX_LISTENER;
+    socket_index_insert(listener_bucket(&file->node), file);
+  }
+  file->unix_backlog = backlog <= 0 ? 1 : (uint16_t)(backlog > MAX_OPEN_FILES ? MAX_OPEN_FILES : backlog);
   return 0;
 }
 
 int take_pending_unix(struct domain *domain, struct open_file *listener, int flags) {
+  if (!listener->unix_pending_head) { return -EAGAIN; }
   int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
-  for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
-    if (!unix_pending[i].used || unix_pending[i].listener != listener) { continue; }
-    domain->fds[fd] = unix_pending[i].server_end;
-    domain->fd_flags[fd] = 0;
-    socket_apply_accept_flags(domain, fd, flags);
-    unix_pending[i] = (struct unix_pending_conn){0};
-    return fd;
-  }
-  return -EAGAIN;
+  if (fd < 0) { return -EMFILE; }
+  domain->fds[fd] = take_head(listener);
+  domain->fd_flags[fd] = 0;
+  socket_apply_accept_flags(domain, fd, flags);
+  return fd;
 }
 
 int cell_fd_unix_accept(int fd, int flags, struct trap_frame *frame) {
@@ -210,8 +209,12 @@ int cell_fd_unix_connect(int fd, const char *path) {
   struct domain *domain = cell_current_domain_internal();
   struct open_file *client = unix_file_for_fd(domain, fd);
   if (client == NULL || client->type != OPEN_UNIX_STREAM || path == NULL) { return -9; }
-  struct open_file *listener = unix_listener_for_path(path);
+  if (client->unix_connected) { return -106; }
+  struct vfs_node node;
+  if (!vfs_lookup(path, &node)) { return -2; }
+  struct open_file *listener = unix_listener_for_node(&node);
   if (listener == NULL) { return -ECONNREFUSED; }
+  if (listener->unix_pending_count >= listener->unix_backlog) { return -EAGAIN; }
   int c2s = cell_alloc_pipe_obj(0);
   int s2c = cell_alloc_pipe_obj(0);
   if (c2s < 0 || s2c < 0) {
@@ -235,7 +238,6 @@ int cell_fd_unix_connect(int fd, const char *path) {
   client->unix_peer_pid = listener->unix_owner_pid;
   client->unix_peer_uid = listener->unix_owner_uid;
   client->unix_peer_gid = listener->unix_owner_gid;
-  copy_cstr(client->unix_path, sizeof(client->unix_path), path);
   server->type = OPEN_UNIX_STREAM;
   server->unix_connected = true;
   server->unix_rx_pipe = (uint8_t)c2s;
@@ -247,18 +249,12 @@ int cell_fd_unix_connect(int fd, const char *path) {
   server->unix_peer_uid = domain->euid;
   server->unix_peer_gid = domain->egid;
   server->node = listener->node;
-  copy_cstr(server->unix_path, sizeof(server->unix_path), path);
-  for (size_t i = 0; i < sizeof(unix_pending) / sizeof(unix_pending[0]); ++i) {
-    if (!unix_pending[i].used) {
-      unix_pending[i] = (struct unix_pending_conn){.used = true, .listener = listener, .server_end = server};
-      cell_socket_wake_file(listener);
-      return 0;
-    }
-  }
-  cell_release_open_file(server);
-  cell_pipe_free((uint8_t)c2s);
-  cell_pipe_free((uint8_t)s2c);
-  return -EAGAIN;
+  if (listener->unix_pending_tail) { listener->unix_pending_tail->unix_pending_next = server; }
+  else { listener->unix_pending_head = server; }
+  listener->unix_pending_tail = server;
+  ++listener->unix_pending_count;
+  cell_socket_wake_file(listener);
+  return 0;
 }
 
 int cell_fd_unix_queue_right_range(int fd, int passed_fd, uint64_t start, uint64_t end) {

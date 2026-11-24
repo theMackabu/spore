@@ -23,7 +23,7 @@ struct cell_peer_cred {
 
 int cell_socket_poll_events(const struct open_file *file, int events);
 int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
-void cell_socket_release_listener(struct open_file *file);
+void cell_unix_release_file(struct open_file *file);
 void cell_socket_release_file(struct open_file *file);
 void cell_socket_wake_file(struct open_file *file);
 void cell_socket_timer_tick(uint64_t now_ticks);

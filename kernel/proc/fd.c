@@ -80,15 +80,8 @@ void cell_release_open_file(struct open_file *file) {
     cell_flock_release(file);
     if (cell_pipe_release_file(file)) {
       cell_pipe_notify();
-    } else if (file->type == OPEN_UNIX_STREAM) {
-      if (file->unix_connected) {
-        cell_pipe_drop_reader(file->unix_rx_pipe);
-        cell_pipe_drop_writer(file->unix_tx_pipe);
-        cell_pipe_notify();
-        cell_socket_wake_file(file);
-      }
-    } else if (file->type == OPEN_UNIX_LISTENER) {
-      cell_socket_release_listener(file);
+    } else if (file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
+      cell_unix_release_file(file);
     } else if (file->type == OPEN_SOCKET) {
       cell_socket_release_file(file);
     } else if (file->type == OPEN_INOTIFY && file->inotify_pa != 0) {

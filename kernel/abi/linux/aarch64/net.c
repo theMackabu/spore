@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 enum {
+  AT_FDCWD = -100,
   AF_UNSPEC = 0,
   AF_UNIX = 1,
   AF_INET = 2,
@@ -107,12 +108,16 @@ static bool copy_sockaddr_family(uint64_t addr, uint64_t len, uint16_t *family) 
   return vmm_copy_from_user(syscall_active_as(), family, addr, sizeof(*family));
 }
 
-static bool copy_sockaddr_un(uint64_t addr, uint64_t len, struct sockaddr_un64 *out) {
-  if (addr == 0 || len < 3 || len > sizeof(*out) || !syscall_user_readable(addr, len)) { return false; }
-  kmemset(out, 0, sizeof(*out));
-  if (!vmm_copy_from_user(syscall_active_as(), out, addr, (size_t)len) || out->sun_family != AF_UNIX) { return false; }
-  out->sun_path[sizeof(out->sun_path) - 1] = '\0';
-  return out->sun_path[0] == '/';
+static int unix_socket_path(uint64_t addr, uint64_t len, char path[CELL_PATH_MAX]) {
+  struct sockaddr_un64 sa = {0};
+  if (len < 3 || len > sizeof(sa)) { return -EINVAL; }
+  if (!addr || !syscall_user_readable(addr, len) ||
+      !vmm_copy_from_user(syscall_active_as(), &sa, addr, len)) { return -EFAULT; }
+  if (sa.sun_family != AF_UNIX || !sa.sun_path[0]) { return -EINVAL; }
+  char name[sizeof(sa.sun_path) + 1];
+  kmemcpy(name, sa.sun_path, sizeof(sa.sun_path));
+  name[sizeof(sa.sun_path)] = 0;
+  return (int)syscall_resolve_path_at(AT_FDCWD, name, path, CELL_PATH_MAX);
 }
 
 static int finish_socket_fd(int fd, uint64_t type) {
@@ -161,10 +166,9 @@ int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
   uint16_t family = 0;
   if (!copy_sockaddr_family(addr, len, &family)) { return -(int64_t)EINVAL; }
   if (family == AF_UNIX) {
-    struct sockaddr_un64 sa_un;
-    if (!copy_sockaddr_un(addr, len, &sa_un)) { return -(int64_t)EINVAL; }
-    int rc = cell_fd_unix_bind((int)fd, sa_un.sun_path);
-    return rc < 0 ? (int64_t)rc : 0;
+    char path[CELL_PATH_MAX];
+    int rc = unix_socket_path(addr, len, path);
+    return rc ? rc : cell_fd_unix_bind((int)fd, path);
   }
   struct sockaddr_in64 sa;
   if (!copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
@@ -181,10 +185,9 @@ int64_t sys_connect(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64
     return rc < 0 ? (int64_t)rc : 0;
   }
   if (family == AF_UNIX) {
-    struct sockaddr_un64 sa_un;
-    if (!copy_sockaddr_un(addr, len, &sa_un)) { return -(int64_t)EINVAL; }
-    int rc = cell_fd_unix_connect((int)fd, sa_un.sun_path);
-    return rc < 0 ? (int64_t)rc : 0;
+    char path[CELL_PATH_MAX];
+    int rc = unix_socket_path(addr, len, path);
+    return rc ? rc : cell_fd_unix_connect((int)fd, path);
   }
   struct sockaddr_in64 sa;
   if (!copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
