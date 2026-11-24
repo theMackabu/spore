@@ -144,10 +144,8 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
 }
 
 int64_t sys_munmap(uint64_t addr, uint64_t len) {
-  if (len == 0) { return -(int64_t)EINVAL; }
-  uint64_t start = align_down(addr, PAGE_SIZE);
-  uint64_t end = align_up(addr + len, PAGE_SIZE);
-  return cell_remove_vma(start, end) ? 0 : -(int64_t)EINVAL;
+  if (!len || (addr & (PAGE_SIZE - 1)) || addr >= USER_VA_LIMIT || len > USER_VA_LIMIT - addr) { return -EINVAL; }
+  return cell_remove_vma(addr, align_up(addr + len, PAGE_SIZE)) ? 0 : -ENOMEM;
 }
 
 int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
@@ -158,14 +156,13 @@ int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
 }
 
 int64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
-  if ((addr & (PAGE_SIZE - 1)) != 0 || len == 0 || (flags & ~(uint64_t)(MS_ASYNC | MS_INVALIDATE | MS_SYNC)) != 0 ||
+  if ((addr & (PAGE_SIZE - 1)) != 0 || (flags & ~(uint64_t)(MS_ASYNC | MS_INVALIDATE | MS_SYNC)) != 0 ||
       ((flags & MS_ASYNC) != 0 && (flags & MS_SYNC) != 0)) {
     return -(int64_t)EINVAL;
   }
-  uint64_t end;
-  if (!checked_add(addr, len, &end)) { return -(int64_t)EINVAL; }
-  end = align_up(end, PAGE_SIZE);
-  return cell_sync_shared_vmas(addr, end) ? 0 : -(int64_t)EINVAL;
+  if (!len) { return 0; }
+  if (addr >= USER_VA_LIMIT || len > USER_VA_LIMIT - addr) { return -ENOMEM; }
+  return cell_sync_shared_vmas(addr, align_up(addr + len, PAGE_SIZE), (flags & MS_SYNC) != 0);
 }
 
 int64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {

@@ -901,6 +901,15 @@ static int64_t write_file(struct ramfs *fs, int index, uint64_t off, const void 
     uint64_t within = pos % RAMFS_PAGE_SIZE;
     uint64_t chunk = RAMFS_PAGE_SIZE - within;
     if (chunk > len - done) { chunk = len - done; }
+    if (writeback) {
+      static const uint8_t zeros[RAMFS_PAGE_SIZE];
+      int slot = find_backing_page(fs, index, page_no);
+      const uint8_t *backing = slot < 0 ? zeros : backing_pages[slot].data;
+      if (kmemcmp(backing + within, in + done, chunk) == 0) {
+        done += chunk;
+        continue;
+      }
+    }
     int slot = ensure_backing_page(fs, index, page_no);
     if (slot < 0) { return -1; }
     kmemcpy(backing_pages[slot].data + within, in + done, (size_t)chunk);

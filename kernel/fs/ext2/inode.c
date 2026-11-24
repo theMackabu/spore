@@ -187,6 +187,25 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
   return true;
 }
 
+bool ext2_file_matches(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, const void *src, size_t len) {
+  static const uint8_t zeros[4096];
+  const uint8_t *data = src;
+  if (off > node->size || len > node->size - off) { return false; }
+  while (len) {
+    size_t within = off % fs->block_size;
+    size_t chunk = fs->block_size - within;
+    if (chunk > len) { chunk = len; }
+    uint32_t block;
+    if (!ext2_file_block(fs, node, off / fs->block_size, &block)) { return false; }
+    const uint8_t *bytes = block ? ext2_cached_block(fs, block) : zeros;
+    if (!bytes || kmemcmp(bytes + within, data, chunk)) { return false; }
+    data += chunk;
+    off += chunk;
+    len -= chunk;
+  }
+  return true;
+}
+
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len) {
   const uint8_t *in = src;
   uint64_t done = 0;

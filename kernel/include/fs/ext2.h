@@ -81,6 +81,7 @@ bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out);
 bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);
 bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, void *dst, uint32_t len,
                     uint32_t *read_out);
+bool ext2_file_matches(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, const void *src, size_t len);
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len);
 bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size);
 bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out);

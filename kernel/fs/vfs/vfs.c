@@ -294,6 +294,7 @@ static int64_t write_node(const struct vfs_node *node, uint64_t off, const void 
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;
     if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &ext)) { return -5; }
+    if (writeback && ext2_file_matches(vfs_root_ext2, &ext, off, src, len)) { return (int64_t)len; }
     written = ext2_write_file(vfs_root_ext2, &ext, off, src, len);
   } else if (node->backend == VFS_RAMFS) {
     written = writeback ? ramfs_writeback(node->ramfs.fs, node->ramfs.index, off, src, len)

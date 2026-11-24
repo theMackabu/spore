@@ -381,10 +381,20 @@ bool cell_remove_vma(uint64_t start, uint64_t end) {
   return true;
 }
 
-bool cell_sync_shared_vmas(uint64_t start, uint64_t end) {
+int cell_sync_shared_vmas(uint64_t start, uint64_t end, bool durable) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || domain->mm == NULL || start >= end) { return false; }
-  return flush_shared_file_vmas(domain->mm, start, end);
+  if (!domain || !domain->mm) { return -ENOMEM; }
+  const struct vma_list *vmas = &domain->mm->vmas;
+  uint64_t covered = start;
+  bool disk = false;
+  for (size_t i = vma_first_ending_after(vmas, start); covered < end; ++i) {
+    const struct vma *vma = vma_at(vmas, i);
+    if (!vma || vma->start > covered) { return -ENOMEM; }
+    if (!flush_shared_file_vma_range(&domain->mm->as, vma, start, end)) { return -EIO; }
+    if (vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && vma->file_node.backend == VFS_EXT2) { disk = true; }
+    covered = vma->end;
+  }
+  return durable && disk && !vfs_sync() ? -EIO : 0;
 }
 
 int cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {
