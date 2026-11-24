@@ -1,6 +1,8 @@
 # Spore
 
-Spore is a small toy C23 operating system (kernel + userland) for AArch64, built to run in QEMU.
+Spore is a small C23 and Rust operating system for AArch64, built to run in QEMU.
+
+The Nix development shell includes Rust 1.100.0, the bare-metal AArch64 soft-float target for the kernel, and the AArch64 Linux musl target for guest programs.
 
 ```sh
 make

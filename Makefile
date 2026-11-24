@@ -2,6 +2,7 @@ BUILD_DIR ?= build
 MESON ?= meson
 NINJA ?= ninja
 CLANG_FORMAT ?= clang-format
+RUSTFMT ?= rustfmt
 QEMU_RUNNER ?= $(BUILD_DIR)/tools/spore-run
 QEMU ?= $(or $(wildcard /opt/homebrew/bin/qemu-system-aarch64),qemu-system-aarch64)
 RUN_QEMU = $(QEMU_RUNNER) --qemu "$(QEMU)"
@@ -100,6 +101,7 @@ kill:
 
 format:
 	find kernel tests tools/src userland \( -path userland/third_party -o -path userland/third_party/\* \) -prune -o -type f \( -name '*.c' -o -name '*.h' -o -name '*.cc' -o -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 $(CLANG_FORMAT) -i
+	git ls-files -z -- 'kernel/*.rs' 'tools/*.rs' 'userland/*.rs' | xargs -0 $(RUSTFMT) --edition 2024
 
 fetch:
 	onefetch -e userland/third_party

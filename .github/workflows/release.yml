@@ -104,6 +104,12 @@ jobs:
             e2fsprogs file gettext git lld-21 llvm-21 make mtools ninja-build perl pkg-config \
             python3-jsonschema python3-venv qemu-system-arm xz-utils zip zstd
 
+      - name: Install Rust for the host, kernel and guest
+        if: steps.release_gate.outputs.should_release == 'true'
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --target aarch64-unknown-none-softfloat,aarch64-unknown-linux-musl
+          echo "RUSTUP_TOOLCHAIN=1.100.0" >> "$GITHUB_ENV"
+
       - name: Check out submodules
         if: steps.release_gate.outputs.should_release == 'true'
         shell: bash
@@ -212,10 +218,12 @@ jobs:
             printf 'musl-primary=%s\n' "$MUSL_TOOLCHAIN_PRIMARY_URL"
             printf 'musl-fallback=%s\n' "$MUSL_TOOLCHAIN_FALLBACK_URL"
             aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
+            rustc -Vv
             git submodule status --recursive
             find userland -type f \( \
               -name meson.build -o \
               -name build.sh -o \
+              -name '*.rs' -o \
               -name '*.patch' -o \
               -name '*.src' -o \
               -name '*.ini' \
