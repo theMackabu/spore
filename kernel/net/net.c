@@ -1,4 +1,5 @@
 #include "net/net.h"
+#include "net/rust.h"
 
 #include "proc/accounting.h"
 #include "lib/kprintf.h"
@@ -611,7 +612,7 @@ static void handle_ipv4(const uint8_t *ip, size_t len) {
 }
 
 void net_receive_ethernet(const uint8_t *frame, size_t len) {
-  if (len < ETH_HEADER_LEN || !mac_is_for_us(frame)) { return; }
+  if (len < ETH_HEADER_LEN || !mac_is_for_us(frame) || !spore_net_validate_ethernet(frame, len)) { return; }
   uint16_t type = load_be16(frame + 12);
   if (type == ETH_TYPE_ARP) {
     handle_arp(frame + ETH_HEADER_LEN, len - ETH_HEADER_LEN);
