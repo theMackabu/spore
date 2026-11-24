@@ -59,7 +59,7 @@ fn build_port(arch: &str, flags: &[&str], out: &Path) {
         .files(files(&Path::new("arch").join(arch), &["c", "S"]))
         .out_dir(out.join(arch));
     if arch == "riscv64" {
-        compiler.file("drivers/virtio_console.c");
+        compiler.files(["drivers/virtio_console.c", "drivers/virtio_mmio.c"]);
     }
     let objects = compiler.compile_intermediates();
     let rust = out.join(arch).join("libkernel.a");
