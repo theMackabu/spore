@@ -17,7 +17,7 @@ struct elf_map_context {
 static bool map_segment(void *ctx, const struct spore_elf_program *program, uint64_t segment, uint64_t start,
                         uint64_t end) {
   struct elf_map_context *map = ctx;
-  return map != NULL && program != NULL &&
+  return end <= USER_VA_LIMIT &&
          vma_insert_file(map->vmas, start, end, phdr_to_vmm_flags(program->flags), 0, map->reader->node, segment,
                          program->offset, program->filesz);
 }

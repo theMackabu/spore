@@ -51,9 +51,11 @@ impl Header {
     fn read(r: &Reader) -> Option<Self> {
         let b = r.bytes::<EHDR>(0)?;
         let kind = le16(&b, 16);
-        if &b[..6] != b"\x7fELF\x02\x01"
+        if &b[..7] != b"\x7fELF\x02\x01\x01"
             || !matches!(kind, ET_EXEC | ET_DYN)
             || le16(&b, 18) != EM_AARCH64
+            || le32(&b, 20) != 1
+            || usize::from(le16(&b, 52)) != EHDR
             || usize::from(le16(&b, 54)) != PHDR
         {
             return None;
@@ -152,9 +154,13 @@ fn load(
         let file_end = p.offset.checked_add(p.filesz)?;
         if p.memsz < p.filesz
             || file_end > reader.size
-            || (p.align > PAGE && p.vaddr % p.align != p.offset % p.align)
+            || (p.align > 1
+                && (!p.align.is_power_of_two() || (p.vaddr ^ p.offset) & (p.align - 1) != 0))
         {
             return None;
+        }
+        if p.memsz == 0 {
+            return Some(());
         }
         let addr = base.checked_add(p.vaddr)?;
         let end = addr.checked_add(p.memsz)?.checked_add(PAGE - 1)? & !(PAGE - 1);

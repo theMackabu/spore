@@ -75,6 +75,7 @@ static void make_test_elf(uint8_t *image, size_t image_size) {
   memcpy(eh->e_ident, "\177ELF", 4);
   eh->e_ident[4] = 2;
   eh->e_ident[5] = 1;
+  eh->e_ident[6] = 1;
   eh->e_type = ET_EXEC;
   eh->e_machine = EM_AARCH64;
   eh->e_version = 1;
@@ -158,6 +159,19 @@ int main(void) {
   assert(!elf_map_image(&vmas, &reader, 0, &loaded, path, 4));
   vma_list_destroy(&vmas);
   vma_list_init(&vmas);
+  ph[3] = (struct elf64_phdr){.p_type = PT_LOAD, .p_vaddr = 0x600000, .p_align = PAGE_SIZE};
+  eh->e_phnum = 4;
+  assert(elf_map_image(&vmas, &reader, 0, &loaded, path, sizeof(path)));
+  assert(loaded.brk_base == 0x402000 && vma_count(&vmas) == 2);
+  vma_list_destroy(&vmas);
+  ph[1].p_align = PAGE_SIZE;
+  assert(!elf_map_image(&vmas, &reader, 0, &loaded, path, sizeof(path)));
+  vma_list_destroy(&vmas);
+  ph[1].p_align = 1;
+  ph[1].p_vaddr = USER_VA_LIMIT;
+  assert(!elf_map_image(&vmas, &reader, 0, &loaded, path, sizeof(path)));
+  vma_list_destroy(&vmas);
+  ph[1].p_vaddr = eh->e_entry;
   image[18] = 0;
   assert(!elf_map_image(&vmas, &reader, 0, &loaded, path, sizeof(path)));
   vma_list_destroy(&vmas);
