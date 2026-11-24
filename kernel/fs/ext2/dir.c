@@ -81,12 +81,12 @@ static int read_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uin
     size_t available = fs->block_size - within;
     if (available > dir->size - *cursor) { available = dir->size - *cursor; }
     struct spore_ext2_dir_next next;
-    if (!spore_ext2_next_visible_dirent(block + within, available, fs->ext2plus && dir->ino == EXT2_ROOT_INO, &next) ||
+    if (spore_ext2_next_visible_dirent(block + within, available, fs->ext2plus && dir->ino == EXT2_ROOT_INO, &next) < 0 ||
         next.consumed == 0) { return -EXT2_EIO; }
     *cursor += next.consumed;
     if (!next.found) { continue; }
     if (out != NULL) {
-      kmemcpy(out->name, next.name, next.name_len);
+      kmemcpy(out->name, block + within + next.name_offset, next.name_len);
       out->name[next.name_len] = '\0';
       out->ino = next.ino;
       out->type = next.type;
@@ -371,7 +371,9 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
     uint32_t disk_block = 0;
     if (!ext2_file_block(fs, dir, bi, &disk_block) || disk_block == 0 || !ext2_read_block(fs, disk_block, block)) { continue; }
     struct spore_ext2_dir_slot slot;
-    if (spore_ext2_find_dir_slot(block, fs->block_size, need, &slot)) {
+    int slot_result = spore_ext2_find_dir_slot(block, fs->block_size, need, &slot);
+    if (slot_result < 0) { return false; }
+    if (slot_result > 0) {
       uint32_t off = slot.offset;
       uint16_t rec_len = slot.rec_len;
       uint16_t used = slot.used;
@@ -414,7 +416,9 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
     uint32_t disk_block = 0;
     if (!ext2_file_block(fs, dir, bi, &disk_block) || disk_block == 0 || !ext2_read_block(fs, disk_block, block)) { continue; }
     struct spore_ext2_dir_match match;
-    if (spore_ext2_find_dir_name(block, fs->block_size, (const uint8_t *)name, kstrlen(name), &match)) {
+    int match_result = spore_ext2_find_dir_name(block, fs->block_size, (const uint8_t *)name, kstrlen(name), &match);
+    if (match_result < 0) { return false; }
+    if (match_result > 0) {
         uint32_t off = match.offset;
         if (ino_out != NULL) { *ino_out = match.ino; }
         if (match.prev_offset != UINT32_MAX) {
