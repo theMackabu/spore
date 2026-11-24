@@ -105,7 +105,7 @@ struct vfs_stats {
   uint64_t page_cache_buckets;
 };
 
-void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset);
+void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2);
 bool vfs_lookup(const char *path, struct vfs_node *out);
 bool vfs_lstat(const char *path, struct vfs_node *out);
 bool vfs_mkdir(const char *path, uint32_t mode);
@@ -137,7 +137,6 @@ void vfs_note_shared_writable_mapping(const struct vfs_node *node, bool add);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
 bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out);
-void vfs_page_cache_invalidate(const struct vfs_node *node);
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 int vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);

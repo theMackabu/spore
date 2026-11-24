@@ -27,16 +27,20 @@ static int shared_mmap_regression(void) {
     p[1] = 'Z';
     p[2] = 'Y';
     lseek(fd, 0, SEEK_SET);
-    ok = msync(map, 4096, MS_SYNC) == 0 && read(fd, buf, 6) == 6 && strcmp(buf, "aZYdef") == 0;
+    struct stat st;
+    ok = read(fd, buf, 6) == 6 && strcmp(buf, "aZYdef") == 0;
+    ok = ok && pwrite(fd, "J", 1, 1) == 1 && p[1] == 'J';
+    ok = ok && msync(map, 4096, MS_SYNC) == 0 && fstat(fd, &st) == 0 && st.st_size == 6;
+    ok = ok && ftruncate(fd, 3) == 0 && p[3] == 0 && msync(map, 4096, MS_SYNC) == 0;
     ok = ok && munmap(map, 4096) == 0;
   }
   if (fd >= 0) {
     memset(buf, 0, sizeof(buf));
     lseek(fd, 0, SEEK_SET);
-    ok = ok && read(fd, buf, 6) == 6;
+    ok = ok && read(fd, buf, 6) == 3;
     close(fd);
   }
-  ok = ok && strcmp(buf, "aZYdef") == 0;
+  ok = ok && strcmp(buf, "aJY") == 0;
   printf("[spore] shared file mmap writeback: %s value=%s\n", ok ? "PASS" : "FAIL", buf);
   return ok;
 }

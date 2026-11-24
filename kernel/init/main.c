@@ -115,6 +115,6 @@ void kernel_main(void) {
   cell_system_init(boot->hhdm_offset);
 
   ramfs_init(&boot_ramfs, boot->modules, boot->module_count, boot->hhdm_offset);
-  vfs_init(&boot_ramfs, root, boot->hhdm_offset);
+  vfs_init(&boot_ramfs, root);
   start_init(boot->hhdm_offset);
 }

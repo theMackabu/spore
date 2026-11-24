@@ -8,18 +8,16 @@
 
 struct ramfs *vfs_root_ramfs;
 struct ext2_fs *vfs_root_ext2;
-uint64_t vfs_hhdm_offset;
 struct vfs_stats vfs_stat_counters;
 
 static void ext2_inode_freed(uint32_t ino) {
   struct ext2_node ext = {.ino = ino};
   struct vfs_node node;
   vfs_from_ext2(&ext, &node);
-  vfs_page_cache_invalidate(&node);
+  vfs_page_cache_truncate(&node, 0);
 }
 
-void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2, uint64_t hhdm_offset) {
-  vfs_hhdm_offset = hhdm_offset;
+void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2) {
   vfs_root_ramfs = ramfs;
   vfs_root_ext2 = ext2;
   if (ext2) { ext2->inode_freed = ext2_inode_freed; }
@@ -135,7 +133,6 @@ bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
 bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
   vfs_update_time_sources();
   if (vfs_truncate_sealed(node, size)) { return false; }
-  vfs_page_cache_invalidate(node);
   bool ok = false;
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;
@@ -143,7 +140,10 @@ bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
   } else if (node->backend == VFS_RAMFS) {
     ok = ramfs_truncate(node->ramfs.fs, node->ramfs.index, size);
   }
-  if (ok) { vfs_lookup_cache_clear(); }
+  if (ok) {
+    vfs_page_cache_truncate(node, size);
+    vfs_lookup_cache_clear();
+  }
   return ok;
 }
 
@@ -296,7 +296,6 @@ uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
   vfs_update_time_sources();
   if (vfs_write_sealed(node)) { return -1; }
-  vfs_page_cache_invalidate_range(node, off, len);
   int64_t written = -28;
   if (node->backend == VFS_EXT2) {
     struct ext2_node ext;
@@ -305,7 +304,10 @@ int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, ui
   } else if (node->backend == VFS_RAMFS) {
     written = ramfs_write(node->ramfs.fs, node->ramfs.index, off, src, len);
   }
-  if (written >= 0) { vfs_lookup_cache_clear(); }
+  if (written > 0) {
+    vfs_page_cache_write(node, off, src, (uint64_t)written);
+    vfs_lookup_cache_clear();
+  }
   return written;
 }
 

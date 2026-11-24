@@ -2,70 +2,25 @@
 
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "mm/pool.h"
 
-#include <stddef.h>
-#include <stdint.h>
-
-enum {
-  VFS_PAGE_SIZE = 4096,
-  VFS_PAGE_CACHE_MIN_ENTRIES = 2048,
-  VFS_PAGE_CACHE_MAX_ENTRIES = 32768,
-  VFS_PAGE_CACHE_MIN_BUCKETS = 512,
-  VFS_PAGE_CACHE_MAX_BUCKETS = 4096,
-  VFS_PAGE_CACHE_NONE = UINT32_MAX,
-  VFS_READAHEAD_PAGES = 2,
-};
+enum { CACHE_ENTRIES = 32768, PAGE_BUCKETS = 4096, FILE_BUCKETS = 256, VFS_READAHEAD_PAGES = 2 };
 
 struct vfs_page_cache_entry {
-  bool valid;
+  struct vfs_page_cache_entry *hash_next;
+  struct vfs_page_cache_entry *file_next;
+  struct vfs_page_cache_entry **file_link;
+  struct vfs_page_cache_entry *older, *newer;
+  uint64_t ino, dev_id, off, pa;
   enum vfs_backend backend;
-  uint64_t ino;
-  uint64_t dev_id;
-  uint64_t off;
-  uint64_t pa;
-  uint32_t hash_next;
 };
 
-static struct vfs_page_cache_entry *page_cache;
-static uint32_t *page_cache_buckets;
-static size_t page_cache_capacity;
-static size_t page_cache_bucket_count;
-static size_t page_cache_entries;
-static uint32_t page_cache_evict_hand;
-
-static void free_kernel_table(void *ptr, size_t count, size_t elem_size) {
-  if (ptr == NULL) { return; }
-  uint64_t bytes = count * elem_size;
-  uint64_t pages = (bytes + VFS_PAGE_SIZE - 1) / VFS_PAGE_SIZE;
-  uint64_t pa = (uint64_t)(uintptr_t)ptr - vfs_hhdm_offset;
-  for (uint64_t i = 0; i < pages; ++i) {
-    pmm_free_page(pa + i * VFS_PAGE_SIZE);
-  }
-}
-
-static size_t page_cache_bucket_count_for(size_t entries) {
-  if (entries >= VFS_PAGE_CACHE_MAX_ENTRIES) { return VFS_PAGE_CACHE_MAX_BUCKETS; }
-  return VFS_PAGE_CACHE_MIN_BUCKETS;
-}
+static struct object_pool entries;
+static struct vfs_page_cache_entry *pages[PAGE_BUCKETS], *files[FILE_BUCKETS];
+static struct vfs_page_cache_entry *oldest, *newest;
 
 void vfs_page_cache_configure(void) {
-  if (page_cache != NULL && page_cache_buckets != NULL) { return; }
-  for (size_t entries = VFS_PAGE_CACHE_MAX_ENTRIES; entries >= VFS_PAGE_CACHE_MIN_ENTRIES; entries >>= 1) {
-    size_t buckets = page_cache_bucket_count_for(entries);
-    struct vfs_page_cache_entry *entries_table = pmm_alloc_table(entries, sizeof(*entries_table));
-    if (entries_table == NULL) { continue; }
-    uint32_t *bucket_table = pmm_alloc_table(buckets, sizeof(*bucket_table));
-    if (bucket_table == NULL) {
-      free_kernel_table(entries_table, entries, sizeof(*entries_table));
-      continue;
-    }
-    page_cache = entries_table;
-    page_cache_buckets = bucket_table;
-    page_cache_capacity = entries;
-    page_cache_bucket_count = buckets;
-    page_cache_entries = 0;
-    return;
-  }
+  if (!entries.limit) { (void)pool_init(&entries, sizeof(struct vfs_page_cache_entry), CACHE_ENTRIES); }
 }
 
 bool vfs_node_cacheable(const struct vfs_node *node) {
@@ -73,155 +28,98 @@ bool vfs_node_cacheable(const struct vfs_node *node) {
          (node->backend == VFS_RAMFS || node->backend == VFS_EXT2);
 }
 
-static uint32_t page_cache_hash(enum vfs_backend backend, uint64_t ino, uint64_t dev_id, uint64_t off) {
-  uint64_t h = ((uint64_t)backend * 0x9e3779b185ebca87ull) ^ ino ^ (dev_id << 17) ^ (off >> 12);
-  h ^= h >> 33;
-  h *= 0xff51afd7ed558ccdull;
-  h ^= h >> 33;
-  return (uint32_t)(h & (page_cache_bucket_count - 1));
+static size_t file_bucket(uint64_t ino, uint64_t dev) {
+  return (ino ^ (ino >> 8) ^ dev) % FILE_BUCKETS;
 }
 
-static void page_cache_init_buckets_once(void) {
-  static bool initialized;
-  if (initialized) { return; }
-  if (page_cache == NULL || page_cache_buckets == NULL || page_cache_capacity == 0 || page_cache_bucket_count == 0) {
-    return;
-  }
-  for (size_t i = 0; i < page_cache_bucket_count; ++i) {
-    page_cache_buckets[i] = VFS_PAGE_CACHE_NONE;
-  }
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    page_cache[i].hash_next = VFS_PAGE_CACHE_NONE;
-  }
-  initialized = true;
+static size_t page_bucket(uint64_t ino, uint64_t dev, uint64_t off) {
+  uint64_t h = ino * UINT64_C(0x9e3779b185ebca87) + dev + off / PAGE_SIZE;
+  return (h ^ (h >> 32)) % PAGE_BUCKETS;
 }
 
-static bool cache_key_eq(const struct vfs_page_cache_entry *entry, const struct vfs_node *node, uint64_t off) {
-  return entry->valid && entry->backend == node->backend && entry->ino == node->ino && entry->dev_id == node->dev_id &&
-         entry->off == off;
+static bool same_file(const struct vfs_page_cache_entry *entry, const struct vfs_node *node) {
+  return entry->ino == node->ino && entry->dev_id == node->dev_id && entry->backend == node->backend;
 }
 
 static struct vfs_page_cache_entry *page_cache_find(const struct vfs_node *node, uint64_t off) {
-  if (page_cache == NULL || page_cache_buckets == NULL || page_cache_bucket_count == 0) { return NULL; }
-  page_cache_init_buckets_once();
-  uint32_t bucket = page_cache_hash(node->backend, node->ino, node->dev_id, off);
-  for (uint32_t index = page_cache_buckets[bucket]; index != VFS_PAGE_CACHE_NONE; index = page_cache[index].hash_next) {
-    if (cache_key_eq(&page_cache[index], node, off)) {
-      return &page_cache[index];
-    }
+  for (struct vfs_page_cache_entry *e = pages[page_bucket(node->ino, node->dev_id, off)]; e; e = e->hash_next) {
+    if (e->off == off && same_file(e, node)) { return e; }
   }
   return NULL;
 }
 
-static void page_cache_unlink(size_t index) {
-  struct vfs_page_cache_entry *entry = &page_cache[index];
-  if (!entry->valid) { return; }
-  uint32_t bucket = page_cache_hash(entry->backend, entry->ino, entry->dev_id, entry->off);
-  uint32_t *slot = &page_cache_buckets[bucket];
-  while (*slot != VFS_PAGE_CACHE_NONE) {
-    if (*slot == index) {
-      *slot = page_cache[*slot].hash_next;
-      break;
-    }
-    slot = &page_cache[*slot].hash_next;
-  }
-  entry->hash_next = VFS_PAGE_CACHE_NONE;
+static void link_entry(struct vfs_page_cache_entry *entry) {
+  size_t bucket = page_bucket(entry->ino, entry->dev_id, entry->off);
+  entry->hash_next = pages[bucket];
+  pages[bucket] = entry;
+  entry->file_link = &files[file_bucket(entry->ino, entry->dev_id)];
+  entry->file_next = *entry->file_link;
+  if (entry->file_next) { entry->file_next->file_link = &entry->file_next; }
+  *entry->file_link = entry;
+  entry->older = newest;
+  if (newest) { newest->newer = entry; }
+  else { oldest = entry; }
+  newest = entry;
 }
 
-static void page_cache_clear(size_t index) {
-  bool valid = page_cache[index].valid;
-  page_cache_unlink(index);
-  if (page_cache[index].pa != 0) { pmm_free_page(page_cache[index].pa); }
-  kmemset(&page_cache[index], 0, sizeof(page_cache[index]));
-  page_cache[index].hash_next = VFS_PAGE_CACHE_NONE;
-  if (valid) { --page_cache_entries; }
+static void clear_entry(struct vfs_page_cache_entry *entry) {
+  struct vfs_page_cache_entry **slot = &pages[page_bucket(entry->ino, entry->dev_id, entry->off)];
+  while (*slot != entry) { slot = &(*slot)->hash_next; }
+  *slot = entry->hash_next;
+  *entry->file_link = entry->file_next;
+  if (entry->file_next) { entry->file_next->file_link = entry->file_link; }
+  if (entry->older) { entry->older->newer = entry->newer; }
+  else { oldest = entry->newer; }
+  if (entry->newer) { entry->newer->older = entry->older; }
+  else { newest = entry->older; }
+  pmm_free_page(entry->pa);
+  pool_free(&entries, entry);
 }
 
-static uint64_t page_cache_alloc_page(void) {
-  uint64_t pa = pmm_alloc_zero_page();
-  if (pa != 0) { return pa; }
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    uint32_t index = (page_cache_evict_hand + (uint32_t)i) % (uint32_t)page_cache_capacity;
-    if (!page_cache[index].valid) { continue; }
-    page_cache_clear(index);
-    pa = pmm_alloc_zero_page();
-    if (pa != 0) {
-      page_cache_evict_hand = (index + 1) % (uint32_t)page_cache_capacity;
-      return pa;
+static bool evict_page(void) {
+  for (struct vfs_page_cache_entry *e = oldest; e; e = e->newer) {
+    if (pmm_is_last_ref(e->pa)) {
+      clear_entry(e);
+      return true;
     }
   }
-  return 0;
-}
-
-static struct vfs_page_cache_entry *page_cache_victim(void) {
-  if (page_cache == NULL || page_cache_capacity == 0) { return NULL; }
-  page_cache_init_buckets_once();
-  if (page_cache_entries < page_cache_capacity) {
-    for (size_t i = 0; i < page_cache_capacity; ++i) {
-      uint32_t index = (page_cache_evict_hand + (uint32_t)i) % (uint32_t)page_cache_capacity;
-      if (!page_cache[index].valid) {
-        page_cache_evict_hand = (index + 1) % (uint32_t)page_cache_capacity;
-        return &page_cache[index];
-      }
-    }
-  }
-  uint32_t index = page_cache_evict_hand++ % (uint32_t)page_cache_capacity;
-  page_cache_clear(index);
-  return &page_cache[index];
-}
-
-static void page_cache_link(size_t index) {
-  struct vfs_page_cache_entry *entry = &page_cache[index];
-  uint32_t bucket = page_cache_hash(entry->backend, entry->ino, entry->dev_id, entry->off);
-  entry->hash_next = page_cache_buckets[bucket];
-  page_cache_buckets[bucket] = (uint32_t)index;
+  return false;
 }
 
 static struct vfs_page_cache_entry *page_cache_load(const struct vfs_node *node, uint64_t off, bool *hit) {
-  if (!vfs_node_cacheable(node)) { return NULL; }
-  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
   struct vfs_page_cache_entry *entry = page_cache_find(node, off);
-  if (entry != NULL) {
-    if (hit != NULL) { *hit = true; }
-    return entry;
-  }
-  if (hit != NULL) { *hit = false; }
+  if (hit) { *hit = entry != NULL; }
+  if (entry) { return entry; }
+  if (!entries.limit) { return NULL; }
   ++vfs_stat_counters.page_cache_loads;
-  entry = page_cache_victim();
-  if (entry == NULL) { return NULL; }
-  size_t index = (size_t)(entry - page_cache);
-  entry->valid = false;
-  entry->backend = node->backend;
+  while (!(entry = pool_alloc(&entries))) {
+    if (!evict_page()) { return NULL; }
+  }
+  uint64_t pa;
+  while (!(pa = pmm_alloc_zero_page())) {
+    if (!evict_page()) {
+      pool_free(&entries, entry);
+      return NULL;
+    }
+  }
+  uint64_t len = off < node->size ? node->size - off : 0;
+  if (len > PAGE_SIZE) { len = PAGE_SIZE; }
+  if (len && vfs_read_uncached(node, off, pmm_phys_to_virt(pa), len) != len) {
+    pmm_free_page(pa);
+    pool_free(&entries, entry);
+    return NULL;
+  }
   entry->ino = node->ino;
   entry->dev_id = node->dev_id;
+  entry->backend = node->backend;
   entry->off = off;
-  entry->pa = page_cache_alloc_page();
-  if (entry->pa == 0) {
-    page_cache_clear(index);
-    return NULL;
-  }
-  if (vfs_hhdm_offset == 0) {
-    page_cache_clear(index);
-    return NULL;
-  }
-  uint8_t *data = (uint8_t *)(uintptr_t)(entry->pa + vfs_hhdm_offset);
-  uint64_t readable = 0;
-  if (off < node->size) {
-    readable = node->size - off;
-    if (readable > VFS_PAGE_SIZE) { readable = VFS_PAGE_SIZE; }
-  }
-  if (readable != 0 && vfs_read_uncached(node, off, data, readable) != readable) {
-    page_cache_clear(index);
-    return NULL;
-  }
-  entry->valid = true;
-  ++page_cache_entries;
-  page_cache_link(index);
+  entry->pa = pa;
+  link_entry(entry);
   return entry;
 }
 
 static struct vfs_page_cache_entry *page_cache_demand(const struct vfs_node *node, uint64_t off) {
-  bool hit;
+  bool hit = false;
   struct vfs_page_cache_entry *entry = page_cache_load(node, off, &hit);
   if (hit) {
     ++vfs_stat_counters.page_cache_hits;
@@ -233,7 +131,7 @@ static struct vfs_page_cache_entry *page_cache_demand(const struct vfs_node *nod
 
 static void page_cache_readahead(const struct vfs_node *node, uint64_t off) {
   for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
-    uint64_t ahead = off + i * VFS_PAGE_SIZE;
+    uint64_t ahead = off + i * PAGE_SIZE;
     if (ahead >= node->size) { break; }
     (void)page_cache_load(node, ahead, NULL);
   }
@@ -241,7 +139,7 @@ static void page_cache_readahead(const struct vfs_node *node, uint64_t off) {
 
 bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out) {
   if (pa_out == NULL || !vfs_node_cacheable(node)) { return false; }
-  off &= ~(uint64_t)(VFS_PAGE_SIZE - 1);
+  off &= ~(uint64_t)(PAGE_SIZE - 1);
   struct vfs_page_cache_entry *entry = page_cache_demand(node, off);
   if (entry == NULL || entry->pa == 0 || !pmm_share_page(entry->pa)) { return false; }
   *pa_out = entry->pa;
@@ -253,52 +151,57 @@ uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, u
   uint8_t *out = dst;
   uint64_t done = 0;
   while (done < len) {
-    uint64_t page_off = (off + done) & ~(uint64_t)(VFS_PAGE_SIZE - 1);
+    uint64_t page_off = (off + done) & ~(uint64_t)(PAGE_SIZE - 1);
     uint64_t in_page = (off + done) - page_off;
     struct vfs_page_cache_entry *entry = page_cache_demand(node, page_off);
-    if (entry == NULL) { break; }
-    uint64_t chunk = VFS_PAGE_SIZE - in_page;
+    if (entry == NULL) { return done + vfs_read_uncached(node, off + done, out + done, len - done); }
+    uint64_t chunk = PAGE_SIZE - in_page;
     if (chunk > len - done) { chunk = len - done; }
-    kmemcpy(out + done, (const void *)(uintptr_t)(vfs_hhdm_offset + entry->pa + in_page), chunk);
+    kmemcpy(out + done, (const uint8_t *)pmm_phys_to_virt(entry->pa) + in_page, chunk);
     done += chunk;
     page_cache_readahead(node, page_off);
   }
   return done;
 }
 
-void vfs_page_cache_invalidate(const struct vfs_node *node) {
-  if (node == NULL || page_cache == NULL) { return; }
+void vfs_page_cache_truncate(const struct vfs_node *node, uint64_t size) {
+  struct vfs_page_cache_entry *e = files[file_bucket(node->ino, node->dev_id)];
   bool any = false;
-  for (size_t i = 0; i < page_cache_capacity; ++i) {
-    if (page_cache[i].valid && page_cache[i].backend == node->backend && page_cache[i].ino == node->ino &&
-        page_cache[i].dev_id == node->dev_id) {
-      page_cache_clear(i);
+  while (e) {
+    struct vfs_page_cache_entry *next = e->file_next;
+    if (same_file(e, node) && (size <= e->off || size - e->off < PAGE_SIZE)) {
+      if (e->off >= size && pmm_is_last_ref(e->pa)) {
+        clear_entry(e);
+      } else {
+        size_t tail = size <= e->off ? 0 : size - e->off;
+        kmemset((uint8_t *)pmm_phys_to_virt(e->pa) + tail, 0, PAGE_SIZE - tail);
+      }
       any = true;
     }
+    e = next;
   }
   if (any) { ++vfs_stat_counters.page_cache_invalidations; }
 }
 
-void vfs_page_cache_invalidate_range(const struct vfs_node *node, uint64_t off, uint64_t len) {
-  if (len == 0) { return; }
-  if (off > UINT64_MAX - (len - 1) || len > 128 * 1024) {
-    vfs_page_cache_invalidate(node);
-    return;
+void vfs_page_cache_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len) {
+  const uint8_t *data = src;
+  while (len) {
+    size_t within = off % PAGE_SIZE;
+    size_t chunk = PAGE_SIZE - within;
+    if (chunk > len) { chunk = len; }
+    struct vfs_page_cache_entry *entry = page_cache_find(node, off - within);
+    if (entry) {
+      uint8_t *dest = (uint8_t *)pmm_phys_to_virt(entry->pa) + within;
+      if (dest != data) { kmemcpy(dest, data, chunk); }
+    }
+    len -= chunk;
+    off += chunk;
+    data += chunk;
   }
-  uint64_t first = off / VFS_PAGE_SIZE;
-  uint64_t last = (off + len - 1) / VFS_PAGE_SIZE;
-  bool any = false;
-  for (uint64_t page = first; page <= last; ++page) {
-    struct vfs_page_cache_entry *entry = page_cache_find(node, page * VFS_PAGE_SIZE);
-    if (entry == NULL) { continue; }
-    page_cache_clear((size_t)(entry - page_cache));
-    any = true;
-  }
-  if (any) { ++vfs_stat_counters.page_cache_invalidations; }
 }
 
 void vfs_page_cache_stats(struct vfs_stats *stats) {
-  stats->page_cache_pages = page_cache_entries;
-  stats->page_cache_capacity = page_cache_capacity;
-  stats->page_cache_buckets = page_cache_bucket_count;
+  stats->page_cache_pages = entries.count;
+  stats->page_cache_capacity = entries.limit;
+  stats->page_cache_buckets = PAGE_BUCKETS;
 }

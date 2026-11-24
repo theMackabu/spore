@@ -136,7 +136,12 @@ static bool flush_shared_file_vma_range(struct user_address_space *as, const str
   if (as == NULL || !vma_is_shared_writable_file(vma)) { return true; }
   uint64_t flush_start = start > vma->start ? start : vma->start;
   uint64_t flush_end = end < vma->end ? end : vma->end;
-  uint64_t file_end = vma->file_start + vma->file_size;
+  struct vfs_node current;
+  if (!vfs_refresh(&vma->file_node, &current)) { return false; }
+  if (current.size <= vma->file_offset) { return true; }
+  uint64_t bytes = current.size - vma->file_offset;
+  if (bytes > vma->file_size) { bytes = vma->file_size; }
+  uint64_t file_end = vma->file_start + bytes;
   for (uint64_t page = flush_start & ~(uint64_t)(PAGE_SIZE - 1); page < flush_end; page += PAGE_SIZE) {
     if (page < vma->file_start || page >= file_end || !vmm_is_mapped(as, page)) { continue; }
     uint64_t pa = vmm_user_to_phys(as, page) & ~(uint64_t)(PAGE_SIZE - 1);
@@ -167,13 +172,15 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
       ((vma->prot & VMM_USER_EXEC) == 0 || vmm_user_range_accessible(as, page, 1, VMM_ACCESS_EXEC))) {
     return true;
   }
+  struct vfs_node current;
+  if (!vfs_refresh(&vma->file_node, &current)) { return false; }
   uint64_t page_end = page + PAGE_SIZE;
   uint64_t file_end = vma->file_start + vma->file_size;
-  if (page >= vma->file_start && page_end <= file_end) {
+  if (page >= vma->file_start && (page_end <= file_end || ((vma->flags & MAP_SHARED) && page < file_end))) {
     uint64_t read_off = vma->file_offset + (page - vma->file_start);
     if ((read_off & (PAGE_SIZE - 1)) != 0) { goto private_copy; }
     uint64_t pa = 0;
-    if (!vfs_retain_page_cached(&vma->file_node, read_off, &pa)) { return false; }
+    if (!vfs_retain_page_cached(&current, read_off, &pa)) { return false; }
     bool mapped = (vma->flags & MAP_SHARED) ? vmm_map_page(as, page, pa, mapping_flags(vma))
                                              : vmm_map_page_cow(as, page, pa, vma->prot);
     if (!mapped) {
@@ -192,7 +199,7 @@ private_copy:
   if (copy_start < copy_end) {
     uint64_t read_off = vma->file_offset + (copy_start - vma->file_start);
     uint64_t len = copy_end - copy_start;
-    if (vfs_read(&vma->file_node, read_off, dst + (copy_start - page), len) != len) {
+    if (vfs_read(&current, read_off, dst + (copy_start - page), len) != len) {
       pmm_free_page(pa);
       return false;
     }
