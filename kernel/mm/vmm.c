@@ -95,6 +95,7 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   as->context_id = __atomic_add_fetch(&last_context_id, 1, __ATOMIC_RELAXED);
   as->root_pa = root;
   as->hhdm_offset = hhdm_offset;
+  as->freebsd_abi = false;
   as->detached_file_pages = false;
   as->resident_pages = 0;
   as->peak_resident_pages = 0;
@@ -243,6 +244,7 @@ static bool clone_table(struct user_address_space *dst, struct user_address_spac
 
 bool vmm_clone(struct user_address_space *dst, struct user_address_space *src, enum vmm_clone_mode mode) {
   if (!vmm_user_init(dst, src->hhdm_offset)) { return false; }
+  dst->freebsd_abi = src->freebsd_abi;
   dst->arg_start = src->arg_start;
   dst->arg_end = src->arg_end;
   dst->brk_base = src->brk_base;

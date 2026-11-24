@@ -86,7 +86,7 @@ bool cell_create_init(const struct init_program *program, struct user_address_sp
     return false;
   }
   thread->state = THREAD_RUNNABLE;
-  aarch64_init_user_frame(&thread->tf, entry, sp);
+  aarch64_init_user_frame(&thread->tf, entry, sp, cell_domain_as(domain)->freebsd_abi);
   cell_set_current_thread(thread);
   kprintf("[spore] booting... domain %d / thread %d\n", domain->id, thread->tid);
   return true;

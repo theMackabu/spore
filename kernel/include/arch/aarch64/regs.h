@@ -36,10 +36,6 @@ static inline uint64_t trap_user_stack(const struct trap_frame *frame) {
   return frame->sp_el0;
 }
 
-static inline uint64_t trap_syscall_arg(const struct trap_frame *frame, unsigned index) {
-  return frame->x[index];
-}
-
 static inline void trap_set_result(struct trap_frame *frame, uint64_t value) {
   frame->x[0] = value;
 }
@@ -48,6 +44,6 @@ static inline void trap_set_stack(struct trap_frame *frame, uint64_t sp) {
   frame->sp_el0 = sp;
 }
 
-void aarch64_init_user_frame(struct trap_frame *frame, uint64_t entry, uint64_t sp);
+void aarch64_init_user_frame(struct trap_frame *frame, uint64_t entry, uint64_t sp, bool freebsd);
 void aarch64_set_snapshot_entry(struct trap_frame *frame, uint64_t entry, uint64_t arg, uint64_t pid);
 bool aarch64_restart_syscall(struct trap_frame *frame);

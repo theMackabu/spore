@@ -125,9 +125,10 @@ ignored_exception:
 enter_el0:
     msr elr_el1, x0
     msr sp_el0, x1
+    mov x0, x2
+    mov x30, x3
     mov x2, #0x340
     msr spsr_el1, x2
-    mov x0, #0
     mov x1, #0
     mov x2, #0
     mov x3, #0

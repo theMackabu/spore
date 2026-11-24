@@ -148,7 +148,13 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     {AT_NULL, 0},
   };
 
-  const uint64_t slots = 1 + argc + 1 + envc + 1 + (sizeof(aux) / sizeof(aux[0])) * 2;
+  enum { BSD_AT_EXECPATH = 15, BSD_AT_CANARY = 16, BSD_AT_CANARYLEN = 17, BSD_AT_HWCAP = 25 };
+  const uint64_t bsd_aux[][2] = {
+    {AT_PHDR, elf->phdr}, {AT_PHENT, elf->phent}, {AT_PHNUM, elf->phnum}, {AT_PAGESZ, PAGE_SIZE},
+    {AT_ENTRY, elf->entry}, {BSD_AT_EXECPATH, execfn}, {BSD_AT_CANARY, random_va}, {BSD_AT_CANARYLEN, sizeof(random)}, {BSD_AT_HWCAP, hwcap}, {AT_NULL, 0},
+  };
+  size_t aux_size = as->freebsd_abi ? sizeof(bsd_aux) : sizeof(aux);
+  const uint64_t slots = 1 + argc + 1 + envc + 1 + aux_size / sizeof(uint64_t);
   uint64_t sp = align_down(cursor - slots * sizeof(uint64_t), 16);
   uint64_t p = sp;
 
@@ -162,7 +168,7 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   p += envc * sizeof(*envp_va);
   if (!stack_write_u64(as, p, 0)) { goto out; }
   p += sizeof(uint64_t);
-  if (!stack_copy_to_user(as, p, aux, sizeof(aux))) { goto out; }
+  if (!stack_copy_to_user(as, p, as->freebsd_abi ? bsd_aux : aux, aux_size)) { goto out; }
 
   as->arg_start = arg_start;
   as->arg_end = arg_end;

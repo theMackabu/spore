@@ -166,16 +166,22 @@ const struct vma *vma_lookup_range(const struct vma_list *list, uint64_t start, 
 }
 
 bool vma_find_gap(const struct vma_list *list, uint64_t start, uint64_t limit, uint64_t len, uint64_t *out) {
-  if (!list || len == 0 || len > limit) { return false; }
-  uint64_t page_mask = (uint64_t)PAGE_SIZE - 1;
-  uint64_t last_start = (limit - len) & ~page_mask;
-  if (start > last_start) { return false; }
-  uint64_t base = (start + page_mask) & ~page_mask;
+  return vma_find_aligned_gap(list, start, limit, len, PAGE_SIZE, out);
+}
+
+bool vma_find_aligned_gap(const struct vma_list *list, uint64_t start, uint64_t limit, uint64_t len,
+                          uint64_t alignment, uint64_t *out) {
+  if (!list || !len || len > limit || alignment < PAGE_SIZE || (alignment & (alignment - 1))) { return false; }
+  uint64_t mask = alignment - 1;
+  uint64_t last = (limit - len) & ~mask;
+  if (start > last) { return false; }
+  uint64_t base = (start + mask) & ~mask;
   for (size_t i = vma_first_ending_after(list, base); i < list->count; ++i) {
     const struct vma *vma = slot_at(list, i);
     if (base + len <= vma->start) { break; }
-    if (vma->end > last_start) { return false; }
-    base = (vma->end + page_mask) & ~page_mask;
+    if (vma->end <= base) { continue; }
+    if (vma->end > last) { return false; }
+    base = (vma->end + mask) & ~mask;
   }
   *out = base;
   return true;

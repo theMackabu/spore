@@ -1,4 +1,6 @@
 #include "proc/thread.h"
+#include "proc/memory.h"
+#include "abi/freebsd/aarch64.h"
 #include "lib/mem.h"
 #include "net/unix.h"
 #include "proc/accounting.h"
@@ -69,7 +71,8 @@ void cell_resume_wait(struct thread *thread) {
 }
 
 void cell_finish_wait(struct thread *thread, int64_t result) {
-  trap_set_result(&thread->tf, (uint64_t)result);
+  if (cell_domain_as(thread->domain)->freebsd_abi) { freebsd_aarch64_result(&thread->tf, result); }
+  else { trap_set_result(&thread->tf, (uint64_t)result); }
   cell_resume_wait(thread);
 }
 

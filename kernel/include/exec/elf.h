@@ -24,6 +24,7 @@ struct loaded_elf {
   uint64_t phdr;
   uint16_t phent;
   uint16_t phnum;
+  uint8_t osabi;
   uint64_t brk_base;
 };
 

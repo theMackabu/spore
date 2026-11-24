@@ -56,7 +56,7 @@ static bool signal_delivers_to_current(int signal) {
          signal == SIGALRM || signal == SIGTERM || signal == SIGURG;
 }
 
-static int64_t dispatch(struct trap_frame *f) {
+int64_t linux_aarch64_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]) {
   static const void *linux_dispatch[] = {
     [SYS_GETCWD] = &&l_getcwd,
     [SYS_EVENTFD2] = &&l_eventfd2,
@@ -211,13 +211,12 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_SPORE_MOUNTINFO - SYS_SPORE_SNAPSHOT] = &&l_spore_mountinfo,
     [SYS_SPORE_NET_CONFIG - SYS_SPORE_SNAPSHOT] = &&l_spore_net_config,
   };
-  uint64_t nr = trap_syscall_number(f);
-  uint64_t a0 = trap_syscall_arg(f, 0);
-  uint64_t a1 = trap_syscall_arg(f, 1);
-  uint64_t a2 = trap_syscall_arg(f, 2);
-  uint64_t a3 = trap_syscall_arg(f, 3);
-  uint64_t a4 = trap_syscall_arg(f, 4);
-  uint64_t a5 = trap_syscall_arg(f, 5);
+  uint64_t a0 = args[0];
+  uint64_t a1 = args[1];
+  uint64_t a2 = args[2];
+  uint64_t a3 = args[3];
+  uint64_t a4 = args[4];
+  uint64_t a5 = args[5];
 
   if (!cell_syscall_allowed(nr)) {
     kprintf("[spore] syscall denied nr=%d\n", (int)nr);
@@ -581,7 +580,7 @@ l_unknown:
 #pragma clang diagnostic pop
 
 void linux_aarch64_syscall(struct trap_frame *frame) {
-  int64_t result = dispatch(frame);
+  int64_t result = linux_aarch64_dispatch(frame, trap_syscall_number(frame), frame->x);
   if (result != SYSCALL_SWITCHED) {
     trap_set_result(frame, (uint64_t)result);
     (void)cell_deliver_pending_signals_current(frame);

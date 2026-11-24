@@ -240,7 +240,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   cell_set_domain_identity(domain, path, argv, argc);
   vmm_install_user(cell_domain_as(domain));
 
-  aarch64_init_user_frame(frame, entry, sp);
+  aarch64_init_user_frame(frame, entry, sp, cell_domain_as(domain)->freebsd_abi);
   struct thread *thread = cell_current_thread_internal();
   thread->tid = domain->id;
   thread->clear_child_tid = 0;

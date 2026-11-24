@@ -90,6 +90,7 @@ impl Package {
             goblin::elf::Elf::parse(&bytes).map_err(|e| bad(format!("{}: {e}", src.display())))?;
         if !elf.is_64
             || !elf.little_endian
+            || !matches!(elf.header.e_ident[7], 0 | 3 | 9)
             || elf.header.e_machine != goblin::elf::header::EM_AARCH64
             || !matches!(
                 elf.header.e_type,
@@ -100,6 +101,19 @@ impl Package {
                 "expected an AArch64 executable/shared object: {}",
                 src.display()
             )));
+        }
+        let osabi = elf.header.e_ident[7];
+        if elf.interpreter.is_some()
+            && (osabi == goblin::elf::header::ELFOSABI_FREEBSD
+                || osabi == 0
+                    && elf
+                        .iter_note_headers(&bytes)
+                        .into_iter()
+                        .flatten()
+                        .map_while(Result::ok)
+                        .any(|n| n.name == "FreeBSD" && n.n_type == 1 && n.desc.len() == 4))
+        {
+            return Err(bad("FreeBSD executables currently require static linking"));
         }
         let origin = src.canonicalize()?.parent().unwrap().to_owned();
         let mut search = Vec::new();

@@ -25,6 +25,7 @@ struct user_address_space {
   uint64_t context_id;
   uint64_t root_pa;
   uint64_t hhdm_offset;
+  bool freebsd_abi;
   bool detached_file_pages;
   uint64_t resident_pages;
   uint64_t peak_resident_pages;

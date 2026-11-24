@@ -14,6 +14,8 @@
 #include "proc/limits.h"
 #include "proc/policy.h"
 #include "proc/process.h"
+#include "proc/thread.h"
+#include "proc/signal.h"
 #include "fs/vfs.h"
 
 #include <stdbool.h>
@@ -357,7 +359,8 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     goto out_scratch;
   }
   cell_apply_exec_creds(exec_node.mode, exec_node.uid, exec_node.gid);
-  ret = 0;
+  (void)cell_deliver_pending_signals_current(frame);
+  ret = CELL_SWITCHED;
 
 out_scratch:
   exec_scratch_free(&scratch);

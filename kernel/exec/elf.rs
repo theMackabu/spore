@@ -4,9 +4,16 @@ const EHDR: usize = 64;
 const PHDR: usize = 56;
 const ET_EXEC: u16 = 2;
 const ET_DYN: u16 = 3;
-const EM_AARCH64: u16 = 183;
+const MACHINE: u16 = if cfg!(all(target_os = "none", target_arch = "riscv64")) {
+    243
+} else if cfg!(all(target_os = "none", target_arch = "x86_64")) {
+    62
+} else {
+    183
+};
 const PT_LOAD: u32 = 1;
 const PT_INTERP: u32 = 3;
+const PT_NOTE: u32 = 4;
 const PAGE: u64 = 4096;
 
 type Read = unsafe extern "C" fn(*mut c_void, u64, *mut u8, usize) -> bool;
@@ -42,6 +49,7 @@ fn le64(b: &[u8], i: usize) -> u64 {
 }
 
 struct Header {
+    osabi: u8,
     kind: u16,
     entry: u64,
     table: u64,
@@ -52,8 +60,9 @@ impl Header {
         let b = r.bytes::<EHDR>(0)?;
         let kind = le16(&b, 16);
         if &b[..7] != b"\x7fELF\x02\x01\x01"
+            || !matches!(b[7], 0 | 3 | 9)
             || !matches!(kind, ET_EXEC | ET_DYN)
-            || le16(&b, 18) != EM_AARCH64
+            || le16(&b, 18) != MACHINE
             || le32(&b, 20) != 1
             || usize::from(le16(&b, 52)) != EHDR
             || usize::from(le16(&b, 54)) != PHDR
@@ -61,6 +70,7 @@ impl Header {
             return None;
         }
         let header = Self {
+            osabi: b[7],
             kind,
             entry: le64(&b, 24),
             table: le64(&b, 32),
@@ -109,6 +119,26 @@ pub struct Segment {
     memsz: u64,
     align: u64,
 }
+fn freebsd_abi_note(reader: &Reader, note: &Segment) -> bool {
+    let Some(end) = note.offset.checked_add(note.filesz).filter(|&n| n <= reader.size) else {
+        return false;
+    };
+    let mut pos = note.offset;
+    while end - pos >= 12 {
+        let Some(header) = reader.bytes::<12>(pos) else { return false };
+        pos += 12;
+        let namesz = u64::from(le32(&header, 0));
+        let descsz = u64::from(le32(&header, 4));
+        let size = namesz.next_multiple_of(4) + descsz.next_multiple_of(4);
+        if size > end - pos { return false; }
+        if le32(&header, 8) == 1 && namesz == 8 && descsz == 4 && reader.bytes(pos) == Some(*b"FreeBSD\0") {
+            return true;
+        }
+        pos += size;
+    }
+    false
+}
+
 #[repr(C)]
 pub struct Loaded {
     entry: u64,
@@ -118,6 +148,7 @@ pub struct Loaded {
     phdr: u64,
     phent: u16,
     phnum: u16,
+    osabi: u8,
     brk_base: u64,
 }
 
@@ -138,10 +169,14 @@ fn load(
         brk_base: 0,
         phent: PHDR as u16,
         phnum: h.count,
+        osabi: h.osabi,
     };
     let table_end = h.table_end()?;
     let mut interpreter = None;
     h.visit_segments(reader, |p| {
+        if p.kind == PT_NOTE && out.osabi == 0 && p.align <= 4 && freebsd_abi_note(reader, &p) {
+            out.osabi = 9;
+        }
         if p.kind == PT_INTERP {
             if interpreter.replace(p).is_some() {
                 return None;

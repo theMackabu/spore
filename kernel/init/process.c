@@ -30,7 +30,8 @@ static void enter_first_process(void *context) {
   vmm_install_user(cell_current_as());
   kprintf("[kernel] entering EL0\n");
   if (app_mode) { app_track_entry(first->entry); }
-  enter_el0(first->entry, first->sp);
+  bool bsd = cell_current_as()->freebsd_abi;
+  enter_el0(first->entry, first->sp, bsd ? first->sp : 0, bsd ? first->entry : 0);
 }
 
 void boot_start_process(const struct init_program *program, uint64_t hhdm_offset) {

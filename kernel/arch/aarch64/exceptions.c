@@ -5,6 +5,7 @@
 #include "init/app.h"
 
 #include "abi/linux/aarch64/syscall.h"
+#include "abi/freebsd/aarch64.h"
 #include "arch/aarch64/signal_frame.h"
 #include "proc/memory.h"
 #include "proc/signal.h"
@@ -66,5 +67,6 @@ void handle_lower_sync(struct trap_frame *frame) {
     cell_signal_current_fault(SIGSEGV, frame, far, translation_fault ? SEGV_MAPERR : SEGV_ACCERR);
     return;
   }
-  linux_aarch64_syscall(frame);
+  if (cell_current_as()->freebsd_abi) { freebsd_aarch64_syscall(frame); }
+  else { linux_aarch64_syscall(frame); }
 }
