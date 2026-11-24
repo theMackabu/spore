@@ -152,14 +152,15 @@ static bool writeback_page(void *ctx, uint64_t page, uint64_t pa) {
 static bool flush_shared_file_vma_range(struct user_address_space *as, const struct vma *vma, uint64_t start,
                                         uint64_t end) {
   if (vma->type != VMA_FILE || !(vma->flags & MAP_SHARED)) { return true; }
-  struct vfs_node current;
-  if (!vfs_refresh(&vma->file_node, &current)) { return false; }
   if (start < vma->start) { start = vma->start; }
   if (end > vma->end) { end = vma->end; }
   uint64_t first = vma->file_offset + (start - vma->file_start);
   uint64_t limit = vma->file_offset + (end - vma->file_start);
-  if (!vfs_sync_mapped_range(&current, first, limit)) { return false; }
-  if (!as->detached_file_pages || !vma_is_shared_writable_file(vma) || current.size <= vma->file_offset) { return true; }
+  if (!vfs_sync_mapped_range(&vma->file_node, first, limit)) { return false; }
+  if (!as->detached_file_pages || !vma_is_shared_writable_file(vma)) { return true; }
+  struct vfs_node current;
+  if (!vfs_refresh(&vma->file_node, &current)) { return false; }
+  if (current.size <= vma->file_offset) { return true; }
   uint64_t bytes = current.size - vma->file_offset;
   if (bytes > vma->file_size) { bytes = vma->file_size; }
   struct file_writeback wb = {.vma = vma, .node = &current, .file_end = vma->file_start + bytes};
@@ -237,7 +238,7 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
   struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
   if (as == NULL || vmas == NULL) { return false; }
-  if (vmm_user_range_accessible(as, va, len, access)) { return true; }
+  if (vmm_user_buffer_accessible(as, va, len, access)) { return true; }
   uint64_t end = va + len - 1;
   if (end < va) { return false; }
   uint64_t page = va & ~(uint64_t)(PAGE_SIZE - 1);
@@ -257,11 +258,11 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
         note_fault(domain, false);
       }
     }
-    if (access == VMM_ACCESS_WRITE && !vmm_user_range_accessible(as, page, 1, VMM_ACCESS_WRITE)) {
+    if (access == VMM_ACCESS_WRITE && !vmm_user_buffer_accessible(as, page, 1, VMM_ACCESS_WRITE)) {
       if (!vmm_handle_write_fault(as, page)) { return false; }
       note_fault(domain, false);
     }
-    if (!vmm_user_range_accessible(as, page, 1, access)) { return false; }
+    if (!vmm_user_buffer_accessible(as, page, 1, access)) { return false; }
     if (page == last) { return true; }
     page += PAGE_SIZE;
   }

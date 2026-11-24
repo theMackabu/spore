@@ -798,9 +798,12 @@ l_fchdir: {
   if (!cell_fd_path((int)a0, path, sizeof(path))) { return -(int64_t)EBADF; }
   return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
 }
-l_fsync:
-  if (cell_fd_get_flags((int)a0) < 0) { return -(int64_t)EBADF; }
-  return vfs_sync() ? 0 : -(int64_t)EIO;
+l_fsync: {
+  struct open_file *file = cell_fd_file(a0);
+  if (!file) { return -EBADF; }
+  if (file->type == OPEN_VFS && !vfs_sync_mapped_range(&file->node, 0, UINT64_MAX)) { return -EIO; }
+  return vfs_sync_storage() ? 0 : -EIO;
+}
 l_getrandom:
   return sys_getrandom(a0, a1);
 l_clock_gettime:

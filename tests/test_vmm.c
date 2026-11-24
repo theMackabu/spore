@@ -1,4 +1,5 @@
 #include "mm/vmm.h"
+#include "mm/file_page.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -52,7 +53,52 @@ bool pmm_is_last_ref(uint64_t pa) {
   return refs[page_index(pa)] == 1;
 }
 
+static struct vmm_file_page *dirty_file_page;
+
+static void note_dirty(struct vmm_file_page *page) {
+  dirty_file_page = page;
+}
+
+static void test_mapped_file_writes(void) {
+  uint64_t first_pa = next_pa;
+  struct user_address_space as, child, snapshot;
+  assert(vmm_user_init(&as, (uintptr_t)phys));
+  struct vmm_file_page page = {.pa = pmm_alloc_zero_page()};
+  vmm_file_pages_init(note_dirty);
+  vmm_file_page_register(&page);
+  uint32_t flags = VMM_USER_READ | VMM_USER_WRITE | VMM_MAP_SHARED | VMM_MAP_FILE_CACHE;
+  assert(pmm_share_page(page.pa) && vmm_map_page(&as, 0x1000, page.pa, flags));
+  assert(pmm_share_page(page.pa) && vmm_map_page(&as, 0x2000, page.pa, flags));
+  assert(vmm_user_buffer_accessible(&as, 0x1000, 2 * TEST_PAGE_SIZE, VMM_ACCESS_WRITE));
+  assert(!dirty_file_page && !vmm_user_range_accessible(&as, 0x1000, 1, VMM_ACCESS_WRITE));
+  assert(vmm_copy_to_user(&as, 0x1000, "A", 1) && dirty_file_page == &page);
+  assert(vmm_clone(&child, &as, VMM_FORK) && vmm_clone(&snapshot, &as, VMM_SNAPSHOT));
+  assert(vmm_copy_to_user(&as, 0x2000, "B", 1) && vmm_copy_to_user(&child, 0x1000, "C", 1));
+  vmm_file_page_rearm(&page);
+  dirty_file_page = NULL;
+  assert(!vmm_user_range_accessible(&as, 0x1000, 1, VMM_ACCESS_WRITE));
+  assert(!vmm_user_range_accessible(&as, 0x2000, 1, VMM_ACCESS_WRITE));
+  assert(!vmm_user_range_accessible(&child, 0x1000, 1, VMM_ACCESS_WRITE));
+  char value;
+  assert(vmm_copy_from_user(&snapshot, &value, 0x1000, 1) && value == 'A');
+  assert(vmm_copy_from_user(&as, &value, 0x2000, 1) && value == 'C');
+  assert(vmm_copy_to_user(&child, 0x2000, "D", 1) && dirty_file_page == &page);
+  assert(vmm_move_range(&child, 0x2000, 0x3000, TEST_PAGE_SIZE));
+  assert(vmm_copy_to_user(&child, 0x3000, "E", 1));
+  vmm_destroy(&child);
+  vmm_file_page_rearm(&page);
+  assert(vmm_copy_from_user(&as, &value, 0x1000, 1) && value == 'E');
+  vmm_destroy(&as);
+  vmm_destroy(&snapshot);
+  vmm_file_page_unregister(&page);
+  pmm_free_page(page.pa);
+  for (uint64_t pa = first_pa; pa < next_pa; pa += TEST_PAGE_SIZE) { assert(refs[page_index(pa)] == 0); }
+  next_pa = first_pa;
+  dirty_file_page = NULL;
+}
+
 int main(void) {
+  test_mapped_file_writes();
   struct user_address_space as;
   assert(vmm_user_init(&as, (uint64_t)(uintptr_t)phys));
 

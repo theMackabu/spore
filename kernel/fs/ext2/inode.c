@@ -187,23 +187,31 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
   return true;
 }
 
-bool ext2_cached_data_matches(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, const void *src, size_t len) {
+int64_t ext2_writeback_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, size_t len) {
   static const uint8_t zeros[4096];
   const uint8_t *data = src;
-  if (off > node->size || len > node->size - off) { return false; }
-  while (len) {
-    size_t within = off % fs->block_size;
+  if (off > node->size || len > node->size - off) { return -EXT2_EIO; }
+  size_t run = 0;
+  for (size_t pos = 0; pos < len;) {
+    uint64_t at = off + pos;
+    size_t within = at % fs->block_size;
     size_t chunk = fs->block_size - within;
-    if (chunk > len) { chunk = len; }
+    if (chunk > len - pos) { chunk = len - pos; }
     uint32_t block;
-    if (!ext2_file_block(fs, node, off / fs->block_size, &block)) { return false; }
+    if (!ext2_file_block(fs, node, at / fs->block_size, &block)) { return -EXT2_EIO; }
     const uint8_t *bytes = block ? ext2_peek_block(fs, block) : zeros;
-    if (!bytes || kmemcmp(bytes + within, data, chunk)) { return false; }
-    data += chunk;
-    off += chunk;
-    len -= chunk;
+    if (bytes && !kmemcmp(bytes + within, data + pos, chunk)) {
+      if (pos > run && ext2_write_file(fs, node, off + run, data + run, pos - run) != (int64_t)(pos - run)) {
+        return -EXT2_EIO;
+      }
+      run = pos + chunk;
+    }
+    pos += chunk;
   }
-  return true;
+  if (len > run && ext2_write_file(fs, node, off + run, data + run, len - run) != (int64_t)(len - run)) {
+    return -EXT2_EIO;
+  }
+  return (int64_t)len;
 }
 
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len) {

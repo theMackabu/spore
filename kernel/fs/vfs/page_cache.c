@@ -44,7 +44,7 @@ static size_t file_bucket(uint64_t ino, uint64_t dev) {
 }
 
 static void mark_dirty(struct vmm_file_page *page) {
-  struct vfs_page_cache_entry *entry = (struct vfs_page_cache_entry *)page;
+  struct vfs_page_cache_entry *entry = (void *)((uint8_t *)page - offsetof(struct vfs_page_cache_entry, mapped));
   if (entry->dirty_link) { return; }
   size_t bucket = file_bucket(entry->ino, entry->dev_id);
   entry->dirty_link = dirty_tails[bucket] ? dirty_tails[bucket] : &dirty_files[bucket];
@@ -196,23 +196,38 @@ uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, u
   return done;
 }
 
-static bool flush_entry(struct vfs_page_cache_entry *entry, const struct vfs_node *node) {
-  vmm_file_page_rearm(&entry->mapped);
-  if (entry->off < node->size) {
-    size_t bytes = node->size - entry->off;
-    if (bytes > PAGE_SIZE) { bytes = PAGE_SIZE; }
-    if (vfs_writeback(node, entry->off, pmm_phys_to_virt(entry->mapped.pa), bytes) != (int64_t)bytes) { return false; }
-  }
-  mark_clean(entry);
-  return true;
-}
-
 bool vfs_sync_mapped_range(const struct vfs_node *node, uint64_t start, uint64_t end) {
+  struct vfs_node current;
+  bool refreshed = false;
   struct vfs_page_cache_entry *entry = dirty_files[file_bucket(node->ino, node->dev_id)];
   while (entry) {
-    struct vfs_page_cache_entry *next = entry->dirty_next;
-    if (same_file(entry, node) && entry->off >= start && entry->off < end && !flush_entry(entry, node)) { return false; }
-    entry = next;
+    if (!same_file(entry, node) || entry->off < start || entry->off >= end) {
+      entry = entry->dirty_next;
+      continue;
+    }
+    if (!refreshed) {
+      if (!vfs_refresh(node, &current) || current.ino != node->ino) { return false; }
+      refreshed = true;
+    }
+    struct vfs_page_cache_entry *next = entry;
+    size_t bytes = 0;
+    do {
+      vmm_file_page_rearm(&next->mapped);
+      bytes += PAGE_SIZE;
+      next = next->dirty_next;
+    } while (next && same_file(next, node) && next->off < end && next->off == entry->off + bytes &&
+             next->mapped.pa == entry->mapped.pa + bytes && bytes < 128 * 1024);
+    if (entry->off < current.size) {
+      if (bytes > current.size - entry->off) { bytes = current.size - entry->off; }
+      if (vfs_writeback(&current, entry->off, pmm_phys_to_virt(entry->mapped.pa), bytes) != (int64_t)bytes) {
+        return false;
+      }
+    }
+    do {
+      struct vfs_page_cache_entry *clean = entry;
+      entry = entry->dirty_next;
+      mark_clean(clean);
+    } while (entry != next);
   }
   return true;
 }
@@ -227,7 +242,7 @@ bool vfs_sync_mapped_pages(void) {
         key.ramfs.fs = vfs_root_ramfs;
         key.ramfs.index = entry->ramfs_index;
       }
-      if (!vfs_refresh(&key, &node) || node.ino != entry->ino) {
+      if (!vfs_refresh(&key, &node) || !same_file(entry, &node)) {
         if (entry->backend != VFS_RAMFS || !pmm_is_last_ref(entry->mapped.pa)) { return false; }
         clear_entry(entry);
         continue;

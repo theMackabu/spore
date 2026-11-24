@@ -893,7 +893,7 @@ static int64_t write_file(struct ramfs *fs, int index, uint64_t off, const void 
     return -1;
   }
   const struct ramfs_mem_node *node = &fs->nodes[index];
-  if (writeback && (!node->shared_write_mappings || off + len > node->size)) { return -1; }
+  if (writeback && off + len > node->size) { return -1; }
   if ((node->seals & RAMFS_F_SEAL_WRITE) || (!writeback && (node->seals & RAMFS_F_SEAL_FUTURE_WRITE)) ||
       ((node->seals & RAMFS_F_SEAL_GROW) && len && off + len > node->size)) { return -1; }
   if (!len) { return 0; }

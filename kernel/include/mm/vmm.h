@@ -53,6 +53,7 @@ bool vmm_visit_detached(const struct user_address_space *as, uint64_t start, uin
 size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t start, uint64_t end);
 uint64_t vmm_user_to_phys(const struct user_address_space *as, uint64_t va);
 bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access);
+bool vmm_user_buffer_accessible(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access);
 bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len);
 bool vmm_copy_from_user(const struct user_address_space *as, void *dst, uint64_t src, size_t len);
 void vmm_install_user(const struct user_address_space *as);

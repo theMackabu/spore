@@ -451,7 +451,8 @@ size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t s
   return pages;
 }
 
-bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access) {
+static bool user_range_accessible(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access,
+                                  bool kernel_buffer) {
   if (len == 0) { return true; }
   uint64_t end;
   if (!checked_add(va, len - 1, &end)) { return false; }
@@ -465,11 +466,22 @@ bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va,
     if (count > limit - page) { count = limit - page; }
     for (size_t i = 0; i < count; ++i) {
       uint64_t entry = ptes[i];
-      if (!(entry & PTE_VALID) || !(entry & PTE_ADDR_MASK) || !user_entry_allows(entry, access)) { return false; }
+      if (!(entry & PTE_VALID) || !(entry & PTE_ADDR_MASK)) { return false; }
+      if (kernel_buffer && access == VMM_ACCESS_WRITE &&
+          (entry & (PTE_FILE_CACHE | PTE_WRITE_ALLOWED)) == (PTE_FILE_CACHE | PTE_WRITE_ALLOWED)) { continue; }
+      if (!user_entry_allows(entry, access)) { return false; }
     }
     page += count;
   }
   return true;
+}
+
+bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access) {
+  return user_range_accessible(as, va, len, access, false);
+}
+
+bool vmm_user_buffer_accessible(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access) {
+  return user_range_accessible(as, va, len, access, true);
 }
 
 bool vmm_copy_to_user(const struct user_address_space *as, uint64_t dst, const void *src, size_t len) {
