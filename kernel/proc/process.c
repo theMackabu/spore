@@ -208,10 +208,10 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)child->id);
   trap_set_result(frame, (uint64_t)child->id);
   copy_cstr(child->name, sizeof(child->name), parent->name);
-  cell_current_thread_internal()->state = THREAD_BLOCKED;
   cell_current_thread_internal()->running_cpu = -1;
   cell_current_thread_internal()->wait.reason = WAIT_VFORK;
   cell_current_thread_internal()->wait.target = child->id;
+  cell_mark_blocked(cell_current_thread_internal());
   smp_notify();
   cell_schedule(frame);
   return CELL_SWITCHED;
@@ -284,10 +284,10 @@ int cell_wait4_options(int pid, uint64_t status_addr, int options, struct trap_f
     if (!has_child(domain->id, pid)) { return -ECHILD; }
     if ((options & WNOHANG) != 0) { return 0; }
     cell_save_current(frame);
-    cell_current_thread_internal()->state = THREAD_BLOCKED;
     cell_current_thread_internal()->running_cpu = -1;
     cell_current_thread_internal()->wait.reason = WAIT_CHILD;
     cell_current_thread_internal()->wait.target = pid;
+    cell_mark_blocked(cell_current_thread_internal());
     cell_schedule(frame);
     return CELL_SWITCHED;
   }

@@ -62,8 +62,9 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "eventfd";
   case WAIT_FLOCK:
     return "flock";
+  default:
+    return "?";
   }
-  return "?";
 }
 
 static const char *domain_state_text(const struct domain *domain) {

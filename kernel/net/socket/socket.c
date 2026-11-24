@@ -463,10 +463,10 @@ bool cell_fd_is_datagram(int fd) {
 }
 
 static void wake_socket_timeout_waiters(uint64_t now_ticks) {
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
-        !thread->wait.has_deadline || now_ticks < thread->wait.deadline_tick) {
+  size_t cursor = 0;
+  struct thread *thread;
+  while ((thread = cell_next_waiter(WAIT_SOCKET, &cursor))) {
+    if (!thread->wait.has_deadline || now_ticks < thread->wait.deadline_tick) {
       continue;
     }
     cell_finish_wait(thread, -EAGAIN);
@@ -474,12 +474,9 @@ static void wake_socket_timeout_waiters(uint64_t now_ticks) {
 }
 
 void wake_socket_waiters(struct open_file *file) {
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_SOCKET ||
-        thread->domain == NULL) {
-      continue;
-    }
+  size_t cursor = 0;
+  struct thread *thread;
+  while ((thread = cell_next_waiter(WAIT_SOCKET, &cursor))) {
     int fd = thread->wait.target;
     if (fd >= 0 && fd < MAX_FDS && thread->domain->fds[fd] == file) {
       if (thread->wait.write && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {

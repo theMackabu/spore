@@ -147,12 +147,9 @@ static void wake_epoll_waiters(void);
 static void wake_poll_waiters(void) {
   if (poll_waking) { return; }
   poll_waking = true;
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_POLL ||
-        thread->domain == NULL) {
-      continue;
-    }
+  size_t cursor = 0;
+  struct thread *thread;
+  while ((thread = cell_next_waiter(WAIT_POLL, &cursor))) {
     int64_t ready = poll_wait_check(thread, false);
     bool expired = thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick;
     if (ready != 0 || expired) {
@@ -194,12 +191,9 @@ static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t event
 static void wake_epoll_waiters(void) {
   if (epoll_waking) { return; }
   epoll_waking = true;
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_EPOLL ||
-        thread->domain == NULL) {
-      continue;
-    }
+  size_t cursor = 0;
+  struct thread *thread;
+  while ((thread = cell_next_waiter(WAIT_EPOLL, &cursor))) {
     int ready =
       epoll_wait_for_domain(thread->domain, thread->wait.target, thread->wait.epoll_events, thread->wait.epoll_maxevents, false);
     bool expired = thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick;
@@ -214,10 +208,6 @@ static void wake_epoll_waiters(void) {
   epoll_waking = false;
 }
 
-void cell_wake_epoll_waiters_internal(void) {
-  wake_epoll_waiters();
-}
-
 static int sleep_poll(struct thread *thread, struct trap_frame *frame, const uint64_t *mask,
                       bool has_timeout, uint64_t timeout_ticks) {
   if (mask != NULL) {
@@ -225,7 +215,7 @@ static int sleep_poll(struct thread *thread, struct trap_frame *frame, const uin
     thread->wait.restore_signal_mask = true;
     thread->signal_mask = cell_sanitize_signal_mask(*mask);
   }
-  thread->state = THREAD_BLOCKED;
+  cell_mark_blocked(thread);
   if ((thread->pending_signals | thread->domain->pending_signals) && cell_deliver_pending_signals_current(frame)) {
     return CELL_SWITCHED;
   }

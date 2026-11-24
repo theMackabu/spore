@@ -437,12 +437,9 @@ int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file
 static void wake_pty_waiters(void) {
   if (pty_waking) { return; }
   pty_waking = true;
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_PTY ||
-        thread->domain == NULL) {
-      continue;
-    }
+  size_t cursor = 0;
+  struct thread *thread;
+  while ((thread = cell_next_waiter(WAIT_PTY, &cursor))) {
     int fd = thread->wait.target;
     if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] == NULL) {
       cell_finish_wait(thread, -9);
@@ -457,7 +454,6 @@ static void wake_pty_waiters(void) {
   }
   pty_waking = false;
   cell_wake_poll_waiters_internal();
-  cell_wake_epoll_waiters_internal();
 }
 
 int cell_block_current_on_pty(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame) {

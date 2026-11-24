@@ -43,9 +43,10 @@ static void wake_waiters(struct open_file *file) {
   bool progress;
   do {
     progress = false;
-    for (size_t i = 0, limit = cell_thread_slot_limit(); file->eventfd_waiters && i < limit; ++i) {
-      struct thread *t = cell_thread_slot(i);
-      if (t->state != THREAD_BLOCKED || t->wait.reason != WAIT_EVENTFD || t->wait.held_file != file) { continue; }
+    size_t cursor = 0;
+    struct thread *t;
+    while (file->eventfd_waiters && (t = cell_next_waiter(WAIT_EVENTFD, &cursor))) {
+      if (t->wait.held_file != file) { continue; }
       int rc = transfer(t->domain, file, t->wait.event_write, t->wait.event_arg);
       if (rc != -EAGAIN) {
         cell_finish_wait(t, rc);

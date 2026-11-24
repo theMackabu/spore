@@ -16,4 +16,5 @@ kernel_sources += files(
   'signal.c',
   'snapshot.c',
   'thread.c',
+  'wait.c',
 )

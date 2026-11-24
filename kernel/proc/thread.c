@@ -36,6 +36,7 @@ bool cell_thread_reset(size_t capacity) {
   } else {
     kmemset(threads, 0, thread_capacity * sizeof(*threads));
   }
+  cell_wait_reset();
   thread_slot_limit = 0;
   return true;
 }
@@ -129,10 +130,10 @@ size_t cell_runnable_or_blocked_threads_in_domain(const struct domain *domain) {
 }
 
 void cell_wake_vfork_parent_of(int child_id) {
-  for (size_t i = 0; i < thread_slot_limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL) { continue; }
-    if (thread->state == THREAD_BLOCKED && thread->wait.reason == WAIT_VFORK && thread->wait.target == child_id) {
+  size_t cursor = 0;
+  struct thread *thread;
+  while ((thread = cell_next_waiter(WAIT_VFORK, &cursor))) {
+    if (thread->wait.target == child_id) {
       cell_finish_wait(thread, child_id);
     }
   }
@@ -220,85 +221,6 @@ void cell_schedule(struct trap_frame *frame) {
   }
   kprintf("[kernel] no runnable threads\n");
   aarch64_poweroff();
-}
-
-void cell_clear_wait(struct thread *thread) {
-  if (thread->wait.restore_signal_mask) { thread->signal_mask = thread->wait.saved_signal_mask; }
-  struct open_file *file = NULL;
-  if (thread->wait.reason == WAIT_FLOCK || thread->wait.reason == WAIT_EVENTFD) {
-    file = thread->wait.held_file;
-    if (thread->wait.reason == WAIT_EVENTFD) { --file->eventfd_waiters; }
-  }
-  thread->wait = (struct thread_wait){.target = -1};
-  if (file != NULL) { cell_release_open_file(file); }
-}
-
-void cell_resume_wait(struct thread *thread) {
-  cell_clear_wait(thread);
-  thread->state = THREAD_RUNNABLE;
-}
-
-void cell_finish_wait(struct thread *thread, int64_t result) {
-  trap_set_result(&thread->tf, (uint64_t)result);
-  cell_resume_wait(thread);
-}
-
-int cell_block_current(struct trap_frame *frame, struct thread_wait wait) {
-  struct thread *thread = cell_current_thread_internal();
-  thread->wait = wait;
-  thread->running_cpu = -1;
-  thread->state = THREAD_BLOCKED;
-  cell_schedule(frame);
-  return CELL_SWITCHED;
-}
-
-int cell_block_current_on_pipe(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame) {
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_PIPE, .target = fd, .buf = buf, .len = len,
-                                                        .write = write});
-}
-
-int cell_block_current_on_sleep(uint64_t deadline_tick, struct trap_frame *frame) {
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_SLEEP, .target = -1,
-                                                        .has_deadline = true, .deadline_tick = deadline_tick});
-}
-
-int cell_block_current_on_socket_accept(int fd, uint64_t addr, uint64_t addrlen, int flags, struct trap_frame *frame) {
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_SOCKET, .target = fd, .socket_addr = addr,
-                                                        .socket_addrlen = addrlen, .socket_accept_flags = flags});
-}
-
-static int block_socket(struct trap_frame *frame, struct thread_wait wait, uint64_t timeout_ticks) {
-  wait.reason = WAIT_SOCKET;
-  if (timeout_ticks != 0) {
-    wait.has_deadline = true;
-    wait.deadline_tick = cell_uptime_ticks() + timeout_ticks;
-  }
-  return cell_block_current(frame, wait);
-}
-
-int cell_block_current_on_socket_flags_timeout(int fd, uint64_t buf, uint64_t len, uint64_t addr, uint64_t addrlen,
-                                               uint32_t flags, uint64_t timeout_ticks, struct trap_frame *frame) {
-  return block_socket(frame, (struct thread_wait){.target = fd, .buf = buf, .len = len, .socket_addr = addr,
-                                                  .socket_addrlen = addrlen, .socket_flags = flags}, timeout_ticks);
-}
-
-int cell_block_current_on_socket_write_timeout(int fd, uint64_t buf, uint64_t len, uint64_t timeout_ticks,
-                                               struct trap_frame *frame) {
-  return block_socket(frame, (struct thread_wait){.target = fd, .buf = buf, .len = len, .write = true}, timeout_ticks);
-}
-
-int cell_block_current_on_socket_sendmsg_timeout(int fd, uint64_t msg_addr, uint64_t timeout_ticks,
-                                                 struct trap_frame *frame) {
-  return block_socket(frame, (struct thread_wait){.target = fd, .socket_msg = true, .write = true,
-                                                  .socket_msg_addr = msg_addr}, timeout_ticks);
-}
-
-int cell_block_current_on_socket_msg_timeout(int fd, uint64_t msg_addr, uint64_t iov, uint64_t iovlen, uint64_t addr,
-                                             uint64_t addrlen, uint32_t flags, uint64_t timeout_ticks,
-                                             struct trap_frame *frame) {
-  return block_socket(frame, (struct thread_wait){.target = fd, .socket_msg = true, .socket_msg_addr = msg_addr,
-                                                  .socket_iov = iov, .socket_iovlen = iovlen, .socket_addr = addr,
-                                                  .socket_addrlen = addrlen, .socket_flags = flags}, timeout_ticks);
 }
 
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {

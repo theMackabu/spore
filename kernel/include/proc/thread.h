@@ -33,6 +33,7 @@ enum wait_reason {
   WAIT_PTY,
   WAIT_FLOCK,
   WAIT_EVENTFD,
+  WAIT_REASON_COUNT,
 };
 
 constexpr int CELL_SWITCHED = -0x40000000;
@@ -105,6 +106,9 @@ bool cell_thread_reset(size_t capacity);
 size_t cell_thread_slot_limit(void);
 void cell_set_current_thread(struct thread *thread);
 bool cell_scheduler_waiting_for_interrupt(void);
+void cell_wait_reset(void);
+struct thread *cell_next_waiter(enum wait_reason reason, size_t *cursor);
+void cell_mark_blocked(struct thread *thread);
 void cell_clear_wait(struct thread *thread);
 void cell_resume_wait(struct thread *thread);
 void cell_finish_wait(struct thread *thread, int64_t result);

@@ -22,4 +22,3 @@ int cell_fd_epoll_create(int flags);
 int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data);
 int cell_epoll_wait_current(int epfd, uint64_t events_addr, int maxevents, int timeout_ms, const uint64_t *mask, struct trap_frame *frame);
 void cell_wake_poll_waiters_internal(void);
-void cell_wake_epoll_waiters_internal(void);
