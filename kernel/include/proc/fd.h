@@ -47,7 +47,6 @@ struct open_file {
   union {
     struct {
       struct pipe_obj *pipe;
-      bool pipe_write_end;
       bool name_unlinked, name_unresolved;
       struct fsnotify_name notify_name;
       struct open_file *name_next, **name_link;

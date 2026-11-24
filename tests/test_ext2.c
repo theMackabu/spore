@@ -499,6 +499,10 @@ static void test_cache_flush_retry(void) {
   assert(ext2_drop_cache(&fs));
   io.unreadable_offset = (uint64_t)dir.blocks[0] * fs.block_size;
   assert(ext2_remove(&fs, "/keep") == -EIO);
+  assert(ext2_mknod(&fs, "/keep/new", 0100600, NULL) == -EIO);
+  assert(!ext2_link(&fs, "/retry.bin", "/keep/link"));
+  assert(!ext2_symlink(&fs, "/retry.bin", "/keep/link"));
+  assert(ext2_remove(&fs, "/keep/.entry") == -EIO);
   io.unreadable_offset = 0;
   assert(ext2_lookup(&fs, "/keep/.entry", &fresh));
   assert(ext2_remove(&fs, "/keep") == -LINUX_ENOTEMPTY);

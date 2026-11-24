@@ -143,8 +143,9 @@ int cell_fd_unix_bind(int fd, const char *path) {
   if (file == NULL || file->type != OPEN_UNIX_STREAM || path == NULL || path[0] == '\0') { return -EINVAL; }
   struct vfs_node node;
   if (file->unix_bound) { return -EINVAL; }
-  if (vfs_lookup(path, &node)) { return -EADDRINUSE; }
-  if (!vfs_mksock(path, 0666, &node)) { return -EINVAL; }
+  int rc = vfs_mkspecial(path, 0140755, &node);
+  if (rc) { return rc == -17 ? -EADDRINUSE : rc; }
+  (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
   if (!vfs_retain_node(&node)) { (void)vfs_remove(path); return -12; }
   file->unix_bound = true;
   file->node = node;

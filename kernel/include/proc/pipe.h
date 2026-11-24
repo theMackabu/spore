@@ -21,6 +21,7 @@ void cell_pipe_drop_reader(struct pipe_obj *pipe);
 void cell_pipe_drop_writer(struct pipe_obj *pipe);
 bool cell_pipe_file_readable(struct open_file *file);
 bool cell_pipe_file_writable(struct open_file *file);
+bool cell_pipe_file_error(struct open_file *file);
 bool cell_pipe_file_hup(struct open_file *file);
 bool cell_pipe_readable(struct pipe_obj *pipe);
 bool cell_pipe_writable(struct pipe_obj *pipe);

@@ -1,4 +1,5 @@
 #include "proc/pipe.h"
+#include "abi/linux/aarch64/open.h"
 
 #include "mm/pmm.h"
 #include "mm/pool.h"
@@ -122,17 +123,21 @@ void cell_pipe_drop_writer(struct pipe_obj *pipe) {
 
 bool cell_pipe_file_readable(struct open_file *file) {
   struct pipe_obj *pipe = pipe_for_file(file);
-  return pipe != NULL && !file->pipe_write_end && (pipe->ring.used != 0 || pipe->writers == 0);
+  return pipe != NULL && linux_open_readable(file->flags) && pipe->ring.used != 0;
 }
 
 bool cell_pipe_file_writable(struct open_file *file) {
   struct pipe_obj *pipe = pipe_for_file(file);
-  return pipe != NULL && file->pipe_write_end && pipe->readers != 0 && pipe->ring.used < PIPE_CAP;
+  return pipe != NULL && linux_open_writable(file->flags) && pipe->ring.used < PIPE_CAP;
 }
 
 bool cell_pipe_file_hup(struct open_file *file) {
   struct pipe_obj *pipe = pipe_for_file(file);
-  return pipe != NULL && !file->pipe_write_end && pipe->writers == 0;
+  return pipe != NULL && linux_open_readable(file->flags) && pipe->had_writer && pipe->writers == 0;
+}
+
+bool cell_pipe_file_error(struct open_file *file) {
+  return file->type == OPEN_PIPE && linux_open_writable(file->flags) && !file->pipe->readers;
 }
 
 bool cell_pipe_readable(struct pipe_obj *pipe) {
@@ -154,8 +159,8 @@ struct unix_rights_queue *cell_pipe_rights(struct pipe_obj *pipe) { return &pipe
 bool cell_pipe_release_file(struct open_file *file) {
   struct pipe_obj *pipe = pipe_for_file(file);
   if (pipe == NULL) { return false; }
-  if (file->pipe_write_end) { cell_pipe_drop_writer(pipe); }
-  else { cell_pipe_drop_reader(pipe); }
+  if (linux_open_readable(file->flags)) { cell_pipe_drop_reader(pipe); }
+  if (linux_open_writable(file->flags)) { cell_pipe_drop_writer(pipe); }
   return true;
 }
 
@@ -269,11 +274,12 @@ int64_t cell_pipe_read_user(struct domain *domain, struct pipe_obj *pipe, uint64
 }
 
 int64_t cell_pipe_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  if (file == NULL || file->type != OPEN_PIPE || !file->pipe_write_end) { return -9; }
+  if (file == NULL || file->type != OPEN_PIPE || !linux_open_writable(file->flags)) { return -9; }
   return cell_pipe_write_user(domain, file->pipe, buf, len);
 }
 
 int64_t cell_pipe_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  if (file == NULL || file->type != OPEN_PIPE || file->pipe_write_end) { return -9; }
+  if (file == NULL || file->type != OPEN_PIPE || !linux_open_readable(file->flags)) { return -9; }
+  if (!file->pipe->writers && !file->pipe->ring.used && (file->flags & 04000)) { return 0; }
   return cell_pipe_read_user(domain, file->pipe, buf, len);
 }

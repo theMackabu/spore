@@ -88,6 +88,7 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
 int64_t ext2_writeback_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, size_t len);
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len);
 bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size);
+int ext2_mknod(struct ext2_fs *fs, const char *path, uint16_t mode, struct ext2_node *out);
 bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out);
 bool ext2_tmpfile(struct ext2_fs *fs, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable, struct ext2_node *out);
 bool ext2_retain_inode(struct ext2_fs *fs, uint32_t ino);

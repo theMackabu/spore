@@ -476,7 +476,7 @@ int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
-  if (!vfs_mkdir(path, (uint32_t)mode)) {
+  if (!vfs_mkdir(path, (uint32_t)mode & ~SYSCALL_UMASK)) {
     struct vfs_node existing;
     if (vfs_lookup(path, &existing)) { return -(int64_t)EEXIST; }
     return -(int64_t)EINVAL;
@@ -491,7 +491,8 @@ int64_t sys_mknodat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   if (path_rc != 0) { return path_rc; }
   if ((mode & S_IFMT) != S_IFIFO) { return -(int64_t)EINVAL; }
   struct vfs_node node;
-  if (!vfs_mkfifo(path, (uint32_t)mode, &node)) { return -(int64_t)EEXIST; }
+  int rc = vfs_mkspecial(path, (uint16_t)(S_IFIFO | (mode & 07777u & ~SYSCALL_UMASK)), &node);
+  if (rc) { return rc; }
   (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
   return 0;
 }

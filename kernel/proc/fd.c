@@ -128,8 +128,10 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
-  if (node->device == RAMFS_DEV_PTMX) { return cell_pty_open_master(flags, path); }
-  if (node->device == RAMFS_DEV_PTS) {
+  bool path_only = (flags & LINUX_O_PATH) != 0;
+  if (!path_only && (node->mode & CELL_S_IFMT) == 0140000u) { return -ENXIO; }
+  if (!path_only && node->device == RAMFS_DEV_PTMX) { return cell_pty_open_master(flags, path); }
+  if (!path_only && node->device == RAMFS_DEV_PTS) {
     int id = cell_pty_id_from_path(path);
     if (id < 0) { return id; }
     return cell_pty_open_slave(id, flags, path);
@@ -142,9 +144,10 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   }
   file->type = OPEN_VFS;
   file->node = *node;
-  if ((node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
-    bool write_end = (flags & LINUX_O_ACCMODE) == LINUX_O_WRONLY;
-    bool needs_reader = write_end && (flags & CELL_O_NONBLOCK) != 0;
+  if (!path_only && (node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
+    bool read = linux_open_readable(flags), write = linux_open_writable(flags);
+    if (!read && !write) { cell_release_open_file(file); return -EINVAL; }
+    bool needs_reader = write && !read && (flags & CELL_O_NONBLOCK) != 0;
     struct pipe_obj *pipe = cell_fifo_open(node, !needs_reader);
     if (needs_reader && (!pipe || !cell_pipe_has_readers(pipe))) {
       cell_release_open_file(file);
@@ -156,12 +159,8 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
     }
     file->type = OPEN_PIPE;
     file->pipe = pipe;
-    file->pipe_write_end = write_end;
-    if (write_end) {
-      cell_pipe_add_writer(pipe);
-    } else {
-      cell_pipe_add_reader(pipe);
-    }
+    if (read) { cell_pipe_add_reader(pipe); }
+    if (write) { cell_pipe_add_writer(pipe); }
   }
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   cell_copy_open_path(file, path);
@@ -197,11 +196,9 @@ int cell_fd_pipe2(uint64_t pipefd_addr, int flags) {
   read_file->type = OPEN_PIPE;
   read_file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
   read_file->pipe = pipe;
-  read_file->pipe_write_end = false;
   write_file->type = OPEN_PIPE;
-  write_file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
+  write_file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC) | LINUX_O_WRONLY;
   write_file->pipe = pipe;
-  write_file->pipe_write_end = true;
 
   return cell_install_fd_pair(domain, read_file, write_file, flags & CELL_O_CLOEXEC, pipefd_addr);
 }

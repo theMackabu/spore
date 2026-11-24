@@ -28,6 +28,7 @@ int cell_file_poll_events(struct open_file *file, int events) {
   }
 
   int revents = 0;
+  if (cell_pipe_file_error(file)) { revents |= CELL_POLLERR; }
   if (file->type == OPEN_PIPE && cell_pipe_file_hup(file)) { revents |= CELL_POLLHUP; }
   if (file->type == OPEN_PTY && cell_pty_file_hup(file)) { revents |= CELL_POLLHUP; }
   if ((events & CELL_POLLIN) != 0) {

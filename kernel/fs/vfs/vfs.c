@@ -66,7 +66,7 @@ bool vfs_mkdir(const char *path, uint32_t mode) {
   bool ok = false;
   if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
     struct ext2_node node;
-    ok = ext2_create(vfs_root_ext2, path, true, (uint16_t)mode, &node);
+    ok = ext2_mknod(vfs_root_ext2, path, 0040000u | (mode & 07777u), &node) == 0;
   } else {
     ok = vfs_root_ramfs != NULL && ramfs_mkdir(vfs_root_ramfs, path, (uint16_t)mode);
   }
@@ -122,28 +122,27 @@ bool vfs_link_node(const struct vfs_node *node, const char *new_path) {
   return ok;
 }
 
-bool vfs_mkfifo(const char *path, uint32_t mode, struct vfs_node *out) {
+int vfs_mkspecial(const char *path, uint16_t mode, struct vfs_node *out) {
+  unsigned type = mode & 0170000u;
+  if (type != 0010000 && type != 0140000) { return -22; }
   vfs_update_time_sources();
-  struct ramfs_node node;
-  if (vfs_root_ramfs == NULL || !vfs_path_uses_ramfs(path) ||
-      !ramfs_mkfifo(vfs_root_ramfs, path, (uint16_t)mode, &node)) {
-    return false;
+  if (vfs_root_ext2 && !vfs_path_uses_ramfs(path)) {
+    struct ext2_node node;
+    int rc = ext2_mknod(vfs_root_ext2, path, mode, &node);
+    if (rc) { return rc; }
+    vfs_from_ext2(&node, out);
+  } else {
+    struct ramfs_node node;
+    if (!vfs_root_ramfs) { return -2; }
+    if (ramfs_lookup_node(vfs_root_ramfs, path, &node)) { return -17; }
+    bool ok = type == 0010000 ? ramfs_mkfifo(vfs_root_ramfs, path, mode, &node) :
+                               ramfs_mksock(vfs_root_ramfs, path, mode, &node);
+    if (!ok) { return -2; }
+    vfs_from_ramfs(&node, out);
   }
-  vfs_from_ramfs(&node, out);
-  vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
-  return true;
-}
-
-bool vfs_mksock(const char *path, uint32_t mode, struct vfs_node *out) {
-  vfs_update_time_sources();
-  struct ramfs_node node;
-  if (vfs_root_ramfs == NULL || !vfs_path_uses_ramfs(path) ||
-      !ramfs_mksock(vfs_root_ramfs, path, (uint16_t)mode, &node)) {
-    return false;
-  }
-  vfs_from_ramfs(&node, out);
-  vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
-  return true;
+  vfs_lookup_cache_clear();
+  fsnotify_path_event(path, FS_CREATE);
+  return 0;
 }
 
 bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
