@@ -154,6 +154,7 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   as->hhdm_offset = hhdm_offset;
   as->freebsd_abi = false;
   as->detached_file_pages = false;
+  as->has_buffer_pins = false;
   as->resident_pages = 0;
   as->peak_resident_pages = 0;
   as->arg_start = 0;

@@ -16,9 +16,7 @@ static void wake_socket_timeout_waiters(uint64_t now_ticks) {
   }
 }
 
-static int64_t resume_socket_wait(struct open_file *file, struct thread *thread) {
-  const struct thread_wait *wait = &thread->wait;
-  struct domain *domain = thread->domain;
+int64_t cell_resume_socket_io(struct open_file *file, struct domain *domain,const struct thread_wait *wait) {
   if (file->type == OPEN_UNIX_LISTENER) { return take_pending_unix(domain, file, wait->socket_accept_flags); }
   if (wait->write) {
     return wait->socket_msg ? socket_sendmsg_tcp_from_domain(domain, file, wait->socket_msg_addr)
@@ -56,7 +54,7 @@ void cell_socket_wake_file(struct open_file *file) {
     while ((thread = cell_next_waiter(WAIT_SOCKET, &cursor))) {
       if (thread->wait.held_file != file || thread->wait.socket_servicing) { continue; }
       thread->wait.socket_servicing = true;
-      int64_t rc = resume_socket_wait(file, thread);
+      int64_t rc = cell_resume_socket_io(file,thread->domain,&thread->wait);
       thread->wait.socket_servicing = false;
       if (rc != -EAGAIN) { cell_finish_wait(thread, rc); }
     }

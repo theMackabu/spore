@@ -54,6 +54,13 @@ int uring_rw(struct open_file *ring, const struct sqe *e) {
   if (!target) { return -EBADF; }
   if (target->type == OPEN_URING) { return -EINVAL; }
   if (target->type != OPEN_VFS && e->off && e->off != UINT64_MAX) { return -29; }
+  if ((e->flags & IO_ASYNC) || uring_ordered(&ring->ring, e)) {
+    if (vector && (e->len > 1024 || !syscall_user_readable(e->addr, e->len * sizeof(struct iovec64)))) {
+      return -EINVAL;
+    }
+    if (!e->len) { return 0; }
+    return uring_defer_io(ring, target, e);
+  }
   if (!vector) { return single_io(ring, target, e, true); }
   if (e->len > 1024) { return -EINVAL; }
   if (target->type == OPEN_SOCKET && target->socket_proto != 6) {
@@ -74,9 +81,30 @@ int uring_rw(struct open_file *ring, const struct sqe *e) {
     part.addr = v.base;
     part.len = v.len;
     int n = single_io(ring, target, &part, false);
+    if (n == -11 && !total && !(target->flags & 04000) && !(e->op_flags & 8)) {
+      return uring_defer_io(ring, target, e);
+    }
     if (n < 0) { return total ? total : n; }
     total += n;
     if (n != (int)v.len) { break; }
+    if (part.off != UINT64_MAX) { part.off += n; }
+  }
+  return total;
+}
+
+int uring_retry_vector(struct domain *d, struct open_file *target, const struct sqe *e, const struct iovec64 *iov) {
+  int total = 0;
+  struct sqe part = *e;
+  part.opcode = e->opcode == OP_WRITEV ? OP_WRITE : OP_READ;
+  for (unsigned i = 0; i < e->len; ++i) {
+    if (iov[i].len > INT32_MAX - (unsigned)total) { return total ? total : -EINVAL; }
+    if (!iov[i].len) { continue; }
+    part.addr = iov[i].base;
+    part.len = iov[i].len;
+    int n = uring_retry_io(d, target, &part);
+    if (n < 0) { return total ? total : n; }
+    total += n;
+    if (n != (int)part.len) { break; }
     if (part.off != UINT64_MAX) { part.off += n; }
   }
   return total;

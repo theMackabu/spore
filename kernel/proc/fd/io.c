@@ -191,9 +191,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   if (file->type != OPEN_VFS) { return -9; }
   if (file->node.is_dir) { return -21; }
   if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, &file->offset, buf, len, frame); }
-  int64_t got = cell_read_regular(domain, file, file->offset, buf, len);
-  if (got > 0) { file->offset += (uint64_t)got; }
-  return got;
+  return cell_file_regular_io(domain,file,buf,len,UINT64_MAX,false);
 }
 
 int64_t cell_fd_positioned_io(int fd, uint64_t buf, uint64_t len, int64_t position, bool write) {
@@ -204,18 +202,14 @@ int64_t cell_fd_positioned_io(int fd, uint64_t buf, uint64_t len, int64_t positi
   if ((file->type == OPEN_VFS || file->type == OPEN_PIPE) &&
       !(write ? linux_open_writable(file->flags) : linux_open_readable(file->flags))) { return -9; }
   if (file->type != OPEN_VFS || file->node.device == RAMFS_DEV_CONSOLE || file->node.device == RAMFS_DEV_TTY) { return -29; }
-  if (file->node.is_dir) { return -21; }
-  if (!len) { return 0; }
-  uint64_t offset = (uint64_t)position;
-  if (write) { return write_vfs(file, domain, &offset, buf, len); }
-  if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, &offset, buf, len, NULL); }
-  return cell_read_regular(domain, file, offset, buf, len);
+  return cell_file_regular_io(domain,file,buf,len,(uint64_t)position,write);
 }
 
 int64_t cell_file_regular_io(struct domain *domain, struct open_file *file, uint64_t buf, size_t len,
                              uint64_t position, bool write) {
   if (file->type != OPEN_VFS || file->node.is_dir) { return -21; }
   if (file->flags & LINUX_O_PATH || !(write ? linux_open_writable(file->flags) : linux_open_readable(file->flags))) { return -9; }
+  if (!len) { return 0; }
   uint64_t *offset = position == UINT64_MAX ? &file->offset : &position;
   if (*offset > INT64_MAX) { return -EINVAL; }
   if (write) { return write_vfs(file,domain,offset,buf,len); }

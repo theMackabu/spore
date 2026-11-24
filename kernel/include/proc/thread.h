@@ -74,7 +74,7 @@ struct thread_wait {
       uint64_t epoll_events;
       int epoll_maxevents;
       uint8_t poll_kind;
-      uint32_t uring_submitted;
+      uint32_t uring_submitted, uring_timeouts;
     };
     bool fifo_cloexec;
     struct {

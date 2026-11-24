@@ -11,61 +11,86 @@
 struct uring_buffer {
   struct iovec64 iov;
   uint64_t *pages;
+  struct uring_extra *tag;
   uint32_t nr, pinned;
 };
 
-void uring_clear_buffers(struct uring *r) {
+static void drop_buffer(struct uring *r, struct uring_buffer *b, bool notify) {
+  for (unsigned j = 0; j < b->pinned; ++j) {
+    pmm_unpin_page(b->pages[j]);
+  }
+  r->pinned_pages -= b->pinned;
+  table_free(b->pages, b->nr, sizeof(*b->pages));
+  uring_tag_put(notify ? r : NULL, b->tag);
+}
+
+static void clear_buffers(struct uring *r, bool notify) {
   for (unsigned i = 0; i < r->nr_buffers; ++i) {
-    struct uring_buffer *b = &r->buffers[i];
-    for (unsigned j = 0; j < b->pinned; ++j) {
-      pmm_unpin_page(b->pages[j]);
-    }
-    table_free(b->pages, b->nr, sizeof(*b->pages));
+    drop_buffer(r, &r->buffers[i], notify);
   }
   table_free(r->buffers, r->nr_buffers, sizeof(*r->buffers));
   r->buffers = NULL;
   r->nr_buffers = 0;
 }
+void uring_clear_buffers(struct uring *r) {
+  clear_buffers(r, true);
+}
 
-int uring_register_buffers(struct uring *r, uint64_t addr, unsigned nr) {
+static int pin_buffer(struct uring *r, struct uring_buffer *b, uint64_t addr, uint64_t tagaddr, unsigned available) {
+  uint64_t tag = 0;
+  if (uring_copy_in(&b->iov, addr, sizeof(b->iov)) || (tagaddr && uring_copy_in(&tag, tagaddr, sizeof(tag)))) {
+    return -EFAULT;
+  }
+  uint64_t base = b->iov.base, len = b->iov.len;
+  if (!base && !len && !tag) { return 0; }
+  if (!len || base >= USER_VA_LIMIT || len > USER_VA_LIMIT - base) { return -EFAULT; }
+  uint64_t n = (base % PAGE_SIZE + len + PAGE_SIZE - 1) / PAGE_SIZE;
+  if (n > available) { return -ENOMEM; }
+  b->nr = n;
+  b->pages = table_alloc(n, sizeof(*b->pages));
+  if (!b->pages) { return -ENOMEM; }
+  if (tag && !(b->tag = uring_extra_new(tag))) { return -ENOMEM; }
+  for (unsigned j = 0; j < n; ++j) {
+    uint64_t va = (base & ~(uint64_t)(PAGE_SIZE - 1)) + (uint64_t)j * PAGE_SIZE;
+    if (!syscall_user_writable(va, 1) || !(b->pages[j] = vmm_pin_writable(syscall_active_as(), va))) { return -EFAULT; }
+    ++b->pinned;
+    ++r->pinned_pages;
+  }
+  return 0;
+}
+static int update(struct uring *r, unsigned offset, uint64_t addr, unsigned nr, uint64_t tags, bool partial) {
+  if (!nr || offset > r->nr_buffers || nr > r->nr_buffers - offset) { return -EINVAL; }
+  if (!syscall_user_readable(addr, nr * sizeof(struct iovec64)) ||
+      (tags && !syscall_user_readable(tags, nr * sizeof(uint64_t)))) {
+    return -EFAULT;
+  }
+  for (unsigned i = 0; i < nr; ++i) {
+    struct uring_buffer b = {0}, *old = &r->buffers[offset + i];
+    int rc = pin_buffer(r, &b, addr + i * sizeof(b.iov), tags ? tags + i * sizeof(uint64_t) : 0,
+                        16384u - r->pinned_pages + old->pinned);
+    if (rc) {
+      drop_buffer(r, &b, false);
+      return i && partial ? (int)i : rc;
+    }
+    drop_buffer(r, old, true);
+    *old = b;
+  }
+  return nr;
+}
+int uring_update_buffers(struct uring *r, unsigned off, uint64_t addr, unsigned nr, uint64_t tags) {
+  return update(r, off, addr, nr, tags, true);
+}
+int uring_register_buffers(struct uring *r, uint64_t addr, unsigned nr, uint64_t tags, bool sparse) {
   if (r->buffers) { return -EBUSY; }
-  if (!nr || nr > 1024) { return -EINVAL; }
-  if (!syscall_user_readable(addr, nr * sizeof(struct iovec64))) { return -EFAULT; }
+  if (!nr || nr > 1024 || (sparse && tags)) { return -EINVAL; }
   r->buffers = table_alloc(nr, sizeof(*r->buffers));
   if (!r->buffers) { return -ENOMEM; }
   r->nr_buffers = nr;
-  unsigned total = 0;
-  int error = -EFAULT;
-  struct user_address_space *as = syscall_active_as();
-  for (unsigned i = 0; i < nr; ++i) {
-    struct uring_buffer *b = &r->buffers[i];
-    if (!vmm_copy_from_user(as, &b->iov, addr + i * sizeof(b->iov), sizeof(b->iov))) { goto fail; }
-    uint64_t base = b->iov.base, len = b->iov.len;
-    if (!len || base >= USER_VA_LIMIT || len > USER_VA_LIMIT - base) { goto fail; }
-    uint64_t n = (base % PAGE_SIZE + len + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (n > 16384u - total) {
-      error = -ENOMEM;
-      goto fail;
-    }
-    total += n;
-    b->nr = n;
-    b->pages = table_alloc(n, sizeof(*b->pages));
-    if (!b->pages) {
-      error = -ENOMEM;
-      goto fail;
-    }
-    for (unsigned j = 0; j < n; ++j) {
-      uint64_t va = (base & ~(uint64_t)(PAGE_SIZE - 1)) + (uint64_t)j * PAGE_SIZE;
-      if (!syscall_user_writable(va, 1)) { goto fail; }
-      b->pages[j] = vmm_pin_writable(as, va);
-      if (!b->pages[j]) { goto fail; }
-      ++b->pinned;
-    }
-  }
-  return 0;
-fail:
-  uring_clear_buffers(r);
-  return error;
+  if (sparse) { return 0; }
+  int n = update(r, 0, addr, nr, tags, false);
+  if (n == (int)nr) { return 0; }
+  clear_buffers(r, false);
+  return n;
 }
 
 int uring_fixed_io(struct open_file *ring, const struct sqe *e) {

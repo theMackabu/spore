@@ -82,3 +82,5 @@ int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint
 int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listener, int flags);
 
 int tcp_copy_peer_addr_to_domain(struct domain *domain, int accepted_fd, uint64_t addr, uint64_t addrlen);
+struct thread_wait;
+int64_t cell_resume_socket_io(struct open_file *file, struct domain *domain,const struct thread_wait *wait);

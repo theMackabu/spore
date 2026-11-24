@@ -152,6 +152,12 @@ static void wake_timer_waiters(uint64_t scheduler_ticks) {
       continue;
     }
     switch (thread->wait.reason) {
+    case WAIT_URING: {
+      bool ready=uring_poll(&thread->wait.held_file->ring,CELL_POLLIN)!=0;
+      int result=thread->wait.uring_submitted;
+      cell_finish_wait(thread,result || ready ? result : -62);
+      break;
+    }
     case WAIT_SLEEP: cell_finish_wait(thread, 0); break;
     case WAIT_FUTEX: cell_finish_wait(thread, -ETIMEDOUT); break;
     case WAIT_PIPE: cell_finish_wait(thread, -11); break;

@@ -2,6 +2,7 @@
 #include "abi/linux/shared/usercopy.h"
 #include "internal.h"
 #include "proc/domain.h"
+#include "proc/thread.h"
 
 static uint32_t round_entries(uint32_t n) {
   uint32_t size = 1;
@@ -19,7 +20,8 @@ int64_t sys_io_uring_setup(uint32_t entries, uint64_t addr) {
     return -EFAULT;
   }
   if (!entries || p.reserved[0] || p.reserved[1] || p.reserved[2] ||
-      (p.flags & ~(SETUP_CQSIZE | SETUP_CLAMP | SETUP_NO_SQARRAY | SETUP_R_DISABLED))) {
+      (p.flags & ~(SETUP_CQSIZE | SETUP_CLAMP | SETUP_NO_SQARRAY | SETUP_R_DISABLED | SETUP_SQE128 | SETUP_CQE32 |
+                   SETUP_SINGLE_ISSUER))) {
     return -EINVAL;
   }
   if (entries > MAX_ENTRIES && !(p.flags & SETUP_CLAMP)) { return -EINVAL; }
@@ -29,13 +31,14 @@ int64_t sys_io_uring_setup(uint32_t entries, uint64_t addr) {
     if (p.cq_entries < sq || (p.cq_entries > 2 * MAX_ENTRIES && !(p.flags & SETUP_CLAMP))) { return -EINVAL; }
     cq = round_entries(p.cq_entries < 2 * MAX_ENTRIES ? p.cq_entries : 2 * MAX_ENTRIES);
   }
-  uint32_t array = p.flags & SETUP_NO_SQARRAY ? 0 : sizeof(struct rings) + cq * sizeof(struct cqe);
+  unsigned sq_shift = !!(p.flags & SETUP_SQE128), cq_shift = !!(p.flags & SETUP_CQE32);
+  uint32_t array = p.flags & SETUP_NO_SQARRAY ? 0 : sizeof(struct rings) + (cq << cq_shift) * sizeof(struct cqe);
 #define OFF(member) offsetof(struct rings, member)
   p = (struct params){
     .flags = p.flags,
     .sq_entries = sq,
     .cq_entries = cq,
-    .features = SINGLE_MMAP,
+    .features = SINGLE_MMAP | FEAT_NODROP | FEAT_EXT_ARG | FEAT_RSRC_TAGS | FEAT_RW_CUR_POS,
     .sq = {OFF(sq_head), OFF(sq_tail), OFF(sq_mask), OFF(sq_entries), OFF(sq_flags), OFF(dropped), array, 0, 0},
     .cq = {OFF(cq_head), OFF(cq_tail), OFF(cq_mask), OFF(cq_entries), OFF(overflow), sizeof(struct rings),
            OFF(cq_flags), 0, 0}};
@@ -45,7 +48,13 @@ int64_t sys_io_uring_setup(uint32_t entries, uint64_t addr) {
   file->type = OPEN_URING;
   file->flags = LINUX_O_RDWR;
   file->ring = (struct uring){
-    .entries = sq, .cq_entries = cq, .sq_array_offset = array, .disabled = (p.flags & SETUP_R_DISABLED) != 0};
+    .issuer = (p.flags & SETUP_SINGLE_ISSUER) ? ((p.flags & SETUP_R_DISABLED) ? -1 : cell_current_tid()) : 0,
+    .sq_shift = sq_shift,
+    .cq_shift = cq_shift,
+    .entries = sq,
+    .cq_entries = cq,
+    .sq_array_offset = array,
+    .disabled = (p.flags & SETUP_R_DISABLED) != 0};
   int fd = cell_install_fd(cell_current_domain_internal(), file, true);
   if (fd >= 0 && !vmm_copy_to_user(as, addr, &p, sizeof(p))) {
     cell_fd_close(fd);

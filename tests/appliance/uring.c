@@ -217,7 +217,144 @@ static void files_and_events(void) {
   assert(munmap(r.map, r.bytes) == 0 && munmap(r.sq, r.p.sq_entries * sizeof(*r.sq)) == 0);
 }
 
+static void overflow_and_tags(void) {
+  struct test_ring r = {0};
+  test_ring_open(&r);
+  for (unsigned batch = 0; batch < 3; ++batch) {
+    for (unsigned i = 0; i < 8; ++i) {
+      queue(&r, (struct io_uring_sqe){.opcode = IORING_OP_NOP, .user_data = batch * 8 + i});
+    }
+    assert(syscall(SYS_io_uring_enter, r.fd, 8, 0, 0, NULL, 0) == 8);
+  }
+  for (unsigned i = 0; i < 24; ++i) {
+    struct io_uring_cqe c = completion(&r);
+    assert(c.res == 0 && c.user_data == i);
+  }
+  int pipes[2];
+  assert(pipe(pipes) == 0);
+  uint64_t tag = 999;
+  struct io_uring_rsrc_register reg = {.nr = 1, .data = (uintptr_t)&pipes[0], .tags = (uintptr_t)&tag};
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_REGISTER_FILES2, &reg, sizeof(reg)) == 0);
+  char ch = 0;
+  queue(&r, (struct io_uring_sqe){.opcode = IORING_OP_READ,
+                                  .flags = IOSQE_FIXED_FILE,
+                                  .fd = 0,
+                                  .addr = (uintptr_t)&ch,
+                                  .len = 1,
+                                  .user_data = 888});
+  assert(syscall(SYS_io_uring_enter, r.fd, 1, 0, 0, NULL, 0) == 1);
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_UNREGISTER_FILES, NULL, 0) == 0);
+  assert(*(unsigned *)(r.map + r.p.cq_off.tail) == r.head);
+  assert(write(pipes[1], "t", 1) == 1);
+  struct io_uring_cqe c = completion(&r);
+  assert(c.user_data == 888 && c.res == 1 && ch == 't');
+  c = completion(&r);
+  assert(c.user_data == 999 && !c.res);
+
+  struct timespec ts = {.tv_nsec = 15000000};
+  struct io_uring_getevents_arg arg = {.ts = (uintptr_t)&ts};
+  errno = 0;
+  assert(syscall(SYS_io_uring_enter, r.fd, 0, 1, IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG, &arg, sizeof(arg)) ==
+           -1 &&
+         errno == ETIME);
+  assert(close(pipes[0]) == 0 && close(pipes[1]) == 0 && close(r.fd) == 0);
+  assert(munmap(r.map, r.bytes) == 0 && munmap(r.sq, r.p.sq_entries * sizeof(*r.sq)) == 0);
+}
+
+static void provided_buffers_and_links(void) {
+  struct test_ring r = {0};
+  test_ring_open(&r);
+  int p[2];
+  assert(pipe(p) == 0);
+  char buffers[2][4] = {0};
+  assert(issue(&r, (struct io_uring_sqe){.opcode = IORING_OP_PROVIDE_BUFFERS,
+                                         .fd = 2,
+                                         .addr = (uintptr_t)buffers,
+                                         .len = 4,
+                                         .off = 10,
+                                         .buf_group = 5}) == 0);
+  queue(&r, (struct io_uring_sqe){.opcode = IORING_OP_READ,
+                                  .flags = IOSQE_BUFFER_SELECT | IOSQE_IO_LINK,
+                                  .buf_group = 5,
+                                  .fd = p[0],
+                                  .user_data = 1});
+  queue(&r, (struct io_uring_sqe){.opcode = IORING_OP_NOP, .user_data = 2});
+  assert(syscall(SYS_io_uring_enter, r.fd, 2, 0, 0, NULL, 0) == 2);
+  assert(*(unsigned *)(r.map + r.p.cq_off.tail) == r.head);
+  assert(write(p[1], "data", 4) == 4);
+  struct io_uring_cqe c = completion(&r);
+  assert(c.user_data == 1 && c.res == 4 && c.flags == (IORING_CQE_F_BUFFER | (10u << 16)) &&
+         !memcmp(buffers[0], "data", 4));
+  c = completion(&r);
+  assert(c.user_data == 2 && c.res == 0);
+  assert(issue(&r, (struct io_uring_sqe){.opcode = IORING_OP_REMOVE_BUFFERS, .fd = 4, .buf_group = 5}) == 1);
+
+  struct io_uring_buf_ring *br = mmap(NULL, 4096, 3, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  assert(br != MAP_FAILED);
+  struct io_uring_buf_reg reg = {.ring_addr = (uintptr_t)br, .ring_entries = 8, .bgid = 8};
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_REGISTER_PBUF_RING, &reg, 1) == 0);
+  br->bufs[0] = (struct io_uring_buf){.addr = (uintptr_t)buffers[1], .len = 4, .bid = 73};
+  __atomic_store_n(&br->tail, 1, __ATOMIC_RELEASE);
+  assert(write(p[1], "read", 4) == 4);
+  queue(&r, (struct io_uring_sqe){.opcode = IORING_OP_READ, .fd = p[0], .flags = IOSQE_BUFFER_SELECT, .buf_group = 8});
+  assert(syscall(SYS_io_uring_enter, r.fd, 1, 0, 0, NULL, 0) == 1);
+  c = completion(&r);
+  assert(c.res == 4 && c.flags == (IORING_CQE_F_BUFFER | (73u << 16)) && !memcmp(buffers[1], "read", 4));
+  reg = (struct io_uring_buf_reg){.bgid = 8};
+  assert(syscall(SYS_io_uring_register, r.fd, IORING_UNREGISTER_PBUF_RING, &reg, 1) == 0);
+  assert(munmap(br, 4096) == 0);
+  struct timespec ts = {.tv_nsec = 15000000};
+  queue(&r, (struct io_uring_sqe){
+              .opcode = IORING_OP_POLL_ADD, .fd = p[0], .poll_events = POLLIN, .flags = IOSQE_IO_LINK, .user_data = 3});
+  queue(&r, (struct io_uring_sqe){
+              .opcode = IORING_OP_LINK_TIMEOUT, .fd = -1, .addr = (uintptr_t)&ts, .len = 1, .user_data = 4});
+  assert(syscall(SYS_io_uring_enter, r.fd, 2, 0, 0, NULL, 0) == 2);
+  int canceled = 0, expired = 0;
+  for (int i = 0; i < 2; ++i) {
+    c = completion(&r);
+    canceled += c.user_data == 3 && c.res == -ECANCELED;
+    expired += c.user_data == 4 && c.res == -ETIME;
+  }
+  assert(canceled == 1 && expired == 1);
+  close(p[0]);
+  close(p[1]);
+  close(r.fd);
+  munmap(r.map, r.bytes);
+  munmap(r.sq, r.p.sq_entries * sizeof(*r.sq));
+}
+
+static void message_ring(void) {
+  struct test_ring src = {0}, dst = {0};
+  test_ring_open(&src);
+  test_ring_open(&dst);
+  assert(issue(&src, (struct io_uring_sqe){.opcode = IORING_OP_MSG_RING, .fd = dst.fd, .off = 0x1234, .len = 17}) == 0);
+  struct io_uring_cqe c = completion(&dst);
+  assert(c.user_data == 0x1234 && c.res == 17);
+  struct io_uring_rsrc_register sparse = {.nr = 4, .flags = IORING_RSRC_REGISTER_SPARSE};
+  assert(syscall(SYS_io_uring_register, src.fd, IORING_REGISTER_FILES2, &sparse, sizeof(sparse)) == 0);
+  assert(issue(&src, (struct io_uring_sqe){.opcode = IORING_OP_OPENAT,
+                                           .fd = AT_FDCWD,
+                                           .addr = (uintptr_t)"/tmp/ring-direct",
+                                           .len = 0600,
+                                           .open_flags = O_CREAT | O_RDWR,
+                                           .file_index = 3}) == 0);
+  int fd = issue(&src, (struct io_uring_sqe){.opcode = IORING_OP_FIXED_FD_INSTALL, .flags = IOSQE_FIXED_FILE, .fd = 2});
+  assert(fd >= 0 && write(fd, "f", 1) == 1);
+  assert(issue(&src, (struct io_uring_sqe){.opcode = IORING_OP_CLOSE, .file_index = 3}) == 0);
+  assert(pread(fd, &c, 1, 0) == 1 && *(char *)&c == 'f');
+  close(fd);
+  close(src.fd);
+  close(dst.fd);
+  munmap(src.map, src.bytes);
+  munmap(dst.map, dst.bytes);
+  munmap(src.sq, src.p.sq_entries * sizeof(*src.sq));
+  munmap(dst.sq, dst.p.sq_entries * sizeof(*dst.sq));
+}
+
 int main(void) {
+  message_ring();
+  provided_buffers_and_links();
+  overflow_and_tags();
   files_and_events();
   int status;
   assert(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD);
