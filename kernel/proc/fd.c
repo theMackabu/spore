@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/open.h"
 #include "proc/fd.h"
 #include "flock.h"
 
@@ -15,8 +16,6 @@
 #include "net/socket.h"
 
 enum {
-  CELL_O_ACCMODE = 3,
-  CELL_O_WRONLY = 1,
   CELL_O_NONBLOCK = 04000,
   CELL_O_APPEND = 02000,
   CELL_O_CLOEXEC = 02000000,
@@ -270,7 +269,7 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   file->type = OPEN_VFS;
   file->node = *node;
   if ((node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
-    bool write_end = (flags & CELL_O_ACCMODE) == CELL_O_WRONLY;
+    bool write_end = (flags & LINUX_O_ACCMODE) == LINUX_O_WRONLY;
     bool needs_reader = write_end && (flags & CELL_O_NONBLOCK) != 0;
     int pipe_id = cell_fifo_pipe_for_ino(node->ino, !needs_reader);
     if (needs_reader && (pipe_id < 0 || !cell_pipe_has_readers((uint8_t)pipe_id))) {
@@ -375,10 +374,14 @@ int cell_fd_dup3(int oldfd, int newfd, int flags) {
   return newfd;
 }
 
-int cell_fd_get_flags(int fd) {
+struct open_file *cell_fd_file(uint64_t fd) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  return (int)domain->fds[fd]->flags;
+  return domain && fd < MAX_FDS ? domain->fds[fd] : NULL;
+}
+
+int cell_fd_get_flags(int fd) {
+  struct open_file *file = cell_fd_file(fd);
+  return file ? (int)file->flags : -9;
 }
 
 int cell_fd_set_flags(int fd, int flags) {
@@ -409,6 +412,7 @@ int cell_fd_add_seals(int fd, uint32_t seals) {
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
   if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE) { return -22; }
+  if (!linux_open_writable(file->flags)) { return -1; }
   return vfs_add_seals(&file->node, seals);
 }
 

@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/open.h"
 #include "handlers.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
@@ -35,10 +36,6 @@ enum {
   EBADF = 9,
   EACCES = 13,
   ENODEV = 19,
-  O_ACCMODE = 3,
-  O_RDONLY = 0,
-  O_RDWR = 2,
-  O_PATH = 010000000,
 };
 
 static uint64_t align_down(uint64_t value, uint64_t align) {
@@ -111,18 +108,15 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
   struct vfs_node node;
   bool shared_may_write = false;
   if (!anon) {
-    struct domain *domain = cell_current_domain_internal();
-    if (!domain || fd >= MAX_FDS || !domain->fds[fd]) { return -EBADF; }
-    struct open_file *file = domain->fds[fd];
-    uint32_t access = file->flags & O_ACCMODE;
-    if (file->flags & O_PATH) { return -EBADF; }
-    if (access != O_RDONLY && access != O_RDWR) { return -EACCES; }
-    if (shared && (prot & PROT_WRITE) && access != O_RDWR) { return -EACCES; }
+    struct open_file *file = cell_fd_file(fd);
+    if (!file || (file->flags & LINUX_O_PATH)) { return -EBADF; }
+    if (!linux_open_readable(file->flags)) { return -EACCES; }
+    if (shared && (prot & PROT_WRITE) && !linux_open_writable(file->flags)) { return -EACCES; }
     if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir ||
         (file->node.backend != VFS_EXT2 && file->node.backend != VFS_RAMFS)) { return -ENODEV; }
     if (!vfs_refresh(&file->node, &node)) { return -ENODEV; }
     if (off > UINT64_MAX - size) { return -EINVAL; }
-    shared_may_write = shared && access == O_RDWR && !vfs_write_sealed(&node);
+    shared_may_write = shared && linux_open_writable(file->flags) && !vfs_write_sealed(&node);
     if (shared && (prot & PROT_WRITE) && !shared_may_write) { return -EPERM; }
   }
   if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }

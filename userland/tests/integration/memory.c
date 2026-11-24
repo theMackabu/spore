@@ -236,6 +236,11 @@ static int file_mapping_access(void) {
   int writer = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
   int reader = open(path, O_RDONLY);
   int ok = writer >= 0 && reader >= 0 && write(writer, "F", 1) == 1;
+  char byte;
+  ok = ok && pread(writer, &byte, 1, 0) == -1 && errno == EBADF &&
+       pwrite(reader, "X", 1, 0) == -1 && errno == EBADF &&
+       read(writer, &byte, 1) == -1 && errno == EBADF && write(reader, "X", 1) == -1 && errno == EBADF &&
+       ftruncate(reader, 0) == -1 && errno == EINVAL;
   char *original = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (original != MAP_FAILED) {
     original[0] = 'A';

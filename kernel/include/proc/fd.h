@@ -158,6 +158,7 @@ int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask);
 int cell_fd_inotify_rm_watch(int fd, int wd);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);
+struct open_file *cell_fd_file(uint64_t fd);
 int cell_fd_get_flags(int fd);
 int cell_fd_set_flags(int fd, int flags);
 int cell_fd_get_fd_flags(int fd);

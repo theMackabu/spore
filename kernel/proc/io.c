@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/open.h"
 #include "proc/io.h"
 
 #include "arch/aarch64/regs.h"
@@ -23,9 +24,6 @@
 
 enum {
   FILE_IO_CHUNK = 128 * 1024,
-  CELL_O_ACCMODE = 3,
-  CELL_O_WRONLY = 1,
-  CELL_O_RDWR = 2,
   CELL_O_NONBLOCK = 04000,
   CELL_O_APPEND = 02000,
   IPPROTO_TCP = 6,
@@ -138,6 +136,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
   if (file->type == OPEN_SOCKET && file->socket_proto != IPPROTO_TCP) { return cell_fd_udp_send(fd, 0, 0, buf, len); }
   if (len == 0) { return 0; }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
@@ -164,10 +163,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
     return cell_block_current_on_pipe(fd, buf, len, true, frame);
   }
   if (file->type != OPEN_STDOUT && file->type != OPEN_STDIN) {
-    if (file->type != OPEN_VFS ||
-        ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR)) {
-      return -22;
-    }
+    if (file->type != OPEN_VFS) { return -22; }
     if (file->node.device != RAMFS_DEV_NONE) { return write_device(file, domain, buf, len); }
     if ((file->flags & CELL_O_APPEND) != 0) {
       struct vfs_node fresh;
@@ -243,6 +239,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     if (frame == NULL) { return 0; }
     return cell_block_current(frame, (struct thread_wait){.reason = WAIT_STDIN, .target = -1, .buf = buf, .len = len});
   }
+  if (file->type == OPEN_VFS && !linux_open_readable(file->flags)) { return -9; }
   if (file->type != OPEN_VFS || file->node.is_dir) { return -22; }
   if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, buf, len, frame); }
   int64_t got = read_regular(domain, file, file->offset, buf, len);
@@ -255,6 +252,7 @@ int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct t
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
+  if (file->type == OPEN_VFS && !linux_open_readable(file->flags)) { return -9; }
   if (file->type != OPEN_VFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
   return read_regular(domain, file, off, buf, len);
 }
@@ -264,12 +262,9 @@ int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct 
   struct domain *domain = current_domain();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   struct open_file *file = domain->fds[fd];
-  if (len == 0) { return 0; }
-  if (file->type != OPEN_VFS ||
-      ((file->flags & CELL_O_ACCMODE) != CELL_O_WRONLY && (file->flags & CELL_O_ACCMODE) != CELL_O_RDWR) ||
-      file->node.device != RAMFS_DEV_NONE) {
-    return -22;
-  }
+  if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
+  if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir) { return -22; }
+  if (!len) { return 0; }
   uint64_t chunk = bounded_io_len(len);
   if (!vmm_copy_from_user(cell_domain_as(domain), file_io_tmp, buf, (size_t)chunk)) { return -14; }
   int64_t wrote = vfs_write(&file->node, off, file_io_tmp, chunk);

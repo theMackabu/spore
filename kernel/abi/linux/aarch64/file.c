@@ -1,3 +1,4 @@
+#include "abi/linux/aarch64/open.h"
 #include "abi/linux/aarch64/layout.h"
 #include "handlers.h"
 #include "proc/accounting.h"
@@ -23,9 +24,6 @@ enum {
   X_OK = 1,
   W_OK = 2,
   R_OK = 4,
-  O_ACCMODE = 3,
-  O_WRONLY = 1,
-  O_RDWR = 2,
   O_CREAT = 0100,
   O_EXCL = 0200,
   O_TRUNC = 01000,
@@ -152,9 +150,9 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
   path_rc = syscall_copy_virtual_path_at(dirfd, path_addr, virtual_path, sizeof(virtual_path));
   if (path_rc != 0) { return path_rc; }
   uint64_t access = 0;
-  if ((flags & O_ACCMODE) == O_WRONLY) {
+  if ((flags & LINUX_O_ACCMODE) == LINUX_O_WRONLY) {
     access = W_OK;
-  } else if ((flags & O_ACCMODE) == O_RDWR) {
+  } else if ((flags & LINUX_O_ACCMODE) == LINUX_O_RDWR) {
     access = R_OK | W_OK;
   } else {
     access = R_OK;
@@ -163,7 +161,7 @@ int64_t sys_openat(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t 
   if (!cell_fs_path_allowed(path, syscall_fs_rights_from_access(access))) { return -(int64_t)EPERM; }
   if ((flags & O_TMPFILE_BIT) != 0) {
     if ((flags & (O_CREAT | O_DIRECTORY)) != O_DIRECTORY ||
-        ((flags & O_ACCMODE) != O_RDWR && (flags & O_ACCMODE) != O_WRONLY)) {
+        ((flags & LINUX_O_ACCMODE) != LINUX_O_RDWR && (flags & LINUX_O_ACCMODE) != LINUX_O_WRONLY)) {
       return -EINVAL;
     }
     char first;
@@ -242,7 +240,7 @@ int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
     (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
     (void)vfs_lookup(path, &node);
     (void)vfs_set_sealable(&node, (flags & MFD_ALLOW_SEALING) != 0);
-    uint32_t open_flags = O_RDWR | ((flags & MFD_CLOEXEC) != 0 ? O_CLOEXEC : 0);
+    uint32_t open_flags = LINUX_O_RDWR | ((flags & MFD_CLOEXEC) != 0 ? O_CLOEXEC : 0);
     int fd = cell_fd_open_node(&node, open_flags, path);
     if (fd >= 0) { (void)vfs_remove(path); }
     return fd;
@@ -682,8 +680,10 @@ int64_t sys_fchown(uint64_t fd, uint64_t uid_arg, uint64_t gid_arg) {
 }
 
 int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
-  struct vfs_node node;
-  if (!cell_fd_stat((int)fd, &node)) { return -(int64_t)EBADF; }
-  if (vfs_truncate_sealed(&node, size)) { return -(int64_t)EPERM; }
-  return vfs_truncate(&node, size) ? 0 : -(int64_t)EINVAL;
+  struct open_file *file = cell_fd_file(fd);
+  if (!file || (file->flags & LINUX_O_PATH)) { return -EBADF; }
+  if (file->type != OPEN_VFS || !linux_open_writable(file->flags) || (int64_t)size < 0 ||
+      file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -EINVAL; }
+  if (vfs_truncate_sealed(&file->node, size)) { return -EPERM; }
+  return vfs_truncate(&file->node, size) ? 0 : -EINVAL;
 }
