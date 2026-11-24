@@ -45,6 +45,9 @@ bool vmm_is_mapped(const struct user_address_space *as, uint64_t va);
 bool vmm_move_range(struct user_address_space *as, uint64_t from, uint64_t to, uint64_t bytes);
 void vmm_unmap_range(struct user_address_space *as, uint64_t start, uint64_t end);
 void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t end, uint32_t flags);
+typedef bool (*vmm_page_visitor)(void *ctx, uint64_t va, uint64_t pa);
+bool vmm_visit_resident(const struct user_address_space *as, uint64_t start, uint64_t end, vmm_page_visitor visit,
+                        void *ctx);
 size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t start, uint64_t end);
 uint64_t vmm_user_to_phys(const struct user_address_space *as, uint64_t va);
 bool vmm_user_range_accessible(const struct user_address_space *as, uint64_t va, size_t len, enum vmm_access access);

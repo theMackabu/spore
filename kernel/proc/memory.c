@@ -131,28 +131,33 @@ static bool vma_is_shared_writable_file(const struct vma *vma) {
          (vma->prot & VMM_USER_WRITE) != 0;
 }
 
+struct file_writeback {
+  const struct vma *vma;
+  const struct vfs_node *node;
+  uint64_t file_end;
+};
+
+static bool writeback_page(void *ctx, uint64_t page, uint64_t pa) {
+  const struct file_writeback *wb = ctx;
+  uint64_t offset = wb->vma->file_offset + (page - wb->vma->file_start);
+  uint64_t bytes = wb->file_end - page;
+  if (bytes > PAGE_SIZE) { bytes = PAGE_SIZE; }
+  return vfs_write(wb->node, offset, pmm_phys_to_virt(pa), bytes) == (int64_t)bytes;
+}
+
 static bool flush_shared_file_vma_range(struct user_address_space *as, const struct vma *vma, uint64_t start,
                                         uint64_t end) {
-  if (as == NULL || !vma_is_shared_writable_file(vma)) { return true; }
-  uint64_t flush_start = start > vma->start ? start : vma->start;
-  uint64_t flush_end = end < vma->end ? end : vma->end;
+  if (!vma_is_shared_writable_file(vma)) { return true; }
   struct vfs_node current;
   if (!vfs_refresh(&vma->file_node, &current)) { return false; }
   if (current.size <= vma->file_offset) { return true; }
   uint64_t bytes = current.size - vma->file_offset;
   if (bytes > vma->file_size) { bytes = vma->file_size; }
-  uint64_t file_end = vma->file_start + bytes;
-  for (uint64_t page = flush_start & ~(uint64_t)(PAGE_SIZE - 1); page < flush_end; page += PAGE_SIZE) {
-    if (page < vma->file_start || page >= file_end || !vmm_is_mapped(as, page)) { continue; }
-    uint64_t pa = vmm_user_to_phys(as, page) & ~(uint64_t)(PAGE_SIZE - 1);
-    if (pa == 0) { continue; }
-    uint64_t file_off = vma->file_offset + (page - vma->file_start);
-    uint64_t chunk = PAGE_SIZE;
-    if (page + chunk > file_end) { chunk = file_end - page; }
-    const void *src = (const void *)(uintptr_t)(as->hhdm_offset + pa);
-    if (vfs_write(&vma->file_node, file_off, src, chunk) != (int64_t)chunk) { return false; }
-  }
-  return true;
+  struct file_writeback wb = {.vma = vma, .node = &current, .file_end = vma->file_start + bytes};
+  if (start < vma->start) { start = vma->start; }
+  if (end > vma->end) { end = vma->end; }
+  if (end > wb.file_end) { end = wb.file_end; }
+  return vmm_visit_resident(as, start, end, writeback_page, &wb);
 }
 
 static bool flush_shared_file_vmas(struct process_mm *mm, uint64_t start, uint64_t end) {

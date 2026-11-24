@@ -387,6 +387,18 @@ void vmm_protect_range(struct user_address_space *as, uint64_t start, uint64_t e
   }
 }
 
+bool vmm_visit_resident(const struct user_address_space *as, uint64_t start, uint64_t end, vmm_page_visitor visit,
+                        void *ctx) {
+  struct leaf_range range = leaf_range(start, end);
+  while (next_leaf_range(as, &range, 512)) {
+    for (size_t i = 0; i < range.count; ++i) {
+      uint64_t entry = range.ptes[i];
+      if ((entry & PTE_VALID) && !visit(ctx, range.va + i * PAGE_SIZE, entry & PTE_ADDR_MASK)) { return false; }
+    }
+  }
+  return true;
+}
+
 size_t vmm_mapped_pages_in_range(const struct user_address_space *as, uint64_t start, uint64_t end) {
   size_t pages = 0;
   struct leaf_range range = leaf_range(start, end);
