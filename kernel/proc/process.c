@@ -112,6 +112,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
+      cell_clear_wait(thread);
       if (thread->running_cpu >= 0) {
         thread->state = THREAD_ZOMBIE;
       } else {
@@ -331,6 +332,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
+      cell_clear_wait(thread);
       thread->state = THREAD_UNUSED;
       thread->domain = NULL;
       if (domain->refcount > 0) { --domain->refcount; }

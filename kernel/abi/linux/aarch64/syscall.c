@@ -710,9 +710,7 @@ l_fcntl:
   if (a1 == F_GET_SEALS) { return cell_fd_get_seals((int)a0); }
   return -(int64_t)EINVAL;
 l_flock: {
-  int flags = cell_fd_get_flags((int)a0);
-  if (flags < 0) { return flags; }
-  return 0;
+  return cell_fd_flock((int)a0, (int)a1, f);
 }
 l_getcwd:
   return sys_getcwd(a0, a1);

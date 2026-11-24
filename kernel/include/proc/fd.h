@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 struct domain;
+struct trap_frame;
 struct tcp_ooo_state;
 struct tcp_tx_state;
 
@@ -40,6 +41,7 @@ struct open_file {
   enum open_file_type type;
   uint64_t offset;
   uint32_t flags;
+  uint8_t flock_mode;
   char path[CELL_PATH_MAX];
   struct vfs_node node;
   union {
@@ -171,4 +173,5 @@ bool cell_fd_is_dir(int fd);
 bool cell_fd_path(int fd, char *out, size_t cap);
 uint64_t cell_fd_dir_offset(int fd);
 void cell_fd_set_dir_offset(int fd, uint64_t offset);
+int cell_fd_flock(int fd, int operation, struct trap_frame *frame);
 struct open_file *cell_alloc_open_file(void);

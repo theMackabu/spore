@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 struct domain;
+struct open_file;
 
 enum thread_state {
   THREAD_UNUSED,
@@ -30,6 +31,7 @@ enum wait_reason {
   WAIT_EPOLL,
   WAIT_INOTIFY,
   WAIT_PTY,
+  WAIT_FLOCK,
 };
 
 constexpr int CELL_SWITCHED = -0x40000000;
@@ -66,6 +68,10 @@ struct thread_wait {
       int epoll_maxevents;
     };
     uint64_t futex_addr;
+    struct {
+      struct open_file *flock_file;
+      uint8_t flock_mode;
+    };
   };
 };
 

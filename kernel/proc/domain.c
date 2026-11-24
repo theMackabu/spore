@@ -117,6 +117,7 @@ void cell_destroy_domain(struct domain *domain) {
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) {
+      cell_clear_wait(thread);
       thread->state = THREAD_UNUSED;
       thread->running_cpu = -1;
       thread->domain = NULL;

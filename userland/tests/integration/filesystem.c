@@ -4,14 +4,17 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/file.h>
 #include <sys/eventfd.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -148,6 +151,56 @@ static int pathname_page_boundary(void) {
   return ok;
 }
 
+static void flock_alarm(int signal) {
+  (void)signal;
+}
+
+static int flock_regression(void) {
+  const char *path = "/flock-test";
+  const char *link_path = "/flock-test-link";
+  int a = open(path, O_CREAT | O_RDWR | O_EXCL, 0600);
+  if (a < 0) { return 0; }
+  int b = link(path, link_path) == 0 ? open(link_path, O_RDWR) : -1;
+  unlink(link_path);
+  unlink(path);
+  int ready[2];
+  if (b < 0 || pipe(ready) < 0) {
+    close(a);
+    if (b >= 0) { close(b); }
+    return 0;
+  }
+
+  int alias = dup(a);
+  int ok = alias >= 0 && flock(a, LOCK_SH) == 0 && flock(b, LOCK_SH) == 0 &&
+           flock(alias, LOCK_EX | LOCK_NB) == -1 && errno == EWOULDBLOCK &&
+           flock(b, LOCK_EX | LOCK_NB) == 0 && flock(b, LOCK_UN) == 0 && flock(alias, LOCK_EX) == 0;
+  close(a);
+  pid_t child = ok ? fork() : -1;
+  if (child == 0) {
+    close(alias);
+    close(ready[0]);
+    struct sigaction sa = {.sa_handler = flock_alarm};
+    struct itimerval timer = {.it_value.tv_usec = 20000};
+    int interrupted = sigaction(SIGALRM, &sa, NULL) == 0 && setitimer(ITIMER_REAL, &timer, NULL) == 0 &&
+                      flock(b, LOCK_SH) == -1 && errno == EINTR;
+    if (!interrupted || write(ready[1], "r", 1) != 1) { _exit(1); }
+    if (flock(b, LOCK_SH) != 0 || write(ready[1], "s", 1) != 1) { _exit(1); }
+    _exit(flock(b, LOCK_EX) == 0 ? 0 : 1);
+  }
+  close(ready[1]);
+  char byte;
+  ok = child > 0 && read(ready[0], &byte, 1) == 1 && byte == 'r' && flock(alias, LOCK_SH) == 0 &&
+       read(ready[0], &byte, 1) == 1 && byte == 's';
+  if (alias >= 0) { close(alias); }
+  int status = 0;
+  if (child > 0) { ok = waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 && ok; }
+  ok = ok && flock(b, LOCK_EX | LOCK_NB) == 0;
+  close(b);
+  close(ready[0]);
+  printf("[spore] flock alias, conversion and interrupted wait: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_fs_demo(void) {
   int ok = 1;
   errno = 0;
@@ -189,7 +242,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+  if (!flock_regression() || !inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
       !getdents_proc_batches()) {
     ok = 0;
   }

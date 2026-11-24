@@ -74,6 +74,7 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
   for (size_t i = 0; i < cell_thread_capacity(); ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) {
+      cell_clear_wait(thread);
       thread->state = THREAD_ZOMBIE;
       if (thread->running_cpu < 0) { thread->running_cpu = -1; }
     }
@@ -85,7 +86,7 @@ static bool wait_is_restartable(const struct thread_wait *wait) {
   enum wait_reason reason = wait->reason;
   if (reason == WAIT_FUTEX) { return !wait->has_deadline; }
   return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
-         reason == WAIT_INOTIFY || reason == WAIT_PTY;
+         reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FLOCK;
 }
 
 static bool thread_requires_deferred_signal_frame(const struct thread *thread) {

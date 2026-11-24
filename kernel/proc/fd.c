@@ -8,6 +8,7 @@
 #include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
+#include "proc/thread.h"
 #include "tty/pty.h"
 #include "net/socket.h"
 
@@ -26,8 +27,16 @@ enum {
   EINVAL = 22,
   ENOSPC = 28,
   ENXIO = 6,
+  EWOULDBLOCK = 11,
   CELL_S_IFMT = 0170000,
   CELL_S_IFIFO = 0010000,
+};
+
+enum {
+  LOCK_SH = 1,
+  LOCK_EX = 2,
+  LOCK_NB = 4,
+  LOCK_UN = 8,
 };
 
 struct inotify_watch {
@@ -53,6 +62,50 @@ static struct open_file *open_files;
 static size_t open_file_capacity;
 static size_t next_unused;
 static struct open_file *free_files;
+
+static bool flock_same_file(const struct open_file *a, const struct open_file *b) {
+  if (a->type != b->type) { return false; }
+  if (a->type == OPEN_RAMFS) {
+    return a->node.backend == b->node.backend && a->node.dev_id == b->node.dev_id && a->node.ino == b->node.ino;
+  }
+  if (a->type == OPEN_PIPE) { return a->pipe_id == b->pipe_id; }
+  if (a->type == OPEN_PTY) { return a->pty_id == b->pty_id && a->pty_master == b->pty_master; }
+  return false;
+}
+
+static bool flock_can_lock(const struct open_file *file, uint8_t mode) {
+  for (size_t i = 0; i < next_unused; ++i) {
+    const struct open_file *other = &open_files[i];
+    if (other == file || other->refcount == 0 || other->flock_mode == 0 || !flock_same_file(file, other)) {
+      continue;
+    }
+    if (mode == LOCK_EX || other->flock_mode == LOCK_EX) { return false; }
+  }
+  return true;
+}
+
+static void wake_flock_waiters(void) {
+  static bool waking;
+  static bool rescan;
+  if (waking) {
+    rescan = true;
+    return;
+  }
+  waking = true;
+  do {
+    rescan = false;
+    for (size_t i = 0; i < cell_thread_capacity(); ++i) {
+      struct thread *thread = cell_thread_slot(i);
+      if (thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_FLOCK) { continue; }
+      struct open_file *file = thread->wait.flock_file;
+      uint8_t mode = thread->wait.flock_mode;
+      if (!flock_can_lock(file, mode)) { continue; }
+      file->flock_mode = mode;
+      cell_finish_wait(thread, 0);
+    }
+  } while (rescan);
+  waking = false;
+}
 
 bool cell_fd_table_reset(size_t capacity) {
   if (capacity == 0 || capacity > MAX_OPEN_FILES) { return false; }
@@ -96,6 +149,10 @@ void cell_release_open_file(struct open_file *file) {
   if (file == NULL || file->refcount == 0) { return; }
   --file->refcount;
   if (file->refcount == 0) {
+    if (file->flock_mode != 0) {
+      file->flock_mode = 0;
+      wake_flock_waiters();
+    }
     if (cell_pipe_release_file(file)) {
       cell_pipe_notify();
     } else if (file->type == OPEN_UNIX_STREAM) {
@@ -432,6 +489,32 @@ int cell_fd_get_flags(int fd) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
   return (int)domain->fds[fd]->flags;
+}
+
+int cell_fd_flock(int fd, int operation, struct trap_frame *frame) {
+  struct domain *domain = cell_current_domain_internal();
+  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
+  struct open_file *file = domain->fds[fd];
+  int mode = operation & (LOCK_SH | LOCK_EX | LOCK_UN);
+  if ((operation & ~(LOCK_SH | LOCK_EX | LOCK_NB | LOCK_UN)) != 0 || mode == 0 || (mode & (mode - 1)) != 0) {
+    return -EINVAL;
+  }
+  if (file->flock_mode == mode) { return 0; }
+  if (file->flock_mode != 0) {
+    file->flock_mode = 0;
+    wake_flock_waiters();
+  }
+  if (mode == LOCK_UN) { return 0; }
+  if (flock_can_lock(file, (uint8_t)mode)) {
+    file->flock_mode = (uint8_t)mode;
+    return 0;
+  }
+  if ((operation & LOCK_NB) != 0) { return -EWOULDBLOCK; }
+  cell_retain_open_file(file);
+  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FLOCK,
+                                                        .target = -1,
+                                                        .flock_file = file,
+                                                        .flock_mode = (uint8_t)mode});
 }
 
 int cell_fd_set_flags(int fd, int flags) {

@@ -10,6 +10,7 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
+#include "proc/fd.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
@@ -98,6 +99,7 @@ void cell_release_thread(struct thread *thread) {
   if (thread == NULL || thread->domain == NULL) { return; }
   struct domain *domain = thread->domain;
   if (domain->refcount > 0) { --domain->refcount; }
+  cell_clear_wait(thread);
   thread->state = THREAD_UNUSED;
   thread->running_cpu = -1;
   thread->domain = NULL;
@@ -232,7 +234,9 @@ void cell_schedule(struct trap_frame *frame) {
 }
 
 void cell_clear_wait(struct thread *thread) {
+  struct open_file *file = thread->wait.reason == WAIT_FLOCK ? thread->wait.flock_file : NULL;
   thread->wait = (struct thread_wait){.target = -1};
+  if (file != NULL) { cell_release_open_file(file); }
 }
 
 void cell_resume_wait(struct thread *thread) {
