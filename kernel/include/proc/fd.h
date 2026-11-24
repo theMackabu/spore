@@ -128,6 +128,7 @@ struct open_file {
       bool ip_recvttl;
       uint64_t tcp_tx_pa;
       uint8_t tcp_rx_slot;
+      struct open_file *socket_index_next;
       struct tcp_tx_state *tcp_tx;
       struct tcp_ooo_state *tcp_ooo;
     };

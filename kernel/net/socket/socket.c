@@ -411,6 +411,7 @@ bool cell_fd_socket_peer_addr(int fd, uint32_t *ip, uint16_t *port) {
 void cell_socket_release_file(struct open_file *file) {
   if (file == NULL || file->type != OPEN_SOCKET) { return; }
   if (file->socket_proto == IPPROTO_TCP) { tcp_release_file(file); }
+  if (file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) { udp_release_file(file); }
   dgram_clear_rx(file);
 }
 

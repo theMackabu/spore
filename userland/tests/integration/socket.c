@@ -84,13 +84,22 @@ static int udp_bind_conflict_regression(void) {
   }
   struct sockaddr_in sa;
   integration_fill_udp_addr(&sa, integration_ip4(0, 0, 0, 0), 45678);
-  int first = bind(a, (struct sockaddr *)&sa, sizeof(sa));
-  errno = 0;
-  int second = bind(b, (struct sockaddr *)&sa, sizeof(sa));
-  int ok = first == 0 && second < 0 && errno == EADDRINUSE;
+  int ok = bind(a, (struct sockaddr *)&sa, sizeof(sa)) == 0;
+  int alias = dup(a);
   close(a);
+  ok = ok && alias >= 0 && bind(b, (struct sockaddr *)&sa, sizeof(sa)) == -1 && errno == EADDRINUSE;
+  sa.sin_addr.s_addr = integration_ip4(127, 0, 0, 1);
+  char byte = 0;
+  ok = ok && sendto(b, "a", 1, 0, (struct sockaddr *)&sa, sizeof(sa)) == 1 &&
+       recv(alias, &byte, 1, MSG_DONTWAIT) == 1 && byte == 'a';
+  if (alias >= 0) { close(alias); }
+  int next = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ok = ok && next >= 0 && bind(next, (struct sockaddr *)&sa, sizeof(sa)) == 0 &&
+       sendto(b, "b", 1, 0, (struct sockaddr *)&sa, sizeof(sa)) == 1 &&
+       recv(next, &byte, 1, MSG_DONTWAIT) == 1 && byte == 'b';
+  if (next >= 0) { close(next); }
   close(b);
-  printf("[spore] udp bind conflict: %s\n", ok ? "PASS" : "FAIL");
+  printf("[spore] udp bind conflict and reuse: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 

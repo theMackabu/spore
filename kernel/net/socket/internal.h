@@ -22,6 +22,22 @@ enum {
   EADDRINUSE = 98,
 };
 
+static inline void socket_index_insert(struct open_file **bucket, struct open_file *file) {
+  file->socket_index_next = *bucket;
+  *bucket = file;
+}
+
+static inline void socket_index_remove(struct open_file **bucket, struct open_file *file) {
+  while (*bucket != NULL) {
+    if (*bucket == file) {
+      *bucket = file->socket_index_next;
+      file->socket_index_next = NULL;
+      return;
+    }
+    bucket = &(*bucket)->socket_index_next;
+  }
+}
+
 struct sockaddr_in_cell {
   uint16_t sin_family;
   uint16_t sin_port;
@@ -46,6 +62,7 @@ int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listen
 uint32_t socket_effective_rcvlowat(const struct open_file *file);
 
 void dgram_clear_rx(struct open_file *file);
+void udp_release_file(struct open_file *file);
 int64_t dgram_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, uint64_t addr,
                              uint64_t addrlen, uint32_t flags);
 int64_t dgram_read_to_kernel(struct domain *domain, struct open_file *file, void *buf, uint64_t len, uint64_t addr,
