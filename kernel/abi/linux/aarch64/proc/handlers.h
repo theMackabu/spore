@@ -18,5 +18,5 @@ int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t ol
 int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set, uint64_t oldset, uint64_t sigsetsize);
 int64_t sys_clone(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
                   uint64_t child_tid);
-int64_t sys_futex(struct trap_frame *frame, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout);
+int64_t sys_futex(struct trap_frame *frame, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout, uint64_t uaddr2, uint32_t bitset);
 int64_t sys_spore_procinfo(uint64_t addr, uint64_t bytes);

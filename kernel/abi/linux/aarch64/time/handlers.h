@@ -1,6 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
+
+struct timespec64 syscall_wall_time(bool realtime);
 
 struct trap_frame;
 

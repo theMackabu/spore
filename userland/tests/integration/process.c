@@ -325,6 +325,36 @@ static void phase_b_futex_entry(void *arg) {
   for (;;) {}
 }
 
+static int requeue_source, requeue_destination;
+constexpr int FUTEX_REQUEUE_PRIVATE = 131;
+constexpr int FUTEX_WAIT_BITSET_PRIVATE = 137;
+constexpr int FUTEX_WAKE_BITSET_PRIVATE = 138;
+constexpr int FUTEX_CLOCK_REALTIME = 256;
+
+static void *bitset_waiter(void *arg) {
+  struct timespec deadline;
+  clock_gettime(CLOCK_REALTIME, &deadline);
+  deadline.tv_sec++;
+  long rc = integration_raw_syscall6(SYS_FUTEX, (long)&requeue_source, FUTEX_WAIT_BITSET_PRIVATE | FUTEX_CLOCK_REALTIME,
+                                     0, (long)&deadline, 0, 1);
+  return (void *)rc;
+}
+
+static bool futex_requeue_regression(void) {
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, bitset_waiter, NULL) != 0) { return false; }
+  long moved = 0;
+  for (int i = 0; i < 10000 && !moved; ++i) {
+    moved = integration_raw_syscall6(SYS_FUTEX, (long)&requeue_source, FUTEX_REQUEUE_PRIVATE, 0, 1,
+                                     (long)&requeue_destination, 0);
+    if (!moved) { sched_yield(); }
+  }
+  long missed = integration_raw_syscall6(SYS_FUTEX, (long)&requeue_destination, FUTEX_WAKE_BITSET_PRIVATE, 1, 0, 0, 2);
+  long woke = integration_raw_syscall6(SYS_FUTEX, (long)&requeue_destination, FUTEX_WAKE_BITSET_PRIVATE, 1, 0, 0, 1);
+  void *result;
+  return pthread_join(thread, &result) == 0 && result == NULL && moved == 1 && missed == 0 && woke == 1;
+}
+
 int integration_futex_demo(void) {
   futex_word = 0;
   futex_started[0] = futex_started[1] = 0;
@@ -361,7 +391,7 @@ int integration_futex_demo(void) {
   uint64_t elapsed = integration_usec_now() - start;
   int timeout_ok = eagain == -EAGAIN && einval == -EINVAL && efault == -EFAULT && immediate == -ETIMEDOUT &&
                    timedout == -ETIMEDOUT && elapsed >= 20000;
-  ok = ok && timeout_ok;
+  ok = ok && timeout_ok && futex_requeue_regression();
   printf("[spore] v3b futex timed wait: %s (rc=%ld elapsed=%luus)\n", timeout_ok ? "PASS" : "FAIL", timedout,
          (unsigned long)elapsed);
   printf("[spore] v3b futex wait/wake: %s (woke=%ld)\n", ok ? "PASS" : "FAIL", woke);

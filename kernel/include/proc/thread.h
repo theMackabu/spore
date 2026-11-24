@@ -75,7 +75,10 @@ struct thread_wait {
       uint8_t poll_kind;
     };
     bool fifo_cloexec;
-    uint64_t futex_addr;
+    struct {
+      uint64_t futex_addr;
+      uint32_t futex_bitset;
+    };
     struct {
       uint64_t child_status, child_usage;
       bool child_servicing;

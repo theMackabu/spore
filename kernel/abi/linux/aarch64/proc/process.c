@@ -3,6 +3,7 @@
 #include "abi/linux/aarch64/layout.h"
 #include "arch/aarch64/regs.h"
 #include "handlers.h"
+#include "../time/handlers.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 #include "proc/accounting.h"
@@ -31,18 +32,36 @@ enum {
   CLONE_CHILD_SETTID = 0x01000000,
   FUTEX_WAIT = 0,
   FUTEX_WAKE = 1,
+  FUTEX_REQUEUE = 3,
+  FUTEX_WAIT_BITSET = 9,
+  FUTEX_WAKE_BITSET = 10,
+  FUTEX_CLOCK_REALTIME = 256,
   FUTEX_PRIVATE_FLAG = 128,
   FUTEX_CMD_MASK = 127,
 };
 
-static bool futex_timeout_ticks(const struct timespec64 *timeout, uint64_t *out) {
-  if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 || timeout->tv_nsec >= 1000000000) { return false; }
-  uint64_t fractional = ((uint64_t)timeout->tv_nsec * 100 + 999999999ull) / 1000000000ull;
-  if ((uint64_t)timeout->tv_sec > (UINT64_MAX - fractional) / 100) {
-    *out = UINT64_MAX;
+static bool futex_deadline(struct timespec64 ts, bool absolute, bool realtime, uint64_t *out) {
+  if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) { return false; }
+  if (absolute) {
+    struct timespec64 now = syscall_wall_time(realtime);
+    ts.tv_sec -= now.tv_sec;
+    ts.tv_nsec -= now.tv_nsec;
+    if (ts.tv_nsec < 0) {
+      --ts.tv_sec;
+      ts.tv_nsec += 1000000000;
+    }
+  }
+  uint64_t now = cell_uptime_ticks();
+  if (ts.tv_sec < 0 || (!ts.tv_sec && !ts.tv_nsec)) {
+    *out = now;
     return true;
   }
-  *out = (uint64_t)timeout->tv_sec * 100 + fractional;
+  uint64_t fraction = ((uint64_t)ts.tv_nsec + 9999999) / 10000000;
+  *out = UINT64_MAX;
+  if ((uint64_t)ts.tv_sec <= (UINT64_MAX - fraction) / 100) {
+    uint64_t ticks = (uint64_t)ts.tv_sec * 100 + fraction;
+    if (ticks < UINT64_MAX - now) { *out = now + ticks + 1; }
+  }
   return true;
 }
 
@@ -68,35 +87,36 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
   return cell_clone_thread_current(f, flags, newsp, parent_tid, tls, child_tid);
 }
 
-int64_t sys_futex(struct trap_frame *f, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout) {
+int64_t sys_futex(struct trap_frame *f, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout, uint64_t uaddr2, uint32_t bitset) {
   uint64_t cmd = op & FUTEX_CMD_MASK;
-  if ((op & ~(uint64_t)(FUTEX_CMD_MASK | FUTEX_PRIVATE_FLAG)) != 0) {
+  bool realtime = (op & FUTEX_CLOCK_REALTIME) != 0;
+  if ((op & ~(uint64_t)(FUTEX_CMD_MASK | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME)) ||
+      (realtime && cmd != FUTEX_WAIT_BITSET)) {
     kprintf("[kernel] futex op %d ENOSYS\n", (int)op);
     return -(int64_t)ENOSYS;
   }
+  if (cmd == FUTEX_WAIT || cmd == FUTEX_WAKE) { bitset = UINT32_MAX; }
+  if ((cmd == FUTEX_WAIT_BITSET || cmd == FUTEX_WAKE_BITSET) && !bitset) { return -EINVAL; }
   switch (cmd) {
-  case FUTEX_WAIT: {
+  case FUTEX_WAIT:
+  case FUTEX_WAIT_BITSET: {
     bool has_deadline = timeout != 0;
     uint64_t deadline = 0;
     if (has_deadline) {
-      struct timespec64 relative;
-      if (!syscall_user_readable(timeout, sizeof(relative)) ||
-          !vmm_copy_from_user(syscall_active_as(), &relative, timeout, sizeof(relative))) {
+      struct timespec64 ts;
+      if (!syscall_user_readable(timeout, sizeof(ts)) ||
+          !vmm_copy_from_user(syscall_active_as(), &ts, timeout, sizeof(ts))) {
         return -(int64_t)EFAULT;
       }
-      uint64_t ticks = 0;
-      if (!futex_timeout_ticks(&relative, &ticks)) { return -(int64_t)EINVAL; }
-      uint64_t now = cell_uptime_ticks();
-      if (ticks == 0) {
-        deadline = now;
-      } else {
-        deadline = ticks >= UINT64_MAX - now ? UINT64_MAX : now + ticks + 1;
-      }
+      if (!futex_deadline(ts, cmd == FUTEX_WAIT_BITSET, realtime, &deadline)) { return -EINVAL; }
     }
-    return cell_futex_wait_current(uaddr, (uint32_t)val, has_deadline, deadline, f);
+    return cell_futex_wait_current(uaddr, (uint32_t)val, bitset, has_deadline, deadline, f);
   }
+  case FUTEX_REQUEUE:
+    return cell_futex_requeue(uaddr, uaddr2, (int32_t)val, (int32_t)timeout);
   case FUTEX_WAKE:
-    return cell_futex_wake_current(uaddr, (uint32_t)val);
+  case FUTEX_WAKE_BITSET:
+    return cell_futex_wake_current(uaddr, (uint32_t)val, bitset);
   default:
     kprintf("[kernel] futex op %d ENOSYS\n", (int)op);
     return -(int64_t)ENOSYS;

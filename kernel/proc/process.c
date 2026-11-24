@@ -37,7 +37,7 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
     if (as != NULL) {
       (void)vmm_copy_to_user(as, cell_current_thread_internal()->clear_child_tid, &zero, sizeof(zero));
     }
-    (void)cell_futex_wake_domain(domain, cell_current_thread_internal()->clear_child_tid, 1);
+    (void)cell_futex_wake_domain(domain, cell_current_thread_internal()->clear_child_tid, 1, UINT32_MAX);
   }
   if (cell_runnable_or_blocked_threads_in_domain(domain) <= 1) {
     domain->exit_status = status;
@@ -65,7 +65,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
     if (as != NULL) {
       (void)vmm_copy_to_user(as, cell_current_thread_internal()->clear_child_tid, &zero, sizeof(zero));
     }
-    (void)cell_futex_wake_domain(domain, cell_current_thread_internal()->clear_child_tid, 1);
+    (void)cell_futex_wake_domain(domain, cell_current_thread_internal()->clear_child_tid, 1, UINT32_MAX);
   }
   domain->exit_status = status;
   domain->term_signal = 0;

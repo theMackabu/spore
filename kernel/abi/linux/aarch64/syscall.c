@@ -308,7 +308,7 @@ l_setgid:
 l_clone:
   return sys_clone(f, a0, a1, a2, a3, a4);
 l_futex: {
-  int64_t rc = sys_futex(f, a0, a1, a2, a3);
+  int64_t rc = sys_futex(f, a0, a1, a2, a3, a4, a5);
   return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
 }
 l_execve:

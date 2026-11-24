@@ -88,7 +88,7 @@ static int write_timespec(uint64_t addr, struct timespec64 ts) {
            ? 0 : -EFAULT;
 }
 
-static struct timespec64 wall_time(bool realtime) {
+struct timespec64 syscall_wall_time(bool realtime) {
   uint64_t cnt = aarch64_counter_value(), freq = aarch64_counter_frequency(), epoch = 0;
   if (realtime) {
     epoch = realtime_base_sec;
@@ -105,7 +105,7 @@ int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp) {
     return write_timespec(tp, (struct timespec64){.tv_sec = ticks / 100, .tv_nsec = (ticks % 100) * 10000000});
   }
   if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) { return -EINVAL; }
-  return write_timespec(tp, wall_time(clk_id == CLOCK_REALTIME));
+  return write_timespec(tp, syscall_wall_time(clk_id == CLOCK_REALTIME));
 }
 
 int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
@@ -119,7 +119,7 @@ int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
 
 int64_t sys_gettimeofday(uint64_t tv_addr, uint64_t tz_addr) {
   if (tv_addr != 0) {
-    struct timespec64 ts = wall_time(true);
+    struct timespec64 ts = syscall_wall_time(true);
     struct timeval64 tv = {.tv_sec = ts.tv_sec, .tv_usec = ts.tv_nsec / 1000};
     if (!syscall_user_writable(tv_addr, sizeof(tv)) ||
         !vmm_copy_to_user(syscall_active_as(), tv_addr, &tv, sizeof(tv))) {
@@ -152,6 +152,6 @@ int64_t sys_times(uint64_t buf_addr) {
       return -(int64_t)EFAULT;
     }
   }
-  struct timespec64 ts = wall_time(false);
+  struct timespec64 ts = syscall_wall_time(false);
   return ts.tv_sec * 100 + ts.tv_nsec / 10000000;
 }
