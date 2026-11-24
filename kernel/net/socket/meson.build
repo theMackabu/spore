@@ -1,1 +1,2 @@
-kernel_sources += files('socket.c', 'tcp.c', 'udp.c', 'unix.c')
+kernel_sources += files('socket.c', 'udp.c', 'unix.c')
+subdir('tcp')

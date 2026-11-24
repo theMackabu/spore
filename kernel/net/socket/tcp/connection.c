@@ -17,7 +17,6 @@ enum {
   ECONNRESET = 104,
   ETIMEDOUT = 110,
   TCP_OOO_BUFFER_SLOTS = 32,
-  TCP_RX_BUFFER_SLOTS = 16,
   TCP_PORT_BUCKETS = 32,
   TCP_OOO_ENTRIES = 8,
   TCP_OOO_PAYLOAD_CAP = 1460,
@@ -71,18 +70,11 @@ struct tcp_pending_conn {
   struct open_file *server_end;
 };
 
-struct tcp_rx_state {
-  struct open_file *owner;
-  uint32_t head;
-  bool timer_active;
-  uint64_t pages[CELL_TCP_RX_CAP / PAGE_SIZE];
-};
-
 static struct tcp_pending_conn tcp_pending[16];
 
 static struct open_file *tcp_port_buckets[TCP_PORT_BUCKETS];
 
-static struct tcp_rx_state tcp_rx_buffers[TCP_RX_BUFFER_SLOTS];
+static struct open_file *timed_sockets;
 
 static struct tcp_ooo_state tcp_ooo_buffers[TCP_OOO_BUFFER_SLOTS];
 
@@ -98,121 +90,18 @@ static void tcp_set_local_port(struct open_file *file, uint16_t port) {
   socket_index_insert(tcp_port_bucket(port), file);
 }
 
-static struct tcp_rx_state *tcp_rx_state_for(const struct open_file *file) {
-  if (file == NULL || file->tcp_rx_slot == 0) { return NULL; }
-  size_t slot = (size_t)file->tcp_rx_slot - 1;
-  return slot < TCP_RX_BUFFER_SLOTS && tcp_rx_buffers[slot].owner == file ? &tcp_rx_buffers[slot] : NULL;
-}
-
-static bool tcp_alloc_rx(struct open_file *file) {
-  if (file == NULL) { return false; }
-  if (file->tcp_rx_slot != 0) { return tcp_rx_state_for(file) != NULL; }
-  for (size_t i = 0; i < TCP_RX_BUFFER_SLOTS; ++i) {
-    if (tcp_rx_buffers[i].owner != NULL) { continue; }
-    tcp_rx_buffers[i].timer_active = true;
-    tcp_rx_buffers[i].owner = file;
-    file->tcp_rx_slot = (uint8_t)(i + 1);
-    return true;
-  }
-  return false;
-}
-
-static void tcp_reset_rx(struct open_file *file) {
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state == NULL) { return; }
-  for (size_t i = 0; i < sizeof(state->pages) / sizeof(state->pages[0]); ++i) {
-    if (state->pages[i] != 0) { pmm_free_page(state->pages[i]); }
-  }
-  kmemset(state->pages, 0, sizeof(state->pages));
-  state->head = 0;
-  file->tcp_rx_len = 0;
-}
-
-static void tcp_free_rx(struct open_file *file) {
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state == NULL) { return; }
-  tcp_reset_rx(file);
-  state->timer_active = false;
-  state->owner = NULL;
-  file->tcp_rx_slot = 0;
-}
-
 static void tcp_set_timer_active(struct open_file *file, bool active) {
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state != NULL) { state->timer_active = active; }
-}
-
-static uint8_t *tcp_rx_page(struct open_file *file, uint32_t offset, bool create) {
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state == NULL) { return NULL; }
-  size_t index = offset / PAGE_SIZE;
-  if (index >= sizeof(state->pages) / sizeof(state->pages[0])) { return NULL; }
-  uint64_t pa = state->pages[index];
-  if (pa == 0 && create) {
-    pa = pmm_alloc_zero_page();
-    if (pa == 0) { return NULL; }
-    state->pages[index] = pa;
+  if (active && !file->tcp_timer_link) {
+    file->tcp_timer_next = timed_sockets;
+    file->tcp_timer_link = &timed_sockets;
+    if (timed_sockets) { timed_sockets->tcp_timer_link = &file->tcp_timer_next; }
+    timed_sockets = file;
+  } else if (!active && file->tcp_timer_link) {
+    *file->tcp_timer_link = file->tcp_timer_next;
+    if (file->tcp_timer_next) { file->tcp_timer_next->tcp_timer_link = file->tcp_timer_link; }
+    file->tcp_timer_link = NULL;
+    file->tcp_timer_next = NULL;
   }
-  return pa == 0 ? NULL : pmm_phys_to_virt(pa);
-}
-
-static bool tcp_rx_write(struct open_file *file, uint32_t offset, const uint8_t *src, uint32_t len) {
-  while (len != 0) {
-    uint32_t page_offset = offset % PAGE_SIZE;
-    uint32_t chunk = PAGE_SIZE - page_offset;
-    if (chunk > len) { chunk = len; }
-    uint8_t *page = tcp_rx_page(file, offset, true);
-    if (page == NULL) { return false; }
-    kmemcpy(page + page_offset, src, chunk);
-    src += chunk;
-    len -= chunk;
-    offset = (offset + chunk) % CELL_TCP_RX_CAP;
-  }
-  return true;
-}
-
-static bool tcp_rx_copy_to_user(struct domain *domain, const struct open_file *file, uint64_t dst, uint32_t len) {
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state == NULL) { return false; }
-  uint32_t offset = state->head;
-  while (len != 0) {
-    uint32_t page_offset = offset % PAGE_SIZE;
-    uint32_t chunk = PAGE_SIZE - page_offset;
-    if (chunk > len) { chunk = len; }
-    uint8_t *page = tcp_rx_page((struct open_file *)file, offset, false);
-    if (page == NULL || !vmm_copy_to_user(cell_domain_as(domain), dst, page + page_offset, chunk)) { return false; }
-    dst += chunk;
-    len -= chunk;
-    offset = (offset + chunk) % CELL_TCP_RX_CAP;
-  }
-  return true;
-}
-
-static bool tcp_rx_copy_to_kernel(const struct open_file *file, void *dst, uint32_t len) {
-  uint8_t *out = dst;
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state == NULL) { return false; }
-  uint32_t offset = state->head;
-  while (len != 0) {
-    uint32_t page_offset = offset % PAGE_SIZE;
-    uint32_t chunk = PAGE_SIZE - page_offset;
-    if (chunk > len) { chunk = len; }
-    uint8_t *page = tcp_rx_page((struct open_file *)file, offset, false);
-    if (page == NULL) { return false; }
-    kmemcpy(out, page + page_offset, chunk);
-    out += chunk;
-    len -= chunk;
-    offset = (offset + chunk) % CELL_TCP_RX_CAP;
-  }
-  return true;
-}
-
-static void tcp_rx_consume(struct open_file *file, uint32_t len) {
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state == NULL) { return; }
-  state->head = (state->head + len) % CELL_TCP_RX_CAP;
-  file->tcp_rx_len -= len;
-  if (file->tcp_rx_len == 0) { tcp_reset_rx(file); }
 }
 
 static bool tcp_alloc_ooo(struct open_file *file) {
@@ -398,20 +287,6 @@ static void tcp_send_abortive_close(struct open_file *file) {
   file->tcp_state = TCP_CLOSED;
 }
 
-static uint32_t tcp_append_rx(struct open_file *file, const uint8_t *data, uint32_t len) {
-  uint32_t limit = socket_effective_buffer(file, true);
-  uint32_t room = file->tcp_rx_len >= limit ? 0 : limit - file->tcp_rx_len;
-  uint32_t n = len < room ? len : room;
-  if (n == 0) { return 0; }
-  struct tcp_rx_state *state = tcp_rx_state_for(file);
-  if (state == NULL) { return 0; }
-  uint32_t tail = (state->head + file->tcp_rx_len) % CELL_TCP_RX_CAP;
-  if (!tcp_rx_write(file, tail, data, n)) { return 0; }
-  file->tcp_rx_len += n;
-  file->tcp_ack += n;
-  return n;
-}
-
 static bool seq_before(uint32_t a, uint32_t b) {
   return (int32_t)(a - b) < 0;
 }
@@ -595,7 +470,7 @@ static bool tcp_rst_acceptable(const struct open_file *file, uint32_t seq, uint3
   return false;
 }
 
-static void tcp_ack_current_state(struct open_file *file) {
+void tcp_ack_current_state(struct open_file *file) {
   if (file == NULL || (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT)) { return; }
   (void)net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                      socket_effective_ttl(file), (uint8_t)file->ip_tos, file->tcp_seq, file->tcp_ack,
@@ -794,46 +669,17 @@ int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_fil
   return (int64_t)sent;
 }
 
-int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
-                                             uint32_t flags) {
-  if (file->tcp_rx_len == 0) {
-    if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
-    return file->tcp_fin ? 0 : -EAGAIN;
-  }
-  uint64_t n = file->tcp_rx_len < len ? file->tcp_rx_len : len;
-  if (!tcp_rx_copy_to_user(domain, file, buf, (uint32_t)n)) { return -EFAULT; }
-  if ((flags & MSG_PEEK) != 0) { return (int64_t)n; }
-  tcp_rx_consume(file, (uint32_t)n);
-  tcp_ack_current_state(file);
-  return (int64_t)n;
-}
-
-int64_t cell_socket_tcp_read_to_kernel(struct open_file *file, void *buf, uint64_t len, uint32_t flags) {
-  if (file == NULL || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
-  if (file->tcp_rx_len == 0) {
-    if (file->tcp_error != 0) { return -(int64_t)file->tcp_error; }
-    return file->tcp_fin ? 0 : -EAGAIN;
-  }
-  uint64_t n = file->tcp_rx_len < len ? file->tcp_rx_len : len;
-  if (n != 0 && !tcp_rx_copy_to_kernel(file, buf, (uint32_t)n)) { return -EIO; }
-  if ((flags & MSG_PEEK) != 0) { return (int64_t)n; }
-  tcp_rx_consume(file, (uint32_t)n);
-  tcp_ack_current_state(file);
-  return (int64_t)n;
-}
-
 bool tcp_recv_waitall_pending(const struct open_file *file, uint64_t want, uint32_t flags) {
   return file != NULL && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && (flags & MSG_WAITALL) != 0 &&
          want != 0 && file->tcp_rx_len < want && file->tcp_error == 0 && !file->tcp_fin;
 }
 
-bool tcp_init_socket(struct open_file *file) {
+void tcp_init_socket(struct open_file *file) {
   file->tcp_remote_window = TCP_DEFAULT_REMOTE_WINDOW;
   file->tcp_remote_window_scale = 0;
   file->tcp_remote_mss = TCP_DEFAULT_MSS;
   tcp_init_rto(file);
   tcp_init_keepalive(file, cell_uptime_ticks());
-  return tcp_alloc_rx(file);
 }
 
 static bool tcp_listener_readable(const struct open_file *listener) {
@@ -876,6 +722,7 @@ void tcp_release_file(struct open_file *file) {
   }
   tcp_tx_clear(file);
   tcp_free_tx(file);
+  tcp_set_timer_active(file, false);
   tcp_free_rx(file);
   tcp_free_ooo(file);
   socket_index_remove(tcp_port_bucket(file->tcp_local_port), file);
@@ -1042,6 +889,7 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
     tcp_note_activity(file, cell_uptime_ticks());
     tcp_tx_clear(file);
     tcp_clear_ooo(file);
+    tcp_set_timer_active(file, true);
     file->tcp_state = TCP_SYN_SENT;
     uint32_t syn_seq = file->tcp_seq;
     file->tcp_seq += 1;
@@ -1082,7 +930,7 @@ int cell_fd_socket_shutdown(int fd, int how) {
   if (how == 0 || how == 2) {
     file->tcp_fin = true;
     file->tcp_fin_pending = false;
-    tcp_reset_rx(file);
+    tcp_free_rx(file);
     cell_socket_wake_file(file);
   }
   if (how == 1 || how == 2) { return tcp_send_fin_once(file); }
@@ -1171,11 +1019,6 @@ static void tcp_deliver_syn_to_listener(uint32_t src_ip, uint16_t src_port, uint
   server->ip_ttl = listener->ip_ttl;
   server->ip_mtu_discover = listener->ip_mtu_discover;
   server->ip_bind_address_no_port = listener->ip_bind_address_no_port;
-  if (!tcp_alloc_rx(server)) {
-    cell_release_open_file(server);
-    return;
-  }
-  tcp_set_timer_active(server, false);
   server->tcp_local_port = dst_port;
   server->tcp_remote_ip = src_ip;
   server->tcp_remote_port = src_port;
@@ -1431,10 +1274,11 @@ static void tcp_timer_file(struct open_file *file, uint64_t now_ticks) {
 }
 
 void tcp_timer_tick(uint64_t now_ticks) {
-  for (size_t i = 0; i < TCP_RX_BUFFER_SLOTS; ++i) {
-    struct tcp_rx_state *state = &tcp_rx_buffers[i];
-    struct open_file *file = state->owner;
-    if (!state->timer_active || file == NULL || file->tcp_rx_slot != i + 1) { continue; }
+  struct open_file *file = timed_sockets;
+  while (file) {
+    struct open_file *next = file->tcp_timer_next;
     tcp_timer_file(file, now_ticks);
+    if (file->tcp_state == TCP_CLOSED) { tcp_set_timer_active(file, false); }
+    file = next;
   }
 }

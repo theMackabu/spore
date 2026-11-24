@@ -95,10 +95,7 @@ int cell_fd_socket_inet(uint8_t proto) {
   if (file == NULL) { return -12; }
   file->type = OPEN_SOCKET;
   file->socket_proto = proto;
-  if (proto == IPPROTO_TCP && !tcp_init_socket(file)) {
-    cell_release_open_file(file);
-    return -12;
-  }
+  if (proto == IPPROTO_TCP) { tcp_init_socket(file); }
   domain->fds[fd] = file;
   domain->fd_flags[fd] = 0;
   return fd;

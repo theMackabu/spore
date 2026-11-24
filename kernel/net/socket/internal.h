@@ -74,7 +74,7 @@ int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_
                                              uint32_t flags);
 int64_t cell_socket_tcp_read_to_kernel(struct open_file *file, void *buf, uint64_t len, uint32_t flags);
 bool tcp_recv_waitall_pending(const struct open_file *file, uint64_t want, uint32_t flags);
-bool tcp_init_socket(struct open_file *file);
+void tcp_init_socket(struct open_file *file);
 void tcp_release_file(struct open_file *file);
 int tcp_copy_peer_addr_to_domain(struct domain *domain, int accepted_fd, uint64_t addr, uint64_t addrlen);
 void tcp_timer_tick(uint64_t now_ticks);

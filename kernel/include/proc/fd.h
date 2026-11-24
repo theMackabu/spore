@@ -11,6 +11,7 @@ struct domain;
 struct trap_frame;
 struct tcp_ooo_state;
 struct tcp_tx_state;
+struct tcp_rx_state;
 
 enum open_file_type {
   OPEN_NONE,
@@ -127,7 +128,9 @@ struct open_file {
       uint32_t ip_ttl;
       bool ip_recvttl;
       uint64_t tcp_tx_pa;
-      uint8_t tcp_rx_slot;
+      struct tcp_rx_state *tcp_rx;
+      struct open_file *tcp_timer_next;
+      struct open_file **tcp_timer_link;
       struct open_file *socket_index_next;
       struct tcp_tx_state *tcp_tx;
       struct tcp_ooo_state *tcp_ooo;
