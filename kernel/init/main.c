@@ -114,7 +114,10 @@ void kernel_main(void) {
   if (virtio_net_init(boot->hhdm_offset)) { net_init(); }
   cell_system_init();
 
-  ramfs_init(&boot_ramfs, boot->modules, boot->module_count, boot->hhdm_offset);
+  if (!ramfs_init(&boot_ramfs, boot->modules, boot->module_count, boot->hhdm_offset)) {
+    kprintf("[spore] ramfs initialization failed\n");
+    aarch64_halt();
+  }
   vfs_init(&boot_ramfs, root);
   start_init(boot->hhdm_offset);
 }

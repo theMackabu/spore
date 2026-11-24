@@ -3,7 +3,42 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+static void many_names_and_mounts(void) {
+  struct ramfs first, second;
+  struct ramfs_node kept, n;
+  assert(ramfs_init(&first, NULL, 0, 0));
+  assert(ramfs_create(&first, "/tmp/kept", 0600, &kept));
+  assert(ramfs_write(&first, kept.index, 0, "one", 3) == 3 && ramfs_retain_node(&first, kept.index));
+  assert(ramfs_init(&second, NULL, 0, 0));
+  assert(ramfs_create(&second, "/tmp/kept", 0600, &n) && ramfs_write(&second, n.index, 0, "two", 3) == 3);
+  assert(ramfs_init(&second, NULL, 0, 0) && !ramfs_lookup_node(&second, "/tmp/kept", &n));
+  assert(ramfs_unlink(&first, "/tmp/kept") && ramfs_mkdir(&first, "/tmp/names", 0700));
+  for (int i = 0; i < 8192; ++i) {
+    char path[40];
+    snprintf(path, sizeof(path), "/tmp/names/n%d", i);
+    assert(ramfs_create(&first, path, 0600, &n));
+  }
+  int dir = ramfs_lookup_node(&first, "/tmp/names", &n) ? n.index : -1;
+  uint64_t cursor = 0;
+  struct vfs_dirent ent;
+  int count = 0;
+  while (ramfs_next_dirent(&first, dir, &cursor, &ent)) { ++count; }
+  assert(count == 8192);
+  for (int i = 8191; i >= 0; --i) {
+    char path[40];
+    snprintf(path, sizeof(path), "/tmp/names/n%d", i);
+    assert(ramfs_unlink(&first, path));
+  }
+  char data[3];
+  assert(ramfs_read(&first, kept.index, 0, data, sizeof(data)) == 3 && !memcmp(data, "one", 3));
+  ramfs_release_node(&first, kept.index);
+  assert(ramfs_backing_used_pages() == 0);
+  ramfs_destroy(&first);
+  ramfs_destroy(&second);
+}
 
 int main(void) {
   const char init_data[] = "init";
@@ -19,7 +54,7 @@ int main(void) {
                                         }};
 
   struct ramfs fs;
-  ramfs_init(&fs, modules, 2, 0);
+  assert(ramfs_init(&fs, modules, 2, 0));
 
   struct ramfs_node node;
   assert(!ramfs_lookup_node(&fs, "/missing", &node));
@@ -201,5 +236,7 @@ int main(void) {
   assert(ramfs_unlink(&fs, "/tmp/d/sealed"));
   assert(ramfs_unlink(&fs, "/tmp/d/busy-seal"));
   assert(ramfs_unlink(&fs, "/tmp/d"));
+  ramfs_destroy(&fs);
+  many_names_and_mounts();
   return 0;
 }

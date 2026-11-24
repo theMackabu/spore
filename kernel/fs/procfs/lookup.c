@@ -206,9 +206,9 @@ static bool numbered_dirent(struct vfs_dirent *out, uint64_t ino, uint8_t type, 
 
 bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out) {
   if (dir->backend == VFS_RAMFS && dir->ramfs.mount == RAMFS_MOUNT_PROC && str_eq(dir->ramfs.name, "proc")) {
-    if (*cursor < RAMFS_MAX_NODES) { return false; }
-    if (*cursor < RAMFS_MAX_NODES + 2) {
-      bool thread = *cursor == RAMFS_MAX_NODES + 1;
+    if (*cursor < RAMFS_DIR_END) { return false; }
+    if (*cursor < RAMFS_DIR_END + 2) {
+      bool thread = *cursor == RAMFS_DIR_END + 1;
       const char *name = thread ? "thread-self" : "self";
       out->ino = proc_ino(0, 0, thread ? 2 : 1);
       out->type = VFS_DT_LNK;
@@ -217,10 +217,10 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
       ++*cursor;
       return true;
     }
-    for (uint64_t i = *cursor - RAMFS_MAX_NODES - 2, end = cell_domain_slot_limit(); i < end; ++i) {
+    for (uint64_t i = *cursor - RAMFS_DIR_END - 2, end = cell_domain_slot_limit(); i < end; ++i) {
       const struct domain *d = cell_domain_slot(i);
       if (!d->used) { continue; }
-      *cursor = RAMFS_MAX_NODES + 2 + i + 1;
+      *cursor = RAMFS_DIR_END + 2 + i + 1;
       return numbered_dirent(out, proc_ino(d->id, 0, 0), VFS_DT_DIR, d->id);
     }
     return false;

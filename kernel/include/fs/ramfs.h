@@ -8,8 +8,6 @@
 #include <stdint.h>
 
 enum {
-  RAMFS_MAX_NODES = 512,
-  RAMFS_NAME_BUCKETS = 256,
   RAMFS_NAME_MAX = 255,
   RAMFS_PAGE_SIZE = 4096,
   RAMFS_INITIAL_BACKING_PAGES = 256,
@@ -81,42 +79,11 @@ enum ramfs_device {
   RAMFS_DEV_PROC_SELF,
 };
 
-struct ramfs_mem_node {
-  bool used;
-  bool is_dir;
-  bool writable;
-  enum ramfs_mount mount;
-  enum ramfs_device device;
-  uint16_t mode;
-  uint32_t uid;
-  uint32_t gid;
-  uint32_t refs;
-  uint16_t links_count;
-  uint32_t seals;
-  uint32_t shared_write_mappings;
-  bool sealable;
-  bool linkable;
-  int link_target;
-  int first_page;
-  uint32_t allocated_pages;
-  int parent;
-  int hash_next;
-  unsigned children;
-  uint8_t name_len;
-  char name[RAMFS_NAME_MAX + 1];
-  const void *ro_data;
-  uint64_t size;
-  uint64_t ino;
-  uint64_t atime;
-  uint64_t ctime;
-  uint64_t mtime;
-};
+constexpr uint64_t RAMFS_DIR_END = UINT64_C(1) << 32;
 
+struct ramfs_table;
 struct ramfs {
-  struct ramfs_mem_node nodes[RAMFS_MAX_NODES];
-  int names[RAMFS_NAME_BUCKETS];
-  int first_free;
-  int next_unused;
+  struct ramfs_table *table;
   uint64_t hhdm_offset;
   uint64_t next_ino;
 };
@@ -140,7 +107,8 @@ struct ramfs_node {
   uint64_t mtime;
 };
 
-void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);
+void ramfs_destroy(struct ramfs *fs);
+bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);
 void ramfs_set_now(uint64_t epoch_sec);
 bool ramfs_lookup_node(const struct ramfs *fs, const char *path, struct ramfs_node *out);
 bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct vfs_dirent *out);

@@ -40,14 +40,14 @@ static bool add_ro_file(struct ramfs *fs, const char *path, const void *data, ui
       next = ramfs_add_node(fs, parent, component, true, true);
       if (next < 0) { return false; }
     }
-    if (!fs->nodes[next].is_dir) { return false; }
+    if (!ramfs_inode_at(fs, next)->is_dir) { return false; }
     parent = next;
   }
   int index = ramfs_add_node(fs, parent, name, false, false);
   if (index < 0) { return false; }
-  fs->nodes[index].ro_data = data;
-  fs->nodes[index].size = size;
-  fs->nodes[index].mode = 0100444u;
+  ramfs_inode_at(fs, index)->ro_data = data;
+  ramfs_inode_at(fs, index)->size = size;
+  ramfs_inode_at(fs, index)->mode = 0100444u;
   return true;
 }
 
@@ -81,24 +81,25 @@ struct boot_node {
   uint16_t mode;
 };
 
-static void add_device(struct ramfs *fs, int parent, const char *name, enum ramfs_device device, uint16_t mode) {
+static bool add_device(struct ramfs *fs, int parent, const char *name, enum ramfs_device device, uint16_t mode) {
   int i = ramfs_add_node(fs, parent, name, false, false);
   if (i >= 0) {
-    fs->nodes[i].device = device;
-    fs->nodes[i].mode = mode;
+    ramfs_inode_at(fs, i)->device = device;
+    ramfs_inode_at(fs, i)->mode = mode;
   }
+  return i >= 0;
 }
 
 static int add_mount(struct ramfs *fs, int root, const char *name, enum ramfs_mount mount) {
   int i = ramfs_add_node(fs, root, name, true, true);
-  if (i >= 0) { fs->nodes[i].mount = mount; }
+  if (i >= 0) { ramfs_inode_at(fs, i)->mount = mount; }
   return i;
 }
 
-static void populate_dev(struct ramfs *fs, int dev) {
+static bool populate_dev(struct ramfs *fs, int dev) {
   int mounts = ramfs_add_node(fs, dev, "fs", true, true);
   int blk = ramfs_add_node(fs, dev, "blk", true, true);
-  ramfs_add_node(fs, dev, "shm", true, true);
+  if (ramfs_add_node(fs, dev, "shm", true, true) < 0) { return false; }
   int pts = ramfs_add_node(fs, dev, "pts", true, true);
   static const struct boot_node devices[] = {
     {"null", RAMFS_DEV_NULL, CHAR_DEVICE}, {"zero", RAMFS_DEV_ZERO, CHAR_DEVICE},
@@ -108,24 +109,24 @@ static void populate_dev(struct ramfs *fs, int dev) {
     {"ptmx", RAMFS_DEV_PTMX, CHAR_DEVICE}, {"procinfo", RAMFS_DEV_PROCINFO, READ_ONLY_FILE},
   };
   for (size_t i = 0; i < sizeof(devices) / sizeof(*devices); ++i) {
-    add_device(fs, dev, devices[i].name, devices[i].device, devices[i].mode);
+    if (!add_device(fs, dev, devices[i].name, devices[i].device, devices[i].mode)) { return false; }
   }
   for (unsigned i = 0; i < CELL_PTY_CAP; ++i) {
     char name[12];
     append_dec(name, sizeof(name), 0, i);
-    add_device(fs, pts, name, RAMFS_DEV_PTS, CHAR_DEVICE);
+    if (!add_device(fs, pts, name, RAMFS_DEV_PTS, CHAR_DEVICE)) { return false; }
   }
-  add_device(fs, mounts, "root", RAMFS_DEV_FS_ROOT, READ_ONLY_FILE);
-  add_device(fs, mounts, "boot", RAMFS_DEV_FS_BOOT, READ_ONLY_FILE);
-  add_device(fs, mounts, "ram0", RAMFS_DEV_FS_RAM0, READ_ONLY_FILE);
-  add_device(fs, mounts, "tmp", RAMFS_DEV_FS_TMP, READ_ONLY_FILE);
-  add_device(fs, blk, "root", RAMFS_DEV_BLK_ROOT, BLOCK_DEVICE);
-  add_device(fs, blk, "boot", RAMFS_DEV_BLK_BOOT, BLOCK_DEVICE);
+  return add_device(fs, mounts, "root", RAMFS_DEV_FS_ROOT, READ_ONLY_FILE) &&
+         add_device(fs, mounts, "boot", RAMFS_DEV_FS_BOOT, READ_ONLY_FILE) &&
+         add_device(fs, mounts, "ram0", RAMFS_DEV_FS_RAM0, READ_ONLY_FILE) &&
+         add_device(fs, mounts, "tmp", RAMFS_DEV_FS_TMP, READ_ONLY_FILE) &&
+         add_device(fs, blk, "root", RAMFS_DEV_BLK_ROOT, BLOCK_DEVICE) &&
+         add_device(fs, blk, "boot", RAMFS_DEV_BLK_BOOT, BLOCK_DEVICE);
 }
 
-static void populate_proc(struct ramfs *fs, int proc) {
+static bool populate_proc(struct ramfs *fs, int proc) {
   int net = ramfs_add_node(fs, proc, "net", true, true);
-  add_device(fs, net, "dev", RAMFS_DEV_NET_DEV, READ_ONLY_FILE);
+  if (!add_device(fs, net, "dev", RAMFS_DEV_NET_DEV, READ_ONLY_FILE)) { return false; }
   static const struct boot_node files[] = {
     {"procinfo", RAMFS_DEV_PROCINFO, READ_ONLY_FILE},
     {"meminfo", RAMFS_DEV_MEMINFO, READ_ONLY_FILE},
@@ -141,38 +142,42 @@ static void populate_proc(struct ramfs *fs, int proc) {
     {"fsstats", RAMFS_DEV_FSSTATS, READ_ONLY_FILE},
   };
   for (size_t i = 0; i < sizeof(files) / sizeof(*files); ++i) {
-    add_device(fs, proc, files[i].name, files[i].device, files[i].mode);
+    if (!add_device(fs, proc, files[i].name, files[i].device, files[i].mode)) { return false; }
   }
+  return true;
 }
 
-static void populate_cpu(struct ramfs *fs, int sys) {
+static bool populate_cpu(struct ramfs *fs, int sys) {
   int devices = ramfs_add_node(fs, sys, "devices", true, true);
   int system = ramfs_add_node(fs, devices, "system", true, true);
   int cpu = ramfs_add_node(fs, system, "cpu", true, true);
-  add_device(fs, cpu, "possible", RAMFS_DEV_SYS_CPU_POSSIBLE, READ_ONLY_FILE);
-  add_device(fs, cpu, "present", RAMFS_DEV_SYS_CPU_PRESENT, READ_ONLY_FILE);
-  add_device(fs, cpu, "online", RAMFS_DEV_SYS_CPU_ONLINE, READ_ONLY_FILE);
+  if (!add_device(fs, cpu, "possible", RAMFS_DEV_SYS_CPU_POSSIBLE, READ_ONLY_FILE)) { return false; }
+  if (!add_device(fs, cpu, "present", RAMFS_DEV_SYS_CPU_PRESENT, READ_ONLY_FILE)) { return false; }
+  if (!add_device(fs, cpu, "online", RAMFS_DEV_SYS_CPU_ONLINE, READ_ONLY_FILE)) { return false; }
   uint32_t possible = ramfs_smp_possible_cpu_count();
   if (!possible) { possible = 1; }
   for (uint32_t i = 0; i < possible && i < SPORE_BOOT_CPU_MAX; ++i) {
     char name[16] = "cpu";
     append_dec(name, sizeof(name), 3, i);
     int core = ramfs_add_node(fs, cpu, name, true, true);
-    add_device(fs, core, "online", RAMFS_DEV_SYS_CPU_CORE_ONLINE, READ_ONLY_FILE);
+    if (!add_device(fs, core, "online", RAMFS_DEV_SYS_CPU_CORE_ONLINE, READ_ONLY_FILE)) { return false; }
   }
+  return true;
 }
 
-void ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *modules, uint32_t count) {
+bool ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *modules, uint32_t count) {
   int dev = add_mount(fs, root, "dev", RAMFS_MOUNT_DEV);
   int proc = add_mount(fs, root, "proc", RAMFS_MOUNT_PROC);
   int sys = add_mount(fs, root, "sys", RAMFS_MOUNT_SYS);
-  add_mount(fs, root, "tmp", RAMFS_MOUNT_TMP);
+  if (add_mount(fs, root, "tmp", RAMFS_MOUNT_TMP) < 0) { return false; }
   int run = add_mount(fs, root, "run", RAMFS_MOUNT_RUN);
-  ramfs_add_node(fs, run, "memfd", true, true);
-  populate_dev(fs, dev);
-  populate_proc(fs, proc);
-  populate_cpu(fs, sys);
+  if (ramfs_add_node(fs, run, "memfd", true, true) < 0 || !populate_dev(fs, dev) ||
+      !populate_proc(fs, proc) || !populate_cpu(fs, sys)) { return false; }
   for (uint32_t i = 0; modules && i < count; ++i) {
-    add_ro_file(fs, modules[i].path, (const void *)(uintptr_t)(fs->hhdm_offset + modules[i].phys_addr), modules[i].size);
+    const struct spore_boot_module *m = &modules[i];
+    struct ramfs_node existing;
+    if (*m->path != '/' || ramfs_lookup_node(fs, m->path, &existing)) { continue; }
+    if (!add_ro_file(fs, m->path, (const void *)(uintptr_t)(fs->hhdm_offset + m->phys_addr), m->size)) { return false; }
   }
+  return true;
 }

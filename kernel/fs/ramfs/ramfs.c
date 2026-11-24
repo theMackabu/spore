@@ -9,40 +9,18 @@ void ramfs_set_now(uint64_t epoch_sec) {
   ramfs_now_sec = epoch_sec;
 }
 
-static int alloc_node(struct ramfs *fs) {
-  int i;
-  if (fs->first_free) {
-    i = fs->first_free - 1;
-    fs->first_free = fs->nodes[i].hash_next;
-  } else {
-    if (fs->next_unused == RAMFS_MAX_NODES) { return -1; }
-    i = fs->next_unused++;
-  }
-  fs->nodes[i] = (struct ramfs_mem_node){
-    .used = true, .parent = -1, .link_target = -1, .links_count = 1, .first_page = -1,
-    .ino = fs->next_ino++, .atime = ramfs_now_sec, .ctime = ramfs_now_sec, .mtime = ramfs_now_sec,
-  };
-  return i;
-}
-
-static void free_node(struct ramfs *fs, int i) {
-  ramfs_free_node_pages(fs, i);
-  fs->nodes[i].used = false;
-  fs->nodes[i].hash_next = fs->first_free;
-  fs->first_free = i + 1;
-}
-
-static unsigned name_bucket(int parent, const char *name, size_t len) {
+static uint32_t name_hash(int parent, const char *name, size_t len) {
   uint32_t hash = (uint32_t)parent ^ 2166136261u;
   for (size_t i = 0; i < len; ++i) { hash = (hash ^ (uint8_t)name[i]) * 16777619u; }
-  return hash % RAMFS_NAME_BUCKETS;
+  return hash;
 }
 
 static int find_component(const struct ramfs *fs, int parent, const char *name, size_t len) {
-  unsigned bucket = name_bucket(parent, name, len);
-  for (int slot = fs->names[bucket]; slot; slot = fs->nodes[slot - 1].hash_next) {
-    const struct ramfs_mem_node *n = &fs->nodes[slot - 1];
-    if (n->parent == parent && n->name_len == len && !kmemcmp(n->name, name, len)) { return slot - 1; }
+  uint32_t hash = name_hash(parent, name, len);
+  unsigned bucket = hash % fs->table->capacity;
+  for (int slot = fs->table->slots[bucket].bucket; slot; slot = ramfs_inode_at(fs, slot - 1)->hash_next) {
+    const struct ramfs_mem_node *n = ramfs_inode_at(fs, slot - 1);
+    if (n->name_hash == hash && n->parent == parent && n->name_len == len && !kmemcmp(n->name, name, len)) { return slot - 1; }
   }
   return -1;
 }
@@ -52,32 +30,34 @@ int ramfs_find_child(const struct ramfs *fs, int parent, const char *name) {
 }
 
 static void attach_name(struct ramfs *fs, int i, int parent, const char *name, size_t len) {
-  struct ramfs_mem_node *n = &fs->nodes[i];
+  struct ramfs_mem_node *n = ramfs_inode_at(fs, i);
   n->parent = parent;
   n->name_len = (uint8_t)len;
   kmemcpy(n->name, name, len);
   n->name[len] = 0;
-  unsigned bucket = name_bucket(parent, name, len);
-  n->hash_next = fs->names[bucket];
-  fs->names[bucket] = i + 1;
-  ++fs->nodes[parent].children;
-  fs->nodes[parent].ctime = fs->nodes[parent].mtime = ramfs_now_sec;
+  uint32_t hash = name_hash(parent, name, len);
+  unsigned bucket = hash % fs->table->capacity;
+  n->name_hash = hash;
+  n->hash_next = fs->table->slots[bucket].bucket;
+  fs->table->slots[bucket].bucket = i + 1;
+  ++ramfs_inode_at(fs, parent)->children;
+  ramfs_inode_at(fs, parent)->ctime = ramfs_inode_at(fs, parent)->mtime = ramfs_now_sec;
 }
 
 static void detach_name(struct ramfs *fs, int i) {
-  struct ramfs_mem_node *n = &fs->nodes[i];
-  int *link = &fs->names[name_bucket(n->parent, n->name, n->name_len)];
-  while (*link != i + 1) { link = &fs->nodes[*link - 1].hash_next; }
+  struct ramfs_mem_node *n = ramfs_inode_at(fs, i);
+  int *link = &fs->table->slots[n->name_hash % fs->table->capacity].bucket;
+  while (*link != i + 1) { link = &ramfs_inode_at(fs, *link - 1)->hash_next; }
   *link = n->hash_next;
-  --fs->nodes[n->parent].children;
-  fs->nodes[n->parent].ctime = fs->nodes[n->parent].mtime = ramfs_now_sec;
+  --ramfs_inode_at(fs, n->parent)->children;
+  ramfs_inode_at(fs, n->parent)->ctime = ramfs_inode_at(fs, n->parent)->mtime = ramfs_now_sec;
   n->parent = -1;
   n->name_len = 0;
   n->name[0] = 0;
 }
 
 static int lookup_entry(const struct ramfs *fs, const char *path) {
-  if (path == NULL || path[0] != '/') { return -1; }
+  if (!fs || !fs->table || path == NULL || path[0] != '/') { return -1; }
   int current = 0;
   const char *p = path + 1;
   while (*p) {
@@ -94,7 +74,7 @@ static int lookup_entry(const struct ramfs *fs, const char *path) {
 }
 
 static int inode_index(const struct ramfs *fs, int entry) {
-  return entry >= 0 && fs->nodes[entry].link_target >= 0 ? fs->nodes[entry].link_target : entry;
+  return entry >= 0 && ramfs_inode_at(fs, entry)->link_target >= 0 ? ramfs_inode_at(fs, entry)->link_target : entry;
 }
 
 static int lookup_index(const struct ramfs *fs, const char *path) {
@@ -102,7 +82,7 @@ static int lookup_index(const struct ramfs *fs, const char *path) {
 }
 
 static bool split_parent(const struct ramfs *fs, const char *path, int *parent, const char **name) {
-  if (path == NULL || path[0] != '/' || str_eq(path, "/")) { return false; }
+  if (!fs || !fs->table || path == NULL || path[0] != '/' || str_eq(path, "/")) { return false; }
   const char *last = base_name(path);
   if (*last == '\0') { return false; }
   size_t name_len = kstrlen(last);
@@ -117,7 +97,7 @@ static bool split_parent(const struct ramfs *fs, const char *path, int *parent, 
   if (parent_len > 1 && parent_path[parent_len - 1] == '/') { --parent_len; }
   parent_path[parent_len] = '\0';
   int p = lookup_index(fs, parent_path);
-  if (p < 0 || !fs->nodes[p].is_dir) { return false; }
+  if (p < 0 || !ramfs_inode_at(fs, p)->is_dir) { return false; }
   *parent = p;
   *name = last;
   return true;
@@ -125,39 +105,39 @@ static bool split_parent(const struct ramfs *fs, const char *path, int *parent, 
 
 int ramfs_add_node(struct ramfs *fs, int parent, const char *name, bool is_dir, bool writable) {
   size_t len = kstrlen(name);
-  if (parent < 0 || !fs->nodes[parent].is_dir || !len || len > RAMFS_NAME_MAX ||
+  if (parent < 0 || !ramfs_inode_at(fs, parent)->is_dir || !len || len > RAMFS_NAME_MAX ||
       find_component(fs, parent, name, len) >= 0) { return -1; }
-  int index = alloc_node(fs);
+  int index = ramfs_alloc_inode(fs);
   if (index < 0) { return -1; }
+  struct ramfs_mem_node *node = ramfs_inode_at(fs, index);
+  node->is_dir = is_dir;
+  node->writable = writable;
+  node->mount = ramfs_inode_at(fs, parent)->mount;
+  node->mode = is_dir ? 0040777u : 0100666u;
   attach_name(fs, index, parent, name, len);
-  fs->nodes[index].is_dir = is_dir;
-  fs->nodes[index].writable = writable;
-  fs->nodes[index].mount = fs->nodes[parent].mount;
-  fs->nodes[index].mode = is_dir ? 0040777u : 0100666u;
-  fs->nodes[index].uid = 0;
-  fs->nodes[index].gid = 0;
   return index;
 }
 
-void ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
+bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
                 uint64_t hhdm_offset) {
-  kmemset(fs, 0, sizeof(*fs));
-  ramfs_reset_pages();
+  ramfs_destroy(fs);
   fs->hhdm_offset = hhdm_offset;
   fs->next_ino = 1;
 
-  int root = alloc_node(fs);
-  fs->nodes[root].is_dir = true;
-  fs->nodes[root].mode = 0040777u;
-  fs->nodes[root].parent = root;
-  fs->nodes[root].mount = RAMFS_MOUNT_RAM0;
+  int root = ramfs_alloc_inode(fs);
+  if (root < 0) { ramfs_destroy(fs); return false; }
+  ramfs_inode_at(fs, root)->is_dir = true;
+  ramfs_inode_at(fs, root)->mode = 0040777u;
+  ramfs_inode_at(fs, root)->parent = root;
+  ramfs_inode_at(fs, root)->mount = RAMFS_MOUNT_RAM0;
 
-  ramfs_populate(fs, root, modules, module_count);
+  if (!ramfs_populate(fs, root, modules, module_count)) { ramfs_destroy(fs); return false; }
+  return true;
 }
 
 bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
-  if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  struct ramfs_mem_node *node = &fs->nodes[index];
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return false; }
   *out = (struct ramfs_node){
     .fs = fs,
     .index = index,
@@ -181,36 +161,39 @@ bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
 }
 
 bool ramfs_retain_node(struct ramfs *fs, int index) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  ++fs->nodes[index].refs;
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return false; }
+  ++node->refs;
   return true;
 }
 
 void ramfs_release_node(struct ramfs *fs, int index) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].refs == 0) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || node->refs == 0) {
     return;
   }
-  --fs->nodes[index].refs;
-  if (fs->nodes[index].refs == 0 && fs->nodes[index].links_count == 0 && index != 0) { free_node(fs, index); }
+  --node->refs;
+  if (node->refs == 0 && node->links_count == 0 && index != 0) { ramfs_free_inode(fs, index); }
 }
 
 bool ramfs_set_sealable(struct ramfs *fs, int index, bool allow_sealing) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      fs->nodes[index].device != RAMFS_DEV_NONE) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || node->is_dir ||
+      node->device != RAMFS_DEV_NONE) {
     return false;
   }
-  fs->nodes[index].sealable = true;
-  fs->nodes[index].seals = allow_sealing ? 0 : RAMFS_F_SEAL_SEAL;
-  fs->nodes[index].ctime = ramfs_now_sec;
+  node->sealable = true;
+  node->seals = allow_sealing ? 0 : RAMFS_F_SEAL_SEAL;
+  node->ctime = ramfs_now_sec;
   return true;
 }
 
 int ramfs_add_seals(struct ramfs *fs, int index, uint32_t seals) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || !fs->nodes[index].sealable ||
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || !node->sealable ||
       (seals & ~RAMFS_F_SEAL_MASK) != 0) {
     return -22;
   }
-  struct ramfs_mem_node *node = &fs->nodes[index];
   if ((node->seals & RAMFS_F_SEAL_SEAL) != 0) { return -1; }
   if ((seals & RAMFS_F_SEAL_WRITE) != 0 && node->shared_write_mappings != 0) { return -16; }
   node->seals |= seals;
@@ -219,30 +202,34 @@ int ramfs_add_seals(struct ramfs *fs, int index, uint32_t seals) {
 }
 
 int ramfs_get_seals(struct ramfs *fs, int index) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || !fs->nodes[index].sealable) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || !node->sealable) {
     return -22;
   }
-  return (int)fs->nodes[index].seals;
+  return (int)node->seals;
 }
 
 bool ramfs_write_sealed(struct ramfs *fs, int index) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  return (fs->nodes[index].seals & (RAMFS_F_SEAL_WRITE | RAMFS_F_SEAL_FUTURE_WRITE)) != 0;
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return false; }
+  return (node->seals & (RAMFS_F_SEAL_WRITE | RAMFS_F_SEAL_FUTURE_WRITE)) != 0;
 }
 
 bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  uint32_t seals = fs->nodes[index].seals;
-  return (size < fs->nodes[index].size && (seals & RAMFS_F_SEAL_SHRINK) != 0) ||
-         (size > fs->nodes[index].size && (seals & RAMFS_F_SEAL_GROW) != 0);
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return false; }
+  uint32_t seals = node->seals;
+  return (size < node->size && (seals & RAMFS_F_SEAL_SHRINK) != 0) ||
+         (size > node->size && (seals & RAMFS_F_SEAL_GROW) != 0);
 }
 
 void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add) {
-  if (fs == NULL || index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return; }
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return; }
   if (add) {
-    ++fs->nodes[index].shared_write_mappings;
-  } else if (fs->nodes[index].shared_write_mappings != 0) {
-    --fs->nodes[index].shared_write_mappings;
+    ++node->shared_write_mappings;
+  } else if (node->shared_write_mappings != 0) {
+    --node->shared_write_mappings;
   }
 }
 
@@ -253,24 +240,25 @@ bool ramfs_lookup_node(const struct ramfs *fs_const, const char *path, struct ra
 }
 
 bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct vfs_dirent *out) {
-  if (cursor == NULL || dir_index < 0 || dir_index >= RAMFS_MAX_NODES || !fs->nodes[dir_index].used ||
-      !fs->nodes[dir_index].is_dir) {
+  struct ramfs_mem_node *directory = ramfs_get_inode(fs, dir_index);
+  if (cursor == NULL || !directory ||
+      !directory->is_dir) {
     return false;
   }
-  if (*cursor >= RAMFS_MAX_NODES) { return false; }
+  if (*cursor >= RAMFS_DIR_END) { return false; }
   size_t first = (size_t)*cursor;
-  for (size_t i = first; i < (size_t)fs->next_unused; ++i) {
-    if (!fs->nodes[i].used || fs->nodes[i].parent != dir_index || (int)i == dir_index) { continue; }
-    const struct ramfs_mem_node *node = &fs->nodes[inode_index(fs, (int)i)];
-    const char *name = fs->nodes[i].name;
-    out->name_len = fs->nodes[i].name_len;
+  for (size_t i = first; i < (size_t)fs->table->next_unused; ++i) {
+    if (!ramfs_inode_at(fs, (int)i) || ramfs_inode_at(fs, i)->parent != dir_index || (int)i == dir_index) { continue; }
+    const struct ramfs_mem_node *node = ramfs_inode_at(fs, inode_index(fs, (int)i));
+    const char *name = ramfs_inode_at(fs, i)->name;
+    out->name_len = ramfs_inode_at(fs, i)->name_len;
     kmemcpy(out->name, name, (size_t)out->name_len + 1);
     out->ino = node->ino;
     out->type = (uint8_t)((node->mode & 0170000u) >> 12);
     *cursor = i + 1;
     return true;
   }
-  *cursor = RAMFS_MAX_NODES;
+  *cursor = RAMFS_DIR_END;
   return false;
 }
 
@@ -279,7 +267,7 @@ bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode) {
   const char *name;
   int index = split_parent(fs, path, &parent, &name) ? ramfs_add_node(fs, parent, name, true, true) : -1;
   if (index < 0) { return false; }
-  fs->nodes[index].mode = (uint16_t)(0040000u | (mode & 07777u));
+  ramfs_inode_at(fs, index)->mode = (uint16_t)(0040000u | (mode & 07777u));
   return true;
 }
 
@@ -291,7 +279,7 @@ bool ramfs_create(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
   if (!split_parent(fs, path, &parent, &name)) { return false; }
   int index = ramfs_add_node(fs, parent, name, false, true);
   if (index < 0) { return false; }
-  fs->nodes[index].mode = (uint16_t)(0100000u | (mode & 07777u));
+  ramfs_inode_at(fs, index)->mode = (uint16_t)(0100000u | (mode & 07777u));
   return ramfs_refresh_node(fs, index, out);
 }
 
@@ -302,7 +290,7 @@ bool ramfs_mkfifo(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
   if (!split_parent(fs, path, &parent, &name)) { return false; }
   int index = ramfs_add_node(fs, parent, name, false, true);
   if (index < 0) { return false; }
-  fs->nodes[index].mode = (uint16_t)(0010000u | (mode & 0777u));
+  ramfs_inode_at(fs, index)->mode = (uint16_t)(0010000u | (mode & 0777u));
   return ramfs_refresh_node(fs, index, out);
 }
 
@@ -313,31 +301,33 @@ bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramf
   if (!split_parent(fs, path, &parent, &name)) { return false; }
   int index = ramfs_add_node(fs, parent, name, false, true);
   if (index < 0) { return false; }
-  fs->nodes[index].mode = (uint16_t)(0140000u | (mode & 0777u));
+  ramfs_inode_at(fs, index)->mode = (uint16_t)(0140000u | (mode & 0777u));
   return ramfs_refresh_node(fs, index, out);
 }
 
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode) {
-  if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  fs->nodes[index].mode = (fs->nodes[index].mode & 0170000u) | (mode & 07777u);
-  fs->nodes[index].ctime = ramfs_now_sec;
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return false; }
+  node->mode = (node->mode & 0170000u) | (mode & 07777u);
+  node->ctime = ramfs_now_sec;
   return true;
 }
 
 bool ramfs_chown_node(struct ramfs *fs, int index, uint32_t uid, uint32_t gid) {
-  if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used) { return false; }
-  fs->nodes[index].uid = uid;
-  fs->nodes[index].gid = gid;
-  fs->nodes[index].ctime = ramfs_now_sec;
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node) { return false; }
+  node->uid = uid;
+  node->gid = gid;
+  node->ctime = ramfs_now_sec;
   return true;
 }
 
 bool ramfs_tmpfile(const struct ramfs_node *dir, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable,
                    struct ramfs_node *out) {
   struct ramfs *fs = dir->fs;
-  int index = alloc_node(fs);
+  int index = ramfs_alloc_inode(fs);
   if (index < 0) { return false; }
-  struct ramfs_mem_node *node = &fs->nodes[index];
+  struct ramfs_mem_node *node = ramfs_inode_at(fs, index);
   node->mount = dir->mount;
   node->writable = true;
   node->mode = 0100000u | mode;
@@ -353,25 +343,25 @@ int ramfs_remove(struct ramfs *fs, const char *path) {
   int entry = lookup_entry(fs, path);
   if (entry <= 0) { return -2; }
   int index = inode_index(fs, entry);
-  struct ramfs_mem_node *node = &fs->nodes[index];
+  struct ramfs_mem_node *node = ramfs_inode_at(fs, index);
   if (node->children) { return -39; }
   detach_name(fs, entry);
-  if (entry != index) { free_node(fs, entry); }
+  if (entry != index) { ramfs_free_inode(fs, entry); }
   --node->links_count;
   node->ctime = ramfs_now_sec;
-  if (node->links_count == 0 && node->refs == 0) { free_node(fs, index); }
+  if (node->links_count == 0 && node->refs == 0) { ramfs_free_inode(fs, index); }
   return 0;
 }
 
 bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path) {
-  if (index <= 0 || index >= RAMFS_MAX_NODES) { return false; }
-  struct ramfs_mem_node *node = &fs->nodes[index];
-  if (!node->used || node->is_dir || node->device != RAMFS_DEV_NONE || (!node->links_count && !node->linkable)) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (index == 0 || !node) { return false; }
+  if (node->is_dir || node->device != RAMFS_DEV_NONE || (!node->links_count && !node->linkable)) {
     return false;
   }
   int parent;
   const char *name;
-  if (!split_parent(fs, new_path, &parent, &name) || fs->nodes[parent].mount != node->mount ||
+  if (!split_parent(fs, new_path, &parent, &name) || ramfs_inode_at(fs, parent)->mount != node->mount ||
       ramfs_find_child(fs, parent, name) >= 0) {
     return false;
   }
@@ -380,12 +370,12 @@ bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path) {
   } else {
     int entry = ramfs_add_node(fs, parent, name, false, false);
     if (entry < 0) { return false; }
-    fs->nodes[entry].link_target = index;
+    ramfs_inode_at(fs, entry)->link_target = index;
   }
   ++node->links_count;
   node->linkable = false;
   node->ctime = ramfs_now_sec;
-  fs->nodes[parent].ctime = fs->nodes[parent].mtime = ramfs_now_sec;
+  ramfs_inode_at(fs, parent)->ctime = ramfs_inode_at(fs, parent)->mtime = ramfs_now_sec;
   return true;
 }
 
@@ -399,18 +389,18 @@ int ramfs_renameat(struct ramfs *fs, const char *old_path, const char *new_path,
   const char *name;
   if (entry <= 0 || !split_parent(fs, new_path, &parent, &name)) { return -2; }
   int index = inode_index(fs, entry);
-  struct ramfs_mem_node *node = &fs->nodes[index];
-  if (fs->nodes[parent].mount != node->mount) { return -18; }
+  struct ramfs_mem_node *node = ramfs_inode_at(fs, index);
+  if (ramfs_inode_at(fs, parent)->mount != node->mount) { return -18; }
   int existing = ramfs_find_child(fs, parent, name);
   if (existing >= 0) {
     if (noreplace) { return -17; }
     int target = inode_index(fs, existing);
     if (target == index) { return 0; }
-    if (node->is_dir != fs->nodes[target].is_dir) { return node->is_dir ? -20 : -21; }
-    if (fs->nodes[target].children) { return -39; }
+    if (node->is_dir != ramfs_inode_at(fs, target)->is_dir) { return node->is_dir ? -20 : -21; }
+    if (ramfs_inode_at(fs, target)->children) { return -39; }
   }
   if (node->is_dir) {
-    for (int at = parent; at > 0; at = fs->nodes[at].parent) {
+    for (int at = parent; at > 0; at = ramfs_inode_at(fs, at)->parent) {
       if (at == index) { return -22; }
     }
   }

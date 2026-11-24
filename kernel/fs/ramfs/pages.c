@@ -86,10 +86,8 @@ static void free_backing_slot(int slot) {
   --backing_page_used_count;
 }
 
-void ramfs_reset_pages(void) {
-  for (size_t i = 0; i < backing_page_capacity; ++i) {
-    if (backing_pages[i].owner != NULL) { table_free(backing_pages[i].data, 1, RAMFS_PAGE_SIZE); }
-  }
+static void release_empty_table(void) {
+  if (backing_page_used_count) { return; }
   table_free(backing_pages, backing_page_capacity, sizeof(*backing_pages) + sizeof(*backing_page_buckets));
   backing_pages = NULL;
   backing_page_buckets = NULL;
@@ -104,7 +102,7 @@ uint64_t ramfs_backing_used_pages(void) {
 
 static int find_backing_page(const struct ramfs *fs, int node, uint32_t file_page) {
   if (backing_page_buckets == NULL) { return -1; }
-  const struct ramfs_mem_node *owner = &fs->nodes[node];
+  const struct ramfs_mem_node *owner = ramfs_inode_at(fs, node);
   uint32_t bucket = backing_page_hash(owner, file_page);
   for (int slot = backing_page_buckets[bucket]; slot >= 0; slot = backing_pages[slot].hash_next) {
     if (backing_pages[slot].owner == owner && backing_pages[slot].file_page == file_page) { return slot; }
@@ -122,34 +120,36 @@ static int ensure_backing_page(struct ramfs *fs, int node, uint32_t file_page) {
   page->data = table_alloc(1, RAMFS_PAGE_SIZE);
   if (!page->data) { return -1; }
   backing_page_free_head = page->next;
-  page->owner = &fs->nodes[node];
+  page->owner = ramfs_inode_at(fs, node);
   page->file_page = file_page;
-  page->next = fs->nodes[node].first_page;
-  fs->nodes[node].first_page = slot;
+  page->next = ramfs_inode_at(fs, node)->first_page;
+  ramfs_inode_at(fs, node)->first_page = slot;
   insert_backing_index(slot);
   ++page->owner->allocated_pages;
   ++backing_page_used_count;
   return slot;
 }
 
-void ramfs_free_node_pages(struct ramfs *fs, int node) {
-  int slot = fs->nodes[node].first_page;
-  fs->nodes[node].first_page = -1;
+void ramfs_free_node_pages(struct ramfs_mem_node *node) {
+  int slot = node->first_page;
+  node->first_page = -1;
   while (slot >= 0) {
     int next = backing_pages[slot].next;
     free_backing_slot(slot);
     slot = next;
   }
+  release_empty_table();
 }
 
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
-  if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || size > RAMFS_MAX_FILE_SIZE) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || node->is_dir ||
+      node->device != RAMFS_DEV_NONE || !node->writable || size > RAMFS_MAX_FILE_SIZE) {
     return false;
   }
   if (ramfs_truncate_sealed(fs, index, size)) { return false; }
   uint64_t keep_pages = (size + RAMFS_PAGE_SIZE - 1) / RAMFS_PAGE_SIZE;
-  int *link = &fs->nodes[index].first_page;
+  int *link = &node->first_page;
   while (*link >= 0) {
     int slot = *link;
     if (backing_pages[slot].file_page >= keep_pages) {
@@ -166,21 +166,23 @@ bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
       kmemset(backing_pages[slot].data + tail, 0, (size_t)(RAMFS_PAGE_SIZE - tail));
     }
   }
-  fs->nodes[index].size = size;
-  fs->nodes[index].mtime = ramfs_now_sec;
-  fs->nodes[index].ctime = ramfs_now_sec;
+  release_empty_table();
+  node->size = size;
+  node->mtime = ramfs_now_sec;
+  node->ctime = ramfs_now_sec;
   return true;
 }
 
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len) {
-  if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      fs->nodes[index].device != RAMFS_DEV_NONE || off >= fs->nodes[index].size) {
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || node->is_dir ||
+      node->device != RAMFS_DEV_NONE || off >= node->size) {
     return 0;
   }
-  uint64_t n = fs->nodes[index].size - off;
+  uint64_t n = node->size - off;
   if (n > len) { n = len; }
-  if (!fs->nodes[index].writable) {
-    const uint8_t *src = fs->nodes[index].ro_data;
+  if (!node->writable) {
+    const uint8_t *src = node->ro_data;
     kmemcpy(dst, src + off, (size_t)n);
     return n;
   }
@@ -204,12 +206,12 @@ uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64
 }
 
 static int64_t write_file(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len, bool writeback) {
-  if (index < 0 || index >= RAMFS_MAX_NODES || !fs->nodes[index].used || fs->nodes[index].is_dir ||
-      fs->nodes[index].device != RAMFS_DEV_NONE || !fs->nodes[index].writable || off > RAMFS_MAX_FILE_SIZE ||
+  struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
+  if (!node || node->is_dir ||
+      node->device != RAMFS_DEV_NONE || !node->writable || off > RAMFS_MAX_FILE_SIZE ||
       len > RAMFS_MAX_FILE_SIZE - off) {
     return -1;
   }
-  const struct ramfs_mem_node *node = &fs->nodes[index];
   if (writeback && off + len > node->size) { return -1; }
   if ((node->seals & RAMFS_F_SEAL_WRITE) || (!writeback && (node->seals & RAMFS_F_SEAL_FUTURE_WRITE)) ||
       ((node->seals & RAMFS_F_SEAL_GROW) && len && off + len > node->size)) { return -1; }
@@ -236,9 +238,9 @@ static int64_t write_file(struct ramfs *fs, int index, uint64_t off, const void 
     kmemcpy(backing_pages[slot].data + within, in + done, (size_t)chunk);
     done += chunk;
   }
-  if (off + len > fs->nodes[index].size) { fs->nodes[index].size = off + len; }
-  fs->nodes[index].mtime = ramfs_now_sec;
-  fs->nodes[index].ctime = ramfs_now_sec;
+  if (off + len > node->size) { node->size = off + len; }
+  node->mtime = ramfs_now_sec;
+  node->ctime = ramfs_now_sec;
   return (int64_t)len;
 }
 
