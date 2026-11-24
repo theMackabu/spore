@@ -33,3 +33,14 @@ bool status_init(uint64_t hhdm) {
 void status_write(const uint8_t *bytes, size_t n) {
   virtio_console_write(bytes, n);
 }
+
+extern void trap_entry(void);
+void platform_cpu_init(uint32_t cpu, uintptr_t stack) {
+  (void)cpu;
+  (void)stack;
+  extern void platform_rearm_timer(void);
+  __asm__ volatile("csrw stvec,%0; csrc sstatus,%1; csrs sstatus,%2; csrs sie,%3" ::"r"((uintptr_t)trap_entry),
+                   "r"(0x40102ul), "r"(0x2020ul), "r"(32ul)
+                   : "memory");
+  platform_rearm_timer();
+}

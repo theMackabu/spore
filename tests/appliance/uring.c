@@ -1,4 +1,7 @@
 #define _GNU_SOURCE
+#ifdef NDEBUG
+#error This guest test requires assertions
+#endif
 #include <assert.h>
 #include <errno.h>
 #include <errno.h>
@@ -6,6 +9,7 @@
 #include <linux/io_uring.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/epoll.h>
@@ -13,6 +17,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -78,11 +83,28 @@ static void exercise(unsigned flags) {
   close(ep);
 }
 
+static volatile sig_atomic_t alarm_seen;
+
+static void on_alarm(int signal) { alarm_seen = signal; }
+
+static void interrupted_epoll(void) {
+  struct sigaction action = {.sa_handler = on_alarm};
+  assert(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGALRM, &action, NULL) == 0);
+  int ep = epoll_create1(0);
+  assert(ep >= 0);
+  struct itimerval timer = {.it_value.tv_usec = 50000};
+  assert(setitimer(ITIMER_REAL, &timer, NULL) == 0);
+  struct epoll_event event;
+  assert(epoll_wait(ep, &event, 1, 3000) == -1 && errno == EINTR);
+  assert(alarm_seen == SIGALRM && close(ep) == 0);
+}
+
 int main(void) {
   int status;
   assert(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD);
   const struct timespec delay = {.tv_nsec = 20000000};
   assert(nanosleep(&delay, NULL) == 0);
+  interrupted_epoll();
   exercise(0);
   exercise(IORING_SETUP_NO_SQARRAY);
   return 0;

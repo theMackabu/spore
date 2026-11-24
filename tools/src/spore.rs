@@ -254,12 +254,7 @@ fn execute() -> io::Result<i32> {
     let system = boot && (program.is_none() || root.is_some());
     if system {
         vm.mem = "8G".into();
-        vm.smp = if vm.arch == arch::Arch::Aarch64 {
-            "4"
-        } else {
-            "1"
-        }
-        .into();
+        vm.smp = "4".into();
     }
     if let Some(memory) = memory {
         vm.mem = memory;
@@ -332,14 +327,8 @@ fn execute() -> io::Result<i32> {
             {
                 let kernel = tmp.0.join("spore.bin");
                 fs::write(&kernel, spore_kernel::DIRECT)?;
-                let network = image::app::payload(
-                    &program,
-                    &pack,
-                    default_port,
-                    &tmp.0,
-                    &image,
-                    goblin::elf::header::EM_AARCH64,
-                )?;
+                let network =
+                    image::app::payload(&program, &pack, default_port, &tmp.0, &image, vm.arch)?;
                 vm.direct = Some(runner::qemu::DirectBoot {
                     kernel,
                     ram,

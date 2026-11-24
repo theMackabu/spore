@@ -16,6 +16,10 @@ _start:
     jc fail
     cmp $4, %rax
     jne fail
+    sub $8,%rsp
+    call freebsd_services
+    test %eax,%eax
+    jnz fail
     mov $42, %edi
     jmp exit
 fail:

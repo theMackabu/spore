@@ -42,6 +42,7 @@ struct native_sigframe {
   uint64_t restorer;
   struct context ctx;
   struct siginfo64 info;
+  uint8_t fpstate[512 + 63];
 #else
   struct siginfo64 info;
   struct context ctx;
@@ -125,7 +126,13 @@ bool arch_push_signal_frame(struct thread *t, const struct signal_action *action
 #ifdef __x86_64__
   base -= 8;
   sf.restorer = action->restorer ? action->restorer : trampoline;
+  sf.ctx.fp = (base + offsetof(struct native_sigframe, fpstate) + 63) & ~63ull;
+  uint8_t *fp = (uint8_t *)&sf + (sf.ctx.fp - base);
+#else
+  uint8_t *fp = sf.ctx.fp;
 #endif
+  if (t == cell_current_thread_internal()) { arch_save_context(&t->context); }
+  __builtin_memcpy(fp, t->context.fp, sizeof(t->context.fp));
   if (!cell_domain_ensure_user_range(t->domain, base, sizeof(sf), VMM_ACCESS_WRITE) ||
       !vmm_copy_to_user(cell_domain_as(t->domain), base, &sf, sizeof(sf)))
     return false;
@@ -151,8 +158,25 @@ int cell_rt_sigreturn(struct trap_frame *f) {
 #ifdef __x86_64__
   base -= 8;
 #endif
-  if (!vmm_copy_from_user(cell_current_as(), &sf, base, sizeof(sf)) || !load_regs(f, sf.ctx.reg)) return -14;
+  struct trap_frame next = *f;
+  if (!vmm_copy_from_user(cell_current_as(), &sf, base, sizeof(sf)) || !load_regs(&next, sf.ctx.reg)) { return -14; }
   struct thread *t = cell_current_thread_internal();
+  struct arch_thread_context context;
+  arch_save_context(&context);
+#ifdef __x86_64__
+  if (sf.ctx.fp) {
+    uint32_t mask, mxcsr;
+    __builtin_memcpy(&mask, context.fp + 28, sizeof(mask));
+    if (!vmm_copy_from_user(cell_current_as(), context.fp, sf.ctx.fp, sizeof(context.fp))) { return -14; }
+    __builtin_memcpy(&mxcsr, context.fp + 24, sizeof(mxcsr));
+    if (mxcsr & ~(mask ? mask : 0xffbfu)) { return -22; }
+  }
+#else
+  __builtin_memcpy(context.fp, sf.ctx.fp, sizeof(context.fp));
+  context.thread_pointer = next.tp;
+#endif
+  arch_restore_context(&context);
+  *f = next;
   t->signal_mask = cell_sanitize_signal_mask(sf.ctx.mask);
   t->tf = *f;
   return 0;

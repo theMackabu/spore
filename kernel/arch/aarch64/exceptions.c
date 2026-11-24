@@ -40,6 +40,10 @@ void handle_unhandled_exception(void) {
 
 void handle_lower_sync(struct trap_frame *frame) {
   uint64_t ec = (frame->esr_el1 >> 26) & 0x3f;
+  if (ec == 0) {
+    cell_signal_current_fault(4, frame, frame->elr_el1, 1);
+    return;
+  }
   if (ec != EC_SVC_A64) {
     uint64_t far;
     __asm__ volatile("mrs %0, far_el1" : "=r"(far));

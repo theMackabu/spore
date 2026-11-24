@@ -68,7 +68,11 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   child->parent_id = parent->id;
   inherit_fork_context(child_thread, cell_current_thread_internal());
   if (newsp != 0) { trap_set_stack(&child_thread->tf, newsp); }
-  if ((flags & CLONE_SETTLS) != 0) { child_thread->context.thread_pointer = tls; }
+  if ((flags & CLONE_SETTLS) != 0) { child_thread->context.thread_pointer = tls;
+#ifdef __riscv
+    child_thread->tf.tp = tls;
+#endif
+  }
   child_thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
   if ((flags & CLONE_PARENT_SETTID) != 0 && parent_tid != 0) {
     uint32_t pid = (uint32_t)child->id;
@@ -115,7 +119,11 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   thread->sigaltstack_flags = 2;
   trap_set_result(&thread->tf, 0);
   trap_set_stack(&thread->tf, newsp);
-  if ((flags & CLONE_SETTLS) != 0) { thread->context.thread_pointer = tls; }
+  if ((flags & CLONE_SETTLS) != 0) { thread->context.thread_pointer = tls;
+#ifdef __riscv
+    thread->tf.tp = tls;
+#endif
+  }
   thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
   if ((flags & CLONE_PARENT_SETTID) != 0 && parent_tid != 0) {
     uint32_t tid = (uint32_t)thread->tid;

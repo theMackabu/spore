@@ -10,6 +10,7 @@
 #include "proc/thread.h"
 
 static const uint16_t operations[] = {
+  [309] = SYS_GETCPU,
   [0] = SYS_READ,
   [1] = SYS_WRITE,
   [3] = SYS_CLOSE,

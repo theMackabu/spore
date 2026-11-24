@@ -17,4 +17,4 @@ The bundled full-system userland targets AArch64. With userland enabled, supply 
 ./target/release/spore boot --arch riscv64 --root root-riscv64.ext2 --snapshot
 ```
 
-AArch64 uses the virt machine and GIC. RV64 uses virt and OpenSBI. x86-64 uses Q35, a local APIC and PCI virtio. RV64 and x86-64 currently run with one vCPU.
+AArch64 uses the virt machine and GIC. RV64 uses virt and OpenSBI. x86-64 uses Q35, a local APIC and PCI virtio. The ports suite also runs a four-vCPU workload on each machine and checks that threads see changes to shared page tables.

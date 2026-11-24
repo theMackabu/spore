@@ -93,6 +93,7 @@ fn build_port(arch: &str, flags: &[&str], out: &Path) {
             "drivers/virtio_net.c",
             "drivers/virtio_blk.c",
         ])
+        .file("arch/smp.c")
         .files(runtime_sources())
         .files(files(Path::new("arch/bringup"), &["c", "S"]))
         .files(abi_sources(arch))
@@ -170,6 +171,7 @@ fn main() {
         .define("SPORE_MACHINE", "\"aarch64\"")
         .file("abi/freebsd/dispatch.c")
         .files(abi_sources("aarch64"))
+        .file("arch/smp.c")
         .files(runtime_sources())
         .files(
             ["arch/aarch64", "drivers", "init"]

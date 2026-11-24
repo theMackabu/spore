@@ -120,6 +120,7 @@ int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]
     [SYS_CLOCK_NANOSLEEP] = &&l_clock_nanosleep,
     [SYS_SCHED_GETSCHEDULER] = &&l_sched_getscheduler,
     [SYS_SCHED_GETPARAM] = &&l_sched_getparam,
+    [SYS_GETCPU] = &&l_getcpu,
     [SYS_SCHED_GETAFFINITY] = &&l_sched_getaffinity,
     [SYS_SCHED_YIELD] = &&l_sched_yield,
     [SYS_KILL] = &&l_kill,
@@ -511,6 +512,8 @@ l_sched_getscheduler:
   return sys_sched_getscheduler((int)a0);
 l_sched_getparam:
   return sys_sched_getparam((int)a0, a1);
+l_getcpu:
+  return sys_getcpu(a0,a1);
 l_sched_getaffinity:
   return sys_sched_getaffinity(a2, a1);
 l_set_tid_address:

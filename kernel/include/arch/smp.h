@@ -13,7 +13,7 @@ uint32_t smp_possible_cpu_count(void);
 uint32_t smp_online_cpu_count(void);
 bool smp_cpu_present(uint32_t cpu);
 bool smp_cpu_online(uint32_t cpu);
-uint64_t smp_cpu_mpidr(uint32_t cpu);
+uint64_t smp_cpu_hardware_id(uint32_t cpu);
 uint32_t smp_current_cpu(void);
 void smp_set_current_cpu(uint32_t cpu);
 void smp_kernel_lock(void);

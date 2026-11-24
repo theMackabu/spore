@@ -36,11 +36,10 @@ static void enter_first_process(void *context) {
   vmm_install_user(cell_current_as());
   kprintf("[kernel] entering EL0\n");
   if (app_mode) { app_track_entry(first->entry); }
-  bool bsd = cell_current_as()->freebsd_abi;
 #ifdef SPORE_NATIVE_PORT
-  user_freebsd = bsd;
   user_enter(first->entry, first->sp);
 #else
+  bool bsd = cell_current_as()->freebsd_abi;
   enter_el0(first->entry, first->sp, bsd ? first->sp : 0, bsd ? first->entry : 0);
 #endif
 }

@@ -6,7 +6,13 @@
 [[noreturn]] void port_monitor(void);
 enum page_flags { PAGE_READ = 1, PAGE_WRITE = 2, PAGE_EXEC = 4, PAGE_USER = 8, PAGE_DEVICE = 16 };
 
-extern bool user_freebsd;
+struct trap_frame;
+extern uint8_t kernel_stack_top[];
+void port_prepare_cpus(const struct spore_boot_info *boot);
+void platform_cpu_init(uint32_t cpu, uintptr_t stack);
+void port_idle_address_space(void);
+void port_flush_remote(void);
+[[noreturn]] void port_return_to_user(struct trap_frame *frame, uintptr_t stack);
 uint64_t active_root(void);
 void install_root(uint64_t root_pa);
 uint64_t table_entry(uint64_t pa);

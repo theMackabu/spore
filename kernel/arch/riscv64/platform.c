@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "arch/smp.h"
 #include "mm/pmm.h"
 
 static long sbi(unsigned extension, unsigned function, unsigned long first, unsigned long second) {
@@ -51,4 +52,24 @@ void platform_rearm_timer(void) {
 void platform_wait_tick(void) {
   __asm__ volatile("wfi");
   platform_rearm_timer();
+}
+
+static void remote_fence(long function) {
+  if (smp_online_cpu_count() <= 1) { return; }
+  register long a0 __asm__("a0") = 0, a1 __asm__("a1") = -1;
+  register long a2 __asm__("a2") = 0, a3 __asm__("a3") = -1;
+  register long a6 __asm__("a6") = function, a7 __asm__("a7") = 0x52464e43;
+  __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a3), "r"(a6), "r"(a7) : "memory");
+  if (a0) { platform_poweroff(); }
+}
+
+void port_flush_remote(void) {
+  remote_fence(1);
+}
+
+int riscv_flush_icache(uint64_t flags) {
+  if (flags & ~1ull) { return -22; }
+  __asm__ volatile("fence.i" ::: "memory");
+  if (!flags) { remote_fence(0); }
+  return 0;
 }

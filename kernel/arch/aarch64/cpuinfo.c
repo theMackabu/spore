@@ -172,7 +172,7 @@ size_t proc_cpuinfo_text(char *dst, size_t cap) {
     proc_append_str(dst, cap, &len, "\nHardware\t: ");
     proc_append_str(dst, cap, &len, model);
     proc_append_str(dst, cap, &len, "\nMPIDR\t\t: ");
-    proc_append_hex(dst, cap, &len, smp_cpu_mpidr(cpu), 8);
+    proc_append_hex(dst, cap, &len, smp_cpu_hardware_id(cpu), 8);
     proc_append_str(dst, cap, &len, "\nonline\t\t: ");
     proc_append_u64(dst, cap, &len, smp_cpu_online(cpu) ? 1 : 0);
     proc_append_str(dst, cap, &len, "\ncpu MHz\t\t: ");

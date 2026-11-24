@@ -1,71 +1,31 @@
 .bss
 .balign 16
 .skip 65536
+.global kernel_stack_top
 kernel_stack_top:
 .text
-.globl user_enter
-user_enter:
-    mv s0,a0
-    mv s1,a1
-    call platform_rearm_timer
-    mv a0,s0
-    mv a1,s1
-    la t0, trap_entry
-    csrw stvec, t0
-    la t0, kernel_stack_top
-    csrw sscratch, t0
-    csrw sepc, a0
-    li t0, 0x46122
-    csrc sstatus, t0
-    li t0,0x2020
-    csrs sstatus,t0
+.globl port_return_to_user
+port_return_to_user:
+    addi sp,a1,-256
+    mv t1,sp
+    li t2,32
+1:  ld t0,0(a0)
+    sd t0,0(t1)
+    addi a0,a0,8
+    addi t1,t1,8
+    addi t2,t2,-1
+    bnez t2,1b
+    li t0,256
+    csrc sstatus,t0
     li t0,32
-    csrs sie,t0
-    mv sp, a1
-    la t0, user_freebsd
-    lbu t0, 0(t0)
-    beqz t0, 1f
-    mv ra, a0
-    mv a0, sp
-    j 2f
-1:  li ra, 0
-    li a0, 0
-2:
-    li gp, 0
-    li tp, 0
-    li s0, 0
-    li s1, 0
-    li s2, 0
-    li s3, 0
-    li s4, 0
-    li s5, 0
-    li s6, 0
-    li s7, 0
-    li s8, 0
-    li s9, 0
-    li s10, 0
-    li s11, 0
-    li a1, 0
-    li a2, 0
-    li a3, 0
-    li a4, 0
-    li a5, 0
-    li a6, 0
-    li a7, 0
-    li t0, 0
-    li t1, 0
-    li t2, 0
-    li t3, 0
-    li t4, 0
-    li t5, 0
-    li t6, 0
-    sfence.vma
-    fence.i
-    sret
+    csrs sstatus,t0
+    j restore_frame
 
 .balign 4
+.global trap_entry
 trap_entry:
     csrrw sp, sscratch, sp
+    bgez sp,supervisor_trap
     addi sp, sp, -256
     sd ra, 0(sp)
     sd t0, 8(sp)
@@ -99,6 +59,8 @@ trap_entry:
     sd tp, 232(sp)
     csrr t0, sscratch
     sd t0, 240(sp)
+    ld t0,256(sp)
+    csrw sscratch,t0
     csrr t0, sepc
     sd t0, 248(sp)
     csrr t0, scause
@@ -111,11 +73,13 @@ trap_entry:
     mv a0, sp
     call port_syscall
 2:
+restore_frame:
     ld t0, 248(sp)
     csrw sepc, t0
     ld t0, 240(sp)
     csrw sscratch, t0
     ld gp, 224(sp)
+    ld tp,232(sp)
     ld s0, 128(sp)
     ld s1, 136(sp)
     ld s2, 144(sp)
@@ -147,6 +111,9 @@ trap_entry:
     addi sp, sp, 256
     csrrw sp, sscratch, sp
     sret
+supervisor_trap:
+    csrrw sp,sscratch,sp
+    tail platform_poweroff
 fault:
     li a2, 0
     li t1, 13
@@ -161,8 +128,10 @@ fault:
     li t1, 2
     bne t0, t1, 1f
     li a1, 4
-1:  li a0, 83
-    call user_finish
+1:  mv a0,sp
+    ld a2,248(sp)
+    call port_user_exception
+    j restore_frame
 
 page_fault:
     mv a0,sp

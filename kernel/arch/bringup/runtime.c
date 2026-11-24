@@ -11,55 +11,19 @@
 #include "proc/thread.h"
 #include "user.h"
 
-static struct thread *current;
-static bool waiting;
-
-uint32_t smp_current_cpu(void) {
-  return 0;
-}
-uint32_t smp_possible_cpu_count(void) {
-  return 1;
-}
-uint32_t smp_present_cpu_count(void) {
-  return 1;
-}
-uint32_t smp_online_cpu_count(void) {
-  return 1;
-}
-bool smp_cpu_present(uint32_t n) {
-  return n == 0;
-}
-bool smp_cpu_online(uint32_t n) {
-  return n == 0;
-}
-void *smp_current_thread_slot(uint32_t cpu) {
-  return cpu == 0 ? current : NULL;
-}
-void smp_set_current_thread_slot(uint32_t cpu, void *thread) {
-  if (!cpu) { current = thread; }
-}
-void smp_clear_current_thread_if(uint32_t cpu, void *thread) {
-  if (!cpu && current == thread) { current = NULL; }
-}
-bool smp_scheduler_waiting(uint32_t cpu) {
-  return !cpu && waiting;
-}
-void smp_set_scheduler_waiting(uint32_t cpu, bool value) {
-  if (!cpu) { waiting = value; }
-}
-void smp_notify(void) {}
-void smp_kernel_lock(void) {}
-void smp_kernel_unlock(void) {}
-void smp_start_scheduler_cpus(void) {}
-
 void port_timer_interrupt(struct trap_frame *frame) {
+  smp_kernel_lock();
   platform_rearm_timer();
   cell_timer_tick(frame, frame != NULL);
+  smp_kernel_unlock();
 }
 void smp_wait_for_irq(void) {
+  port_idle_address_space();
   platform_wait_tick();
 #ifdef __riscv
+  smp_kernel_lock();
   cell_timer_tick(NULL, false);
+  smp_kernel_unlock();
 #endif
 }
 void serial_putc(char c) {
@@ -82,7 +46,7 @@ void serial_get_winsize(uint16_t *rows, uint16_t *cols) {
   platform_poweroff();
 }
 
-void port_page_fault(struct trap_frame *f, uint64_t address, enum vmm_access access) {
+static void resolve_page_fault(struct trap_frame *f, uint64_t address, enum vmm_access access) {
   bool mapped = vmm_is_mapped(cell_current_as(), address);
   if (!mapped && cell_handle_translation_fault(address, access)) {
     if (access == VMM_ACCESS_EXEC) { app_instruction_fetched(address); }
@@ -95,6 +59,23 @@ void port_page_fault(struct trap_frame *f, uint64_t address, enum vmm_access acc
 
 size_t proc_cpuinfo_text(char *dst, size_t cap) {
   size_t len = 0;
-  proc_append_str(dst, cap, &len, "processor\t: 0\nmodel name\t: " SPORE_MACHINE "\n");
+  for (unsigned cpu = 0; cpu < smp_present_cpu_count(); ++cpu) {
+    if (!smp_cpu_online(cpu)) { continue; }
+    proc_append_str(dst, cap, &len, "processor\t: ");
+    proc_append_u64(dst, cap, &len, cpu);
+    proc_append_str(dst, cap, &len, "\nmodel name\t: " SPORE_MACHINE "\n\n");
+  }
   return len;
+}
+
+void port_page_fault(struct trap_frame *f, uint64_t address, enum vmm_access access) {
+  smp_kernel_lock();
+  resolve_page_fault(f, address, access);
+  smp_kernel_unlock();
+}
+
+void port_user_exception(struct trap_frame *frame, int signal, uint64_t address) {
+  smp_kernel_lock();
+  cell_signal_current_fault(signal, frame, address, 1);
+  smp_kernel_unlock();
 }

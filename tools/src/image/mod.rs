@@ -154,8 +154,8 @@ fn stage_manifest(root: &Path, manifest: &Path, source: &Path, prebuilt: &Path) 
     }
     Ok(())
 }
-fn gcc_file(name: &str) -> io::Result<PathBuf> {
-    let output = Command::new("aarch64-unknown-linux-musl-gcc")
+fn gcc_file(arch: crate::arch::Arch, name: &str) -> io::Result<PathBuf> {
+    let output = Command::new(format!("{}-unknown-linux-musl-gcc", arch.name()))
         .arg(format!("-print-file-name={name}"))
         .output()?;
     if !output.status.success() {
@@ -168,8 +168,8 @@ fn gcc_file(name: &str) -> io::Result<PathBuf> {
     )))
 }
 fn install_musl(root: &Path) -> io::Result<()> {
-    let libc = gcc_file("libc.so")?;
-    let ld = gcc_file("ld-musl-aarch64.so.1")?;
+    let libc = gcc_file(crate::arch::Arch::Aarch64, "libc.so")?;
+    let ld = gcc_file(crate::arch::Arch::Aarch64, "ld-musl-aarch64.so.1")?;
     let dest = root.join("lib/libc.so");
     copy_file(&libc, &dest)?;
     chmod(&dest, 0o755)?;
@@ -182,12 +182,12 @@ fn install_musl(root: &Path) -> io::Result<()> {
         copy_file(&ld, &dest)?;
         chmod(&dest, 0o755)?;
     }
-    let headers = gcc_file("include")?
+    let headers = gcc_file(crate::arch::Arch::Aarch64, "include")?
         .join("../../../../../aarch64-unknown-linux-musl/sys-include")
         .canonicalize()?;
     copy_tree(&headers, &root.join("usr/include"))?;
     for obj in ["crt1.o", "crti.o", "crtn.o", "Scrt1.o", "rcrt1.o"] {
-        let src = gcc_file(obj)?;
+        let src = gcc_file(crate::arch::Arch::Aarch64, obj)?;
         if src.exists() {
             let dst = root.join("usr/lib").join(obj);
             copy_file(&src, &dst)?;

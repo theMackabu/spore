@@ -56,6 +56,7 @@ static void fill_signal_context(struct signal_frame64 *frame, const struct threa
 
 bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action, int signal,
                                uint64_t fault_addr, int sig_code) {
+  if (!action->restorer) { return false; }
   struct domain *domain = thread->domain;
   struct signal_frame64 frame;
   kmemset(&frame, 0, sizeof(frame));

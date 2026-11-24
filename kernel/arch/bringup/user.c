@@ -1,6 +1,7 @@
 #include "user.h"
 #include "arch/clock.h"
 #include "arch/regs.h"
+#include "arch/smp.h"
 #include "drivers/virtio_net.h"
 #include "init/app.h"
 #include "init/boot.h"
@@ -12,7 +13,6 @@
 #include "proc/bootstrap.h"
 #include "proc/memory.h"
 
-bool user_freebsd;
 #ifdef __x86_64__
 #define linux_entry linux_x86_64_syscall
 #define freebsd_entry freebsd_x86_64_syscall
@@ -23,11 +23,13 @@ bool user_freebsd;
 void linux_entry(struct trap_frame *);
 void freebsd_entry(struct trap_frame *);
 void port_syscall(struct trap_frame *frame) {
+  smp_kernel_lock();
   if (cell_current_as()->freebsd_abi) {
     freebsd_entry(frame);
   } else {
     linux_entry(frame);
   }
+  smp_kernel_unlock();
 }
 
 static uint64_t *root;
@@ -77,6 +79,7 @@ bool map_page(uint64_t va, uint64_t pa, unsigned flags) {
   struct ext2_fs *disk = boot_mount_disk(boot->hhdm_offset);
   if (!profile.payload && !disk) { port_monitor(); }
   if (virtio_net_init(boot->hhdm_offset)) { net_init(); }
+  port_prepare_cpus(boot);
   cell_system_init();
   boot_mount_root(boot, disk, &profile);
   boot_start_process(&profile.program, boot->hhdm_offset);

@@ -1,4 +1,5 @@
 use super::{build_esp, build_image, gcc_file};
+use crate::arch::Arch;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
@@ -20,7 +21,7 @@ fn guest(s: &str) -> io::Result<String> {
     Ok(s.into())
 }
 struct Package {
-    machine: u16,
+    arch: Arch,
     files: BTreeMap<String, PathBuf>,
     dirs: BTreeSet<String>,
     libs: Vec<PathBuf>,
@@ -75,10 +76,7 @@ impl Package {
             .map(|p| p.join(name))
             .find(|p| p.is_file())
             .or_else(|| {
-                if self.machine != goblin::elf::header::EM_AARCH64 {
-                    return None;
-                }
-                gcc_file(name)
+                gcc_file(self.arch, name)
                     .ok()
                     .filter(|p| p.is_absolute() && p.is_file())
             })
@@ -95,7 +93,7 @@ impl Package {
         if !elf.is_64
             || !elf.little_endian
             || !matches!(elf.header.e_ident[7], 0 | 3 | 9)
-            || elf.header.e_machine != self.machine
+            || elf.header.e_machine != self.arch.machine()
             || !matches!(
                 elf.header.e_type,
                 goblin::elf::header::ET_EXEC | goblin::elf::header::ET_DYN
@@ -141,7 +139,7 @@ impl Package {
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| bad("invalid interpreter"))?;
             let lib = self.library(name, &search).or_else(|error| {
-                if name == "ld-musl-aarch64.so.1" {
+                if name == format!("ld-musl-{}.so.1", self.arch.name()) {
                     self.library("libc.so", &search)
                 } else {
                     Err(error)
@@ -172,10 +170,10 @@ pub fn payload(
     default_port: Option<u16>,
     stage: &Path,
     bundle: &Path,
-    machine: u16,
+    arch: Arch,
 ) -> io::Result<[Ipv4Addr; 4]> {
     let mut pkg = Package {
-        machine,
+        arch,
         files: BTreeMap::new(),
         dirs: BTreeSet::new(),
         libs: Vec::new(),
@@ -317,7 +315,7 @@ pub fn build(
         fs::create_dir(&stage)?;
         let result = (|| {
             let bundle = stage.join("payload");
-            let net = payload(program, opts, default_port, &stage, &bundle, arch.machine())?;
+            let net = payload(program, opts, default_port, &stage, &bundle, arch)?;
             let config = stage.join("limine.conf");
             fs::write(
                 &config,

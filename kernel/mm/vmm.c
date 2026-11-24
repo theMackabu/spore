@@ -345,6 +345,9 @@ static size_t destroy_table(struct user_address_space *as, uint64_t pa_table, un
 
 void vmm_destroy(struct user_address_space *as) {
   if (as->root_pa != 0) {
+#ifdef SPORE_NATIVE_PORT
+    if (active_root() == as->root_pa) { port_idle_address_space(); }
+#endif
     destroy_table(as, as->root_pa, 0);
     as->root_pa = 0;
     as->resident_pages = 0;

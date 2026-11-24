@@ -252,12 +252,6 @@ fn launch(config: Config) -> io::Result<i32> {
         Arch::Riscv64 => "virt",
         Arch::X86_64 => "q35",
     };
-    if arch != Arch::Aarch64 && smp != "1" {
-        return Err(io::Error::other(
-            "secondary CPUs require platform interrupt routing",
-        ));
-    }
-
     let cpu = cpu.unwrap_or_else(|| {
         if accel.as_bytes().split(|&b| b == b',').next() == Some(b"tcg") {
             "max".into()

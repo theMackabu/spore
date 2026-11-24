@@ -119,10 +119,6 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
     return true;
   }
   if (action->handler == 1) { return true; }
-  if (action->restorer == 0) {
-    terminate_domain_by_signal(domain, signal);
-    return true;
-  }
   if (thread_requires_deferred_signal_frame(thread)) {
     queue_signal_to_thread(thread, signal);
     return false;

@@ -1,5 +1,6 @@
 #include "platform.h"
 #include "arch/clock.h"
+#include "arch/smp.h"
 #include "user.h"
 #include <stdint.h>
 
@@ -118,4 +119,45 @@ void platform_rearm_timer(void) {
 }
 void platform_wait_tick(void) {
   __asm__ volatile("sti; hlt; cli" ::: "memory");
+}
+
+static uint64_t flush_generation;
+static uint64_t requested[SPORE_BOOT_CPU_MAX], completed[SPORE_BOOT_CPU_MAX];
+
+void x86_tlb_interrupt(void) {
+  uint32_t id = apic_read(0x20);
+  if (!x2apic) { id >>= 24; }
+  for (uint32_t cpu = 0; cpu < smp_present_cpu_count(); ++cpu) {
+    if (smp_cpu_hardware_id(cpu) != id) { continue; }
+    uint64_t generation = __atomic_load_n(&requested[cpu], __ATOMIC_ACQUIRE);
+    install_root(active_root());
+    __atomic_store_n(&completed[cpu], generation, __ATOMIC_RELEASE);
+    break;
+  }
+}
+
+void port_flush_remote(void) {
+  if (smp_online_cpu_count() <= 1) { return; }
+  uint32_t self = smp_current_cpu();
+  uint64_t generation = ++flush_generation;
+  for (uint32_t cpu = 0; cpu < smp_present_cpu_count(); ++cpu) {
+    if (cpu == self || !smp_cpu_online(cpu)) { continue; }
+    __atomic_store_n(&requested[cpu], generation, __ATOMIC_RELEASE);
+    uint32_t id = smp_cpu_hardware_id(cpu);
+    if (x2apic) {
+      __asm__ volatile("wrmsr" ::"c"(0x830u), "a"(0x400u), "d"(id) : "memory");
+    } else {
+      while (apic_read(0x300) & (1u << 12)) {
+        __asm__ volatile("pause");
+      }
+      apic_write(0x310, id << 24);
+      apic_write(0x300, 0x400);
+    }
+  }
+  for (uint32_t cpu = 0; cpu < smp_present_cpu_count(); ++cpu) {
+    if (requested[cpu] != generation) { continue; }
+    while (__atomic_load_n(&completed[cpu], __ATOMIC_ACQUIRE) != generation) {
+      __asm__ volatile("pause");
+    }
+  }
 }

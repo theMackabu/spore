@@ -18,6 +18,8 @@ _start:
     bnez t0, fail
     li t1, 4
     bne a0, t1, fail
+    call freebsd_services
+    bnez a0,fail
     li a0, 42
     j exit
 fail:
