@@ -17,3 +17,4 @@ void cell_loadavg_scaled(uint64_t out[3]);
 uint64_t cell_boot_epoch_seconds(void);
 void cell_set_boot_epoch(uint64_t epoch_sec);
 uint64_t cell_realtime_seconds(void);
+int cell_set_budget(int domain_id, uint64_t ticks);

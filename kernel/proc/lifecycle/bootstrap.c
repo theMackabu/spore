@@ -2,7 +2,7 @@
 #include "init/app.h"
 #include "init/program.h"
 #include "lib/kstr.h"
-#include "accounting_internal.h"
+#include "proc/sched/accounting_internal.h"
 #include "arch/aarch64/platform.h"
 #include "arch/aarch64/regs.h"
 #include "exec/stack.h"

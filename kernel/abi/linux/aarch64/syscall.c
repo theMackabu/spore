@@ -1,3 +1,4 @@
+#include "proc/accounting.h"
 #include "abi/linux/aarch64/syscall.h"
 #include "arch/aarch64/platform.h"
 #include "arch/aarch64/regs.h"

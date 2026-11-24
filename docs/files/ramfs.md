@@ -6,6 +6,6 @@ written. Their contents last for the current boot. [Payload unpacking](../../ker
 
 Ramfs also creates the guest's initial device nodes, including `/dev/null`, `/dev/zero`,
 `/dev/console` and `/dev/ptmx`. A device tag tells the I/O code which operation to perform
-when a process opens one. [Boot nodes](../../kernel/fs/ramfs/boot.c) · [File I/O](../../kernel/proc/file_io.c)
+when a process opens one. [Boot nodes](../../kernel/fs/ramfs/boot.c) · [File I/O](../../kernel/proc/fd/file_io.c)
 
 [Filesystem routing](vfs.md) · [Terminal devices](../kernel/terminal.md) · [Persistent storage](ext2.md)

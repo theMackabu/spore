@@ -20,4 +20,3 @@ int cell_set_tid_address_current(uint64_t clear_child_tid);
 int cell_wait4_options(int pid, uint64_t status_addr, int options, uint64_t usage_addr, struct trap_frame *frame);
 bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp,
                        struct trap_frame *frame, const char *path, const char *const argv[], uint64_t argc);
-int cell_set_budget(int domain_id, uint64_t ticks);

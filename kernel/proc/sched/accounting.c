@@ -1,3 +1,4 @@
+#include "lib/kprintf.h"
 #include "proc/accounting.h"
 #include "accounting_internal.h"
 #include "arch/aarch64/smp.h"
@@ -120,4 +121,13 @@ void cell_merge_usage(struct resource_usage *total, const struct resource_usage 
   total->minor_faults += usage->minor_faults;
   total->major_faults += usage->major_faults;
   if (usage->peak_pages > total->peak_pages) { total->peak_pages = usage->peak_pages; }
+}
+
+int cell_set_budget(int domain_id, uint64_t ticks) {
+  struct domain *domain = domain_id == 0 ? cell_current_domain_internal() : cell_find_domain(domain_id);
+  if (domain == NULL) { return -3; }
+  domain->budget.max_ticks = ticks;
+  domain->budget.remaining_ticks = ticks;
+  if (ticks != 0) { kprintf("[spore] domain %d CPU budget set to %u ticks\n", domain->id, (unsigned)ticks); }
+  return 0;
 }

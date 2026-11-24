@@ -8,4 +8,4 @@ requested entry point with its argument.
 The parent can reap the child through the same wait path used for ordinary processes.
 On the host, `boot --snapshot` discards disk writes after an [interactive session](../interactive.md).
 
-[Snapshot implementation](../../kernel/proc/snapshot.c) · [Process lifecycle](lifecycle.md) · [Virtual memory](../memory/faults.md)
+[Snapshot implementation](../../kernel/proc/memory/snapshot.c) · [Process lifecycle](lifecycle.md) · [Virtual memory](../memory/faults.md)

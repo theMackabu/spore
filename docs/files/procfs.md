@@ -9,4 +9,4 @@ System-wide entries include `/proc/meminfo`, `/proc/cpuinfo`, `/proc/mounts` and
 `/proc/kmsg`. Programs such as `ps` and `htop` can inspect this state using ordinary file
 operations. [Proc formatting](../../kernel/fs/procfs/format.c) · [Boot entries](../../kernel/fs/ramfs/boot.c)
 
-[Process accounting](../../kernel/proc/accounting.c) · [Filesystem routing](vfs.md)
+[Process accounting](../../kernel/proc/sched/accounting.c) · [Filesystem routing](vfs.md)

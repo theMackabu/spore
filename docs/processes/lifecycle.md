@@ -7,6 +7,6 @@ has its own registers, signal mask and wait state. [Domain layout](../../kernel/
 In the interactive image, fork creates a child with a copy-on-write address space. Exec
 installs the new program and closes descriptors marked close-on-exec. When a child exits,
 its parent can collect the status with `wait4`. The [app profile](../host/results.md) allows threads
-within its single process. [Process operations](../../kernel/proc/process.c) · [Child reaping](../../kernel/proc/child.c)
+within its single process. [Process creation](../../kernel/proc/lifecycle/clone.c) · [Child reaping](../../kernel/proc/lifecycle/child.c)
 
 [Signals](signals.md) · [Snapshots](snapshots.md) · [Credentials and confinement](confinement.md) · [File descriptors](descriptors.md)

@@ -4,7 +4,7 @@
 mod bitmap;
 #[path = "exec/elf.rs"]
 mod elf;
-#[path = "proc/manifest.rs"]
+#[path = "proc/policy/manifest.rs"]
 mod manifest;
 #[path = "net/packet.rs"]
 mod packet;

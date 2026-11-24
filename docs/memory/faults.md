@@ -7,6 +7,6 @@ the physical pages the CPU can currently access. [Memory areas](../../kernel/mm/
 On a missing translation, the kernel looks up the area and checks the access. It can supply
 an anonymous page or load bytes from the mapped file. On a write to a private copy-on-write
 page, it resolves the write for that process. An access it cannot resolve raises `SIGSEGV`.
-[Process fault handling](../../kernel/proc/memory.c) · [Exception dispatch](../../kernel/arch/aarch64/exceptions.c)
+[Process fault handling](../../kernel/proc/memory/fault.c) · [Exception dispatch](../../kernel/arch/aarch64/exceptions.c)
 
 [Shared file writeback](../files/cache.md) · [Linux mapping calls](../../kernel/abi/linux/shared/mm/mmap.c) · [Physical pages](pages.md)
