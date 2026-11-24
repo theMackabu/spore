@@ -66,39 +66,28 @@ trap_entry:
     sd t4, 40(sp)
     sd t5, 48(sp)
     sd t6, 56(sp)
-    sd a1, 64(sp)
-    sd a2, 72(sp)
-    sd a3, 80(sp)
-    sd a4, 88(sp)
-    sd a5, 96(sp)
-    sd a6, 104(sp)
-    sd a7, 112(sp)
+    sd a0, 64(sp)
+    sd a1, 72(sp)
+    sd a2, 80(sp)
+    sd a3, 88(sp)
+    sd a4, 96(sp)
+    sd a5, 104(sp)
+    sd a6, 112(sp)
+    sd a7, 120(sp)
     csrr t0, scause
     li t1, 8
     bne t0, t1, fault
     csrr t0, sepc
     addi t0, t0, 4
     csrw sepc, t0
-    mv a4, a3
-    mv a3, a2
-    mv a2, a1
-    mv a1, a0
-    mv a0, a7
+    mv a0, sp
     la t0, user_freebsd
     lbu t0, 0(t0)
-    beqz t0, 1f
-    ld a0, 8(sp)
-1:  call user_syscall
-    la t0, user_freebsd
-    lbu t0, 0(t0)
-    beqz t0, 3f
-    sltz t0, a0
-    sd t0, 8(sp)
-    bnez t0, 2f
-    sd zero, 64(sp)
-    j 3f
-2:  neg a0, a0
-3:
+    bnez t0, 1f
+    call linux_riscv64_syscall
+    j 2f
+1:  call freebsd_riscv64_syscall
+2:
     ld ra, 0(sp)
     ld t0, 8(sp)
     ld t1, 16(sp)
@@ -107,13 +96,14 @@ trap_entry:
     ld t4, 40(sp)
     ld t5, 48(sp)
     ld t6, 56(sp)
-    ld a1, 64(sp)
-    ld a2, 72(sp)
-    ld a3, 80(sp)
-    ld a4, 88(sp)
-    ld a5, 96(sp)
-    ld a6, 104(sp)
-    ld a7, 112(sp)
+    ld a0, 64(sp)
+    ld a1, 72(sp)
+    ld a2, 80(sp)
+    ld a3, 88(sp)
+    ld a4, 96(sp)
+    ld a5, 104(sp)
+    ld a6, 112(sp)
+    ld a7, 120(sp)
     addi sp, sp, 128
     csrrw sp, sscratch, sp
     sret

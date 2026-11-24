@@ -30,6 +30,12 @@ fn limine(out: &Path) {
         .unwrap();
 }
 
+fn abi_sources(arch: &str) -> impl Iterator<Item = std::path::PathBuf> {
+    ["linux", "freebsd"]
+        .into_iter()
+        .flat_map(move |os| files(&Path::new("abi").join(os).join(arch), &["c", "S"]))
+}
+
 fn build_port(arch: &str, flags: &[&str], out: &Path) {
     let target = format!("{arch}-unknown-none-elf");
     let mut compiler = cc::Build::new();
@@ -47,6 +53,8 @@ fn build_port(arch: &str, flags: &[&str], out: &Path) {
         .include("arch/bringup")
         .files(["init/limine.c", "init/event.c", "mm/pmm.c", "lib/mem.c"])
         .files(files(Path::new("arch/bringup"), &["c", "S"]))
+        .files(abi_sources(arch))
+        .file("abi/freebsd/console.c")
         .include(".")
         .files(files(&Path::new("arch").join(arch), &["c", "S"]))
         .out_dir(out.join(arch));
@@ -117,10 +125,10 @@ fn main() {
         clang.define("SPORE_USERLAND", None);
     }
     let objects = clang
+        .files(abi_sources("aarch64"))
         .files(
             [
                 "arch/aarch64",
-                "abi",
                 "drivers",
                 "exec",
                 "fs",

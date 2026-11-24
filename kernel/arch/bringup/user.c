@@ -117,20 +117,7 @@ static bool load_segment(void *ctx, const struct spore_elf_program *p, uint64_t 
   user_enter(elf.entry, sp);
 }
 
-int64_t user_syscall(uint64_t nr, uint64_t fd, uint64_t va, uint64_t n, uint64_t fourth) {
-#if defined(__x86_64__)
-  enum { WRITE = 1, EXIT = 60, EXIT_GROUP = 231 };
-#else
-  enum { WRITE = 64, EXIT = 93, EXIT_GROUP = 94 };
-#endif
-  if (user_freebsd) {
-    if (nr == 0 || nr == 198) { nr = fd; fd = va; va = n; n = fourth; }
-    if (nr == 1) { user_finish('E', fd); }
-    if (nr != 4) { return -78; }
-  } else {
-    if (nr == EXIT || nr == EXIT_GROUP) { user_finish('E', fd); }
-    if (nr != WRITE) { return -38; }
-  }
+int64_t user_write(uint64_t fd, uint64_t va, uint64_t n) {
   if (fd != 1 && fd != 2) { return -9; }
   if (n && (va >= USER_TOP || n > USER_TOP - va)) { return -14; }
   for (uint64_t i = 0; i < n;) {

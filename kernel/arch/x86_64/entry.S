@@ -55,30 +55,21 @@ syscall_entry:
     push %r8
     push %r9
     push %r10
-    sub $8, %rsp
-    mov %r10, %r8
-    mov %rdx, %rcx
-    mov %rsi, %rdx
-    mov %rdi, %rsi
-    mov %rax, %rdi
-    call user_syscall
-    add $8, %rsp
+    push %rax
+    mov %rsp, %rdi
+    cmpb $0, user_freebsd(%rip)
+    jne 1f
+    call linux_x86_64_syscall
+    jmp 2f
+1:  call freebsd_x86_64_syscall
+2:  pop %rax
     pop %r10
     pop %r9
     pop %r8
     pop %rdx
     pop %rsi
     pop %rdi
-    cmpb $0, user_freebsd(%rip)
-    je 2f
-    andq $-2, 16(%rsp)
-    test %rax, %rax
-    js 1f
-    xor %edx, %edx
-    jmp 2f
-1:  neg %rax
-    orq $1, 16(%rsp)
-2:  iretq
+    iretq
 .global fault_entry, illegal_entry, divide_entry
 divide_entry:
     mov $8, %esi
