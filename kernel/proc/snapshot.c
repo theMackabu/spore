@@ -90,7 +90,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
     return -12;
   }
   cell_copy_domain_metadata(child_domain, parent);
-  cell_copy_fd_table(child_domain, parent);
+  if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
   child_domain->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   cell_save_current(frame);

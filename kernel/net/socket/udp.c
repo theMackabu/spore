@@ -42,10 +42,10 @@ void udp_release_file(struct open_file *file) {
 }
 
 static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || domain->fds[fd]->type != OPEN_SOCKET) {
+  if (cell_file_at(domain, fd) == NULL || cell_file_at(domain, fd)->type != OPEN_SOCKET) {
     return NULL;
   }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
   return file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP ? file : NULL;
 }
 

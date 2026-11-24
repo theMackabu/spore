@@ -86,22 +86,18 @@ int cell_socket_poll_events(const struct open_file *file, int events) {
 int cell_fd_socket_inet(uint8_t proto) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
-  int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
   file->type = OPEN_SOCKET;
   file->socket_proto = proto;
   if (proto == IPPROTO_TCP) { tcp_init_socket(file); }
-  domain->fds[fd] = file;
-  domain->fd_flags[fd] = 0;
-  return fd;
+  return cell_install_fd(domain, file, false);
 }
 
 bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return false; }
   if (file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
     if (type != NULL) { *type = SOCK_STREAM; }
     if (proto != NULL) { *proto = 0; }
@@ -115,8 +111,8 @@ bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto) {
 
 int cell_fd_socket_error(int fd, bool clear) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
     int err = file->tcp_error;
     if (clear) { file->tcp_error = 0; }
@@ -133,8 +129,8 @@ int cell_fd_socket_error(int fd, bool clear) {
 
 int cell_fd_socket_get_int_option(int fd, int level, int optname, int32_t *out) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || out == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (out == NULL || file == NULL) { return -9; }
   if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM && file->type != OPEN_UNIX_LISTENER) { return -9; }
   if (level == SOL_SOCKET) {
     switch (optname) {
@@ -218,10 +214,10 @@ int cell_fd_socket_get_int_option(int fd, int level, int optname, int32_t *out) 
 
 bool cell_fd_socket_get_linger(int fd, bool *enabled, uint32_t *seconds) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || enabled == NULL || seconds == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) {
+  if (domain == NULL || enabled == NULL || seconds == NULL || cell_file_at(domain, fd) == NULL) {
     return false;
   }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
   if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM && file->type != OPEN_UNIX_LISTENER) { return false; }
   *enabled = file->so_linger_enabled;
   *seconds = file->so_linger_seconds;
@@ -230,8 +226,8 @@ bool cell_fd_socket_get_linger(int fd, bool *enabled, uint32_t *seconds) {
 
 int cell_fd_socket_set_int_option(int fd, int level, int optname, int32_t value) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM && file->type != OPEN_UNIX_LISTENER) { return -9; }
   if (level == SOL_SOCKET) {
     switch (optname) {
@@ -326,8 +322,8 @@ int cell_fd_socket_set_int_option(int fd, int level, int optname, int32_t value)
 
 bool cell_fd_socket_set_linger(int fd, bool enabled, uint32_t seconds) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return false; }
   if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM && file->type != OPEN_UNIX_LISTENER) { return false; }
   file->so_linger_enabled = enabled;
   file->so_linger_seconds = seconds;
@@ -336,8 +332,8 @@ bool cell_fd_socket_set_linger(int fd, bool enabled, uint32_t seconds) {
 
 bool cell_fd_socket_accepting(int fd, bool *accepting) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || accepting == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (domain == NULL || accepting == NULL || file == NULL) { return false; }
   *accepting = (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && file->tcp_state == TCP_LISTEN) ||
                file->type == OPEN_UNIX_LISTENER;
   return file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER;
@@ -345,8 +341,8 @@ bool cell_fd_socket_accepting(int fd, bool *accepting) {
 
 bool cell_fd_socket_get_timeout(int fd, bool receive, uint64_t *ticks) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || ticks == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (domain == NULL || ticks == NULL || file == NULL) { return false; }
   if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM && file->type != OPEN_UNIX_LISTENER) { return false; }
   *ticks = receive ? file->so_rcvtimeo_ticks : file->so_sndtimeo_ticks;
   return true;
@@ -354,8 +350,8 @@ bool cell_fd_socket_get_timeout(int fd, bool receive, uint64_t *ticks) {
 
 bool cell_fd_socket_set_timeout(int fd, bool receive, uint64_t ticks) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return false; }
   if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM && file->type != OPEN_UNIX_LISTENER) { return false; }
   if (receive) {
     file->so_rcvtimeo_ticks = ticks;
@@ -367,8 +363,8 @@ bool cell_fd_socket_set_timeout(int fd, bool receive, uint64_t ticks) {
 
 bool cell_fd_socket_local_addr(int fd, uint32_t *ip, uint16_t *port) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return false; }
   if (file->type != OPEN_SOCKET) { return false; }
   struct net_config cfg;
   net_get_config(&cfg);
@@ -385,8 +381,8 @@ bool cell_fd_socket_local_addr(int fd, uint32_t *ip, uint16_t *port) {
 
 bool cell_fd_socket_peer_addr(int fd, uint32_t *ip, uint16_t *port) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return false; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return false; }
   if (file->type != OPEN_SOCKET) { return false; }
   if (file->socket_proto == IPPROTO_TCP) {
     if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { return false; }
@@ -408,17 +404,11 @@ void cell_socket_release_file(struct open_file *file) {
   if (file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) { udp_release_file(file); }
 }
 
-void socket_apply_accept_flags(struct domain *domain, int fd, int flags) {
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return; }
-  if ((flags & CELL_O_NONBLOCK) != 0) { domain->fds[fd]->flags |= CELL_O_NONBLOCK; }
-  if ((flags & CELL_O_CLOEXEC) != 0) { domain->fd_flags[fd] = 1; }
-}
-
 int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, bool dontwait, struct trap_frame *frame,
                             uint64_t addr, uint64_t addrlen) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type == OPEN_UNIX_STREAM) {
     if (!file->unix_connected) { return -ENOTCONN; }
     int64_t got = cell_pipe_recv_user(domain, file->unix_rx_pipe, buf, len, flags & MSG_PEEK);

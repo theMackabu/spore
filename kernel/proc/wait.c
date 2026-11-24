@@ -75,7 +75,7 @@ void cell_finish_wait(struct thread *thread, int64_t result) {
 int cell_block_current(struct trap_frame *frame, struct thread_wait wait) {
   struct thread *thread = cell_current_thread_internal();
   if (wait.reason == WAIT_SOCKET || wait.reason == WAIT_PIPE) {
-    wait.held_file = thread->domain->fds[wait.target];
+    wait.held_file = cell_file_at(thread->domain, wait.target);
     cell_retain_open_file(wait.held_file);
     if (wait.reason == WAIT_SOCKET) { ++wait.held_file->socket_waiters; }
   }

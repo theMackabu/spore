@@ -88,7 +88,7 @@ static int64_t require_tty_fd(uint64_t fd) {
 static struct open_file *fd_file(uint64_t fd) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL || fd >= MAX_FDS) { return NULL; }
-  return domain->fds[fd];
+  return cell_file_at(domain, fd);
 }
 
 static uint8_t tty_erase_char(struct open_file *file) {

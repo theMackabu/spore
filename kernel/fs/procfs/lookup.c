@@ -160,7 +160,7 @@ bool vfs_proc_node_live(const struct vfs_node *node) {
 static size_t fd_link_target(int fd, char *out, size_t cap) {
   if (cell_fd_path(fd, out, cap)) { return kstrlen(out); }
   struct domain *d = cell_current_domain_internal();
-  struct open_file *file = d->fds[fd];
+  struct open_file *file = cell_file_at(d, fd);
   struct vfs_node node;
   size_t len = 0;
   if ((file->type == OPEN_PIPE || file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM ||
@@ -229,9 +229,10 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
   int pid = dir->proc.pid, tid = dir->proc.tid;
   if (dir->device == RAMFS_DEV_PROC_PID_FD) {
     if (pid != cell_current_pid()) { return false; }
-    for (uint64_t fd = *cursor; fd < MAX_FDS; ++fd) {
-      if (cell_fd_get_fd_flags((int)fd) < 0) { continue; }
-      *cursor = fd + 1;
+    if (*cursor >= MAX_FDS) { return false; }
+    int fd = cell_next_open_fd(cell_current_domain_internal(), (unsigned)*cursor);
+    if (fd >= 0) {
+      *cursor = (unsigned)fd + 1;
       return numbered_dirent(out, proc_ino(pid, tid, 64u + (unsigned)fd), VFS_DT_LNK, (unsigned)fd);
     }
     return false;

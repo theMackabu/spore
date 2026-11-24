@@ -5,6 +5,7 @@ kernel_sources += files(
   'domain.c',
   'eventfd.c',
   'fd.c',
+  'fdtable.c',
   'flock.c',
   'futex.c',
   'info.c',

@@ -116,10 +116,10 @@ void tcp_release_file(struct open_file *file) {
 
 int tcp_copy_peer_addr_to_domain(struct domain *domain, int accepted_fd, uint64_t addr, uint64_t addrlen) {
   if (addr == 0) { return 0; }
-  if (domain == NULL || accepted_fd < 0 || accepted_fd >= MAX_FDS || domain->fds[accepted_fd] == NULL || addrlen == 0) {
+  if (domain == NULL || accepted_fd < 0 || accepted_fd >= MAX_FDS || cell_file_at(domain, accepted_fd) == NULL || addrlen == 0) {
     return -EFAULT;
   }
-  struct open_file *file = domain->fds[accepted_fd];
+  struct open_file *file = cell_file_at(domain, accepted_fd);
   if (file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -ENOTCONN; }
   uint32_t user_len = 0;
   if (!vmm_copy_from_user(cell_domain_as(domain), &user_len, addrlen, sizeof(user_len))) { return -EFAULT; }
@@ -136,11 +136,11 @@ int tcp_copy_peer_addr_to_domain(struct domain *domain, int accepted_fd, uint64_
 }
 
 static struct open_file *tcp_socket_for_fd(struct domain *domain, int fd) {
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL || domain->fds[fd]->type != OPEN_SOCKET ||
-      domain->fds[fd]->socket_proto != IPPROTO_TCP) {
+  if (cell_file_at(domain, fd) == NULL || cell_file_at(domain, fd)->type != OPEN_SOCKET ||
+      cell_file_at(domain, fd)->socket_proto != IPPROTO_TCP) {
     return NULL;
   }
-  return domain->fds[fd];
+  return cell_file_at(domain, fd);
 }
 
 uint32_t tcp_initial_seq(void) {
@@ -285,8 +285,8 @@ int64_t cell_fd_tcp_send(int fd, uint64_t buf, uint64_t len, bool dontwait, stru
 int cell_fd_socket_shutdown(int fd, int how) {
   if (how < 0 || how > 2) { return -EINVAL; }
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -EOPNOTSUPP; }
   if (file->tcp_error != 0) { return -(int)file->tcp_error; }
   if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT) { return -ENOTCONN; }

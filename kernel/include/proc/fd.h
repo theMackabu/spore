@@ -162,11 +162,16 @@ struct open_file {
 
 bool cell_fd_table_reset(size_t capacity);
 int cell_find_free_fd(struct domain *domain, int start);
+int cell_install_fd(struct domain *domain, struct open_file *file, bool cloexec);
+void cell_assign_fd(struct domain *domain, int fd, struct open_file *file, bool cloexec);
+int cell_install_fd_pair(struct domain *domain, struct open_file *a, struct open_file *b, bool cloexec, uint64_t out);
+void cell_close_exec_fds(struct domain *domain);
+int cell_next_open_fd(struct domain *domain, unsigned start);
 void cell_retain_open_file(struct open_file *file);
 void cell_release_open_file(struct open_file *file);
 void cell_close_all_fds(struct domain *domain);
 bool cell_init_stdio(struct domain *domain);
-void cell_copy_fd_table(struct domain *dst, const struct domain *src);
+bool cell_copy_fd_table(struct domain *dst, const struct domain *src);
 void cell_copy_open_path(struct open_file *file, const char *path);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path);

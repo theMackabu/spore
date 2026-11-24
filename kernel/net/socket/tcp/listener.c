@@ -55,11 +55,10 @@ int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listen
   struct open_file *server = listener->tcp_ready_head;
   if (!server) { return -EAGAIN; }
   int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
+  if (fd < 0) { return fd; }
   detach(server);
-  domain->fds[fd] = server;
-  domain->fd_flags[fd] = 0;
-  socket_apply_accept_flags(domain, fd, flags);
+  server->flags |= flags & CELL_O_NONBLOCK;
+  cell_assign_fd(domain, fd, server, flags & CELL_O_CLOEXEC);
   return fd;
 }
 

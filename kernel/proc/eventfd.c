@@ -13,17 +13,13 @@ int cell_fd_eventfd(uint32_t initial, int flags) {
   if ((flags & ~(O_CLOEXEC | O_NONBLOCK | EFD_SEMAPHORE)) != 0) { return -EINVAL; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -ENOMEM; }
-  int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -EMFILE; }
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -ENOMEM; }
   file->type = OPEN_EVENTFD;
   file->flags = O_RDWR | (flags & O_NONBLOCK);
   file->eventfd_value = initial;
   file->eventfd_semaphore = (flags & EFD_SEMAPHORE) != 0;
-  domain->fds[fd] = file;
-  domain->fd_flags[fd] = (flags & O_CLOEXEC) != 0;
-  return fd;
+  return cell_install_fd(domain, file, (flags & O_CLOEXEC));
 }
 
 static int transfer(struct domain *domain, struct open_file *file, bool write, uint64_t arg) {

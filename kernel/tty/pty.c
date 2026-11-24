@@ -177,17 +177,16 @@ int cell_pty_id_from_path(const char *path) {
 }
 
 static int install_pty_fd(struct domain *domain, int id, bool master, uint32_t flags, const char *path) {
-  int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
+  int fd = cell_find_free_fd(domain, 0);
+  if (fd < 0) { cell_release_open_file(file); return fd; }
   file->type = OPEN_PTY;
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   file->pty_id = (uint8_t)id;
   file->pty_master = master;
   cell_copy_open_path(file, path);
-  domain->fds[fd] = file;
-  domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
+  cell_assign_fd(domain, fd, file, flags & CELL_O_CLOEXEC);
   return fd;
 }
 
@@ -441,10 +440,10 @@ static void wake_pty_waiters(void) {
   struct thread *thread;
   while ((thread = cell_next_waiter(WAIT_PTY, &cursor))) {
     int fd = thread->wait.target;
-    if (fd < 0 || fd >= MAX_FDS || thread->domain->fds[fd] == NULL) {
+    if (fd < 0 || fd >= MAX_FDS || cell_file_at(thread->domain, fd) == NULL) {
       cell_finish_wait(thread, -9);
     } else {
-      struct open_file *file = thread->domain->fds[fd];
+      struct open_file *file = cell_file_at(thread->domain, fd);
       int64_t rc = thread->wait.write
                      ? cell_pty_write_from_domain(thread->domain, file, thread->wait.buf, thread->wait.len)
                      : cell_pty_read_to_domain(thread->domain, file, thread->wait.buf, thread->wait.len);

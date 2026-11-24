@@ -79,7 +79,7 @@ int64_t cell_fd_dgram_writev(int fd, uint64_t iov, int32_t count) {
 
 int64_t cell_fd_dgram_readv(int fd, uint64_t iov, int32_t count, struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
   net_poll();
   int64_t got = socket_recvmsg_to_iov(domain, file, 0, iov, count, 0, 0, 0);
   if (got != -EAGAIN || (file->flags & CELL_O_NONBLOCK) || frame == NULL) { return got; }
@@ -97,8 +97,8 @@ int64_t socket_sendmsg_tcp_from_domain(struct domain *domain, struct open_file *
 
 int64_t cell_fd_socket_sendmsg(int fd, uint64_t msg_addr, bool dontwait, struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP) { return -9; }
   net_poll();
   int64_t sent = socket_sendmsg_tcp_from_domain(domain, file, msg_addr);
@@ -109,8 +109,8 @@ int64_t cell_fd_socket_sendmsg(int fd, uint64_t msg_addr, bool dontwait, struct 
 
 int64_t cell_fd_socket_recvmsg(int fd, uint64_t msg_addr, uint32_t flags, bool dontwait, struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type != OPEN_SOCKET) { return -9; }
   struct socket_user_message msg;
   if (aarch64_read_socket_message(domain, msg_addr, &msg) < 0) { return -EFAULT; }

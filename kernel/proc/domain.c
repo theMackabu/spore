@@ -82,6 +82,7 @@ struct thread *cell_alloc_process(void) {
       kmemset(&domains[i], 0, sizeof(domains[i]));
       if (i == domain_slot_limit) { ++domain_slot_limit; }
       domains[i].used = true;
+      domains[i].nofile_soft = domains[i].nofile_hard = MAX_FDS;
       domains[i].id = cell_new_task_id();
       domains[i].pgrp_id = domains[i].id;
       domains[i].session_id = domains[i].id;
@@ -106,6 +107,8 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   kmemcpy(dst->cmdline, src->cmdline, sizeof(dst->cmdline));
   dst->caps = cell_policy_retain(src->caps);
   dst->budget = src->budget;
+  dst->nofile_soft = src->nofile_soft;
+  dst->nofile_hard = src->nofile_hard;
   dst->uid = src->uid;
   dst->euid = src->euid;
   dst->gid = src->gid;

@@ -76,8 +76,8 @@ void cell_flock_release(struct open_file *file) {
 
 int cell_fd_flock(int fd, int operation, struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   int mode = operation & (LOCK_SH | LOCK_EX | LOCK_UN);
   if ((operation & ~(LOCK_SH | LOCK_EX | LOCK_NB | LOCK_UN)) != 0 || mode == 0 || (mode & (mode - 1)) != 0) {
     return -EINVAL;

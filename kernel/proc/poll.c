@@ -28,9 +28,9 @@ static bool poll_waking;
 static bool epoll_waking;
 
 static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) {
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return CELL_POLLNVAL; }
+  if (cell_file_at(domain, fd) == NULL) { return CELL_POLLNVAL; }
 
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
   if (file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
     return cell_socket_poll_events(file, events);
   }
@@ -168,11 +168,11 @@ void cell_wake_poll_waiters_internal(void) {
 
 static int epoll_wait_for_domain(struct domain *domain, int epfd, uint64_t events_addr, int maxevents, bool commit) {
   if (maxevents <= 0) { return -EINVAL; }
-  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || domain->fds[epfd] == NULL ||
-      domain->fds[epfd]->type != OPEN_EPOLL) {
+  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || cell_file_at(domain, epfd) == NULL ||
+      cell_file_at(domain, epfd)->type != OPEN_EPOLL) {
     return -9;
   }
-  struct open_file *ep = domain->fds[epfd];
+  struct open_file *ep = cell_file_at(domain, epfd);
   int written = 0;
   for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP && written < maxevents; ++i) {
     if (!ep->epoll_watches[i].used) { continue; }
@@ -270,24 +270,20 @@ int cell_fd_epoll_create(int flags) {
   if ((flags & ~CELL_O_CLOEXEC) != 0) { return -EINVAL; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
-  int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
   file->type = OPEN_EPOLL;
   file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
-  domain->fds[fd] = file;
-  domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
-  return fd;
+  return cell_install_fd(domain, file, (flags & CELL_O_CLOEXEC));
 }
 
 int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t events, uint64_t data) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || domain->fds[epfd] == NULL ||
-      domain->fds[epfd]->type != OPEN_EPOLL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) {
+  if (domain == NULL || epfd < 0 || epfd >= MAX_FDS || cell_file_at(domain, epfd) == NULL ||
+      cell_file_at(domain, epfd)->type != OPEN_EPOLL || cell_file_at(domain, fd) == NULL) {
     return -9;
   }
-  struct open_file *ep = domain->fds[epfd];
+  struct open_file *ep = cell_file_at(domain, epfd);
   int free_slot = -1;
   for (size_t i = 0; i < CELL_EPOLL_WATCH_CAP; ++i) {
     if (ep->epoll_watches[i].used && ep->epoll_watches[i].fd == fd) {

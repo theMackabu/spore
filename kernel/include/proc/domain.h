@@ -1,6 +1,7 @@
 #pragma once
 
 #include "proc/limits.h"
+#include "proc/fdtable.h"
 #include "proc/accounting.h"
 #include "proc/policy.h"
 #include "proc/signal.h"
@@ -45,8 +46,8 @@ struct domain {
   uint64_t unsupported_ioctls;
   uint64_t last_unsupported_ioctl;
   struct process_mm *mm;
-  struct open_file *fds[MAX_FDS];
-  uint8_t fd_flags[MAX_FDS];
+  struct fd_table files;
+  uint32_t nofile_soft, nofile_hard;
   char name[32];
   char exec_path[CELL_PATH_MAX];
   char argv0[64];
@@ -58,6 +59,10 @@ struct domain {
   struct signal_action signal_actions[65];
   uint64_t pending_signals;
 };
+
+static inline struct open_file *cell_file_at(const struct domain *domain, uint64_t fd) {
+  return domain ? fd_table_get(&domain->files, fd) : NULL;
+}
 
 bool cell_domain_reset(size_t capacity);
 size_t cell_domain_slot_limit(void);

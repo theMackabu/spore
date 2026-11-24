@@ -34,13 +34,9 @@ static struct open_file *unix_socket(int pid, uint32_t uid, uint32_t gid) {
 int cell_fd_socket_unix(void) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
-  int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
   struct open_file *file = unix_socket(domain->id, domain->euid, domain->egid);
   if (file == NULL) { return -12; }
-  domain->fds[fd] = file;
-  domain->fd_flags[fd] = 0;
-  return fd;
+  return cell_install_fd(domain, file, false);
 }
 
 int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
@@ -50,10 +46,6 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
   };
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
-  int fd0 = cell_find_free_fd(domain, 0);
-  int fd1 = fd0 < 0 ? -1 : cell_find_free_fd(domain, fd0 + 1);
-  if (fd0 < 0 || fd1 < 0) { return -24; }
-
   struct pipe_obj *a2b = cell_pipe_create();
   struct pipe_obj *b2a = cell_pipe_create();
   if (!a2b || !b2a) {
@@ -93,22 +85,12 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags) {
   b->unix_peer_uid = domain->euid;
   b->unix_peer_gid = domain->egid;
 
-  int sv[2] = {fd0, fd1};
-  if (!vmm_copy_to_user(cell_domain_as(domain), sv_addr, sv, sizeof(sv))) {
-    cell_release_open_file(a);
-    cell_release_open_file(b);
-    return -14;
-  }
-  domain->fds[fd0] = a;
-  domain->fds[fd1] = b;
-  domain->fd_flags[fd0] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
-  domain->fd_flags[fd1] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
-  return 0;
+  return cell_install_fd_pair(domain, a, b, flags & CELL_O_CLOEXEC, sv_addr);
 }
 
 static struct open_file *unix_file_for_fd(struct domain *domain, int fd) {
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return NULL; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return NULL; }
   return file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER ? file : NULL;
 }
 
@@ -181,10 +163,10 @@ int cell_fd_unix_listen(int fd, int backlog) {
 int take_pending_unix(struct domain *domain, struct open_file *listener, int flags) {
   if (!listener->unix_pending_head) { return -EAGAIN; }
   int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -EMFILE; }
-  domain->fds[fd] = take_head(listener);
-  domain->fd_flags[fd] = 0;
-  socket_apply_accept_flags(domain, fd, flags);
+  if (fd < 0) { return fd; }
+  struct open_file *server = take_head(listener);
+  server->flags |= flags & CELL_O_NONBLOCK;
+  cell_assign_fd(domain, fd, server, flags & CELL_O_CLOEXEC);
   return fd;
 }
 

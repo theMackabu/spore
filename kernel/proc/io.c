@@ -141,8 +141,8 @@ static int64_t write_regular(struct domain *domain, struct open_file *file, uint
 
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
   if (file->type == OPEN_SOCKET && file->socket_proto != IPPROTO_TCP) { return cell_fd_udp_send(fd, 0, 0, buf, len); }
   if (len == 0) { return 0; }
@@ -207,8 +207,8 @@ static int64_t read_regular(struct domain *domain, struct open_file *file, uint6
 
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
   struct domain *domain = current_domain();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type == OPEN_EVENTFD) { return cell_eventfd_io(domain, file, buf, len, false, frame); }
   if (file->type == OPEN_INOTIFY) {
     if ((file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return -EAGAIN; }
@@ -254,8 +254,8 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
 int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {
   (void)frame;
   struct domain *domain = current_domain();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type == OPEN_VFS && !linux_open_readable(file->flags)) { return -9; }
   if (file->type != OPEN_VFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
   return read_regular(domain, file, off, buf, len);
@@ -264,8 +264,8 @@ int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct t
 int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {
   (void)frame;
   struct domain *domain = current_domain();
-  if (domain == NULL || fd < 0 || fd >= MAX_FDS || domain->fds[fd] == NULL) { return -9; }
-  struct open_file *file = domain->fds[fd];
+  struct open_file *file = cell_file_at(domain, fd);
+  if (file == NULL) { return -9; }
   if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
   if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir) { return -22; }
   if (!len) { return 0; }

@@ -103,7 +103,7 @@ int cell_fork_current(struct trap_frame *frame) {
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child_domain, parent);
-  cell_copy_fd_table(child_domain, parent);
+  if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
   child_domain->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   child_thread->tf = cell_current_thread_internal()->tf;
@@ -133,7 +133,7 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child, parent);
-  cell_copy_fd_table(child, parent);
+  if (!cell_copy_fd_table(child, parent)) { cell_destroy_domain(child); return -12; }
   child->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   child_thread->tf = cell_current_thread_internal()->tf;
@@ -231,11 +231,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
       if (domain->refcount > 0) { --domain->refcount; }
     }
   }
-  for (size_t i = 0; i < MAX_FDS; ++i) {
-    if (domain->fds[i] != NULL && domain->fd_flags[i] != 0) {
-      (void)cell_close_domain_fd(domain, (int)i);
-    }
-  }
+  cell_close_exec_fds(domain);
   cell_domain_set_mm(domain, new_mm);
   kmemset(domain->signal_actions, 0, sizeof(domain->signal_actions));
   cell_set_domain_identity(domain, path, argv, argc);

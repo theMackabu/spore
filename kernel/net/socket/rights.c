@@ -45,7 +45,7 @@ int unix_prepare_rights(struct domain *domain, const int32_t *fds, unsigned coun
   if (!count) { return 0; }
   if (count > UNIX_MAX_RIGHTS) { return -22; }
   for (unsigned i = 0; i < count; ++i) {
-    if (fds[i] < 0 || fds[i] >= MAX_FDS || !domain->fds[fds[i]]) { return -9; }
+    if (fds[i] < 0 || fds[i] >= MAX_FDS || !cell_file_at(domain, fds[i])) { return -9; }
   }
   unsigned index = 0;
   while (count > capacities[index]) { ++index; }
@@ -57,7 +57,7 @@ int unix_prepare_rights(struct domain *domain, const int32_t *fds, unsigned coun
   rights->count = count;
   rights->pool = index;
   for (unsigned i = 0; i < count; ++i) {
-    rights->files[i] = domain->fds[fds[i]];
+    rights->files[i] = cell_file_at(domain, fds[i]);
     cell_retain_open_file(rights->files[i]);
   }
   *out = rights;
@@ -120,9 +120,8 @@ unsigned unix_install_rights(struct domain *domain, const struct unix_rights *ri
   while (count < capacity && count < rights->count) {
     int fd = cell_find_free_fd(domain, start);
     if (fd < 0) { break; }
-    domain->fds[fd] = rights->files[count];
-    cell_retain_open_file(domain->fds[fd]);
-    domain->fd_flags[fd] = cloexec;
+    cell_retain_open_file(rights->files[count]);
+    cell_assign_fd(domain, fd, rights->files[count], cloexec);
     fds[count++] = fd;
     start = fd + 1;
   }
