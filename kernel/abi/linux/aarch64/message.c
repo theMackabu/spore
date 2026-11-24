@@ -22,65 +22,69 @@ int aarch64_write_msg_flags(struct domain *domain, uint64_t addr, int32_t flags)
            : -EFAULT;
 }
 
-static int socket_copy_iov_at(struct domain *domain, uint64_t iov_addr, int32_t iovlen, int32_t index,
-                              struct iovec64 *out) {
-  if (domain == NULL || out == NULL || iovlen < 0 || iovlen > SOCKET_MAX_IOVCNT || index < 0 || index >= iovlen) {
-    return -EINVAL;
-  }
-  uint64_t addr = iov_addr + (uint64_t)index * sizeof(*out);
-  return vmm_copy_from_user(cell_domain_as(domain), out, addr, sizeof(*out)) ? 0 : -EFAULT;
+static bool read_bytes(struct aarch64_iov_cursor *cursor, void *dst, uint64_t addr, size_t size) {
+  return vmm_copy_from_user(cursor->as, dst, addr, size) ||
+         (cell_domain_ensure_user_range(cursor->domain, addr, size, VMM_ACCESS_READ) &&
+          vmm_copy_from_user(cursor->as, dst, addr, size));
 }
 
-int aarch64_iov_capacity(struct domain *domain, uint64_t iov_addr, int32_t iovlen, uint64_t *capacity) {
-  if (domain == NULL || capacity == NULL || iovlen < 0 || iovlen > SOCKET_MAX_IOVCNT) { return -EINVAL; }
-  if (iovlen > 0 && iov_addr == 0) { return -EFAULT; }
-  *capacity = 0;
-  for (int32_t i = 0; i < iovlen; ++i) {
-    struct iovec64 iov;
-    int rc = socket_copy_iov_at(domain, iov_addr, iovlen, i, &iov);
-    if (rc < 0) { return rc; }
-    if (UINT64_MAX - *capacity < iov.len) { return -EINVAL; }
-    *capacity += iov.len;
+int aarch64_iov_init(struct aarch64_iov_cursor *cursor, struct domain *domain, uint64_t iov, int32_t count) {
+  if (!domain || count < 0 || count > SOCKET_MAX_IOVCNT) { return -EINVAL; }
+  uint64_t bytes = (uint64_t)count * sizeof(struct iovec64);
+  if (bytes && (!iov || iov > UINT64_MAX - bytes)) { return -EFAULT; }
+  *cursor = (struct aarch64_iov_cursor){.domain = domain, .as = cell_domain_as(domain), .next = iov, .end = iov + bytes};
+  for (uint64_t addr = iov; addr < cursor->end;) {
+    struct iovec64 batch[16];
+    size_t n = cursor->end - addr < sizeof(batch) ? cursor->end - addr : sizeof(batch);
+    if (!read_bytes(cursor, batch, addr, n)) { return -EFAULT; }
+    for (size_t i = 0; i < n / sizeof(*batch); ++i) {
+      if (batch[i].len > INT64_MAX - cursor->capacity) { return -EINVAL; }
+      cursor->capacity += batch[i].len;
+    }
+    addr += n;
   }
   return 0;
 }
 
-int aarch64_gather_iov_at(struct domain *domain, uint64_t iov_addr, int32_t iovlen, uint64_t offset, uint8_t *dst,
-                          size_t len) {
-  if (domain == NULL || dst == NULL || iovlen < 0 || iovlen > SOCKET_MAX_IOVCNT) { return -EINVAL; }
-  if (iovlen > 0 && iov_addr == 0) { return -EFAULT; }
-  uint64_t base = 0;
-  size_t done = 0;
-  for (int32_t i = 0; i < iovlen && done < len; ++i) {
-    struct iovec64 iov;
-    int rc = socket_copy_iov_at(domain, iov_addr, iovlen, i, &iov);
-    if (rc < 0) { return rc; }
-    if (UINT64_MAX - base < iov.len) { return -EINVAL; }
-    uint64_t end = base + iov.len;
-    if (offset >= end) {
-      base = end;
-      continue;
-    }
-    uint64_t start = offset > base ? offset - base : 0;
-    uint64_t available = iov.len - start;
-    size_t n = (size_t)(available < (uint64_t)(len - done) ? available : (uint64_t)(len - done));
-    if (n != 0 && !vmm_copy_from_user(cell_domain_as(domain), dst + done, iov.base + start, n)) { return -EFAULT; }
-    done += n;
-    base = end;
+static size_t next_span(struct aarch64_iov_cursor *cursor, size_t want, uint64_t *addr) {
+  while (!cursor->remaining) {
+    struct iovec64 entry;
+    if (cursor->next == cursor->end || !read_bytes(cursor, &entry, cursor->next, sizeof(entry))) { return 0; }
+    if (entry.len > UINT64_MAX - entry.base) { return 0; }
+    cursor->addr = entry.base;
+    cursor->remaining = entry.len;
+    cursor->next += sizeof(entry);
   }
-  return done == len ? 0 : -EFAULT;
+  size_t size = want < cursor->remaining ? want : cursor->remaining;
+  *addr = cursor->addr;
+  cursor->addr += size;
+  cursor->remaining -= size;
+  return size;
 }
 
-int aarch64_scatter_iov(struct domain *domain, uint64_t iov_addr, int32_t iovlen, const uint8_t *src, uint64_t len) {
-  uint64_t done = 0;
-  for (int32_t i = 0; i < iovlen && done < len; ++i) {
-    struct iovec64 iov;
-    int rc = socket_copy_iov_at(domain, iov_addr, iovlen, i, &iov);
-    if (rc < 0) { return rc; }
-    uint64_t remaining = len - done;
-    size_t n = (size_t)(iov.len < remaining ? iov.len : remaining);
-    if (n != 0 && !vmm_copy_to_user(cell_domain_as(domain), iov.base, src + done, n)) { return -EFAULT; }
-    done += n;
+int aarch64_gather_iov(void *source, uint8_t *dst, size_t len) {
+  struct aarch64_iov_cursor *cursor = source;
+  while (len) {
+    uint64_t addr;
+    size_t n = next_span(cursor, len, &addr);
+    if (!n || !read_bytes(cursor, dst, addr, n)) { return -EFAULT; }
+    dst += n;
+    len -= n;
+  }
+  return 0;
+}
+
+int aarch64_scatter_iov(void *destination, const uint8_t *src, size_t len) {
+  struct aarch64_iov_cursor *cursor = destination;
+  while (len) {
+    uint64_t addr;
+    size_t n = next_span(cursor, len, &addr);
+    if (!n) { return -EFAULT; }
+    if (!vmm_copy_to_user(cursor->as, addr, src, n) &&
+        !(cell_domain_ensure_user_range(cursor->domain, addr, n, VMM_ACCESS_WRITE) &&
+          vmm_copy_to_user(cursor->as, addr, src, n))) { return -EFAULT; }
+    src += n;
+    len -= n;
   }
   return 0;
 }

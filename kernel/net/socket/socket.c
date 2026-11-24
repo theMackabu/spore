@@ -463,9 +463,10 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, 
 
 static int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *file, uint64_t msg_addr, uint64_t iov,
                                      int32_t iovlen, uint64_t addr, uint64_t addrlen, uint32_t recv_flags) {
-  uint64_t capacity = 0;
-  int rc = aarch64_iov_capacity(domain, iov, iovlen, &capacity);
+  struct aarch64_iov_cursor cursor;
+  int rc = aarch64_iov_init(&cursor, domain, iov, iovlen);
   if (rc < 0) { return rc; }
+  uint64_t capacity = cursor.capacity;
   if (capacity == 0) { return 0; }
   uint8_t tmp[SOCKET_RECVMSG_SCRATCH_CAP];
   uint64_t want = capacity < sizeof(tmp) ? capacity : sizeof(tmp);
@@ -488,7 +489,7 @@ static int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *fi
   }
   if (got < 0) { return got; }
   uint64_t scatter_len = (uint64_t)got < capacity ? (uint64_t)got : capacity;
-  rc = aarch64_scatter_iov(domain, iov, iovlen, tmp, scatter_len);
+  rc = aarch64_scatter_iov(&cursor, tmp, scatter_len);
   if (rc < 0) { return rc; }
   if (msg_addr && aarch64_write_msg_flags(domain, msg_addr, msg_flags) < 0) { return -EFAULT; }
   return got;
@@ -502,11 +503,12 @@ bool cell_fd_is_datagram(int fd) {
 int64_t cell_fd_dgram_writev(int fd, uint64_t iov, int32_t count) {
   struct domain *domain = cell_current_domain_internal();
   uint8_t packet[CELL_DGRAM_RX_CAP];
-  uint64_t len;
-  int rc = aarch64_iov_capacity(domain, iov, count, &len);
+  struct aarch64_iov_cursor cursor;
+  int rc = aarch64_iov_init(&cursor, domain, iov, count);
   if (rc < 0) { return rc; }
+  uint64_t len = cursor.capacity;
   if (len > sizeof(packet)) { return -90; }
-  rc = aarch64_gather_iov_at(domain, iov, count, 0, packet, (size_t)len);
+  rc = aarch64_gather_iov(&cursor, packet, (size_t)len);
   if (rc < 0) { return rc; }
   return cell_fd_udp_send_kernel(fd, 0, 0, packet, len);
 }
@@ -537,26 +539,13 @@ int64_t cell_socket_tcp_write_from_domain(struct domain *domain, struct open_fil
   return source.as ? tcp_write_stream(file, len, copy_user_payload, &source) : -EFAULT;
 }
 
-struct socket_message_source {
-  struct domain *domain;
-  struct socket_user_message msg;
-  uint64_t offset;
-};
-
-static int copy_message_payload(void *source, uint8_t *dst, size_t len) {
-  struct socket_message_source *input = source;
-  int rc = aarch64_gather_iov_at(input->domain, input->msg.iov, input->msg.iovlen, input->offset, dst, len);
-  input->offset += len;
-  return rc;
-}
-
 static int64_t socket_sendmsg_tcp_from_domain(struct domain *domain, struct open_file *file, uint64_t msg_addr) {
-  struct socket_message_source source = {.domain = domain};
-  if (aarch64_read_socket_message(domain, msg_addr, &source.msg) < 0) { return -EFAULT; }
-  uint64_t len;
-  int rc = aarch64_iov_capacity(domain, source.msg.iov, source.msg.iovlen, &len);
-  if (rc || !len) { return rc; }
-  return tcp_write_stream(file, len, copy_message_payload, &source);
+  struct socket_user_message msg;
+  if (aarch64_read_socket_message(domain, msg_addr, &msg) < 0) { return -EFAULT; }
+  struct aarch64_iov_cursor cursor;
+  int rc = aarch64_iov_init(&cursor, domain, msg.iov, msg.iovlen);
+  if (rc || !cursor.capacity) { return rc; }
+  return tcp_write_stream(file, cursor.capacity, aarch64_gather_iov, &cursor);
 }
 
 int64_t cell_fd_socket_sendmsg(int fd, uint64_t msg_addr, bool dontwait, struct trap_frame *frame) {
