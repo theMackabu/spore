@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "rust.h"
 
 enum {
   CHILD_CACHE_ENTRIES = 4096,
@@ -78,14 +79,15 @@ static int read_next_dirent(struct ext2_fs *fs, const struct ext2_node *dir, uin
     const uint8_t *block = ext2_cached_block(fs, disk_block);
     if (block == NULL) { return -EXT2_EIO; }
     const uint8_t *record = block + within;
-    uint32_t ino =
-      (uint32_t)record[0] | ((uint32_t)record[1] << 8) | ((uint32_t)record[2] << 16) | ((uint32_t)record[3] << 24);
-    uint16_t rec_len = (uint16_t)record[4] | ((uint16_t)record[5] << 8);
-    uint8_t name_len = record[6];
-    if (rec_len < 8 || (rec_len & 3u) || rec_len > fs->block_size - within || rec_len > dir->size - *cursor ||
-        (ino && (name_len == 0 || name_len + 8 > rec_len))) {
+    struct spore_ext2_dir_record parsed;
+    size_t available = fs->block_size - within;
+    if (available > dir->size - *cursor) { available = dir->size - *cursor; }
+    if (!spore_ext2_parse_dir_record(record, available, &parsed)) {
       return -EXT2_EIO;
     }
+    uint32_t ino = parsed.ino;
+    uint16_t rec_len = parsed.rec_len;
+    uint8_t name_len = parsed.name_len;
     *cursor += rec_len;
     if (!ino) { continue; }
     const char *name = (const char *)(record + 8);

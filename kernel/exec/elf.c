@@ -1,4 +1,5 @@
 #include "exec/elf.h"
+#include "elf_rust.h"
 
 #include "lib/mem.h"
 
@@ -67,11 +68,10 @@ static uint32_t phdr_to_vmm_flags(uint32_t flags) {
 }
 
 static bool valid_ehdr(const struct elf64_ehdr *ehdr, uint64_t image_size) {
-  const unsigned char magic[4] = {0x7f, 'E', 'L', 'F'};
-  return image_size >= sizeof(*ehdr) && kmemcmp(ehdr->e_ident, magic, sizeof(magic)) == 0 && ehdr->e_ident[4] == 2 &&
-         ehdr->e_ident[5] == 1 && (ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN) &&
-         ehdr->e_machine == EM_AARCH64 && ehdr->e_phentsize == sizeof(struct elf64_phdr) &&
-         bounds_ok(ehdr->e_phoff, (uint64_t)ehdr->e_phentsize * ehdr->e_phnum, image_size);
+  struct spore_elf_header parsed;
+  return spore_elf_parse_header((const uint8_t *)ehdr, sizeof(*ehdr), image_size, &parsed) &&
+         parsed.type == ehdr->e_type && parsed.entry == ehdr->e_entry && parsed.phoff == ehdr->e_phoff &&
+         parsed.phentsize == ehdr->e_phentsize && parsed.phnum == ehdr->e_phnum;
 }
 
 static bool read_ehdr(const struct elf_reader *reader, struct elf64_ehdr *ehdr) {
@@ -87,12 +87,14 @@ bool elf_find_interp_aarch64(const struct elf_reader *reader, char *out, size_t 
     struct elf64_phdr ph;
     uint64_t ph_off = ehdr.e_phoff + (uint64_t)i * sizeof(ph);
     if (!read_exact(reader, ph_off, &ph, sizeof(ph))) { return false; }
-    if (ph.p_type != PT_INTERP) { continue; }
+    struct spore_elf_program parsed;
+    if (!spore_elf_parse_program((const uint8_t *)&ph, sizeof(ph), &parsed)) { return false; }
+    if (parsed.type != PT_INTERP) { continue; }
     if (ph.p_filesz == 0 || ph.p_filesz >= out_cap || !bounds_ok(ph.p_offset, ph.p_filesz, reader->size)) {
       return false;
     }
     if (!read_exact(reader, ph.p_offset, out, (size_t)ph.p_filesz)) { return false; }
-    if (out[ph.p_filesz - 1] != '\0') { return false; }
+    if (!spore_elf_interp_valid((const uint8_t *)out, (size_t)ph.p_filesz)) { return false; }
     return true;
   }
   return false;
@@ -113,7 +115,9 @@ bool elf_load_aarch64(struct user_address_space *as, struct vma_list *vmas, cons
     struct elf64_phdr ph;
     uint64_t ph_off = ehdr.e_phoff + (uint64_t)i * sizeof(ph);
     if (!read_exact(reader, ph_off, &ph, sizeof(ph))) { return false; }
-    if (ph.p_type != PT_LOAD) { continue; }
+    struct spore_elf_program parsed;
+    if (!spore_elf_parse_program((const uint8_t *)&ph, sizeof(ph), &parsed)) { return false; }
+    if (parsed.type != PT_LOAD) { continue; }
     if (ph.p_memsz < ph.p_filesz || !bounds_ok(ph.p_offset, ph.p_filesz, reader->size) ||
         (ph.p_align > PAGE_SIZE && (ph.p_vaddr % ph.p_align) != (ph.p_offset % ph.p_align))) {
       return false;
