@@ -2,9 +2,16 @@
 #include "arch/aarch64/platform.h"
 #include "arch/aarch64/regs.h"
 #include "arch/aarch64/signal_frame.h"
-#include "handlers.h"
+#include "numbers.h"
+#include "usercopy.h"
+#include "fd/handlers.h"
+#include "fs/handlers.h"
+#include "mm/handlers.h"
+#include "net/handlers.h"
+#include "proc/handlers.h"
+#include "system/handlers.h"
+#include "time/handlers.h"
 #include "lib/kprintf.h"
-#include "lib/mem.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
 #include "proc/eventfd.h"
@@ -15,7 +22,6 @@
 #include "proc/policy.h"
 #include "proc/poll.h"
 #include "proc/process.h"
-#include "proc/info.h"
 #include "proc/signal.h"
 #include "proc/snapshot.h"
 #include "proc/thread.h"
@@ -26,173 +32,10 @@
 #include <stdint.h>
 
 enum {
-  SYS_GETCWD = 17,
-  SYS_EVENTFD2 = 19,
-  SYS_EPOLL_CREATE1 = 20,
-  SYS_EPOLL_CTL = 21,
-  SYS_EPOLL_PWAIT = 22,
-  SYS_DUP = 23,
-  SYS_DUP3 = 24,
-  SYS_FCNTL = 25,
-  SYS_INOTIFY_INIT1 = 26,
-  SYS_INOTIFY_ADD_WATCH = 27,
-  SYS_INOTIFY_RM_WATCH = 28,
-  SYS_FLOCK = 32,
-  SYS_IOCTL = 29,
-  SYS_MKNODAT = 33,
-  SYS_MKDIRAT = 34,
-  SYS_UNLINKAT = 35,
-  SYS_SYMLINKAT = 36,
-  SYS_LINKAT = 37,
-  SYS_RENAMEAT = 38,
-  SYS_STATFS = 43,
-  SYS_FSTATFS = 44,
-  SYS_FTRUNCATE = 46,
-  SYS_FACCESSAT = 48,
-  SYS_CHDIR = 49,
-  SYS_FCHDIR = 50,
-  SYS_CHROOT = 51,
-  SYS_FCHMOD = 52,
-  SYS_FCHMODAT = 53,
-  SYS_FCHOWNAT = 54,
-  SYS_FCHOWN = 55,
-  SYS_OPENAT = 56,
-  SYS_CLOSE = 57,
-  SYS_PIPE2 = 59,
-  SYS_GETDENTS64 = 61,
-  SYS_LSEEK = 62,
-  SYS_READ = 63,
-  SYS_WRITE = 64,
-  SYS_READV = 65,
-  SYS_WRITEV = 66,
-  SYS_PREAD64 = 67,
-  SYS_PWRITE64 = 68,
-  SYS_PSELECT6 = 72,
-  SYS_PPOLL = 73,
-  SYS_READLINKAT = 78,
-  SYS_NEWFSTATAT = 79,
-  SYS_FSTAT = 80,
-  SYS_FSYNC = 82,
-  SYS_FDATASYNC = 83,
-  SYS_UTIMENSAT = 88,
-  SYS_EXIT = 93,
-  SYS_EXIT_GROUP = 94,
-  SYS_SET_TID_ADDRESS = 96,
-  SYS_FUTEX = 98,
-  SYS_SET_ROBUST_LIST = 99,
-  SYS_NANOSLEEP = 101,
-  SYS_SETITIMER = 103,
-  SYS_CLOCK_GETTIME = 113,
-  SYS_CLOCK_GETRES = 114,
-  SYS_CLOCK_NANOSLEEP = 115,
-  SYS_SCHED_GETAFFINITY = 123,
-  SYS_SCHED_YIELD = 124,
-  SYS_KILL = 129,
-  SYS_TKILL = 130,
-  SYS_TGKILL = 131,
-  SYS_SIGALTSTACK = 132,
-  SYS_RT_SIGACTION = 134,
-  SYS_RT_SIGPROCMASK = 135,
-  SYS_RT_SIGRETURN = 139,
-  SYS_TIMES = 153,
-  SYS_SETGID = 144,
-  SYS_SETUID = 146,
-  SYS_SET_PGID = 154,
-  SYS_GET_PGID = 155,
-  SYS_GET_SID = 156,
-  SYS_SETSID = 157,
-  SYS_SETRESUID = 147,
-  SYS_GETRESUID = 148,
-  SYS_SETRESGID = 149,
-  SYS_GETRESGID = 150,
-  SYS_GETGROUPS = 158,
-  SYS_SETGROUPS = 159,
-  SYS_UNAME = 160,
-  SYS_SETHOSTNAME = 161,
-  SYS_GETRLIMIT = 163,
-  SYS_SETRLIMIT = 164,
-  SYS_GETRUSAGE = 165,
-  SYS_UMASK = 166,
-  SYS_PRCTL = 167,
-  SYS_GETTIMEOFDAY = 169,
-  SYS_GETPID = 172,
-  SYS_GETPPID = 173,
-  SYS_GETUID = 174,
-  SYS_GETEUID = 175,
-  SYS_GETGID = 176,
-  SYS_GETEGID = 177,
-  SYS_GETTID = 178,
-  SYS_SYSINFO = 179,
-  SYS_SOCKET = 198,
-  SYS_SOCKETPAIR = 199,
-  SYS_BIND = 200,
-  SYS_LISTEN = 201,
-  SYS_ACCEPT = 202,
-  SYS_CONNECT = 203,
-  SYS_GETSOCKNAME = 204,
-  SYS_GETPEERNAME = 205,
-  SYS_SENDTO = 206,
-  SYS_RECVFROM = 207,
-  SYS_SETSOCKOPT = 208,
-  SYS_GETSOCKOPT = 209,
-  SYS_SHUTDOWN = 210,
-  SYS_SENDMSG = 211,
-  SYS_RECVMSG = 212,
-  SYS_ACCEPT4 = 242,
-  SYS_BRK = 214,
-  SYS_MUNMAP = 215,
-  SYS_MREMAP = 216,
-  SYS_CLONE = 220,
-  SYS_EXECVE = 221,
-  SYS_MMAP = 222,
-  SYS_MPROTECT = 226,
-  SYS_MSYNC = 227,
-  SYS_MADVISE = 233,
-  SYS_WAIT4 = 260,
-  SYS_PRLIMIT64 = 261,
-  SYS_RENAMEAT2 = 276,
-  SYS_GETRANDOM = 278,
-  SYS_MEMFD_CREATE = 279,
-  SYS_MEMBARRIER = 283,
-  SYS_STATX = 291,
-  SYS_RSEQ = 293,
-  SYS_IO_URING_SETUP = 425,
-  SYS_IO_URING_ENTER = 426,
-  SYS_IO_URING_REGISTER = 427,
-  SYS_CLONE3 = 435,
-  SYS_CLOSE_RANGE = 436,
-  SYS_FACCESSAT2 = 439,
-  SYS_FCHMODAT2 = 452,
-  SYS_SPORE_SNAPSHOT = 0x4000,
-  SYS_SPORE_SPAWN = 0x4001,
-  SYS_SPORE_REAP = 0x4002,
-  SYS_SPORE_RESIDENT = 0x4003,
-  SYS_SPORE_SET_BUDGET = 0x4004,
-  SYS_SPORE_APPLY_POLICY = 0x4005,
-  SYS_SPORE_SHUTDOWN = 0x4006,
-  SYS_SPORE_PROCINFO = 0x4007,
-  SYS_SPORE_FSINFO = 0x4008,
-  SYS_SPORE_MOUNTINFO = 0x4009,
-  SYS_SPORE_NET_CONFIG = 0x400a,
-  F_DUPFD = 0,
-  F_GETFD = 1,
-  F_SETFD = 2,
-  F_DUPFD_CLOEXEC = 1030,
-  F_ADD_SEALS = 1033,
-  F_GET_SEALS = 1034,
-  F_GETFL = 3,
-  F_SETFL = 4,
-  FD_CLOEXEC = 1,
   EPERM = 1,
-  EIO = 5,
-  EBADF = 9,
-  EACCES = 13,
   EFAULT = 14,
   EINVAL = 22,
-  ENOTDIR = 20,
   ENOSYS = 38,
-  ENAMETOOLONG = 36,
-  EOPNOTSUPP = 95,
   SIGINT = 2,
   SIGABRT = 6,
   SIGKILL = 9,
@@ -204,23 +47,6 @@ enum {
 };
 
 constexpr int64_t SYSCALL_SWITCHED = CELL_SWITCHED;
-
-struct fs_info64 {
-  uint64_t block_size;
-  uint64_t block_count;
-  uint64_t free_blocks;
-  uint64_t inode_count;
-  uint64_t free_inodes;
-};
-
-struct mount_info64 {
-  char source[32];
-  char target[32];
-  char fstype[16];
-  uint64_t block_size;
-  uint64_t block_count;
-  uint64_t free_blocks;
-};
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-label-as-value"
@@ -552,54 +378,12 @@ l_spore_shutdown:
     aarch64_poweroff();
   }
   return 0;
-l_spore_procinfo: {
-  size_t max = a1 / sizeof(struct proc_info);
-  if (a0 == 0 || max == 0) { return (int64_t)cell_proc_info(NULL, 0); }
-  constexpr int PROCINFO_CHUNK = 64;
-  static struct proc_info infos[PROCINFO_CHUNK];
-  size_t request = max < PROCINFO_CHUNK ? max : PROCINFO_CHUNK;
-  size_t count = cell_proc_info(infos, request);
-  size_t copy = count < request ? count : request;
-  return syscall_user_writable(a0, copy * sizeof(infos[0])) &&
-             vmm_copy_to_user(syscall_active_as(), a0, infos, copy * sizeof(infos[0]))
-           ? (int64_t)count
-           : -(int64_t)EFAULT;
-}
-l_spore_fsinfo: {
-  struct vfs_fs_info raw;
-  if (!vfs_fs_info(&raw)) { return -(int64_t)EINVAL; }
-  struct fs_info64 info = {
-    .block_size = raw.block_size,
-    .block_count = raw.block_count,
-    .free_blocks = raw.free_blocks,
-    .inode_count = raw.inode_count,
-    .free_inodes = raw.free_inodes,
-  };
-  return syscall_user_writable(a0, sizeof(info)) && vmm_copy_to_user(syscall_active_as(), a0, &info, sizeof(info))
-           ? 0
-           : -(int64_t)EFAULT;
-}
-l_spore_mountinfo: {
-  size_t max = a1 / sizeof(struct mount_info64);
-  if (a0 == 0 || max == 0) { return (int64_t)vfs_mount_info(NULL, 0); }
-  struct vfs_mount_info raw[8];
-  size_t count = vfs_mount_info(raw, max < 8 ? max : 8);
-  size_t copy = count < max ? count : max;
-  struct mount_info64 out[8];
-  for (size_t i = 0; i < copy; ++i) {
-    kmemset(&out[i], 0, sizeof(out[i]));
-    kmemcpy(out[i].source, raw[i].source, sizeof(out[i].source));
-    kmemcpy(out[i].target, raw[i].target, sizeof(out[i].target));
-    kmemcpy(out[i].fstype, raw[i].fstype, sizeof(out[i].fstype));
-    out[i].block_size = raw[i].block_size;
-    out[i].block_count = raw[i].block_count;
-    out[i].free_blocks = raw[i].free_blocks;
-  }
-  return syscall_user_writable(a0, copy * sizeof(out[0])) &&
-             vmm_copy_to_user(syscall_active_as(), a0, out, copy * sizeof(out[0]))
-           ? (int64_t)count
-           : -(int64_t)EFAULT;
-}
+l_spore_procinfo:
+  return sys_spore_procinfo(a0, a1);
+l_spore_fsinfo:
+  return sys_spore_fsinfo(a0);
+l_spore_mountinfo:
+  return sys_spore_mountinfo(a0, a1);
 l_spore_net_config:
   return sys_spore_net_config(a0, a1);
 l_brk:
@@ -654,15 +438,8 @@ l_openat:
   return sys_openat(f, a0, a1, a2, a3);
 l_close:
   return cell_fd_close((int)a0);
-l_close_range: {
-  const uint64_t close_range_unshare = 1u << 1;
-  const uint64_t close_range_cloexec = 1u << 2;
-  if ((unsigned)a0 > (unsigned)a1) { return -(int64_t)EINVAL; }
-  if ((a2 & ~(close_range_unshare | close_range_cloexec)) != 0) { return -(int64_t)EINVAL; }
-  if ((a2 & close_range_unshare) != 0) { return -(int64_t)EOPNOTSUPP; }
-  cell_close_fd_range((unsigned)a0, (unsigned)a1, (a2 & close_range_cloexec) != 0);
-  return 0;
-}
+l_close_range:
+  return sys_close_range(a0, a1, a2);
 l_pipe2:
   return cell_fd_pipe2(a0, (int)a1);
 l_lseek:
@@ -686,25 +463,7 @@ l_dup:
 l_dup3:
   return cell_fd_dup3((int)a0, (int)a1, (int)a2);
 l_fcntl:
-  if (a1 == F_DUPFD) { return cell_fd_dup((int)a0, (int)a2); }
-  if (a1 == F_DUPFD_CLOEXEC) {
-    int fd = cell_fd_dup((int)a0, (int)a2);
-    if (fd >= 0) {
-      int rc = cell_fd_set_fd_flags(fd, 1);
-      if (rc < 0) { return rc; }
-    }
-    return fd;
-  }
-  if (a1 == F_GETFD) { return cell_fd_get_fd_flags((int)a0); }
-  if (a1 == F_SETFD) { return cell_fd_set_fd_flags((int)a0, (int)a2); }
-  if (a1 == F_GETFL) {
-    int flags = cell_fd_get_flags((int)a0);
-    return flags;
-  }
-  if (a1 == F_SETFL) { return cell_fd_set_flags((int)a0, (int)a2); }
-  if (a1 == F_ADD_SEALS) { return cell_fd_add_seals((int)a0, (uint32_t)a2); }
-  if (a1 == F_GET_SEALS) { return cell_fd_get_seals((int)a0); }
-  return -(int64_t)EINVAL;
+  return sys_fcntl(a0, a1, a2);
 l_flock: {
   return cell_fd_flock((int)a0, (int)a1, f);
 }
@@ -784,21 +543,10 @@ l_ftruncate:
   return sys_ftruncate(a0, a1);
 l_chdir:
   return sys_chdir(a0);
-l_fchdir: {
-  struct vfs_node node;
-  if (!cell_fd_stat((int)a0, &node)) { return -(int64_t)EBADF; }
-  if (!node.is_dir) { return -(int64_t)ENOTDIR; }
-  if (!syscall_node_access_allowed(&node, 1)) { return -EACCES; }
-  char path[CELL_PATH_MAX];
-  if (!cell_fd_path((int)a0, path, sizeof(path))) { return -(int64_t)EBADF; }
-  return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
-}
-l_fsync: {
-  struct open_file *file = cell_fd_file(a0);
-  if (!file) { return -EBADF; }
-  if (file->type == OPEN_VFS && !vfs_sync_mapped_range(&file->node, 0, UINT64_MAX)) { return -EIO; }
-  return vfs_sync_storage() ? 0 : -EIO;
-}
+l_fchdir:
+  return sys_fchdir(a0);
+l_fsync:
+  return sys_fsync(a0);
 l_getrandom:
   return sys_getrandom(a0, a1, a2);
 l_clock_gettime:

@@ -1,23 +1,9 @@
-kernel_sources += files(
-  'attributes.c',
-  'context.c',
-  'dirent.c',
-  'exec.c',
-  'file.c',
-  'io.c',
-  'ioctl.c',
-  'memory.c',
-  'message.c',
-  'misc.c',
-  'net.c',
-  'open.c',
-  'path.c',
-  'poll.c',
-  'process.c',
-  'signal.c',
-  'stat.c',
-  'syscall.c',
-  'time.c',
-  'usage.c',
-  'unix_msg.c',
-)
+kernel_sources += files('syscall.c', 'usercopy.c')
+
+subdir('fd')
+subdir('fs')
+subdir('mm')
+subdir('net')
+subdir('proc')
+subdir('system')
+subdir('time')
