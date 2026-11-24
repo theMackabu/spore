@@ -532,6 +532,21 @@ static void test_relative_symlink_with_dotdot(struct ext2_fs *fs) {
   assert(ext2_lookup(fs, "/symlink-bin/tool", &resolved));
   assert(ext2_is_regular(&resolved));
   assert(resolved.size == sizeof(payload) - 1);
+  assert(ext2_symlink(fs, "/symlink-lib/llvm", "/symlink-bin/alias"));
+  assert(ext2_symlink(fs, "alias/../llvm/tool-real", "/symlink-bin/through-parent"));
+  struct ext2_node through_parent;
+  assert(ext2_lookup(fs, "/symlink-bin/through-parent", &through_parent) && through_parent.ino == resolved.ino);
+  assert(!ext2_lookup(fs, "/symlink-bin/tool/", &through_parent));
+  for (int i = 0; i < 20; ++i) {
+    char target[32], path[48];
+    if (i) { snprintf(target, sizeof(target), "step%d", i - 1); }
+    else { strcpy(target, "tool"); }
+    snprintf(path, sizeof(path), "/symlink-bin/step%d", i);
+    assert(ext2_symlink(fs, target, path));
+  }
+  assert(ext2_lookup(fs, "/symlink-bin/step19", &through_parent) && through_parent.ino == resolved.ino);
+  assert(ext2_symlink(fs, "cycle", "/symlink-bin/cycle"));
+  assert(!ext2_lookup(fs, "/symlink-bin/cycle", &through_parent));
 }
 
 static void test_full_length_names(struct ext2_fs *fs) {

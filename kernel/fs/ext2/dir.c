@@ -1,8 +1,6 @@
 #include "internal.h"
 #include "records.h"
 
-constexpr int SYMLINK_DEPTH_MAX = 8;
-
 static uint16_t rec_len_for(uint8_t name_len) {
   return (uint16_t)((8u + name_len + 3u) & ~3u);
 }
@@ -111,98 +109,6 @@ static bool split_parent_path(const char *path, char *parent, size_t parent_cap,
   return true;
 }
 
-static bool append_path_component(char *path, size_t cap, const char *name, size_t name_len) {
-  size_t len = kstrlen(path);
-  if (len == 0) { return false; }
-  if (!(len == 1 && path[0] == '/')) {
-    if (len + 1 >= cap) { return false; }
-    path[len++] = '/';
-  }
-  if (len + name_len >= cap) { return false; }
-  kmemcpy(path + len, name, name_len);
-  path[len + name_len] = '\0';
-  return true;
-}
-
-static bool normalize_absolute_path(const char *path, char *out, size_t cap) {
-  if (path == NULL || path[0] != '/' || cap < 2) { return false; }
-  size_t out_len = 1;
-  out[0] = '/';
-  out[1] = '\0';
-
-  const char *p = path;
-  while (*p != '\0') {
-    while (*p == '/') {
-      ++p;
-    }
-    if (*p == '\0') { break; }
-
-    const char *start = p;
-    while (*p != '\0' && *p != '/') {
-      ++p;
-    }
-    size_t len = (size_t)(p - start);
-    if (len == 1 && start[0] == '.') { continue; }
-    if (len == 2 && start[0] == '.' && start[1] == '.') {
-      if (out_len > 1) {
-        while (out_len > 1 && out[out_len - 1] != '/') {
-          --out_len;
-        }
-        if (out_len > 1) { --out_len; }
-        out[out_len] = '\0';
-      }
-      continue;
-    }
-
-    if (out_len != 1) {
-      if (out_len + 1 >= cap) { return false; }
-      out[out_len++] = '/';
-    }
-    if (out_len + len >= cap) { return false; }
-    kmemcpy(out + out_len, start, len);
-    out_len += len;
-    out[out_len] = '\0';
-  }
-  return true;
-}
-
-static bool combine_symlink_path(char *out, size_t cap, const char *parent, const char *target, const char *rest) {
-  char raw[256];
-  size_t pos = 0;
-  if (cap == 0 || target[0] == '\0') { return false; }
-  if (target[0] == '/') {
-    for (const char *p = target; *p != '\0'; ++p) {
-      if (pos + 1 >= sizeof(raw)) { return false; }
-      raw[pos++] = *p;
-    }
-  } else {
-    for (const char *p = parent; *p != '\0'; ++p) {
-      if (pos + 1 >= sizeof(raw)) { return false; }
-      raw[pos++] = *p;
-    }
-    if (!(pos == 1 && raw[0] == '/')) {
-      if (pos + 1 >= sizeof(raw)) { return false; }
-      raw[pos++] = '/';
-    }
-    for (const char *p = target; *p != '\0'; ++p) {
-      if (pos + 1 >= sizeof(raw)) { return false; }
-      raw[pos++] = *p;
-    }
-  }
-  if (rest != NULL && rest[0] != '\0') {
-    if (pos == 0 || raw[pos - 1] != '/') {
-      if (pos + 1 >= sizeof(raw)) { return false; }
-      raw[pos++] = '/';
-    }
-    for (const char *p = rest; *p != '\0'; ++p) {
-      if (pos + 1 >= sizeof(raw)) { return false; }
-      raw[pos++] = *p;
-    }
-  }
-  raw[pos] = '\0';
-  return normalize_absolute_path(raw, out, cap);
-}
-
 static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *name, uint32_t ino, uint8_t type) {
   uint8_t name_len = (uint8_t)kstrlen(name);
   uint16_t need = rec_len_for(name_len);
@@ -291,76 +197,6 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
     }
   }
   return false;
-}
-
-static bool ext2_readlink_node(struct ext2_fs *fs, const struct ext2_node *node, char *out, size_t cap,
-                               size_t *len_out) {
-  if (!ext2_is_symlink(node) || cap == 0) { return false; }
-  uint32_t len = node->size;
-  if ((size_t)len >= cap) { len = (uint32_t)(cap - 1); }
-  uint32_t got = 0;
-  if (node->sectors_count == 0 && node->size <= sizeof(node->blocks)) {
-    kmemcpy(out, node->blocks, len);
-    got = len;
-  } else if (!ext2_read_file(fs, node, 0, out, len, &got) || got != len) {
-    return false;
-  }
-  out[len] = '\0';
-  if (len_out != NULL) { *len_out = len; }
-  return true;
-}
-
-static bool ext2_lookup_inner(struct ext2_fs *fs, const char *path, struct ext2_node *out, bool follow_final,
-                              unsigned depth) {
-  if (path == NULL || path[0] != '/' || depth > SYMLINK_DEPTH_MAX) { return false; }
-  struct ext2_node cur;
-  if (!ext2_read_inode(fs, EXT2_ROOT_INO, &cur)) { return false; }
-  char parent_path[256] = "/";
-  const char *p = path;
-  while (*p == '/') {
-    ++p;
-  }
-  if (*p == '\0') {
-    *out = cur;
-    return true;
-  }
-  while (*p != '\0') {
-    const char *start = p;
-    while (*p != '\0' && *p != '/') {
-      ++p;
-    }
-    size_t len = (size_t)(p - start);
-    if (len == 0) { return false; }
-    struct ext2_node next;
-    if (!ext2_lookup_child(fs, &cur, start, len, &next)) { return false; }
-    while (*p == '/') {
-      ++p;
-    }
-    bool final = *p == '\0';
-    if (ext2_is_symlink(&next) && (!final || follow_final)) {
-      char target[256];
-      char combined[256];
-      if (!ext2_readlink_node(fs, &next, target, sizeof(target), NULL) ||
-          !combine_symlink_path(combined, sizeof(combined), parent_path, target, p)) {
-        return false;
-      }
-      return ext2_lookup_inner(fs, combined, out, follow_final, depth + 1);
-    }
-    cur = next;
-    if (!final && !append_path_component(parent_path, sizeof(parent_path), start, len)) { return false; }
-  }
-  *out = cur;
-  return true;
-}
-
-bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
-  ++ext2_stat_counters.lookup_count;
-  return ext2_lookup_inner(fs, path, out, true, 0);
-}
-
-bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
-  ++ext2_stat_counters.lstat_count;
-  return ext2_lookup_inner(fs, path, out, false, 0);
 }
 
 bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out) {
@@ -496,40 +332,6 @@ bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path)
     return false;
   }
   return true;
-}
-
-bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out) {
-  struct ext2_node node;
-  return ext2_lstat(fs, path, &node) && ext2_readlink_node(fs, &node, out, cap, len_out);
-}
-
-bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t mode) {
-  if (node == NULL) { return false; }
-  struct ext2_node copy;
-  if (!ext2_read_inode(fs, node->ino, &copy)) { return false; }
-  copy.mode = (uint16_t)((copy.mode & 0170000u) | (mode & 07777u));
-  copy.ctime = ext2_now_sec();
-  return ext2_write_inode(fs, &copy);
-}
-
-bool ext2_chmod(struct ext2_fs *fs, const char *path, uint32_t mode) {
-  struct ext2_node node;
-  return ext2_lookup(fs, path, &node) && ext2_chmod_node(fs, &node, mode);
-}
-
-bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t uid, uint32_t gid) {
-  if (node == NULL || uid > UINT16_MAX || gid > UINT16_MAX) { return false; }
-  struct ext2_node copy;
-  if (!ext2_read_inode(fs, node->ino, &copy)) { return false; }
-  copy.uid = (uint16_t)uid;
-  copy.gid = (uint16_t)gid;
-  copy.ctime = ext2_now_sec();
-  return ext2_write_inode(fs, &copy);
-}
-
-bool ext2_chown(struct ext2_fs *fs, const char *path, uint32_t uid, uint32_t gid) {
-  struct ext2_node node;
-  return ext2_lookup(fs, path, &node) && ext2_chown_node(fs, &node, uid, gid);
 }
 
 int ext2_remove(struct ext2_fs *fs, const char *path) {

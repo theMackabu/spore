@@ -147,3 +147,4 @@ void ext2_dir_cache_remove_name(struct ext2_fs *fs, uint32_t parent, const char 
 bool ext2_check_refs(struct ext2_fs *fs, bool remount);
 bool ext2_set_orphan(struct ext2_fs *fs, uint32_t ino, bool orphan, bool linkable);
 bool ext2_inode_linkable(struct ext2_fs *fs, uint32_t ino);
+bool ext2_parent_inode(struct ext2_fs *fs, const struct ext2_node *dir, uint32_t *ino);
