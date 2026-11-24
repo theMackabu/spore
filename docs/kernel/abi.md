@@ -12,3 +12,5 @@ AArch64, RV64 and x86-64 feed a common Linux dispatcher. CPU entry code reads th
 
 Spore-specific calls cover snapshots, policy, CPU budgets, shutdown and network configuration.
 [Linux syscall numbers by CPU](../../kernel/abi/linux/syscalls.def) · [Spore call numbers](../../kernel/abi/linux/shared/numbers.h) · [Confinement](../processes/confinement.md)
+
+Linux applications can also submit batches through io_uring. [Ring operations and limits](io-uring.md)

@@ -179,6 +179,23 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
             }
             return status(&mut cmd);
         }
+        (true, Some("uring")) => {
+            let tmp = Workspace::new()?;
+            let exe = tmp.0.join("uring-bench");
+            let source =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/appliance/uring-bench.c");
+            let rc = status(
+                Command::new("aarch64-unknown-linux-musl-gcc")
+                    .args(["-O2", "-UNDEBUG", "-static"])
+                    .arg(source)
+                    .arg("-o")
+                    .arg(&exe),
+            )?;
+            if rc != 0 {
+                return Ok(rc);
+            }
+            return status(Command::new(build.join("spore")).arg("run").arg(exe));
+        }
         (false, Some("ports")) => {
             let mut cmd = Command::new("python3");
             cmd.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ports/check.py"))

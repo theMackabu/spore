@@ -49,6 +49,7 @@ struct domain {
   struct process_mm *mm;
   struct fd_table files;
   uint32_t nofile_soft, nofile_hard;
+  uint64_t fsize_soft, fsize_hard;
   char name[32];
   char exec_path[CELL_PATH_MAX];
   char argv0[64];

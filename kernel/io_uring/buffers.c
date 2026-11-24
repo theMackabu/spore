@@ -5,28 +5,41 @@
 #include "fs/notify.h"
 #include "internal.h"
 #include "mm/pmm.h"
+#include "mm/pool.h"
 #include "mm/table.h"
+#include "proc/domain.h"
+#include "proc/io.h"
 #include "proc/policy.h"
 
 struct uring_buffer {
   struct iovec64 iov;
   uint64_t *pages;
   struct uring_extra *tag;
-  uint32_t nr, pinned;
+  uint32_t nr, pinned, refs;
 };
 
-static void drop_buffer(struct uring *r, struct uring_buffer *b, bool notify) {
+static struct object_pool buffers;
+
+struct uring_buffer *uring_hold_buffer(struct uring *r, unsigned i) {
+  struct uring_buffer *b = i < r->nr_buffers ? r->buffers[i] : NULL;
+  if (b) { ++b->refs; }
+  return b;
+}
+
+void uring_put_buffer(struct uring *r, struct uring_buffer *b, bool notify) {
+  if (!b || --b->refs) { return; }
   for (unsigned j = 0; j < b->pinned; ++j) {
     pmm_unpin_page(b->pages[j]);
   }
   r->pinned_pages -= b->pinned;
   table_free(b->pages, b->nr, sizeof(*b->pages));
   uring_tag_put(notify ? r : NULL, b->tag);
+  pool_free(&buffers, b);
 }
 
 static void clear_buffers(struct uring *r, bool notify) {
   for (unsigned i = 0; i < r->nr_buffers; ++i) {
-    drop_buffer(r, &r->buffers[i], notify);
+    uring_put_buffer(r, r->buffers[i], notify);
   }
   table_free(r->buffers, r->nr_buffers, sizeof(*r->buffers));
   r->buffers = NULL;
@@ -65,15 +78,19 @@ static int update(struct uring *r, unsigned offset, uint64_t addr, unsigned nr, 
     return -EFAULT;
   }
   for (unsigned i = 0; i < nr; ++i) {
-    struct uring_buffer b = {0}, *old = &r->buffers[offset + i];
-    int rc = pin_buffer(r, &b, addr + i * sizeof(b.iov), tags ? tags + i * sizeof(uint64_t) : 0,
-                        16384u - r->pinned_pages + old->pinned);
+    struct uring_buffer *old = r->buffers[offset + i];
+    if (!buffers.limit) { pool_init(&buffers, sizeof(struct uring_buffer), 65536); }
+    struct uring_buffer *b = pool_alloc(&buffers);
+    if (!b) { return i && partial ? (int)i : -ENOMEM; }
+    b->refs = 1;
+    unsigned available = 16384u - r->pinned_pages + (old && old->refs == 1 ? old->pinned : 0);
+    int rc = pin_buffer(r, b, addr + i * sizeof(b->iov), tags ? tags + i * sizeof(uint64_t) : 0, available);
     if (rc) {
-      drop_buffer(r, &b, false);
+      uring_put_buffer(r, b, false);
       return i && partial ? (int)i : rc;
     }
-    drop_buffer(r, old, true);
-    *old = b;
+    uring_put_buffer(r, old, true);
+    r->buffers[offset + i] = b;
   }
   return nr;
 }
@@ -98,11 +115,19 @@ int uring_fixed_io(struct open_file *ring, const struct sqe *e) {
   if (e->op_flags || e->len > INT32_MAX) { return -EINVAL; }
   if (e->off != UINT64_MAX && !cell_syscall_allowed(write ? SYS_PWRITE64 : SYS_PREAD64)) { return -1; }
   if (e->buf_index >= ring->ring.nr_buffers) { return -EFAULT; }
-  struct uring_buffer *b = &ring->ring.buffers[e->buf_index];
+  struct uring_buffer *b = ring->ring.buffers[e->buf_index];
+  if (!b || !b->pinned) { return -EFAULT; }
+  struct open_file *f = uring_target(&ring->ring, e);
+  if (!f) { return -EBADF; }
+  if ((e->flags & IO_ASYNC) || uring_ordered(&ring->ring, e)) { return uring_defer_io(ring, f, e); }
+  return uring_fixed_transfer(cell_current_domain_internal(), b, f, e);
+}
+
+int uring_fixed_transfer(struct domain *domain, struct uring_buffer *b, struct open_file *f, const struct sqe *e) {
+  bool write = e->opcode == OP_WRITE_FIXED;
   if (e->addr < b->iov.base || e->addr - b->iov.base > b->iov.len || e->len > b->iov.len - (e->addr - b->iov.base)) {
     return -EFAULT;
   }
-  struct open_file *f = uring_target(&ring->ring, e);
   if (!f || !(write ? linux_open_writable(f->flags) : linux_open_readable(f->flags))) { return -EBADF; }
   if (f->type != OPEN_VFS || f->node.device != RAMFS_DEV_NONE) { return -95; }
   if (f->node.is_dir) { return -21; }
@@ -110,16 +135,21 @@ int uring_fixed_io(struct open_file *ring, const struct sqe *e) {
   uint64_t off = e->off == UINT64_MAX ? f->offset : e->off;
   if (write && (f->flags & 02000)) { off = f->node.size; }
   if (off > INT64_MAX || e->len > INT64_MAX - off) { return -EINVAL; }
+  size_t len = e->len;
+  if (write) {
+    int rc = cell_file_write_limit(domain, off, &len);
+    if (rc) { return rc; }
+  }
   unsigned done = 0;
-  while (done < e->len) {
+  while (done < len) {
     uint64_t va = e->addr + done;
     unsigned page = va / PAGE_SIZE - b->iov.base / PAGE_SIZE;
     size_t n = PAGE_SIZE - va % PAGE_SIZE;
-    while (n < e->len - done && page + 1 < b->nr && b->pages[page + 1] == b->pages[page] + PAGE_SIZE) {
+    while (n < len - done && page + 1 < b->nr && b->pages[page + 1] == b->pages[page] + PAGE_SIZE) {
       n += PAGE_SIZE;
       ++page;
     }
-    if (n > e->len - done) { n = e->len - done; }
+    if (n > len - done) { n = len - done; }
     uint8_t *data = (uint8_t *)pmm_phys_to_virt(b->pages[va / PAGE_SIZE - b->iov.base / PAGE_SIZE]) + va % PAGE_SIZE;
     int64_t result =
       write ? vfs_write(&f->node, off + done, data, n) : (int64_t)vfs_read(&f->node, off + done, data, n);

@@ -1,3 +1,4 @@
+#include "proc/io.h"
 #include "../usercopy.h"
 #include "file_abi.h"
 #include "abi/linux/shared/layout.h"
@@ -117,6 +118,12 @@ int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
   if (file->type != OPEN_VFS || !linux_open_writable(file->flags) || (int64_t)size < 0 ||
       file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -EINVAL; }
   if (vfs_truncate_sealed(&file->node, size)) { return -EPERM; }
+  struct domain *d=cell_current_domain_internal();
+  if (size>d->fsize_soft) {
+    struct vfs_node fresh;
+    if (!vfs_refresh(&file->node,&fresh)) {return -5;}
+    if (size>fresh.size) {size_t bytes=1;return cell_file_write_limit(d,size,&bytes);}
+  }
   if (!vfs_truncate(&file->node, size)) { return -EINVAL; }
   fsnotify_file_event(file, FS_MODIFY);
   return 0;

@@ -91,17 +91,11 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
   }
 }
 
-static int64_t write_vfs(struct open_file *file, struct domain *domain, uint64_t *offset, uint64_t buf, uint64_t len) {
-  if (file->node.device != RAMFS_DEV_NONE) { return write_device(file, domain, offset, buf, len); }
-  uint64_t off = *offset;
-  if (file->flags & CELL_O_APPEND) {
-    struct vfs_node fresh;
-    if (!vfs_refresh(&file->node, &fresh)) { return -5; }
-    off = fresh.size;
-  }
-  int64_t wrote = cell_write_regular(domain, file, off, buf, len);
-  if (wrote > 0) { *offset = off + (uint64_t)wrote; }
-  return wrote;
+int cell_file_write_limit(struct domain *d,uint64_t offset,size_t *len) {
+  if (!*len) {return 0;}
+  if (offset>=d->fsize_soft) {cell_signal_domain(d,25,NULL);return -27;}
+  if (*len>d->fsize_soft-offset) {*len=d->fsize_soft-offset;}
+  return 0;
 }
 
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
@@ -136,7 +130,7 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   }
   if (file->type != OPEN_STDOUT && file->type != OPEN_STDIN) {
     if (file->type != OPEN_VFS) { return -22; }
-    return write_vfs(file, domain, &file->offset, buf, len);
+    return cell_file_regular_io(domain,file,buf,len,UINT64_MAX,true);
   }
   return cell_tty_write_console_from_user(domain, buf, len);
 }
@@ -212,9 +206,27 @@ int64_t cell_file_regular_io(struct domain *domain, struct open_file *file, uint
   if (!len) { return 0; }
   uint64_t *offset = position == UINT64_MAX ? &file->offset : &position;
   if (*offset > INT64_MAX) { return -EINVAL; }
-  if (write) { return write_vfs(file,domain,offset,buf,len); }
-  if (file->node.device != RAMFS_DEV_NONE) { return read_device(file,domain,offset,buf,len,NULL); }
-  int64_t n = cell_read_regular(domain,file,*offset,buf,len);
-  if (n > 0) { *offset += n; }
-  return n;
+  if (file->node.device != RAMFS_DEV_NONE) {
+    return write ? write_device(file,domain,offset,buf,len) : read_device(file,domain,offset,buf,len,NULL);
+  }
+  if (len>INT64_MAX-*offset) {return -EINVAL;}
+  uint64_t start=*offset;
+  if (write) {
+    if (file->flags & CELL_O_APPEND) {
+      struct vfs_node fresh;
+      if (!vfs_refresh(&file->node,&fresh)) {return -5;}
+      start=fresh.size;
+    }
+    int rc=cell_file_write_limit(domain,start,&len);
+    if (rc) {return rc;}
+  }
+  size_t done=0;
+  while (done<len) {
+    int64_t n=write ? cell_write_regular(domain,file,start+done,buf+done,len-done)
+                    : cell_read_regular(domain,file,start+done,buf+done,len-done);
+    if (n<=0) {return done ? (int64_t)done : n;}
+    done+=n;
+    *offset=start+done;
+  }
+  return done;
 }

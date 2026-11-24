@@ -14,7 +14,7 @@ struct uring {
   uint32_t entries, cq_entries, sq_array_offset;
   uint32_t sq_head, cq_tail, dropped, pending, waiters;
   struct uring_group *groups;
-  struct uring_buffer *buffers;
+  struct uring_buffer **buffers;
   uint32_t nr_buffers;
   struct uring_slot *files;
   struct uring_extra *overflow_head, *overflow_tail;

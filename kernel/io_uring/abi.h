@@ -18,7 +18,7 @@ enum {
   FEAT_RSRC_TAGS = 1u << 10,
   OFF_CQ_RING = 0x8000000,
   OFF_SQES = 0x10000000,
-#define URING_OP(name, number, syscall) OP_##name = number,
+#define URING_OP(name, number, syscall, scheduling, file_index) OP_##name = number,
 #include "operations.def"
 #undef URING_OP
   OP_LAST = OP_PIPE,

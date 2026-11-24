@@ -72,3 +72,7 @@ int uring_direct_result(struct uring *r, uint32_t index, int fd);
 int uring_close_direct(struct uring *r, uint32_t index);
 int uring_message(struct open_file *source, const struct sqe *e);
 bool uring_prepare_rings(struct uring *r);
+
+struct uring_buffer *uring_hold_buffer(struct uring *r, unsigned i);
+void uring_put_buffer(struct uring *r, struct uring_buffer *b, bool notify);
+int uring_fixed_transfer(struct domain *domain, struct uring_buffer *b, struct open_file *f, const struct sqe *e);

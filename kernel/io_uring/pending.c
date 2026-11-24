@@ -14,6 +14,7 @@ struct uring_pending {
   struct open_file *target;
   struct uring_extra *tag;
   struct iovec64 *iov;
+  struct uring_buffer *buffer;
   struct sqe sqe;
   uint64_t context, deadline;
   uint32_t first_completion;
@@ -57,6 +58,7 @@ static int defer(struct open_file *owner, struct open_file *target, const struct
       return -ENOMEM;
     }
   }
+  if (e->opcode == OP_READ_FIXED || e->opcode == OP_WRITE_FIXED) { p->buffer = uring_hold_buffer(r, e->buf_index); }
   if ((e->flags & FIXED_FILE) && target) {
     p->tag = r->files[e->fd].tag;
     if (p->tag) { ++p->tag->refs; }
@@ -245,6 +247,7 @@ static void discard(struct uring *r, struct uring_pending **slot) {
   }
   if (!--r->pending) { deactivate(r); }
   cell_release_open_file(p->target);
+  uring_put_buffer(r, p->buffer, true);
   table_free(p->iov, p->sqe.len, sizeof(*p->iov));
   uring_tag_put(r, p->tag);
   pool_free(&requests, p);
@@ -269,6 +272,7 @@ static int check(struct uring_pending *p, struct uring *r) {
   }
   if (p->parent) { return URING_PENDING; }
   if (p->sqe.opcode == OP_TIMEOUT_REMOVE) { return update_deadline(r, p->sqe.addr, p->deadline); }
+  if (p->sqe.opcode == OP_REMOVE_BUFFERS || p->sqe.opcode == OP_PROVIDE_BUFFERS) { return uring_group_op(r, &p->sqe); }
   if (p->sqe.opcode == OP_NOP) { return p->sqe.op_flags ? (int)p->sqe.len : 0; }
   if (p->sqe.opcode == OP_TIMEOUT) {
     if (!(p->sqe.op_flags & 64) && p->sqe.off &&
@@ -288,6 +292,7 @@ static int check(struct uring_pending *p, struct uring *r) {
   }
   struct domain *d = cell_find_domain(p->pid);
   if (!d || d->zombie || !d->mm || cell_domain_as(d)->context_id != p->context) { return -125; }
+  if (p->buffer) { return uring_fixed_transfer(d, p->buffer, p->target, &p->sqe); }
   if (p->sqe.flags & BUFFER_SELECT) {
     int n = uring_selected_io(r, d, p->target, &p->sqe, &p->cflags);
     return n == -11 ? URING_PENDING : n;

@@ -1,5 +1,6 @@
 #include "abi/linux/shared/fd/handlers.h"
 #include "abi/linux/shared/fs/handlers.h"
+#include "abi/linux/shared/iovec.h"
 #include "abi/linux/shared/mm/handlers.h"
 #include "abi/linux/shared/net/handlers.h"
 #include "abi/linux/shared/numbers.h"
@@ -8,14 +9,19 @@
 #include "proc/domain.h"
 #include "proc/policy.h"
 
-static const uint16_t permissions[OP_LAST + 1] = {
-#define URING_OP(name, number, syscall) [number] = SYS_##syscall,
+enum scheduling { INLINE, ORDERED, ASYNC };
+static const struct operation {
+  uint16_t syscall;
+  uint8_t scheduling;
+  bool file_index;
+} operations[OP_LAST + 1] = {
+#define URING_OP(name, number, syscall, scheduling, file_index) [number] = {SYS_##syscall, scheduling, file_index},
 #include "operations.def"
 #undef URING_OP
 };
 
 bool uring_opcode_supported(unsigned op) {
-  return op <= OP_LAST && permissions[op];
+  return op <= OP_LAST && operations[op].syscall;
 }
 
 struct open_file *uring_target(struct uring *r, const struct sqe *e) {
@@ -43,28 +49,31 @@ int uring_issue(struct open_file *file, const struct sqe *e, uint32_t *flags) {
       (e->flags & ~(FIXED_FILE | IO_LINK | IO_HARDLINK | IO_DRAIN | IO_ASYNC | BUFFER_SELECT | CQE_SKIP_SUCCESS))) {
     return -EINVAL;
   }
-  if ((e->flags & IO_ASYNC) && e->opcode != OP_NOP && e->opcode != OP_TIMEOUT_REMOVE && e->opcode != OP_READ &&
-      e->opcode != OP_WRITE && e->opcode != OP_READV && e->opcode != OP_WRITEV) {
-    return -95;
-  }
-  if (uring_ordered(&file->ring, e) && e->opcode != OP_NOP && e->opcode != OP_TIMEOUT_REMOVE && e->opcode != OP_READ &&
-      e->opcode != OP_WRITE && e->opcode != OP_READV && e->opcode != OP_WRITEV && e->opcode != OP_POLL_ADD &&
-      e->opcode != OP_TIMEOUT && e->opcode != OP_LINK_TIMEOUT) {
-    return -95;
-  }
-  if (!cell_syscall_allowed(permissions[e->opcode])) { return -1; }
-  if (e->file_index && e->opcode != OP_SEND && e->opcode != OP_CLOSE && e->opcode != OP_OPENAT &&
-      e->opcode != OP_OPENAT2 && e->opcode != OP_SOCKET && e->opcode != OP_MSG_RING) {
-    return -95;
-  }
+  const struct operation *op = &operations[e->opcode];
+  if (!cell_syscall_allowed(op->syscall)) { return -1; }
+  if ((e->flags & IO_ASYNC) && op->scheduling != ASYNC) { return -95; }
+  if (uring_ordered(&file->ring, e) && op->scheduling == INLINE) { return -95; }
+  if (e->file_index && !op->file_index) { return -95; }
   if (e->flags & BUFFER_SELECT) {
-    if ((e->opcode != OP_READ && e->opcode != OP_RECV) || e->addr || (e->flags & IO_ASYNC)) { return -EINVAL; }
+    struct sqe single;
+    if (e->opcode == OP_READV) {
+      struct iovec64 v;
+      if (e->len != 1) { return -EINVAL; }
+      if (uring_copy_in(&v, e->addr, sizeof(v))) { return -EFAULT; }
+      if (v.len > INT32_MAX) { return -EINVAL; }
+      single = *e;
+      single.opcode = OP_READ;
+      single.addr = 0;
+      single.len = v.len;
+      e = &single;
+    }
+    if ((e->opcode != OP_READ && e->opcode != OP_RECV) || e->addr) { return -EINVAL; }
     struct open_file *target = uring_target(&file->ring, e);
     if (!target) { return -EBADF; }
     if (e->opcode == OP_RECV && target->type != OPEN_SOCKET && target->type != OPEN_UNIX_STREAM) { return -88; }
     if (e->opcode == OP_READ && e->off != UINT64_MAX && !cell_syscall_allowed(SYS_PREAD64)) { return -1; }
     if (e->opcode == OP_READ && e->op_flags & ~8u) { return -95; }
-    int rc = (e->priority == 2 || uring_ordered(&file->ring, e))
+    int rc = ((e->flags & IO_ASYNC) || e->priority == 2 || uring_ordered(&file->ring, e))
                ? -11
                : uring_selected_io(&file->ring, cell_current_domain_internal(), target, e, flags);
     if (rc == -11 && !(e->op_flags & (e->opcode == OP_READ ? 8u : 64u))) { return uring_defer_io(file, target, e); }
@@ -141,6 +150,7 @@ int uring_issue(struct open_file *file, const struct sqe *e, uint32_t *flags) {
     return sys_shutdown(e->fd, e->len);
   case OP_PROVIDE_BUFFERS:
   case OP_REMOVE_BUFFERS:
+    if ((e->flags & IO_ASYNC) || uring_ordered(&file->ring, e)) { return uring_defer_io(file, NULL, e); }
     return uring_group_op(&file->ring, e);
   case OP_FILES_UPDATE:
     if (e->off > UINT32_MAX || !file->ring.files) { return -EINVAL; }

@@ -24,7 +24,7 @@ Usage:
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
   spore test [host|guest|shell|appliance|ports|rng|stress]
-  spore bench [guest|inodes|appliance|startup]
+  spore bench [guest|inodes|appliance|startup|uring]
 
 Image options:
   --exec PATH        Guest executable path (default /app/server)
