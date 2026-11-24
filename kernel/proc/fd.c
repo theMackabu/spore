@@ -20,10 +20,8 @@ enum {
   CELL_O_NONBLOCK = 04000,
   CELL_O_APPEND = 02000,
   CELL_O_CLOEXEC = 02000000,
-  EFD_SEMAPHORE = 1,
   IN_NONBLOCK = 04000,
   IN_CLOEXEC = 02000000,
-  EAGAIN = 11,
   ENOMEM = 12,
   EFAULT = 14,
   EINVAL = 22,
@@ -152,43 +150,6 @@ void cell_copy_open_path(struct open_file *file, const char *path) {
   if (len >= sizeof(file->path)) { len = sizeof(file->path) - 1; }
   kmemcpy(file->path, path, len);
   file->path[len] = '\0';
-}
-
-int64_t cell_eventfd_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  if (len < sizeof(uint64_t)) { return -EINVAL; }
-  uint64_t add = 0;
-  if (!vmm_copy_from_user(cell_domain_as(domain), &add, buf, sizeof(add))) { return -EFAULT; }
-  if (add == UINT64_MAX || UINT64_MAX - file->eventfd_value <= add) { return -EAGAIN; }
-  file->eventfd_value += add;
-  cell_wake_poll_waiters_internal();
-  return sizeof(add);
-}
-
-int64_t cell_eventfd_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len) {
-  if (len < sizeof(uint64_t)) { return -EINVAL; }
-  if (file->eventfd_value == 0) { return -EAGAIN; }
-  uint64_t value = file->eventfd_semaphore ? 1 : file->eventfd_value;
-  file->eventfd_value -= value;
-  if (!vmm_copy_to_user(cell_domain_as(domain), buf, &value, sizeof(value))) { return -EFAULT; }
-  cell_wake_poll_waiters_internal();
-  return sizeof(value);
-}
-
-int cell_fd_eventfd(uint64_t initval, int flags) {
-  if ((flags & ~(CELL_O_CLOEXEC | CELL_O_NONBLOCK | EFD_SEMAPHORE)) != 0) { return -EINVAL; }
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) { return -12; }
-  int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { return -24; }
-  struct open_file *file = cell_alloc_open_file();
-  if (file == NULL) { return -12; }
-  file->type = OPEN_EVENTFD;
-  file->flags = (uint32_t)(flags & ~CELL_O_CLOEXEC);
-  file->eventfd_value = initval;
-  file->eventfd_semaphore = (flags & EFD_SEMAPHORE) != 0;
-  domain->fds[fd] = file;
-  domain->fd_flags[fd] = (flags & CELL_O_CLOEXEC) != 0 ? 1 : 0;
-  return fd;
 }
 
 int cell_fd_inotify_init1(int flags) {

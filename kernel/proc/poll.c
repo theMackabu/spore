@@ -74,7 +74,7 @@ static int fd_poll_events_for_domain(struct domain *domain, int fd, int events) 
 
   if ((events & CELL_POLLOUT) != 0) {
     if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN || file->type == OPEN_RAMFS || file->type == OPEN_EPOLL ||
-        file->type == OPEN_EVENTFD) {
+        (file->type == OPEN_EVENTFD && file->eventfd_value < UINT64_MAX - 1)) {
       revents |= CELL_POLLOUT;
     } else if (file->type == OPEN_PIPE) {
       if (cell_pipe_file_writable(file)) { revents |= CELL_POLLOUT; }

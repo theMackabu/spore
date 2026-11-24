@@ -54,7 +54,7 @@ static void wake_flock_waiters(void) {
     for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
       struct thread *thread = cell_thread_slot(i);
       if (thread->state != THREAD_BLOCKED || thread->wait.reason != WAIT_FLOCK) { continue; }
-      struct open_file *file = thread->wait.flock_file;
+      struct open_file *file = thread->wait.held_file;
       uint8_t mode = thread->wait.flock_mode;
       if (!flock_can_lock(file, mode)) { continue; }
       grant_lock(file, mode);
@@ -93,6 +93,6 @@ int cell_fd_flock(int fd, int operation, struct trap_frame *frame) {
   cell_retain_open_file(file);
   return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FLOCK,
                                                         .target = -1,
-                                                        .flock_file = file,
+                                                        .held_file = file,
                                                         .flock_mode = (uint8_t)mode});
 }

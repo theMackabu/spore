@@ -135,6 +135,7 @@ struct open_file {
     struct epoll_watch epoll_watches[CELL_EPOLL_WATCH_CAP];
     struct {
       uint64_t eventfd_value;
+      uint16_t eventfd_waiters;
       bool eventfd_semaphore;
     };
     uint64_t inotify_pa;
@@ -149,12 +150,9 @@ void cell_close_all_fds(struct domain *domain);
 bool cell_init_stdio(struct domain *domain);
 void cell_copy_fd_table(struct domain *dst, const struct domain *src);
 void cell_copy_open_path(struct open_file *file, const char *path);
-int64_t cell_eventfd_write_from_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
-int64_t cell_eventfd_read_to_domain(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
-int cell_fd_eventfd(uint64_t initval, int flags);
 int cell_fd_inotify_init1(int flags);
 int cell_fd_inotify_add_watch(int fd, const char *path, uint32_t mask);
 int cell_fd_inotify_rm_watch(int fd, int wd);

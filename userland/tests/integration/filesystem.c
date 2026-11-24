@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -107,6 +108,44 @@ static int getdents_fault_resume(void) {
   if (fd >= 0) { close(fd); }
   if (reference >= 0) { close(reference); }
   munmap(buf, page * 2);
+  return ok;
+}
+
+static int eventfd_counter(void) {
+  int fd = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
+  if (fd < 0) { return 0; }
+  eventfd_t value;
+  struct pollfd pfd = {.fd = fd, .events = POLLIN | POLLOUT};
+  int ok = eventfd_read(fd, &value) == -1 && errno == EAGAIN &&
+           eventfd_write(fd, UINT64_MAX) == -1 && errno == EINVAL &&
+           eventfd_write(fd, UINT64_MAX - 1) == 0 && poll(&pfd, 1, 0) == 1 && pfd.revents == POLLIN &&
+           eventfd_write(fd, 1) == -1 && errno == EAGAIN && eventfd_read(fd, &value) == 0 && value == 1 &&
+           poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLOUT);
+  close(fd);
+
+  fd = eventfd(0, 0);
+  if (fd < 0) { return 0; }
+  pid_t child = fork();
+  if (child == 0) {
+    integration_sleep_ms(25);
+    _exit(eventfd_write(fd, UINT64_MAX - 1) != 0);
+  }
+  int status;
+  ok = child > 0 && eventfd_read(fd, &value) == 0 && value == UINT64_MAX - 1 && ok;
+  if (child > 0) { ok = waitpid(child, &status, 0) == child && status == 0 && ok; }
+  if (!ok || eventfd_write(fd, UINT64_MAX - 1) != 0) {
+    close(fd);
+    return 0;
+  }
+  child = fork();
+  if (child == 0) {
+    integration_sleep_ms(25);
+    _exit(eventfd_read(fd, &value) != 0 || value != UINT64_MAX - 1);
+  }
+  ok = child > 0 && eventfd_write(fd, 3) == 0 && eventfd_read(fd, &value) == 0 && value == 3;
+  if (child > 0) { ok = waitpid(child, &status, 0) == child && status == 0 && ok; }
+  close(fd);
+  printf("[spore] eventfd capacity, semaphore and blocked transfers: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
@@ -297,7 +336,7 @@ int integration_fs_demo(void) {
   }
   if (dfd >= 0) { close(dfd); }
   if (!saw_b) { ok = 0; }
-  if (!removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
+  if (!removal_errors("/unlink-test", 1) || !removal_errors("/tmp/unlink-test", 0) || !flock_regression() || !inotify_shared_watch() || !eventfd_counter() || !epoll_watch_lifetime() || !fifo_without_reader() || !pathname_page_boundary() ||
       !getdents_proc_batches() || !getdents_fault_resume()) {
     ok = 0;
   }

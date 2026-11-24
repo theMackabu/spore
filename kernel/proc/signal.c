@@ -86,7 +86,7 @@ static bool wait_is_restartable(const struct thread_wait *wait) {
   enum wait_reason reason = wait->reason;
   if (reason == WAIT_FUTEX) { return !wait->has_deadline; }
   return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
-         reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FLOCK;
+         reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FLOCK || reason == WAIT_EVENTFD;
 }
 
 static bool thread_requires_deferred_signal_frame(const struct thread *thread) {

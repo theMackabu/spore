@@ -32,6 +32,7 @@ enum wait_reason {
   WAIT_INOTIFY,
   WAIT_PTY,
   WAIT_FLOCK,
+  WAIT_EVENTFD,
 };
 
 constexpr int CELL_SWITCHED = -0x40000000;
@@ -69,8 +70,14 @@ struct thread_wait {
     };
     uint64_t futex_addr;
     struct {
-      struct open_file *flock_file;
-      uint8_t flock_mode;
+      struct open_file *held_file;
+      union {
+        uint8_t flock_mode;
+        struct {
+          uint64_t event_arg;
+          bool event_write;
+        };
+      };
     };
   };
 };

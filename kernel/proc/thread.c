@@ -217,7 +217,11 @@ void cell_schedule(struct trap_frame *frame) {
 
 void cell_clear_wait(struct thread *thread) {
   if (thread->wait.restore_signal_mask) { thread->signal_mask = thread->wait.saved_signal_mask; }
-  struct open_file *file = thread->wait.reason == WAIT_FLOCK ? thread->wait.flock_file : NULL;
+  struct open_file *file = NULL;
+  if (thread->wait.reason == WAIT_FLOCK || thread->wait.reason == WAIT_EVENTFD) {
+    file = thread->wait.held_file;
+    if (thread->wait.reason == WAIT_EVENTFD) { --file->eventfd_waiters; }
+  }
   thread->wait = (struct thread_wait){.target = -1};
   if (file != NULL) { cell_release_open_file(file); }
 }

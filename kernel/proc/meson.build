@@ -2,6 +2,7 @@ kernel_sources += files(
   'accounting.c',
   'bootstrap.c',
   'domain.c',
+  'eventfd.c',
   'fd.c',
   'flock.c',
   'futex.c',

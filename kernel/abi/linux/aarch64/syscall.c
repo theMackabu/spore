@@ -7,6 +7,7 @@
 #include "lib/mem.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
+#include "proc/eventfd.h"
 #include "proc/fd.h"
 #include "proc/futex.h"
 #include "proc/limits.h"
