@@ -17,7 +17,7 @@ static uint32_t ramfs_smp_possible_cpu_count(void) {
 #endif
 
 struct ramfs_backing_page {
-  const struct ramfs_mem_node *owner;
+  struct ramfs_mem_node *owner;
   uint32_t file_page;
   int next;
   int hash_next;
@@ -201,6 +201,7 @@ static bool grow_backing_pages(void) {
 }
 
 static void free_backing_slot(int slot) {
+  --backing_pages[slot].owner->allocated_pages;
   remove_backing_index(slot);
   free_backing_data(&backing_pages[slot]);
   backing_pages[slot] = (struct ramfs_backing_page){.next = backing_page_free_head};
@@ -248,6 +249,7 @@ static int ensure_backing_page(struct ramfs *fs, int node, uint32_t file_page) {
   page->next = fs->nodes[node].first_page;
   fs->nodes[node].first_page = slot;
   insert_backing_index(slot);
+  ++page->owner->allocated_pages;
   ++backing_page_used_count;
   return slot;
 }
@@ -570,6 +572,8 @@ bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out) {
     .index = index,
     .name = index == 0 ? "/" : node->name,
     .size = node->size,
+    .allocated_pages = node->ro_data ? (uint32_t)((node->size + RAMFS_PAGE_SIZE - 1) / RAMFS_PAGE_SIZE)
+                                     : node->allocated_pages,
     .ino = node->ino,
     .is_dir = node->is_dir,
     .mount = node->mount,

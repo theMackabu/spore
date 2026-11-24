@@ -250,6 +250,12 @@ int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
   return -(int64_t)EEXIST;
 }
 
+static uint64_t allocated_sectors(const struct vfs_node *node) {
+  if (node->backend == VFS_EXT2) { return node->ext2.sectors_count; }
+  if (node->backend == VFS_RAMFS) { return (uint64_t)node->ramfs.allocated_pages * (RAMFS_PAGE_SIZE / 512); }
+  return 0;
+}
+
 static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   kmemset(st, 0, sizeof(*st));
   st->st_dev = node->dev_id;
@@ -261,7 +267,7 @@ static void fill_stat(struct stat64_aarch64 *st, const struct vfs_node *node) {
   st->st_rdev = node->rdev;
   st->st_size = (int64_t)node->size;
   st->st_blksize = PAGE_SIZE;
-  st->st_blocks = (int64_t)((node->size + 511) / 512);
+  st->st_blocks = (int64_t)allocated_sectors(node);
   uint64_t now = cell_realtime_seconds();
   uint64_t atime = node->atime == 0 ? now : node->atime;
   uint64_t mtime = node->mtime == 0 ? now : node->mtime;
@@ -305,7 +311,7 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
   st->stx_mode = node->mode;
   st->stx_ino = node->ino;
   st->stx_size = node->size;
-  st->stx_blocks = (node->size + 511) / 512;
+  st->stx_blocks = allocated_sectors(node);
   st->stx_rdev_major = dev_major(node->rdev);
   st->stx_rdev_minor = dev_minor(node->rdev);
   st->stx_dev_major = dev_major(node->dev_id);

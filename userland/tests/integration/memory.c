@@ -15,6 +15,28 @@
 
 constexpr int SYS_MEMFD_CREATE = 279;
 
+static int sparse_shared_file(const char *path) {
+  constexpr size_t length = 8 * 1024 * 1024;
+  int fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 0600);
+  if (fd < 0) { return 0; }
+  int ok = ftruncate(fd, length) == 0;
+  volatile char *map = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  struct stat st;
+  if (map != MAP_FAILED) {
+    ok = ok && map[4096] == 0 && map[length - 4096] == 0;
+    ok = ok && msync((void *)map, length, MS_SYNC) == 0 && fstat(fd, &st) == 0 && st.st_blocks == 0;
+    map[length - 1] = 'Z';
+    ok = ok && msync((void *)map, length, MS_SYNC) == 0 && fstat(fd, &st) == 0 &&
+         st.st_size == length && st.st_blocks > 0 && st.st_blocks < length / 512;
+    munmap((void *)map, length);
+    ok = ok && ftruncate(fd, 0) == 0 && fstat(fd, &st) == 0 && st.st_blocks == 0;
+  } else { ok = 0; }
+  close(fd);
+  unlink(path);
+  printf("[spore] sparse shared file %s: %s\n", path, ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int shared_mmap_regression(void) {
   int fd = open("/tmp/shared-mmap", O_CREAT | O_RDWR | O_TRUNC, 0666);
   int ok = fd >= 0;
@@ -292,7 +314,7 @@ static int mmap_noreserve_regression(void) {
 }
 
 int integration_memory_suite(void) {
-  return shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
+  return sparse_shared_file("/spore-sparse") && sparse_shared_file("/tmp/spore-sparse") && shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
          file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mmap_past_reservation(false) &&
          mmap_past_reservation(true);

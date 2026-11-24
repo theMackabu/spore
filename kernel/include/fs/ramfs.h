@@ -97,6 +97,7 @@ struct ramfs_mem_node {
   bool linkable;
   int link_target;
   int first_page;
+  uint32_t allocated_pages;
   int parent;
   char name[RAMFS_NAME_MAX + 1];
   const void *ro_data;
@@ -116,6 +117,7 @@ struct ramfs {
 struct ramfs_node {
   struct ramfs *fs;
   int index;
+  uint32_t allocated_pages;
   const char *name;
   uint64_t size;
   uint64_t ino;
