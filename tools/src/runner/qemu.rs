@@ -59,7 +59,60 @@ fn default_accelerator() -> &'static str {
     }
 }
 
+pub struct DirectBoot {
+    pub kernel: std::path::PathBuf,
+    pub ram: u64,
+    pub network: [std::net::Ipv4Addr; 4],
+}
+
+impl DirectBoot {
+    pub fn memory(config: &Config) -> Option<u64> {
+        if config.smp != "1" || config.vars.is_some() {
+            return None;
+        }
+        let digits = config.mem.to_str()?.strip_suffix('M')?;
+        if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mib: u64 = digits.parse().ok()?;
+        ((32..=1024).contains(&mib) && mib.is_multiple_of(2)).then(|| mib << 20)
+    }
+
+    fn append(&self, args: &mut Vec<OsString>, bundle: &OsStr) -> io::Result<()> {
+        let size = fs::metadata(bundle)?.len();
+        if size > self.ram - 0x400000 {
+            return Err(io::Error::other("app payload exceeds guest RAM"));
+        }
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_secs();
+        args.extend([
+            "-device".into(),
+            drive(
+                "loader,file=",
+                self.kernel.as_os_str(),
+                ",addr=0x40200000,cpu-num=0,force-raw=on",
+            ),
+            "-device".into(),
+            drive("loader,file=", bundle, ",addr=0x40400000,force-raw=on"),
+        ]);
+        for (address, word) in [
+            (0x403fffe8, self.ram),
+            (0x403ffff0, size),
+            (0x403ffff8, epoch),
+        ] {
+            args.extend([
+                "-device".into(),
+                format!("loader,addr={address:#x},data={word:#x},data-len=8").into(),
+            ]);
+        }
+        Ok(())
+    }
+}
+
 pub struct Config {
+    pub direct: Option<DirectBoot>,
     pub mode: String,
     pub image: OsString,
     pub root: Option<OsString>,
@@ -106,10 +159,11 @@ fn network_manifest(image: &OsStr) -> io::Result<[std::net::Ipv4Addr; 4]> {
 pub fn run(config: Config) -> io::Result<i32> {
     if let Some(target) = config.report.as_ref().and_then(|p| fs::metadata(p).ok()) {
         for input in [
-            Some(&config.image),
-            config.root.as_ref(),
-            config.vars.as_ref(),
-            config.control.as_ref(),
+            Some(config.image.as_os_str()),
+            config.root.as_deref(),
+            config.vars.as_deref(),
+            config.control.as_deref(),
+            config.direct.as_ref().map(|boot| boot.kernel.as_os_str()),
         ]
         .into_iter()
         .flatten()
@@ -133,6 +187,7 @@ pub fn run(config: Config) -> io::Result<i32> {
 
 fn launch(config: Config) -> io::Result<i32> {
     let Config {
+        direct,
         mode,
         image,
         root,
@@ -158,7 +213,10 @@ fn launch(config: Config) -> io::Result<i32> {
                 return Err(io::Error::other("data volume requires an ext2 filesystem"));
             }
         }
-        let cfg = network_manifest(&image)?;
+        let cfg = match &direct {
+            Some(boot) => boot.network,
+            None => network_manifest(&image)?,
+        };
         (app_network::user_network(cfg)?, cfg[0].to_string())
     } else {
         ("user,id=sporenet".into(), String::new())
@@ -166,28 +224,6 @@ fn launch(config: Config) -> io::Result<i32> {
     let forwards_fixture_port = forwards.iter().any(|&(host, _)| host == 8080);
     for (host, port) in forwards {
         net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-{guest}:{port}"));
-    }
-    let dirs = firmware_dirs(&qemu);
-    let Some(firmware) = find(&dirs, &["edk2-aarch64-code.fd"]) else {
-        return Err(io::Error::other("edk2-aarch64-code.fd not found"));
-    };
-
-    if let Some(v) = &vars {
-        if fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(v)
-            .is_err()
-        {
-            let Some(template) = find(&dirs, &["edk2-arm-vars.fd", "edk2-aarch64-vars.fd"]) else {
-                return Err(io::Error::other("edk2 vars template not found"));
-            };
-            let copy = fs::File::open(&template).and_then(|mut src| {
-                let mut dst = fs::File::create(v)?;
-                std::io::copy(&mut src, &mut dst)
-            });
-            copy?;
-        }
     }
     let accel = accel.unwrap_or_else(|| default_accelerator().into());
     let cpu = cpu.unwrap_or_else(|| {
@@ -215,36 +251,11 @@ fn launch(config: Config) -> io::Result<i32> {
         net.into(),
         "-device".into(),
         "virtio-net-device,netdev=sporenet,mac=52:54:00:12:34:56".into(),
-        "-boot".into(),
-        (if mode == "app" {
-            "order=d,menu=on,splash-time=0,strict=on"
-        } else {
-            "order=d,menu=off,strict=on"
-        })
-        .into(),
-        "-drive".into(),
-        drive(
-            "if=pflash,format=raw,readonly=on,file=",
-            firmware.as_os_str(),
-            "",
-        ),
     ];
-    if let Some(v) = vars {
-        q.extend(["-drive".into(), drive("if=pflash,format=raw,file=", &v, "")])
-    }
-    if image.as_bytes().ends_with(b".iso") {
-        q.extend(["-cdrom".into(), image])
+    if let Some(boot) = direct {
+        boot.append(&mut q, &image)?;
     } else {
-        q.extend([
-            "-drive".into(),
-            drive(
-                "if=none,format=raw,readonly=on,file=",
-                &image,
-                ",id=sporeesp",
-            ),
-            "-device".into(),
-            "virtio-blk-device,drive=sporeesp,bootindex=0".into(),
-        ])
+        append_firmware(&mut q, mode, &image, vars.as_deref())?;
     }
     if let Some(r) = root {
         q.extend([
@@ -289,4 +300,67 @@ fn launch(config: Config) -> io::Result<i32> {
     }
     super::fixtures::start(mode, forwards_fixture_port)?;
     super::harness::run(&q, mode, timings)
+}
+
+fn append_firmware(
+    q: &mut Vec<OsString>,
+    mode: &str,
+    image: &OsStr,
+    vars: Option<&OsStr>,
+) -> io::Result<()> {
+    let dirs = firmware_dirs(&q[0]);
+    let Some(firmware) = find(&dirs, &["edk2-aarch64-code.fd"]) else {
+        return Err(io::Error::other("edk2-aarch64-code.fd not found"));
+    };
+
+    if let Some(v) = vars {
+        if fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(v)
+            .is_err()
+        {
+            let Some(template) = find(&dirs, &["edk2-arm-vars.fd", "edk2-aarch64-vars.fd"]) else {
+                return Err(io::Error::other("edk2 vars template not found"));
+            };
+            let copy = fs::File::open(&template).and_then(|mut src| {
+                let mut dst = fs::File::create(v)?;
+                std::io::copy(&mut src, &mut dst)
+            });
+            copy?;
+        }
+    }
+    q.extend([
+        "-boot".into(),
+        (if mode == "app" {
+            "order=d,menu=on,splash-time=0,strict=on"
+        } else {
+            "order=d,menu=off,strict=on"
+        })
+        .into(),
+        "-drive".into(),
+        drive(
+            "if=pflash,format=raw,readonly=on,file=",
+            firmware.as_os_str(),
+            "",
+        ),
+    ]);
+    if let Some(v) = vars {
+        q.extend(["-drive".into(), drive("if=pflash,format=raw,file=", v, "")])
+    }
+    if image.as_bytes().ends_with(b".iso") {
+        q.extend(["-cdrom".into(), image.to_owned()])
+    } else {
+        q.extend([
+            "-drive".into(),
+            drive(
+                "if=none,format=raw,readonly=on,file=",
+                image,
+                ",id=sporeesp",
+            ),
+            "-device".into(),
+            "virtio-blk-device,drive=sporeesp,bootindex=0".into(),
+        ])
+    }
+    Ok(())
 }

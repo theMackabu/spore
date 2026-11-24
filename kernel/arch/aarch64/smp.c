@@ -35,7 +35,7 @@ void smp_init_topology(const struct limine_mp_response *mp) {
   smp_online_count = 1;
   smp_present_count = 1;
   smp_cpus[0].online = 1;
-  for (uint64_t i = 0; i < mp->cpu_count; ++i) {
+  for (uint64_t i = 0; mp && i < mp->cpu_count; ++i) {
     struct limine_mp_info *cpu = mp->cpus[i];
     if (cpu->mpidr == mp->bsp_mpidr) {
       smp_cpus[0].boot_cpu = cpu;
@@ -109,7 +109,7 @@ uint32_t smp_online_cpu_count(void) {
 }
 
 bool smp_cpu_present(uint32_t cpu) {
-  return cpu < smp_present_cpu_count() && smp_cpus[cpu].boot_cpu != NULL;
+  return cpu < smp_present_cpu_count();
 }
 
 bool smp_cpu_online(uint32_t cpu) {
@@ -117,7 +117,7 @@ bool smp_cpu_online(uint32_t cpu) {
 }
 
 uint64_t smp_cpu_mpidr(uint32_t cpu) {
-  return smp_cpu_present(cpu) ? smp_cpus[cpu].boot_cpu->mpidr : 0;
+  return smp_cpu_present(cpu) && smp_cpus[cpu].boot_cpu ? smp_cpus[cpu].boot_cpu->mpidr : 0;
 }
 
 uint32_t smp_current_cpu(void) {

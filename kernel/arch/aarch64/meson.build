@@ -2,6 +2,8 @@ aarch64_mmu_sources = files('mmu.c')
 kernel_sources += aarch64_mmu_sources
 kernel_sources += files(
   'boot.S',
+  'direct.S',
+  'direct.c',
   'context.c',
   'cpuinfo.c',
   'entropy.c',

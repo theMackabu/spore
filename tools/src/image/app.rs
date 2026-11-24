@@ -164,10 +164,12 @@ fn string(out: &mut impl Write, s: &str) -> io::Result<()> {
     out.write_all(&[0])
 }
 
-pub fn build(artifacts: &Path, output: &Path, program: &Path, opts: &[PathBuf]) -> io::Result<()> {
-    let kernel = artifacts.join("kernel/kernel-boot.elf");
-    let efi = artifacts.join("boot/BOOTAA64.EFI");
-    let license = artifacts.join("boot/LIMINE-LICENSE");
+pub fn payload(
+    program: &Path,
+    opts: &[PathBuf],
+    stage: &Path,
+    bundle: &Path,
+) -> io::Result<[Ipv4Addr; 4]> {
     let mut pkg = Package {
         files: BTreeMap::new(),
         dirs: BTreeSet::new(),
@@ -242,55 +244,63 @@ pub fn build(artifacts: &Path, output: &Path, program: &Path, opts: &[PathBuf]) 
         pkg.dir(&cwd)?;
     }
     pkg.elf(program, &exe)?;
+    if resolver_requested && !pkg.files.contains_key("/etc/resolv.conf") {
+        let resolv = stage.join("resolv.conf");
+        fs::write(&resolv, format!("nameserver {}\n", net[3]))?;
+        pkg.file(&resolv, "/etc/resolv.conf")?;
+    }
+    let mut out = BufWriter::new(File::create(bundle)?);
+    out.write_all(b"SPOREAP1")?;
+    for count in [argv.len(), env.len(), pkg.files.len() + pkg.dirs.len()] {
+        out.write_all(
+            &u32::try_from(count)
+                .map_err(|_| bad("too many entries"))?
+                .to_le_bytes(),
+        )?;
+    }
+    for ip in net {
+        out.write_all(&ip.octets())?;
+    }
+    for s in [&exe, &cwd].into_iter().chain(&argv).chain(&env) {
+        string(&mut out, s)?;
+    }
+    for d in &pkg.dirs {
+        string(&mut out, d)?;
+        out.write_all(&u64::MAX.to_le_bytes())?;
+    }
+    let mut stored = BTreeMap::new();
+    for (path, src) in &pkg.files {
+        let mut f = File::open(src)?;
+        let n = f.metadata()?.len();
+        string(&mut out, path)?;
+        if let Some(original) = stored.insert(src, path) {
+            out.write_all(&(u64::MAX - 1).to_le_bytes())?;
+            string(&mut out, original)?;
+            continue;
+        }
+        out.write_all(&n.to_le_bytes())?;
+        if io::copy(&mut f, &mut out)? != n {
+            return Err(bad(format!(
+                "file changed while packaging: {}",
+                src.display()
+            )));
+        }
+    }
+    out.flush()?;
+    drop(out);
+    Ok(net)
+}
+
+pub fn build(artifacts: &Path, output: &Path, program: &Path, opts: &[PathBuf]) -> io::Result<()> {
+    let kernel = artifacts.join("kernel/kernel-boot.elf");
+    let efi = artifacts.join("boot/BOOTAA64.EFI");
+    let license = artifacts.join("boot/LIMINE-LICENSE");
     build_image(output, |image| {
         let stage = image.with_extension("app-stage");
         fs::create_dir(&stage)?;
         let result = (|| {
-            if resolver_requested && !pkg.files.contains_key("/etc/resolv.conf") {
-                let resolv = stage.join("resolv.conf");
-                fs::write(&resolv, format!("nameserver {}\n", net[3]))?;
-                pkg.file(&resolv, "/etc/resolv.conf")?;
-            }
             let bundle = stage.join("payload");
-            let mut out = BufWriter::new(File::create(&bundle)?);
-            out.write_all(b"SPOREAP1")?;
-            for count in [argv.len(), env.len(), pkg.files.len() + pkg.dirs.len()] {
-                out.write_all(
-                    &u32::try_from(count)
-                        .map_err(|_| bad("too many entries"))?
-                        .to_le_bytes(),
-                )?;
-            }
-            for ip in net {
-                out.write_all(&ip.octets())?;
-            }
-            for s in [&exe, &cwd].into_iter().chain(&argv).chain(&env) {
-                string(&mut out, s)?;
-            }
-            for d in &pkg.dirs {
-                string(&mut out, d)?;
-                out.write_all(&u64::MAX.to_le_bytes())?;
-            }
-            let mut stored = BTreeMap::new();
-            for (path, src) in &pkg.files {
-                let mut f = File::open(src)?;
-                let n = f.metadata()?.len();
-                string(&mut out, path)?;
-                if let Some(original) = stored.insert(src, path) {
-                    out.write_all(&(u64::MAX - 1).to_le_bytes())?;
-                    string(&mut out, original)?;
-                    continue;
-                }
-                out.write_all(&n.to_le_bytes())?;
-                if io::copy(&mut f, &mut out)? != n {
-                    return Err(bad(format!(
-                        "file changed while packaging: {}",
-                        src.display()
-                    )));
-                }
-            }
-            out.flush()?;
-            drop(out);
+            let net = payload(program, opts, &stage, &bundle)?;
             let config = stage.join("limine.conf");
             fs::write(
                 &config,

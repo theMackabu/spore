@@ -83,3 +83,9 @@ kernel_boot_elf = custom_target('boot-kernel',
   output: 'kernel-boot.elf',
   build_by_default: true,
   command: [find_program('llvm-objcopy', 'llvm-objcopy-21'), '--strip-debug', '@INPUT@', '@OUTPUT@'])
+
+direct_kernel = custom_target('direct-kernel',
+  input: kernel_elf,
+  output: 'spore.bin',
+  build_by_default: true,
+  command: [find_program('llvm-objcopy', 'llvm-objcopy-21'), '-O', 'binary', '@INPUT@', '@OUTPUT@'])

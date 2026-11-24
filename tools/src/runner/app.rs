@@ -38,7 +38,7 @@ fn relay_console(serial: ChildStdout) -> io::Result<()> {
     let mut serial = BufReader::new(serial);
     let mut line = Vec::new();
     let mut diagnostic = Vec::new();
-    let marker = b"[kernel] Limine handoff at EL1,";
+    let marker = b" handoff at EL1,";
     loop {
         line.clear();
         if serial.read_until(b'\n', &mut line)? == 0 {

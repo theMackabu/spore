@@ -12,15 +12,14 @@
 #include "proc/accounting.h"
 #include "proc/bootstrap.h"
 
-void kernel_main(void) {
-  const struct spore_boot_info *boot = limine_boot_info();
+void kernel_main(const struct spore_boot_info *boot) {
   if (boot == NULL || aarch64_current_el() != 1) { aarch64_halt(); }
   struct boot_profile profile = {0};
   boot_select_profile(boot, &profile);
   pmm_init(boot->hhdm_offset, boot->memmap, boot->memmap_count);
   smp_init_topology(boot->mp);
   aarch64_map_devices(boot->hhdm_offset);
-  klog_init_console(boot->hhdm_offset, smp_present_cpu_count());
+  klog_init_console(boot->hhdm_offset, smp_present_cpu_count(), boot->mp ? "Limine" : "QEMU");
 
   syscall_set_boot_time(boot->realtime_epoch_sec);
   cell_set_boot_epoch(boot->realtime_epoch_sec);

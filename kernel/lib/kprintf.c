@@ -113,9 +113,9 @@ void kprintf(const char *fmt, ...) {
   va_end(ap);
 }
 
-void klog_init_console(uint64_t hhdm_offset, unsigned cpus) {
+void klog_init_console(uint64_t hhdm_offset, unsigned cpus, const char *loader) {
   pl011_init(hhdm_offset);
-  kprintf("[kernel] Limine handoff at EL1, %u CPU(s)\n", cpus);
+  kprintf("[kernel] %s handoff at EL1, %u CPU(s)\n", loader, cpus);
   kernel_log_handoff = true;
   (void)virtio_console_init(hhdm_offset);
 }

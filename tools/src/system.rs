@@ -159,6 +159,14 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                     .arg(build),
             );
         }
+        (false, Some("stress")) => {
+            compile(build, Path::new("check-stress"))?;
+            return Ok(0);
+        }
+        (true, Some("startup")) => {
+            compile(build, Path::new("measure-startup"))?;
+            return Ok(0);
+        }
         (_, Some("appliance")) => {
             let target = if bench {
                 "measure-appliance"

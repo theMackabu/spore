@@ -21,8 +21,8 @@ Usage:
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
-  spore test [host|guest|shell|appliance|rng]
-  spore bench [guest|inodes|appliance]
+  spore test [host|guest|shell|appliance|rng|stress]
+  spore bench [guest|inodes|appliance|startup]
 
 Image options:
   --exec PATH        Guest executable path (default /app/server)
@@ -93,6 +93,7 @@ fn qemu_default() -> OsString {
 fn vm_config(mode: &str) -> runner::qemu::Config {
     runner::qemu::Config {
         mode: mode.into(),
+        direct: None,
         image: OsString::new(),
         root: None,
         vars: None,
@@ -294,8 +295,23 @@ fn execute() -> io::Result<i32> {
         } else {
             tmp.0.join("app.img")
         };
-        let result = system::program(artifacts, &input)
-            .and_then(|program| image::app::build(artifacts, &image, &program, &pack));
+        let kernel = artifacts.join("kernel/spore.bin");
+        let result = system::program(artifacts, &input).and_then(|program| {
+            if !build
+                && kernel.is_file()
+                && let Some(ram) = runner::qemu::DirectBoot::memory(&vm)
+            {
+                let network = image::app::payload(&program, &pack, &tmp.0, &image)?;
+                vm.direct = Some(runner::qemu::DirectBoot {
+                    kernel,
+                    ram,
+                    network,
+                });
+                Ok(())
+            } else {
+                image::app::build(artifacts, &image, &program, &pack)
+            }
+        });
         if let Err(e) = result {
             eprintln!("spore: {e}");
             return Ok(1);
@@ -307,8 +323,10 @@ fn execute() -> io::Result<i32> {
     }
     vm.image = image.into_os_string();
     vm.control = Some(tmp.0.join("control").into_os_string());
-    vm.vars
-        .get_or_insert_with(|| tmp.0.join("vars.fd").into_os_string());
+    if vm.direct.is_none() {
+        vm.vars
+            .get_or_insert_with(|| tmp.0.join("vars.fd").into_os_string());
+    }
     runner::qemu::run(vm)
 }
 

@@ -155,6 +155,11 @@ test('page-cache', test_page_cache)
 foreach suite : ['check-appliance', 'measure-appliance']
   run_target(suite,
     command: [python, files('appliance/check.py'), suite == 'measure-appliance' ? ['--sweep'] : []],
-    depends: [spore_cli, kernel_boot_elf, boot_efi, ant_prebuilt],
+    depends: [spore_cli, kernel_boot_elf, direct_kernel, boot_efi, ant_prebuilt],
     env: {'BUILD_DIR': meson.project_build_root()})
 endforeach
+
+run_target('check-stress', command: [python, files('appliance/stress.py')],
+  depends: [spore_cli, direct_kernel], env: {'BUILD_DIR': meson.project_build_root()})
+run_target('measure-startup', command: [python, files('appliance/startup.py')],
+  depends: [spore_cli, direct_kernel, ant_prebuilt], env: {'BUILD_DIR': meson.project_build_root()})

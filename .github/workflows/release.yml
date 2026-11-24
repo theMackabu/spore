@@ -308,7 +308,7 @@ jobs:
           cp build/test_image.img "dist/spore-$version-test-image.img"
           cp build/test_root.ext2 "dist/spore-$version-test-root.ext2"
           tar -C build -czf "dist/spore-$version-cli-linux-x86_64.tar.gz" \
-            spore kernel/kernel-boot.elf boot/BOOTAA64.EFI boot/LIMINE-LICENSE
+            spore kernel/kernel-boot.elf kernel/spore.bin boot/BOOTAA64.EFI boot/LIMINE-LICENSE
           (cd dist && sha256sum * > SHA256SUMS)
 
       - name: Create tag and GitHub release

@@ -32,7 +32,7 @@ spore_cli = executable('spore', 'tools/src/spore.rs',
   rust_args: get_option('userland') ? ['--cfg', 'spore_userland'] : [],
   link_with: runner_terminal,
   install: false)
-alias_target('cli', spore_cli, kernel_boot_elf, boot_efi)
+alias_target('cli', spore_cli, kernel_boot_elf, direct_kernel, boot_efi)
 if get_option('userland')
   fs = import('fs')
   foreach variant : [
