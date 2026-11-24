@@ -93,6 +93,30 @@ static int sync_file_aliases(void) {
   return ok;
 }
 
+static int read_across_dirty_mapping(void) {
+  constexpr size_t page = 4096;
+  constexpr size_t len = 28 * page + 17;
+  int fd = open("/mixed-cache-read", O_CREAT | O_RDWR | O_TRUNC, 0600);
+  if (fd < 0) { return 0; }
+  unsigned char *data = malloc(len + 1);
+  int ok = data && ftruncate(fd, len) == 0 && pwrite(fd, "X", 1, len - 1) == 1;
+  unsigned char *middle = ok ? mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 16 * page) : MAP_FAILED;
+  if (middle != MAP_FAILED) {
+    memset(middle, 'M', page);
+    memset(data, 0xcc, len + 1);
+    ok = pread(fd, data, len + 1, 0) == len && data[len] == 0xcc;
+    for (size_t i = 0; ok && i < len; ++i) {
+      unsigned char expected = i == len - 1 ? 'X' : i >= 16 * page && i < 17 * page ? 'M' : 0;
+      ok = data[i] == expected;
+    }
+    munmap(middle, page);
+  } else { ok = 0; }
+  free(data);
+  close(fd);
+  unlink("/mixed-cache-read");
+  return ok;
+}
+
 static int shared_mmap_regression(void) {
   int fd = open("/tmp/shared-mmap", O_CREAT | O_RDWR | O_TRUNC, 0666);
   int ok = fd >= 0;
@@ -412,6 +436,7 @@ static int mmap_noreserve_regression(void) {
 }
 
 int integration_memory_suite(void) {
+  if (!read_across_dirty_mapping()) { return 0; }
   return sync_file_aliases() && sparse_shared_file("/spore-sparse") && sparse_shared_file("/tmp/spore-sparse") && shared_mmap_regression() && shared_anon_mmap_fork_regression() && shm_open_path_mmap_regression() &&
          memfd_shared_mmap_regression() && memfd_seals_regression() && growdown_mmap_regression() &&
          file_mapping_access() && mmap_fixed_noreplace_regression() && mmap_noreserve_regression() && mapping_ranges() && grow_file_mapping() && mmap_past_reservation(false) &&

@@ -117,66 +117,109 @@ static bool evict_page(void) {
   return false;
 }
 
-static struct vfs_page_cache_entry *page_cache_load(const struct vfs_node *node, uint64_t off, bool *hit) {
-  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
-  if (hit) { *hit = entry != NULL; }
-  if (entry) { return entry; }
+static struct vfs_page_cache_entry *allocate_entry(void) {
   if (!entries.limit) { return NULL; }
-  ++vfs_stat_counters.page_cache_loads;
+  struct vfs_page_cache_entry *entry;
   while (!(entry = pool_alloc(&entries))) {
     if (!evict_page()) { return NULL; }
   }
-  uint64_t pa;
-  while (!(pa = pmm_alloc_zero_page())) {
+  while (!(entry->mapped.pa = pmm_alloc_page())) {
     if (!evict_page()) {
       pool_free(&entries, entry);
       return NULL;
     }
   }
-  uint64_t len = off < node->size ? node->size - off : 0;
-  if (len > PAGE_SIZE) { len = PAGE_SIZE; }
-  if (len && vfs_read_uncached(node, off, pmm_phys_to_virt(pa), len) != len) {
-    pmm_free_page(pa);
-    pool_free(&entries, entry);
-    return NULL;
-  }
+  return entry;
+}
+
+static void publish_entry(struct vfs_page_cache_entry *entry, const struct vfs_node *node, uint64_t off) {
   entry->ino = node->ino;
   entry->dev_id = node->dev_id;
   entry->backend = node->backend;
   if (node->backend == VFS_RAMFS) { entry->ramfs_index = node->ramfs.index; }
   entry->off = off;
-  entry->mapped.pa = pa;
   link_entry(entry);
+}
+
+static struct vfs_page_cache_entry *load_page(const struct vfs_node *node, uint64_t off) {
+  struct vfs_page_cache_entry *entry = allocate_entry();
+  if (!entry) { return NULL; }
+  uint8_t *data = pmm_phys_to_virt(entry->mapped.pa);
+  uint64_t len = off < node->size ? node->size - off : 0;
+  if (len > PAGE_SIZE) { len = PAGE_SIZE; }
+  ++vfs_stat_counters.page_cache_loads;
+  if (len && vfs_read_uncached(node, off, data, len) != len) {
+    pmm_free_page(entry->mapped.pa);
+    pool_free(&entries, entry);
+    return NULL;
+  }
+  if (len < PAGE_SIZE) { kmemset(data + len, 0, PAGE_SIZE - len); }
+  publish_entry(entry, node, off);
   return entry;
 }
 
-static struct vfs_page_cache_entry *page_cache_demand(const struct vfs_node *node, uint64_t off) {
-  bool hit = false;
-  struct vfs_page_cache_entry *entry = page_cache_load(node, off, &hit);
-  if (hit) {
+static struct vfs_page_cache_entry *cached_page(const struct vfs_node *node, uint64_t off) {
+  struct vfs_page_cache_entry *entry = page_cache_find(node, off);
+  if (entry) {
     ++vfs_stat_counters.page_cache_hits;
-  } else {
-    ++vfs_stat_counters.page_cache_misses;
+    return entry;
   }
-  return entry;
+  ++vfs_stat_counters.page_cache_misses;
+  return NULL;
 }
 
 static void page_cache_readahead(const struct vfs_node *node, uint64_t off) {
   for (uint64_t i = 1; i <= VFS_READAHEAD_PAGES; ++i) {
     uint64_t ahead = off + i * PAGE_SIZE;
     if (ahead >= node->size) { break; }
-    (void)page_cache_load(node, ahead, NULL);
+    if (!page_cache_find(node, ahead) && !load_page(node, ahead)) { break; }
   }
 }
 
 bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out) {
   if (pa_out == NULL || !vfs_node_cacheable(node)) { return false; }
   off &= ~(uint64_t)(PAGE_SIZE - 1);
-  struct vfs_page_cache_entry *entry = page_cache_demand(node, off);
+  struct vfs_page_cache_entry *entry = cached_page(node, off);
+  bool miss = !entry;
+  if (miss) { entry = load_page(node, off); }
   if (entry == NULL || entry->mapped.pa == 0 || !pmm_share_page(entry->mapped.pa)) { return false; }
   *pa_out = entry->mapped.pa;
-  page_cache_readahead(node, off);
+  if (miss) { page_cache_readahead(node, off); }
   return true;
+}
+
+static size_t read_full_pages(const struct vfs_node *node, uint64_t off, uint8_t *dst, uint64_t len) {
+  constexpr size_t MAX_PAGES = 32;
+  size_t pages = 1;
+  while (pages < MAX_PAGES && pages < len / PAGE_SIZE && !page_cache_find(node, off + pages * PAGE_SIZE)) { ++pages; }
+  if (pages < 2) { return 0; }
+  struct vfs_page_cache_entry *batch[MAX_PAGES];
+  size_t count = 0;
+  while (count < pages) {
+    struct vfs_page_cache_entry *entry = allocate_entry();
+    if (!entry) { break; }
+    batch[count++] = entry;
+  }
+  size_t done = 0;
+  while (done < count) {
+    size_t end = done + 1;
+    while (end < count && batch[end]->mapped.pa == batch[end - 1]->mapped.pa + PAGE_SIZE) { ++end; }
+    size_t pos = done * PAGE_SIZE, bytes = (end - done) * PAGE_SIZE;
+    uint8_t *data = pmm_phys_to_virt(batch[done]->mapped.pa);
+    if (vfs_read_uncached(node, off + pos, data, bytes) != bytes) { break; }
+    kmemcpy(dst + pos, data, bytes);
+    while (done < end) {
+      publish_entry(batch[done], node, off + done * PAGE_SIZE);
+      ++done;
+    }
+  }
+  for (size_t i = done; i < count; ++i) {
+    pmm_free_page(batch[i]->mapped.pa);
+    pool_free(&entries, batch[i]);
+  }
+  vfs_stat_counters.page_cache_loads += done;
+  if (done) { vfs_stat_counters.page_cache_misses += done - 1; }
+  return done * PAGE_SIZE;
 }
 
 uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {
@@ -185,13 +228,19 @@ uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, u
   while (done < len) {
     uint64_t page_off = (off + done) & ~(uint64_t)(PAGE_SIZE - 1);
     uint64_t in_page = (off + done) - page_off;
-    struct vfs_page_cache_entry *entry = page_cache_demand(node, page_off);
+    struct vfs_page_cache_entry *entry = cached_page(node, page_off);
+    if (!entry) {
+      if (node->backend == VFS_EXT2 && !in_page && len - done >= 2 * PAGE_SIZE) {
+        size_t bytes = read_full_pages(node, page_off, out + done, len - done);
+        if (bytes) { done += bytes; continue; }
+      }
+      entry = load_page(node, page_off);
+    }
     if (entry == NULL) { return done + vfs_read_uncached(node, off + done, out + done, len - done); }
     uint64_t chunk = PAGE_SIZE - in_page;
     if (chunk > len - done) { chunk = len - done; }
     kmemcpy(out + done, (const uint8_t *)pmm_phys_to_virt(entry->mapped.pa) + in_page, chunk);
     done += chunk;
-    page_cache_readahead(node, page_off);
   }
   return done;
 }
