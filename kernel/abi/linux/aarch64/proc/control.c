@@ -2,6 +2,7 @@
 #include "handlers.h"
 #include "arch/aarch64/smp.h"
 #include "proc/domain.h"
+#include "proc/thread.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 
@@ -14,6 +15,7 @@ enum {
   PR_GET_NO_NEW_PRIVS = 39,
   PR_SET_VMA = 0x53564d41,
   PR_SET_VMA_ANON_NAME = 0,
+  ESRCH = 3,
   EFAULT = 14,
   EINVAL = 22,
 };
@@ -63,6 +65,21 @@ int64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, 
             cell_current_name());
     return -(int64_t)EINVAL;
   }
+}
+
+int64_t sys_sched_getscheduler(int tid) {
+  if (tid < 0) { return -EINVAL; }
+  if (tid && !cell_find_thread(tid)) { return -ESRCH; }
+  return 0;
+}
+
+int64_t sys_sched_getparam(int tid, uint64_t param) {
+  if (!param) { return -EINVAL; }
+  int64_t policy = sys_sched_getscheduler(tid);
+  if (policy < 0) { return policy; }
+  int32_t priority = 0;
+  return syscall_user_writable(param, sizeof(priority)) &&
+         vmm_copy_to_user(syscall_active_as(), param, &priority, sizeof(priority)) ? 0 : -EFAULT;
 }
 
 int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len) {

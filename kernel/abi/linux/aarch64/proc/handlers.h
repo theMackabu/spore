@@ -11,6 +11,8 @@ int64_t sys_setgroups(uint64_t count, uint64_t list);
 int64_t sys_getrusage(int who, uint64_t usage_addr);
 int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, uint64_t old_limit);
 int64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5);
+int64_t sys_sched_getscheduler(int tid);
+int64_t sys_sched_getparam(int tid, uint64_t param);
 int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len);
 int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr);
 int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t sigset_size);

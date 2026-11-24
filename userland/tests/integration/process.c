@@ -440,6 +440,9 @@ static int pthread_demo_counter;
 
 static void *phase_c_pthread_worker(void *arg) {
   long slot = (long)arg;
+  int policy = -1;
+  struct sched_param param = {.sched_priority = -1};
+  if (pthread_getschedparam(pthread_self(), &policy, &param) || policy != SCHED_OTHER || param.sched_priority != 0) { return NULL; }
   for (int i = 0; i < 1000; ++i) {
     pthread_mutex_lock(&pthread_demo_lock);
     ++pthread_demo_counter;

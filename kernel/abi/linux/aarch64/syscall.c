@@ -117,6 +117,8 @@ static int64_t dispatch(struct trap_frame *f) {
     [SYS_CLOCK_GETTIME] = &&l_clock_gettime,
     [SYS_CLOCK_GETRES] = &&l_clock_getres,
     [SYS_CLOCK_NANOSLEEP] = &&l_clock_nanosleep,
+    [SYS_SCHED_GETSCHEDULER] = &&l_sched_getscheduler,
+    [SYS_SCHED_GETPARAM] = &&l_sched_getparam,
     [SYS_SCHED_GETAFFINITY] = &&l_sched_getaffinity,
     [SYS_SCHED_YIELD] = &&l_sched_yield,
     [SYS_KILL] = &&l_kill,
@@ -505,6 +507,10 @@ l_chroot:
   return sys_chroot(a0);
 l_set_robust_list:
   return cell_set_robust_list_current(a0);
+l_sched_getscheduler:
+  return sys_sched_getscheduler((int)a0);
+l_sched_getparam:
+  return sys_sched_getparam((int)a0, a1);
 l_sched_getaffinity:
   return sys_sched_getaffinity(a2, a1);
 l_set_tid_address:
