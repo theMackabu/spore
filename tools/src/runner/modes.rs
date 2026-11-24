@@ -207,6 +207,10 @@ impl ShellCheck {
         }
         Ok(true)
     }
+    pub fn completed(&self) -> bool {
+        self.sent == COMMANDS.len()
+    }
+
     pub fn idle(&mut self, input: &mut impl Write, buf: &mut SerialWindow) -> io::Result<()> {
         if matches!(self.script, Script::AntFirst | Script::AntSecond)
             && contains(buf.bytes(), "❯".as_bytes())

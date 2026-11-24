@@ -2,7 +2,7 @@ use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, UdpSocket};
 use std::thread;
 
-pub fn start_udp() -> io::Result<()> {
+fn start_udp() -> io::Result<()> {
     let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 5555))?;
     thread::Builder::new()
         .name("udp-echo".into())
@@ -17,7 +17,7 @@ pub fn start_udp() -> io::Result<()> {
     Ok(())
 }
 
-pub fn start_http() -> io::Result<()> {
+fn start_http() -> io::Result<()> {
     const RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n\r\nhello from host http\n";
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 8080))?;
     thread::Builder::new()
@@ -29,5 +29,22 @@ pub fn start_http() -> io::Result<()> {
                 let _ = client.write_all(RESPONSE);
             }
         })?;
+    Ok(())
+}
+
+pub fn start(mode: &str) -> io::Result<()> {
+    if matches!(mode, "integration" | "shell") {
+        start_udp()
+            .map_err(|e| io::Error::new(e.kind(), format!("UDP fixture on 127.0.0.1:5555: {e}")))?;
+    }
+    if matches!(mode, "shell" | "bench") {
+        start_http().map_err(|e| {
+            io::Error::new(e.kind(), format!("HTTP fixture on 127.0.0.1:8080: {e}"))
+        })?;
+    }
+    if matches!(mode, "plain" | "filter") {
+        let _ = start_udp();
+        let _ = start_http();
+    }
     Ok(())
 }

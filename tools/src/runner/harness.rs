@@ -120,8 +120,7 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
     } else {
         None
     };
-    let _ = fixtures::start_udp();
-    let _ = fixtures::start_http();
+    fixtures::start(mode)?;
     let mut check = modes::ShellCheck::new();
     let mut bench = modes::Bench::default();
     let mut rng = modes::Rng::default();
@@ -270,6 +269,10 @@ fn run_inner(argv: &[OsString], mode: &str, mut timings: bool) -> io::Result<i32
                 return Ok(1);
             }
         }
+    }
+    if code == 0 && shell && !check.completed() {
+        eprintln!("spore-run: guest exited before the shell check reached shutdown");
+        return Ok(1);
     }
     Ok(code)
 }
