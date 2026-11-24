@@ -16,13 +16,10 @@ case "$out" in
 esac
 
 musl_cc=$(command -v aarch64-unknown-linux-musl-gcc)
-musl_ar=$(command -v aarch64-unknown-linux-musl-ar)
 musl_strip=$(command -v aarch64-unknown-linux-musl-strip)
 apk_src="$root/userland/third_party/apk-tools"
 apk_work="$build/apk-tools-src"
-apk_build="$build/apk-tools-build"
 sdk="$project_build/userland/prebuilt/apk-sdk"
-cross="$build/apk-cross.ini"
 stamp="$build/.apk.stamp"
 stamp_new="$build/.apk.stamp.new"
 
@@ -40,8 +37,8 @@ if [ -f "$out" ] && [ -f "$stamp" ] && cmp -s "$stamp_new" "$stamp"; then
   exit 0
 fi
 
-rm -rf "$apk_work" "$apk_build"
-mkdir -p "$apk_work" "$apk_build"
+rm -rf "$apk_work"
+mkdir -p "$apk_work"
 git -C "$apk_src" archive --format=tar HEAD | tar -x -C "$apk_work"
 
 for patch_file in "$root"/userland/usr/local/bin/apk/patches/*.patch; do
@@ -49,43 +46,14 @@ for patch_file in "$root"/userland/usr/local/bin/apk/patches/*.patch; do
   (cd "$apk_work" && patch -p1 < "$patch_file" >/dev/null)
 done
 
-cat >"$cross" <<EOF
-[binaries]
-c = '$musl_cc'
-ar = '$musl_ar'
-strip = '$musl_strip'
-pkg-config = 'pkg-config'
-
-[host_machine]
-system = 'linux'
-cpu_family = 'aarch64'
-cpu = 'aarch64'
-endian = 'little'
-
-[properties]
-needs_exe_wrapper = true
-EOF
-
-env PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1 PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$sdk/usr/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$sdk" \
-  meson setup "$apk_build" "$apk_work" \
-    --cross-file "$cross" \
-    --prefix=/usr \
-    --sysconfdir=/etc \
-    --libdir=lib \
-    --default-library=static \
-    --prefer-static \
-    -Dc_link_args=-static \
-    -Dcrypto_backend=mbedtls \
-    -Durl_backend=wget \
-    -Dminimal=true \
-    -Darch=aarch64 \
-    -Dzstd=disabled \
-    -Ddocs=disabled \
-    -Dhelp=disabled \
-    -Dlua=disabled \
-    -Dpython=disabled \
-    -Dtests=disabled \
-    >/dev/null
-meson compile -C "$apk_build" ./src/apk:executable
-aarch64-unknown-linux-musl-strip -o "$out" "$apk_build/src/apk"
+export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1 PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
+export PKG_CONFIG_LIBDIR="$sdk/usr/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$sdk" PKG_CONFIG_PATH=
+export CFLAGS_ALL="-std=gnu11 -O2 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -I\"$sdk/usr/include\""
+export LDFLAGS_ALL="-L\"$sdk/usr/lib\""
+make -C "$apk_work" -f Make.rules -j"${NUM_JOBS:-4}" build=src src/apk.static \
+  CC="$musl_cc" AR=aarch64-unknown-linux-musl-ar PKG_CONFIG=pkg-config \
+  STATIC=y CRYPTO=mbedtls URL_BACKEND=wget ZSTD=no LUA=no \
+  SED=sed LN='ln -sf' VERSION="$(cat "$apk_work/VERSION")" SO_VERSION="$(cat "$apk_work/SOVERSION")" \
+  LIBS_apk.static='-ldl'
+"$musl_strip" -o "$out" "$apk_work/src/apk.static"
 mv "$stamp_new" "$stamp"

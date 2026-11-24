@@ -51,9 +51,9 @@ Implemented safe wins:
 
 Current verification:
 
-- `meson test -C build --print-errorlogs`
-- `./build/spore test guest`
-- `./build/spore test shell`
+- `cargo test --release`
+- `./target/release/spore test guest`
+- `./target/release/spore test shell`
 
 ## Exec and ELF Loading
 

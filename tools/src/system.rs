@@ -3,10 +3,9 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs, io,
-    os::fd::AsFd,
     os::unix::process::ExitStatusExt,
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 fn status(command: &mut Command) -> io::Result<i32> {
@@ -21,58 +20,78 @@ fn status(command: &mut Command) -> io::Result<i32> {
         .unwrap_or_else(|| 128 + result.signal().unwrap_or(0)))
 }
 
-pub fn compile(build: &Path, target: &Path) -> io::Result<()> {
-    let code = status(
-        Command::new(env::var_os("NINJA").unwrap_or_else(|| "ninja".into()))
-            .arg("-C")
-            .arg(build)
-            .arg(target)
-            .stdout(Stdio::from(io::stderr().as_fd().try_clone_to_owned()?)),
-    )?;
-    if code != 0 {
-        return Err(io::Error::other(format!(
-            "building {} failed ({code})",
-            target.display()
-        )));
+fn cargo(action: &str, build: &Path) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args([action, "--locked", "--target-dir"])
+        .arg(build.parent().unwrap());
+    if build.ends_with("release") {
+        cmd.arg("--release");
     }
-    Ok(())
+    cmd
 }
 
-pub fn enable_userland(build: &Path) -> io::Result<()> {
-    if !cfg!(spore_userland) {
-        let code = status(
-            Command::new(env::var_os("MESON").unwrap_or_else(|| "meson".into()))
-                .args(["configure", "-Duserland=true"])
-                .arg(build),
-        )?;
-        if code != 0 {
-            return Err(io::Error::other("could not enable userland"));
+pub fn build_project(build: &Path, full: bool, tests: bool) -> io::Result<i32> {
+    if tests && !full {
+        userland()?;
+    }
+    if full || tests {
+        let mut cmd = cargo("run", build);
+        cmd.args(["--features", "userland", "--", "_image"]);
+        if tests {
+            cmd.arg("tests");
         }
+        return status(&mut cmd);
     }
-    Ok(())
+    let mut cmd = cargo("build", build);
+    if cfg!(feature = "userland") {
+        cmd.args(["--features", "userland"]);
+    }
+    status(&mut cmd)
 }
 
-pub fn require_userland() -> io::Result<()> {
-    if cfg!(spore_userland) {
-        Ok(())
-    } else {
+pub fn userland() -> io::Result<&'static Path> {
+    #[cfg(feature = "userland")]
+    {
+        Ok(Path::new(spore_userland::ARTIFACTS))
+    }
+    #[cfg(not(feature = "userland"))]
+    {
         Err(io::Error::other(
-            "full-system support is disabled; run spore build --userland first",
+            "enable full userland with spore build --userland",
         ))
     }
 }
 
-pub fn program(build: &Path, name: &OsStr) -> io::Result<PathBuf> {
+pub fn program(name: &OsStr) -> io::Result<PathBuf> {
     let path = Path::new(name);
     if path.is_file() {
         return Ok(path.into());
     }
-    if matches!(path.components().next(), Some(Component::Normal(part)) if part == name)
-        && build.join("build.ninja").is_file()
-    {
-        let target = Path::new("userland/prebuilt").join(name);
-        compile(build, &target)?;
-        return Ok(build.join(target));
+    if matches!(path.components().next(), Some(Component::Normal(part)) if part == name) {
+        for package in spore_packages::catalog().packages {
+            if let Some(member) = package.files.iter().find(|p| p.file_name() == Some(name)) {
+                let cache = env::var_os("XDG_CACHE_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| env::var_os("HOME").map(|p| PathBuf::from(p).join(".cache")))
+                    .ok_or_else(|| io::Error::other("package cache needs HOME or XDG_CACHE_HOME"))?
+                    .join("spore");
+                let dest = cache.join("bin").join(&package.archive.sha256);
+                let exe = dest.join(name);
+                if !exe.is_file() {
+                    let local = Path::new(env!("CARGO_MANIFEST_DIR")).join(".cache/packages");
+                    let archives = if local.join(&package.archive.sha256).is_file() {
+                        local
+                    } else {
+                        cache.join("packages")
+                    };
+                    package
+                        .archive
+                        .extract(&archives, &dest, std::slice::from_ref(member))?;
+                }
+                return Ok(exe);
+            }
+        }
     }
     Err(io::Error::other(format!(
         "executable not found: {}",
@@ -109,6 +128,7 @@ pub fn boot(
     image: Option<OsString>,
     reset: bool,
 ) -> io::Result<i32> {
+    let image_supplied = image.is_some();
     if reset && (vm.snap || vm.root.is_some() || image.is_some()) {
         return Err(io::Error::other(
             "--reset applies to the default persistent root disk",
@@ -117,13 +137,15 @@ pub fn boot(
     if let Some(image) = image {
         vm.image = image;
     } else {
-        require_userland()?;
+        userland()?;
         let (image, root) = if vm.mode == "integration" {
             ("test_image.img", "test_root.ext2")
         } else {
             ("image.img", "root.ext2")
         };
-        compile(build, Path::new(image))?;
+        if !build.join(image).is_file() || !build.join(root).is_file() {
+            crate::image::system_image(build, vm.mode == "integration")?;
+        }
         vm.image = build.join(image).into();
         let base = build.join(root);
         if vm.snap {
@@ -138,7 +160,7 @@ pub fn boot(
     let tmp = Workspace::new()?;
     if vm.vars.is_none() {
         vm.vars = Some(
-            if vm.snap || !build.join("build.ninja").is_file() {
+            if vm.snap || image_supplied {
                 tmp.0.join("vars.fd")
             } else {
                 build.join("edk2-vars.fd")
@@ -152,34 +174,37 @@ pub fn boot(
 pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32> {
     let suite = suite.unwrap_or(OsStr::new(if bench { "guest" } else { "host" }));
     let mode = match (bench, suite.to_str()) {
-        (false, Some("host")) => {
-            return status(
-                Command::new(env::var_os("MESON").unwrap_or_else(|| "meson".into()))
-                    .args(["test", "--print-errorlogs", "-C"])
-                    .arg(build),
-            );
+        (false, Some("host")) | (true, Some("inodes")) => {
+            let mut cmd = cargo("test", build);
+            cmd.args(["--test", "host"]);
+            if cfg!(feature = "userland") {
+                cmd.args(["--features", "userland"]);
+            }
+            if bench {
+                cmd.args(["bench_inodes", "--", "--ignored", "--nocapture"]);
+            }
+            if build.join("root.ext2").is_file() {
+                cmd.env("SPORE_TEST_ROOT", build.join("root.ext2"));
+            }
+            return status(&mut cmd);
         }
-        (false, Some("stress")) => {
-            compile(build, Path::new("check-stress"))?;
-            return Ok(0);
-        }
-        (true, Some("startup")) => {
-            compile(build, Path::new("measure-startup"))?;
-            return Ok(0);
-        }
-        (_, Some("appliance")) => {
-            let target = if bench {
-                "measure-appliance"
-            } else {
-                "check-appliance"
+        (false, Some("stress")) | (true, Some("startup")) | (_, Some("appliance")) => {
+            let script = match suite.to_str() {
+                Some("stress") => "stress.py",
+                Some("startup") => "startup.py",
+                _ => "check.py",
             };
-            compile(build, Path::new(target))?;
-            return Ok(0);
-        }
-        (true, Some("inodes")) => {
-            let exe = Path::new("tests/bench_ext2_inodes");
-            compile(build, exe)?;
-            return status(&mut Command::new(build.join(exe)));
+            let mut cmd = Command::new("python3");
+            cmd.arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/appliance")
+                    .join(script),
+            )
+            .env("BUILD_DIR", build);
+            if bench && suite == "appliance" {
+                cmd.arg("--sweep");
+            }
+            return status(&mut cmd);
         }
         (true, Some("guest")) => "bench",
         (false, Some("guest")) => "integration",
@@ -191,6 +216,11 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
             )));
         }
     };
+    userland()?;
+    let code = build_project(build, true, mode == "integration")?;
+    if code != 0 {
+        return Ok(code);
+    }
     let mut vm = crate::vm_config(mode);
     vm.snap = true;
     boot(build, vm, None, false)

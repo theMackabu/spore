@@ -5,7 +5,6 @@
 #include "proc/domain.h"
 #include "proc/info.h"
 #include "proc/accounting.h"
-#include "spore_version.h"
 
 enum { EPERM = 1, EFAULT = 14, EINVAL = 22 };
 
@@ -43,20 +42,18 @@ static void uts_copy(char dst[65], const char *src) {
   dst[i] = '\0';
 }
 
-static char kernel_hostname[65] = SPORE_UTS_NODENAME;
+static char kernel_hostname[65] = "spore.local";
 
 int64_t sys_uname(uint64_t buf) {
   struct utsname64 u;
   kmemset(&u, 0, sizeof(u));
-  uts_copy(u.sysname, SPORE_UTS_SYSNAME);
+  uts_copy(u.sysname, "Spore");
   uts_copy(u.nodename, kernel_hostname);
-  uts_copy(u.release, SPORE_UTS_RELEASE);
-  uts_copy(u.version, SPORE_UTS_VERSION);
-  uts_copy(u.machine, SPORE_UTS_MACHINE);
-  uts_copy(u.domainname, SPORE_UTS_DOMAINNAME);
-  return syscall_user_writable(buf, sizeof(u)) && vmm_copy_to_user(syscall_active_as(), buf, &u, sizeof(u))
-           ? 0
-           : -(int64_t)EFAULT;
+  uts_copy(u.release, SPORE_VERSION);
+  uts_copy(u.version, "Spore Kernel Version " SPORE_VERSION ": " __DATE__ ";");
+  uts_copy(u.machine, "aarch64");
+  uts_copy(u.domainname, "Spore");
+  return syscall_user_writable(buf, sizeof(u)) && vmm_copy_to_user(syscall_active_as(), buf, &u, sizeof(u)) ? 0 : -(int64_t)EFAULT;
 }
 
 int64_t sys_sethostname(uint64_t name_addr, uint64_t len) {

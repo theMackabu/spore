@@ -349,19 +349,19 @@ fn build_root(
     disk.seek(incompat)?;
     disk.write_all(&(u32::from_le_bytes(flags) | 0x8000_0000).to_le_bytes())
 }
-fn build_esp(
-    kernel: &Path,
-    boot: &Path,
-    config: &Path,
-    license: &Path,
-    image: &Path,
-    bundle: Option<&Path>,
-) -> io::Result<()> {
+fn build_esp(config: &Path, image: &Path, bundle: Option<&Path>) -> io::Result<()> {
+    let tmp = crate::Workspace::new()?;
+    let kernel = tmp.0.join("kernel.elf");
+    let boot = tmp.0.join("BOOTAA64.EFI");
+    let license = tmp.0.join("LICENSE");
+    fs::write(&kernel, spore_kernel::ELF)?;
+    fs::write(&boot, spore_kernel::EFI)?;
+    fs::write(&license, spore_kernel::LICENSE)?;
     let extra = bundle.map(fs::metadata).transpose()?.map_or(0, |m| m.len());
-    let payload = fs::metadata(kernel)?.len()
-        + fs::metadata(boot)?.len()
+    let payload = fs::metadata(&kernel)?.len()
+        + fs::metadata(&boot)?.len()
         + fs::metadata(config)?.len()
-        + fs::metadata(license)?.len();
+        + fs::metadata(&license)?.len();
     let mib = (payload * 2 + extra + 2 * MIB).div_ceil(MIB).max(9);
     File::create(image)?.set_len(mib * MIB)?;
     run(Command::new("mkfs.fat")
@@ -374,10 +374,10 @@ fn build_esp(
         .arg(image)
         .args(["::/EFI", "::/EFI/BOOT", "::/boot"]))?;
     for (src, dst) in [
-        (boot, "::/EFI/BOOT/BOOTAA64.EFI"),
-        (kernel, "::/boot/kernel.elf"),
+        (boot.as_path(), "::/EFI/BOOT/BOOTAA64.EFI"),
+        (kernel.as_path(), "::/boot/kernel.elf"),
         (config, "::/limine.conf"),
-        (license, "::/EFI/BOOT/LICENSE"),
+        (license.as_path(), "::/EFI/BOOT/LICENSE"),
     ] {
         run(Command::new("mcopy").arg("-i").arg(image).arg(src).arg(dst))?;
     }
@@ -390,14 +390,29 @@ fn build_esp(
     }
     Ok(())
 }
-pub fn generate(args: &[PathBuf]) -> io::Result<()> {
-    match args {
-        [mode, k, b, c, l, o] if mode == Path::new("esp") => {
-            build_image(o, |tmp| build_esp(k, b, c, l, tmp, None))
-        }
-        [mode, s, t, m, p, o] if mode == Path::new("rootfs") => {
-            build_image(o, |tmp| build_root(s, t, m, p, tmp))
-        }
-        _ => Err(io::Error::other("invalid Meson image generation arguments")),
-    }
+pub fn system_image(build: &Path, tests: bool) -> io::Result<()> {
+    let guest = crate::system::userland()?;
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let (manifest, disk, esp) = if tests {
+        (
+            "userland/tests/integration/image.manifest",
+            "test_root.ext2",
+            "test_image.img",
+        )
+    } else {
+        ("userland/image.manifest", "root.ext2", "image.img")
+    };
+    let stage = crate::Workspace::at(build)?;
+    build_image(&build.join(disk), |tmp| {
+        build_root(
+            source,
+            &stage.0.join("stage"),
+            &source.join(manifest),
+            guest,
+            tmp,
+        )
+    })?;
+    let config = stage.0.join("limine.conf");
+    fs::write(&config, include_bytes!("../../../boot/limine.conf"))?;
+    build_image(&build.join(esp), |tmp| build_esp(&config, tmp, None))
 }

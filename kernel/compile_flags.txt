@@ -1,0 +1,11 @@
+--target=aarch64-none-elf
+-std=c23
+-ffreestanding
+-fno-stack-protector
+-fno-pic
+-fno-omit-frame-pointer
+-mgeneral-regs-only
+-march=armv8-a
+-I.
+-Iinclude
+-I../.cache/limine

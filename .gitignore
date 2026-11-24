@@ -1,4 +1,4 @@
-build/
+/build/
 wasm/
 
 /.cache
@@ -11,3 +11,5 @@ wasm/
 
 .DS_Store
 __pycache__
+
+/target/

@@ -13,7 +13,7 @@ Alpine supplies sudo, shadow and PAM. `sudo mkuser NAME` creates a home and priv
 `sudo passwd NAME` sets a password, and `sudo deluser NAME` removes the account. The wrapper
 protects root. [Account defaults](../../userland/etc/login.defs) · [Account removal](../../userland/bin/deluser.sh)
 
-For additional packages inside the guest, `spm` is Spore's build of apk-tools. It uses
-curl for URL fetches and reads the configured Alpine repositories. [Package manager patches](../../userland/usr/local/bin/apk/meson.build) · [Repositories](../../userland/etc/apk/repositories)
+For additional packages inside the guest, `spm` is Spore's build of apk-tools. The static build includes upstream's package-authoring commands.
+It fetches URLs through curl and reads the configured Alpine repositories. [Package manager patches](../../userland/usr/local/bin/apk/build.sh) · [Repositories](../../userland/etc/apk/repositories)
 
 [How the host assembles packages](prebuilt.md) · [Guest shell](shell.md)

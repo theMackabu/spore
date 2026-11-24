@@ -6,8 +6,8 @@ With Nix and direnv set up, run Ant from the checkout.
 
 ```sh
 direnv allow
-make
-./build/spore run ant
+cargo build --release
+./target/release/spore run ant
 ```
 
 The first run downloads Ant and opens its JavaScript REPL.

@@ -6,7 +6,7 @@ on:
       - master
       - main
     paths:
-      - meson.build
+      - Cargo.toml
   workflow_dispatch:
 
 permissions:
@@ -28,23 +28,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read Meson version
+      - name: Read workspace version
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          version="$(python3 - meson.build <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          text = pathlib.Path(sys.argv[1]).read_text()
-          match = re.search(r"project\s*\([^)]*version\s*:\s*['\"]([^'\"]+)['\"]", text, re.S)
-          if not match:
-              sys.exit("meson.build project() version not found")
-          print(match.group(1))
-          PY
-          )"
+          version="$(awk -F'"' '/^\[workspace\.package\]/ {workspace=1; next} /^\[/ {workspace=0} workspace && /^version = "/ {print $2}' Cargo.toml)"
+          test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
@@ -53,18 +43,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          meson_version_from_file() {
-            python3 - "$1" <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          text = pathlib.Path(sys.argv[1]).read_text()
-          match = re.search(r"project\s*\([^)]*version\s*:\s*['\"]([^'\"]+)['\"]", text, re.S)
-          print(match.group(1) if match else "")
-          PY
-          }
-
           tag='${{ steps.version.outputs.tag }}'
           version='${{ steps.version.outputs.version }}'
           git fetch --force --tags origin '+refs/tags/*:refs/tags/*'
@@ -76,11 +54,13 @@ jobs:
 
           if [ '${{ github.event_name }}' = 'push' ]; then
             before='${{ github.event.before }}'
-            if [ -n "$before" ] && git cat-file -e "$before:meson.build" 2>/dev/null; then
-              git show "$before:meson.build" > "$RUNNER_TEMP/previous-meson.build"
-              previous="$(meson_version_from_file "$RUNNER_TEMP/previous-meson.build")"
+            if ! git cat-file -e "$before:Cargo.toml" 2>/dev/null; then
+              echo "Initial workspace manifest; no version bump to release."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              previous="$(git show "$before:Cargo.toml" | awk -F'"' '/^\[workspace\.package\]/ {workspace=1; next} /^\[/ {workspace=0} workspace && /^version = "/ {print $2}')"
               if [ "$previous" = "$version" ]; then
-                echo "meson.build changed, but project version is still $version; no release to create."
                 echo "should_release=false" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
@@ -101,8 +81,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake build-essential ca-certificates clang-21 cmake curl dosfstools \
-            e2fsprogs file gettext git lld-21 llvm-21 make mtools ninja-build perl pkg-config \
-            python3-jsonschema python3-venv qemu-system-arm xz-utils zip zstd
+            e2fsprogs file gettext git libarchive-tools lld-21 llvm-21 make mtools perl pkg-config \
+            python3 qemu-system-arm xz-utils zip zstd
+          echo /usr/lib/llvm-21/bin >> "$GITHUB_PATH"
 
       - name: Install Rust for the host, kernel and guest
         if: steps.release_gate.outputs.should_release == 'true'
@@ -117,15 +98,6 @@ jobs:
           set -euo pipefail
           git submodule sync --recursive
           git submodule update --init --recursive --jobs 4
-
-      - name: Install Meson
-        if: steps.release_gate.outputs.should_release == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/meson-venv"
-          "$RUNNER_TEMP/meson-venv/bin/pip" install meson==1.10.1 jsonschema jinja2
-          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
 
       - name: Restore musl toolchain cache
         if: steps.release_gate.outputs.should_release == 'true'
@@ -202,99 +174,22 @@ jobs:
           done
           test -x "$toolchain/bin/aarch64-unknown-linux-musl-gcc"
 
-          sudo mkdir -p /run/current-system/sw/bin
-          for tool in ar ranlib strip; do
-            sudo ln -sf "$toolchain/bin/aarch64-unknown-linux-musl-$tool" \
-              "/run/current-system/sw/bin/aarch64-unknown-linux-musl-$tool"
-          done
-
-      - name: Compute userland build cache key
+      - name: Cache pinned downloads
         if: steps.release_gate.outputs.should_release == 'true'
-        id: userland_cache_key
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            printf 'musl-primary=%s\n' "$MUSL_TOOLCHAIN_PRIMARY_URL"
-            printf 'musl-fallback=%s\n' "$MUSL_TOOLCHAIN_FALLBACK_URL"
-            aarch64-unknown-linux-musl-gcc --version | sed -n '1p'
-            rustc -Vv
-            git submodule status --recursive
-            find userland -type f \( \
-              -name meson.build -o \
-              -name build.sh -o \
-              -name '*.rs' -o \
-              -name '*.patch' -o \
-              -name '*.src' -o \
-              -name '*.ini' \
-            \) -print | sort | while IFS= read -r file; do
-              sha256sum "$file"
-            done
-            sha256sum meson.build userland/prebuilt/packages.json userland/prebuilt/*.py
-          } > "$RUNNER_TEMP/userland-cache-inputs"
-          hash="$(sha256sum "$RUNNER_TEMP/userland-cache-inputs" | cut -d' ' -f1)"
-          echo "hash=$hash" >> "$GITHUB_OUTPUT"
-
-      - name: Restore userland build cache
-        if: steps.release_gate.outputs.should_release == 'true'
-        id: userland_cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache@v5
         with:
-          path: |
-            .ci-cache/userland-build
-            .cache/packages
-          key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
-          restore-keys: |
-            ${{ runner.os }}-spore-userland-
+          path: .cache/packages
+          key: ${{ runner.os }}-downloads-${{ hashFiles('userland/prebuilt/packages.json', 'kernel/build.rs') }}
 
-      - name: Configure Meson
-        if: steps.release_gate.outputs.should_release == 'true'
-        shell: bash
+      - name: Build and test release
         env:
           CC: clang-21
-          CXX: clang++-21
-        run: meson setup build
-
-      - name: Hydrate cached userland build outputs
         if: steps.release_gate.outputs.should_release == 'true'
-        shell: bash
         run: |
-          set -euo pipefail
-          if [ -d .ci-cache/userland-build ]; then
-            mkdir -p build/userland
-            cp -a .ci-cache/userland-build/. build/userland/
-          fi
-
-      - name: Build release artifacts
-        if: steps.release_gate.outputs.should_release == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          meson compile -C build cli
-          ./build/spore build --userland
-          ./build/spore build --tests
-          ./build/spore test host
-
-      - name: Refresh userland build cache
-        if: steps.release_gate.outputs.should_release == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf .ci-cache/userland-build
-          mkdir -p .ci-cache/userland-build
-          if [ -d build/userland ]; then
-            cp -a build/userland/. .ci-cache/userland-build/
-          fi
-          du -sh .ci-cache/userland-build || true
-
-      - name: Save userland build cache
-        if: steps.release_gate.outputs.should_release == 'true' && steps.userland_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            .ci-cache/userland-build
-            .cache/packages
-          key: ${{ runner.os }}-spore-userland-${{ steps.userland_cache_key.outputs.hash }}
+          cargo build --release --locked --features userland
+          ./target/release/spore build --userland
+          ./target/release/spore build --tests
+          ./target/release/spore test host
 
       - name: Package artifacts
         if: steps.release_gate.outputs.should_release == 'true'
@@ -303,12 +198,11 @@ jobs:
           set -euo pipefail
           version='${{ steps.version.outputs.version }}'
           mkdir -p dist
-          cp build/image.img "dist/spore-$version-image.img"
-          cp build/root.ext2 "dist/spore-$version-root.ext2"
-          cp build/test_image.img "dist/spore-$version-test-image.img"
-          cp build/test_root.ext2 "dist/spore-$version-test-root.ext2"
-          tar -C build -czf "dist/spore-$version-cli-linux-x86_64.tar.gz" \
-            spore kernel/kernel-boot.elf kernel/spore.bin boot/BOOTAA64.EFI boot/LIMINE-LICENSE
+          cp target/release/image.img "dist/spore-$version-image.img"
+          cp target/release/root.ext2 "dist/spore-$version-root.ext2"
+          cp target/release/test_image.img "dist/spore-$version-test-image.img"
+          cp target/release/test_root.ext2 "dist/spore-$version-test-root.ext2"
+          tar -czf "dist/spore-$version-cli-linux-x86_64.tar.gz" -C target/release spore -C "$GITHUB_WORKSPACE" LICENSE.md boot/LIMINE-LICENSE
           (cd dist && sha256sum * > SHA256SUMS)
 
       - name: Create tag and GitHub release
@@ -326,4 +220,4 @@ jobs:
           git push origin "$tag"
           gh release create "$tag" dist/* \
             --title "Spore $version" \
-            --notes "Automated release for Meson project version $version. Built from commit $GITHUB_SHA."
+            --notes "Automated release for Cargo workspace version $version. Built from commit $GITHUB_SHA."

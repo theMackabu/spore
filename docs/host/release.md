@@ -1,6 +1,6 @@
 # Release artifacts
 
-The release workflow reads the version from Meson. A version bump on the release branches
+The release workflow reads the version from Cargo.toml. A version bump on the release branches
 can publish a new tag. The workflow skips a tag that already exists.
 
 It builds the CLI, interactive and integration images, runs the host tests, and publishes

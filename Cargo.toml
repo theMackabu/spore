@@ -1,0 +1,37 @@
+[package]
+name = "spore"
+version.workspace = true
+edition = "2024"
+rust-version = "1.100"
+autotests = false
+
+[workspace]
+members = ["kernel", "userland", "tests/native", "tools/packages", "tools/build"]
+default-members = ["."]
+
+[workspace.package]
+version = "0.7.0"
+
+[features]
+userland = ["dep:spore-userland", "spore-kernel/userland"]
+
+[build-dependencies]
+cc = "1"
+
+[dependencies]
+goblin = { version = "0.10.7", default-features = false, features = ["std", "elf64", "elf32", "endian_fd"] }
+spore-kernel = { path = "kernel" }
+spore-packages = { path = "tools/packages" }
+spore-userland = { path = "userland", optional = true }
+
+[dev-dependencies]
+spore-native-tests = { path = "tests/native" }
+
+[[bin]]
+name = "spore"
+path = "tools/src/spore.rs"
+test = false
+
+[[test]]
+name = "host"
+path = "tests/host.rs"

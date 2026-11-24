@@ -123,21 +123,20 @@ fn execute() -> io::Result<i32> {
     }
     let build = action == "build";
     let boot = action == "boot";
+    let check = action == "test" || action == "bench";
+    let exe = env::current_exe()?;
+    let artifacts = exe.parent().unwrap();
     if action == "_image" {
-        image::generate(&args.map(PathBuf::from).collect::<Vec<_>>())?;
+        let tests = args.next().as_deref() == Some("tests".as_ref());
+        image::system_image(artifacts, tests)?;
         return Ok(0);
     }
-    let check = action == "test" || action == "bench";
     if !build && !boot && !check && action != "run" {
         return Err(io::Error::other("expected boot, run, build, test or bench"));
     }
     let mut program = None;
     let mut output = None;
     let mut pack = Vec::new();
-    let exe = env::current_exe()?;
-    let artifacts = exe
-        .parent()
-        .ok_or_else(|| io::Error::other("missing executable directory"))?;
     if check {
         let suite = args.next();
         if suite.as_deref().is_some_and(|s| s == "-h" || s == "--help") {
@@ -265,20 +264,7 @@ fn execute() -> io::Result<i32> {
         ));
     }
     if build && program.is_none() && pack.is_empty() && output.is_none() {
-        if userland {
-            system::enable_userland(artifacts)?;
-        } else if tests {
-            system::require_userland()?;
-        }
-        let target = if tests {
-            "test_image.img"
-        } else if userland {
-            "image.img"
-        } else {
-            "cli"
-        };
-        system::compile(artifacts, Path::new(target))?;
-        return Ok(0);
+        return system::build_project(artifacts, userland, tests);
     }
     if tests || userland {
         return Err(io::Error::other(
@@ -295,12 +281,10 @@ fn execute() -> io::Result<i32> {
         } else {
             tmp.0.join("app.img")
         };
-        let kernel = artifacts.join("kernel/spore.bin");
-        let result = system::program(artifacts, &input).and_then(|program| {
-            if !build
-                && kernel.is_file()
-                && let Some(ram) = runner::qemu::DirectBoot::memory(&vm)
-            {
+        let result = system::program(&input).and_then(|program| {
+            if !build && let Some(ram) = runner::qemu::DirectBoot::memory(&vm) {
+                let kernel = tmp.0.join("spore.bin");
+                fs::write(&kernel, spore_kernel::DIRECT)?;
                 let network = image::app::payload(&program, &pack, &tmp.0, &image)?;
                 vm.direct = Some(runner::qemu::DirectBoot {
                     kernel,
@@ -309,7 +293,7 @@ fn execute() -> io::Result<i32> {
                 });
                 Ok(())
             } else {
-                image::app::build(artifacts, &image, &program, &pack)
+                image::app::build(&image, &program, &pack)
             }
         });
         if let Err(e) = result {

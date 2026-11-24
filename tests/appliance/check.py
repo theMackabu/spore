@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
-BUILD = Path(os.environ.get("BUILD_DIR", ROOT / "build")).resolve()
+BUILD = Path(os.environ.get("BUILD_DIR", ROOT / "target/release")).resolve()
 CLI = BUILD / "spore"
 
 
@@ -55,10 +55,9 @@ def contract(d, disk):
 
 
 def repl_prompt():
-    ant = BUILD / "userland/prebuilt/ant"
     master, slave = os.openpty()
     try:
-        with subprocess.Popen([CLI, "run", ant], stdin=slave, stdout=subprocess.PIPE,
+        with subprocess.Popen([CLI, "run", "ant"], stdin=slave, stdout=subprocess.PIPE,
                               start_new_session=True,
                               preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0)) as vm:
             def expect(marker):
@@ -150,7 +149,7 @@ def main():
         images = []
         for rev in ("one","two"):
             img=d/(rev+".img")
-            invoke(CLI,"build", BUILD/"userland/prebuilt/ant","-o",img,"--file",f"{HERE}/server.js=/app/server.js",
+            invoke(CLI,"build", "ant","-o",img,"--file",f"{HERE}/server.js=/app/server.js",
                    "--env",f"REVISION={rev}", "--ip","10.73.1.20","--gateway","10.73.1.2",
                    "--dns","10.73.1.3","--","/app/server.js")
             images.append(img)

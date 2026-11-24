@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 HERE = Path(__file__).resolve().parent
-BUILD = Path(os.environ.get("BUILD_DIR", HERE.parents[1] / "build")).resolve()
+BUILD = Path(os.environ.get("BUILD_DIR", HERE.parents[1] / "target/release")).resolve()
 
 
 def main():

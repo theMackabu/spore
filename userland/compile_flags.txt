@@ -1,0 +1,4 @@
+-std=c23
+-D_GNU_SOURCE
+-Ilib/spore
+-Wno-deprecated-declarations

@@ -7,7 +7,7 @@ import statistics
 import subprocess
 import time
 
-BUILD = Path(os.environ.get("BUILD_DIR", Path(__file__).resolve().parents[2] / "build")).resolve()
+BUILD = Path(os.environ.get("BUILD_DIR", Path(__file__).resolve().parents[2] / "target/release")).resolve()
 
 
 def launch():

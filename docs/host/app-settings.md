@@ -4,8 +4,8 @@ Packaged files are read-only. Use `/tmp` or `/run` for scratch files. To keep da
 boots or image replacements, create an ext2 volume at a new path and pass it to each boot.
 
 ```sh
-test ! -e build/data.ext2 && mke2fs -q -t ext2 -b 4096 build/data.ext2 4096
-./build/spore boot build/server.img --data build/data.ext2 --forward 8080:8080
+test ! -e data.ext2 && mke2fs -q -t ext2 -b 4096 data.ext2 4096
+./target/release/spore boot server.img --data data.ext2 --forward 8080:8080
 ```
 
 The guest mounts the volume at `/data`. [Build the example server](../app-images.md) · [Filesystem routing](../files/vfs.md)

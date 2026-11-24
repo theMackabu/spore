@@ -1,0 +1,12 @@
+[package]
+name = "spore-native-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[build-dependencies]
+spore-build = { path = "../../tools/build" }
+cc = { version = "1", features = ["parallel"] }

@@ -2,10 +2,9 @@ use super::{build_esp, build_image, gcc_file};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{self, BufWriter, Read, Write},
+    io::{self, BufWriter, Write},
     net::Ipv4Addr,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 fn bad(s: impl Into<String>) -> io::Error {
@@ -86,78 +85,63 @@ impl Package {
         if !self.scanned.insert(dst.into()) {
             return Ok(());
         }
-        let mut hdr = [0; 20];
-        File::open(src)?.read_exact(&mut hdr)?;
-        if &hdr[..6] != b"\x7fELF\x02\x01"
-            || !matches!(u16::from_le_bytes([hdr[16], hdr[17]]), 2 | 3)
-            || hdr[18..20] != [183, 0]
+        let bytes = fs::read(src)?;
+        let elf =
+            goblin::elf::Elf::parse(&bytes).map_err(|e| bad(format!("{}: {e}", src.display())))?;
+        if !elf.is_64
+            || !elf.little_endian
+            || elf.header.e_machine != goblin::elf::header::EM_AARCH64
+            || !matches!(
+                elf.header.e_type,
+                goblin::elf::header::ET_EXEC | goblin::elf::header::ET_DYN
+            )
         {
             return Err(bad(format!(
                 "expected an AArch64 executable/shared object: {}",
                 src.display()
             )));
         }
-        let o = Command::new("llvm-readelf")
-            .args(["-lWd"])
-            .arg(src)
-            .output()?;
-        if !o.status.success() {
-            return Err(bad(format!(
-                "cannot inspect {}: {}",
-                src.display(),
-                String::from_utf8_lossy(&o.stderr)
-            )));
-        }
-        let report = String::from_utf8_lossy(&o.stdout);
-        let origin = src.canonicalize()?.parent().unwrap().to_path_buf();
+        let origin = src.canonicalize()?.parent().unwrap().to_owned();
         let mut search = Vec::new();
-        for line in report
-            .lines()
-            .filter(|s| s.contains("(RUNPATH)") || s.contains("(RPATH)"))
+        for p in elf
+            .runpaths
+            .iter()
+            .chain(&elf.rpaths)
+            .flat_map(|p| p.split(':'))
         {
-            for p in bracket(line)?.split(':') {
-                if let Some(rel) = p
-                    .strip_prefix("${ORIGIN}")
-                    .or_else(|| p.strip_prefix("$ORIGIN"))
-                {
-                    search.push(origin.join(rel.trim_start_matches('/')));
-                }
+            if let Some(rel) = p
+                .strip_prefix("${ORIGIN}")
+                .or_else(|| p.strip_prefix("$ORIGIN"))
+            {
+                search.push(origin.join(rel.trim_start_matches('/')));
             }
         }
         search.push(origin);
-        for line in report.lines() {
-            if let Some((_, i)) = line.split_once("Requesting program interpreter: ") {
-                let i = i.trim().trim_end_matches(']');
-                let name = Path::new(i)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| bad("invalid interpreter"))?;
-                let lib = self.library(name, &search).or_else(|e| {
-                    if name == "ld-musl-aarch64.so.1" {
-                        self.library("libc.so", &search)
-                    } else {
-                        Err(e)
-                    }
-                })?;
-                self.elf(&lib, i)?;
-            } else if line.contains("(NEEDED)") {
-                let n = bracket(line)?;
-                if n.contains('/') {
-                    return Err(bad(format!("unsupported path in DT_NEEDED: {n}")));
+        if let Some(interp) = elf.interpreter {
+            let name = Path::new(interp)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| bad("invalid interpreter"))?;
+            let lib = self.library(name, &search).or_else(|error| {
+                if name == "ld-musl-aarch64.so.1" {
+                    self.library("libc.so", &search)
+                } else {
+                    Err(error)
                 }
-                let lib = self
-                    .library(n, &search)
-                    .map_err(|e| bad(format!("{} needs {n}: {e}", src.display())))?;
-                self.elf(&lib, &format!("/lib/{n}"))?;
+            })?;
+            self.elf(&lib, interp)?;
+        }
+        for name in elf.libraries {
+            if name.contains('/') {
+                return Err(bad(format!("unsupported path in DT_NEEDED: {name}")));
             }
+            let lib = self
+                .library(name, &search)
+                .map_err(|e| bad(format!("{} needs {name}: {e}", src.display())))?;
+            self.elf(&lib, &format!("/lib/{name}"))?;
         }
         Ok(())
     }
-}
-fn bracket(line: &str) -> io::Result<&str> {
-    line.split_once('[')
-        .and_then(|(_, s)| s.strip_suffix(']'))
-        .ok_or_else(|| bad(format!("unexpected ELF metadata: {line}")))
 }
 fn string(out: &mut impl Write, s: &str) -> io::Result<()> {
     out.write_all(s.as_bytes())?;
@@ -291,10 +275,7 @@ pub fn payload(
     Ok(net)
 }
 
-pub fn build(artifacts: &Path, output: &Path, program: &Path, opts: &[PathBuf]) -> io::Result<()> {
-    let kernel = artifacts.join("kernel/kernel-boot.elf");
-    let efi = artifacts.join("boot/BOOTAA64.EFI");
-    let license = artifacts.join("boot/LIMINE-LICENSE");
+pub fn build(output: &Path, program: &Path, opts: &[PathBuf]) -> io::Result<()> {
     build_image(output, |image| {
         let stage = image.with_extension("app-stage");
         fs::create_dir(&stage)?;
@@ -309,7 +290,7 @@ pub fn build(artifacts: &Path, output: &Path, program: &Path, opts: &[PathBuf]) 
                     net[0], net[1], net[2], net[3]
                 ),
             )?;
-            build_esp(&kernel, &efi, &config, &license, image, Some(&bundle))
+            build_esp(&config, image, Some(&bundle))
         })();
         let cleanup = fs::remove_dir_all(stage);
         result.and(cleanup)

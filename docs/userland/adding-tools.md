@@ -2,9 +2,9 @@
 
 1. Put the source in `userland/bin/NAME/main.c`. Include [spore.h](../../userland/lib/spore/spore.h)
    for helpers such as `usage` and `eprintf`.
-2. Add `'bin/NAME'` to the program list in the [userland build](../../userland/meson.build).
+2. Add `"bin/NAME"` to the program list in the [userland build](../../userland/build.rs).
    Add `userland/programs/NAME /bin/NAME` to the [image manifest](../../userland/image.manifest).
-3. Run `./build/spore build --userland` and `./build/spore boot --snapshot` to try it.
+3. Run `./target/release/spore build --userland` and `./target/release/spore boot --snapshot` to try it.
 
 Commands conventionally return 0 for success, 1 for an ordinary failure and 2 for usage
 errors. Send diagnostics to stderr.

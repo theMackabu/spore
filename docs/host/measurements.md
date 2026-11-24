@@ -14,4 +14,4 @@ runs from QEMU launch until the host observes the guest resolving its first user
 fetch. HTTP time starts at CLI launch. The harness sampled memory half a second after five
 successful requests. Guest RAM in use includes firmware and payload pages.
 
-Run `./build/spore bench appliance` to repeat the sweep. [Measurement harness](../../tests/appliance/check.py) · [App results](results.md)
+Run `./target/release/spore bench appliance` to repeat the sweep. [Measurement harness](../../tests/appliance/check.py) · [App results](results.md)

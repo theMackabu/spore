@@ -1,0 +1,16 @@
+[package]
+name = "spore-kernel"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[features]
+userland = []
+
+[lib]
+path = "artifacts.rs"
+
+[build-dependencies]
+cc = { version = "1", features = ["parallel"] }
+spore-packages = { path = "../tools/packages" }
+spore-build = { path = "../tools/build" }

@@ -1,0 +1,12 @@
+[package]
+name = "spore-userland"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[lib]
+path = "artifacts.rs"
+
+[build-dependencies]
+spore-packages = { path = "../tools/packages" }
+spore-build = { path = "../tools/build" }

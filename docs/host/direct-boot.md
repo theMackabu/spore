@@ -1,7 +1,7 @@
 # Running an app directly from RAM
 
 `spore run` can hand the raw kernel and app payload to QEMU's loader. The CLI selects
-this path when `kernel/spore.bin` exists, the guest has one vCPU, no firmware variable
+this path when the guest has one vCPU, no firmware variable
 store was requested, and the memory size is an even number of MiB from 32 through 1024
 written with an `M` suffix. Otherwise it builds a temporary EFI image.
 [CLI selection](../../tools/src/spore.rs) · [QEMU loader](../../tools/src/runner/qemu.rs)
