@@ -243,13 +243,28 @@ static size_t proc_pid_proc_stat_text(char *dst, size_t cap, int pid) {
   return len;
 }
 
-static size_t proc_pid_cmdline_text(char *dst, size_t cap, int pid) {
-  size_t len = 0;
-  const struct domain *domain = domain_for_pid(pid);
-  if (domain == NULL) { return 0; }
-  proc_append_str(dst, cap, &len, domain->exec_path[0] == '\0' ? domain->name : domain->exec_path);
-  proc_append_char(dst, cap, &len, '\0');
-  return len;
+static int64_t read_cmdline(struct open_file *file, struct domain *caller, uint64_t buf, size_t len) {
+  const struct domain *target = cell_find_domain(file->node.proc.pid);
+  if (target == NULL || target->zombie) { return 0; }
+  const struct user_address_space *as = cell_domain_as_const(target);
+  if (as == NULL || file->offset >= as->arg_end - as->arg_start) { return 0; }
+  uint64_t src = as->arg_start + file->offset;
+  if (len > as->arg_end - src) { len = as->arg_end - src; }
+  size_t done = 0;
+  uint8_t bytes[512];
+  while (done < len) {
+    size_t chunk = PAGE_SIZE - (src + done) % PAGE_SIZE;
+    if (chunk > sizeof(bytes)) { chunk = sizeof(bytes); }
+    if (chunk > len - done) { chunk = len - done; }
+    if (!vmm_copy_from_user(as, bytes, src + done, chunk)) { break; }
+    if (!vmm_copy_to_user(cell_domain_as(caller), buf + done, bytes, chunk)) {
+      if (done == 0) { return -14; }
+      break;
+    }
+    done += chunk;
+  }
+  file->offset += done;
+  return (int64_t)done;
 }
 
 static size_t proc_pid_statm_text(char *dst, size_t cap, int pid) {
@@ -427,7 +442,7 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
   case RAMFS_DEV_PROC_PID_STATUS:
     return read_generated_pid_device(file, domain, buf, len, proc_pid_status_text);
   case RAMFS_DEV_PROC_PID_CMDLINE:
-    return read_generated_pid_device(file, domain, buf, len, proc_pid_cmdline_text);
+    return read_cmdline(file, domain, buf, len);
   case RAMFS_DEV_PROC_PID_STATM:
     return read_generated_pid_device(file, domain, buf, len, proc_pid_statm_text);
   case RAMFS_DEV_PROC_PID_COMM:

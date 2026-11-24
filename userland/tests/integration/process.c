@@ -172,8 +172,18 @@ static int exec_child_status(const char *arg, int expected) {
   return waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == expected;
 }
 
+static int exec_cmdline(void) {
+  pid_t child = fork();
+  if (child == 0) {
+    execl("/bin/exec_child", "child", "check-cmdline", "two words", "", (char *)NULL);
+    _exit(99);
+  }
+  int status;
+  return child > 0 && waitpid(child, &status, 0) == child && status == 0;
+}
+
 int integration_exec_private_data(void) {
-  int ok = exec_child_status("poison-data", 0) && exec_child_status("check-data", 0);
+  int ok = exec_cmdline() && exec_child_status("poison-data", 0) && exec_child_status("check-data", 0);
   printf("[spore] exec private data COW: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }

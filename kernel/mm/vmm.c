@@ -90,6 +90,8 @@ bool vmm_user_init(struct user_address_space *as, uint64_t hhdm_offset) {
   as->context_id = __atomic_add_fetch(&last_context_id, 1, __ATOMIC_RELAXED);
   as->root_pa = root;
   as->hhdm_offset = hhdm_offset;
+  as->arg_start = 0;
+  as->arg_end = 0;
   as->brk_base = 0;
   as->brk_current = 0;
   as->mmap_base = USER_MMAP_BASE;
@@ -187,6 +189,8 @@ static bool clone_table_cow(struct user_address_space *dst, struct user_address_
 
 bool vmm_clone_cow(struct user_address_space *dst, struct user_address_space *src) {
   if (!vmm_user_init(dst, src->hhdm_offset)) { return false; }
+  dst->arg_start = src->arg_start;
+  dst->arg_end = src->arg_end;
   dst->brk_base = src->brk_base;
   dst->brk_current = src->brk_current;
   dst->mmap_base = src->mmap_base;

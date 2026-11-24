@@ -98,19 +98,21 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   }
   uint64_t *envp_va = argv_va + argc;
 
-  for (uint64_t i = 0; i < argc; ++i) {
-    size_t len = kstrlen(argv[i]) + 1;
+  for (uint64_t i = envc; i > 0; --i) {
+    size_t len = kstrlen(envp[i - 1]) + 1;
     cursor -= len;
-    argv_va[i] = cursor;
-    if (!stack_copy_to_user(as, argv_va[i], argv[i], len)) { goto out; }
+    envp_va[i - 1] = cursor;
+    if (!stack_copy_to_user(as, cursor, envp[i - 1], len)) { goto out; }
   }
 
-  for (uint64_t i = 0; i < envc; ++i) {
-    size_t len = kstrlen(envp[i]) + 1;
+  uint64_t arg_end = cursor;
+  for (uint64_t i = argc; i > 0; --i) {
+    size_t len = kstrlen(argv[i - 1]) + 1;
     cursor -= len;
-    envp_va[i] = cursor;
-    if (!stack_copy_to_user(as, envp_va[i], envp[i], len)) { goto out; }
+    argv_va[i - 1] = cursor;
+    if (!stack_copy_to_user(as, cursor, argv[i - 1], len)) { goto out; }
   }
+  uint64_t arg_start = cursor;
 
   static const char platform[] = "aarch64";
   cursor -= sizeof(platform);
@@ -164,6 +166,8 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   p += sizeof(uint64_t);
   if (!stack_copy_to_user(as, p, aux, sizeof(aux))) { goto out; }
 
+  as->arg_start = arg_start;
+  as->arg_end = arg_end;
   *stack_pointer = sp;
   ok = true;
 out:

@@ -23,6 +23,8 @@ struct user_address_space {
   uint64_t context_id;
   uint64_t root_pa;
   uint64_t hhdm_offset;
+  uint64_t arg_start;
+  uint64_t arg_end;
   uint64_t brk_base;
   uint64_t brk_current;
   uint64_t mmap_base;
