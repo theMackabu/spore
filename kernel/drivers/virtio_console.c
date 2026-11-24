@@ -166,11 +166,11 @@ bool virtio_console_ready(void) {
   return console_ready;
 }
 
-void virtio_console_putc(char c) {
-  if (!console_ready) { return; }
-  tx_buf[0] = (uint8_t)c;
+void virtio_console_write(const uint8_t *data, size_t len) {
+  if (!console_ready || !len || len > 4096) { return; }
+  for (size_t i = 0; i < len; ++i) { tx_buf[i] = data[i]; }
   desc[0].addr = tx_pa;
-  desc[0].len = 1;
+  desc[0].len = len;
   desc[0].flags = 0;
   desc[0].next = 0;
   avail->ring[tx_avail_idx % QUEUE_SIZE] = 0;

@@ -24,9 +24,10 @@ static int attr_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descript
     if (!file || (file->flags & LINUX_O_PATH)) { return -EBADF; }
     if (!cell_fd_stat((int)fd, &target->node)) { return -EBADF; }
     target->file = file;
-    return 0;
+    return vfs_readonly_node(&target->node) ? -30 : 0;
   }
   int rc = syscall_lookup_at(fd, addr, flags, CELL_FS_WRITE, &target->node, target->path);
+  if (!rc && vfs_readonly_node(&target->node)) { return -30; }
   if (!rc && !target->path[0]) { target->file = cell_fd_file(fd); }
   return rc;
 }

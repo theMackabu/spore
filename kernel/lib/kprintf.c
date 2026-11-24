@@ -1,5 +1,6 @@
 #include "lib/kprintf.h"
 
+#include "init/app.h"
 #include "drivers/pl011.h"
 #include "drivers/virtio_console.h"
 
@@ -28,8 +29,8 @@ uint64_t klog_copy(char *dst, uint64_t cap) {
 
 void kputc(char c) {
   klog_store(c);
-  if (virtio_console_ready()) {
-    virtio_console_putc(c);
+  if (!app_mode && virtio_console_ready()) {
+    virtio_console_write((const uint8_t *)&c, 1);
   } else if (!kernel_log_handoff) {
     pl011_putc(c);
   }

@@ -1,5 +1,6 @@
 #include "../fs/path.h"
 #include "../usercopy.h"
+#include "init/app.h"
 #include "arch/aarch64/regs.h"
 #include "handlers.h"
 #include "exec/elf.h"
@@ -202,6 +203,7 @@ static bool parse_shebang_node(const struct vfs_node *node, char *interp, size_t
 }
 
 int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
+  if (app_mode) { return -EPERM; }
   char path[CELL_PATH_MAX];
   int64_t path_rc = syscall_copy_resolved_path_at(AT_FDCWD, path_addr, path, sizeof(path));
   if (path_rc) { return path_rc; }
@@ -334,7 +336,7 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
   if ((exec_node.mode & 04000u) != 0) { creds.euid = exec_node.uid; }
   if ((exec_node.mode & 02000u) != 0) { creds.egid = exec_node.gid; }
 
-  if (!build_initial_stack_args(&new_as, &elf, argv, argc, envp, envc, &creds, &user_sp)) {
+  if (!build_initial_stack_args(&new_as, &elf, path, argv, argc, envp, envc, &creds, &user_sp)) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
     ret = -(int64_t)EINVAL;

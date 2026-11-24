@@ -21,6 +21,7 @@ void vfs_page_cache_write(const struct vfs_node *node, uint64_t off, const void 
 void vfs_page_cache_stats(struct vfs_stats *stats);
 uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 
+const char *vfs_disk_path(const char *path);
 bool vfs_path_uses_ramfs(const char *path);
 bool vfs_paths_share_ramfs(const char *a, const char *b);
 void vfs_update_time_sources(void);

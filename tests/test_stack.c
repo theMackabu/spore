@@ -77,7 +77,7 @@ int main(void) {
   };
   uint64_t sp = 0;
 
-  assert(build_initial_stack_args(&as, &elf, argv, 1, NULL, 0, &creds, &sp));
+  assert(build_initial_stack_args(&as, &elf, "/bin/real-msh", argv, 1, NULL, 0, &creds, &sp));
   assert((sp % 16) == 0);
   size_t mapped_count = 0;
   for (size_t i = 0; i < sizeof(mapped) / sizeof(mapped[0]); ++i) {
@@ -113,7 +113,7 @@ int main(void) {
     if (key == 25 && value >= TEST_STACK_TOP - TEST_STACK_SIZE && value < TEST_STACK_TOP) { saw_random = true; }
     if (key == 15 && strcmp((const char *)&stack_mem[stack_offset(value)], "aarch64") == 0) { saw_platform = true; }
     if (key == 16 && (value & 0x3) == 0x3) { saw_hwcap = true; }
-    if (key == 31 && value == argv0) { saw_execfn = true; }
+    if (key == 31 && strcmp((const char *)&stack_mem[stack_offset(value)], "/bin/real-msh") == 0) { saw_execfn = true; }
     if (key == 23 && value == 1) { saw_secure = true; }
     if (key == 11 && value == creds.uid) { saw_uid = true; }
     if (key == 12 && value == creds.euid) { saw_euid = true; }

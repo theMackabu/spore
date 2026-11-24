@@ -1,3 +1,4 @@
+#include "init/app.h"
 #include "proc/process.h"
 
 #include "arch/aarch64/regs.h"
@@ -45,6 +46,7 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
     cell_close_all_fds(domain);
     cell_current_thread_internal()->state = THREAD_ZOMBIE;
     cell_current_thread_internal()->running_cpu = -1;
+    if (app_mode) { app_finish('E', status); }
     cell_wake_parent_of(domain);
     cell_schedule(frame);
     return;
@@ -85,6 +87,7 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
   }
   cell_current_thread_internal()->state = THREAD_ZOMBIE;
   cell_current_thread_internal()->running_cpu = -1;
+  if (app_mode) { app_finish('E', status); }
   cell_wake_parent_of(domain);
   cell_schedule(frame);
 }

@@ -78,6 +78,21 @@ bool ext2_check_refs(struct ext2_fs *fs, bool remount) {
   return ok;
 }
 
+bool ext2_shutdown(struct ext2_fs *fs) {
+  bool ok = true;
+  for (size_t i = 0; i < sizeof(buckets) / sizeof(*buckets); ++i) {
+    struct inode_ref **slot = &buckets[i];
+    while (*slot) {
+      if ((*slot)->fs == fs && (*slot)->orphan) {
+        if (reap(slot)) { continue; }
+        ok = false;
+      }
+      slot = &(*slot)->next;
+    }
+  }
+  return ext2_flush(fs) && ok;
+}
+
 bool ext2_set_orphan(struct ext2_fs *fs, uint32_t ino, bool orphan, bool linkable) {
   struct inode_ref *ref = *find_ref(fs, ino);
   if (!ref) { return false; }

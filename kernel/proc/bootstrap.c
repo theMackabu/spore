@@ -1,4 +1,6 @@
 #include "proc/bootstrap.h"
+#include "init/app.h"
+#include "lib/kstr.h"
 #include "accounting_internal.h"
 #include "arch/aarch64/platform.h"
 #include "arch/aarch64/regs.h"
@@ -43,6 +45,7 @@ void cell_system_init(void) {
   size_t mm_count = 0;
   size_t open_file_count = 0;
   derive_table_sizes(&domain_count, &thread_count, &mm_count, &open_file_count);
+  if (app_mode) { domain_count = 1; mm_count = 2; }
   if (!cell_policy_init(domain_count)) { halt_table_init_failure("policy"); }
   if (!cell_mm_reset(mm_count)) { halt_table_init_failure("mm"); }
   if (!cell_domain_reset(domain_count)) { halt_table_init_failure("domain"); }
@@ -63,8 +66,8 @@ bool cell_create_init(struct user_address_space *as, struct vma_list *vmas, uint
   domain->pgrp_id = domain->id;
   domain->session_id = domain->id;
   (void)cell_tty_set_foreground_pgrp(domain->pgrp_id);
-  static const char *init_argv[] = {"/sbin/init"};
-  cell_set_domain_identity(domain, "/sbin/init", init_argv, 1);
+  cell_set_domain_identity(domain, launch.path, launch.argv, launch.argc);
+  copy_cstr(domain->cwd, sizeof(domain->cwd), launch.cwd);
   struct process_mm *mm = cell_mm_from_owned(as, vmas);
   if (mm == NULL || !cell_domain_set_mm(domain, mm)) {
     if (mm != NULL) { cell_mm_release(mm); }

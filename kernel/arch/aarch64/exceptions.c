@@ -2,6 +2,7 @@
 
 #include "arch/aarch64/regs.h"
 #include "lib/kprintf.h"
+#include "init/app.h"
 
 #include "abi/linux/aarch64/syscall.h"
 #include "arch/aarch64/signal_frame.h"
@@ -44,7 +45,13 @@ void handle_lower_sync(struct trap_frame *frame) {
     uint64_t iss = frame->esr_el1 & 0x1ffffff;
     uint64_t dfsc = iss & 0x3f;
     bool write = (iss & (1u << 6)) != 0;
-    if (ec == 0x20 && dfsc >= 0x04 && dfsc <= 0x07 && cell_handle_translation_fault(far, VMM_ACCESS_EXEC)) { return; }
+    if (ec == 0x20 && dfsc >= 0x04 && dfsc <= 0x07 && cell_handle_translation_fault(far, VMM_ACCESS_EXEC)) {
+      if (app_entry_pc && frame->elr_el1 == app_entry_pc) {
+        app_entry_pc = 0;
+        app_event('U', 0);
+      }
+      return;
+    }
     if (ec == 0x20 && dfsc >= 0x0c && dfsc <= 0x0f && cell_handle_permission_fault(far, VMM_ACCESS_EXEC)) { return; }
     if (ec == 0x24 && dfsc >= 0x04 && dfsc <= 0x07 &&
         cell_handle_translation_fault(far, write ? VMM_ACCESS_WRITE : VMM_ACCESS_READ)) {

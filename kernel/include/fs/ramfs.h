@@ -111,6 +111,7 @@ typedef void (*ramfs_reclaim_fn)(enum ramfs_mount mount, uint64_t ino);
 void ramfs_set_reclaim_callback(struct ramfs *fs, ramfs_reclaim_fn callback);
 void ramfs_destroy(struct ramfs *fs);
 bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count, uint64_t hhdm_offset);
+bool ramfs_add_boot_file(struct ramfs *fs, const char *path, const void *data, uint64_t size, uint16_t mode);
 void ramfs_set_now(uint64_t epoch_sec);
 bool ramfs_lookup_node(const struct ramfs *fs, const char *path, struct ramfs_node *out);
 bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct vfs_dirent *out);

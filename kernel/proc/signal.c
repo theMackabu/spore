@@ -1,3 +1,4 @@
+#include "init/app.h"
 #include "proc/signal.h"
 
 #include "arch/aarch64/regs.h"
@@ -79,6 +80,7 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
       if (thread->running_cpu < 0) { thread->running_cpu = -1; }
     }
   }
+  if (app_mode) { app_finish('S', signal); }
   cell_wake_parent_of(domain);
 }
 

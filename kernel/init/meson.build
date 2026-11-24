@@ -1,1 +1,1 @@
-kernel_sources += files('main.c')
+kernel_sources += files('main.c', 'app.c')

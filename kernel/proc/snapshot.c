@@ -1,3 +1,4 @@
+#include "init/app.h"
 #include "proc/snapshot.h"
 
 #include "arch/aarch64/regs.h"
@@ -45,6 +46,7 @@ void cell_snapshot_reset(void) {
 }
 
 int snapshot_create_current(void) {
+  if (app_mode) { return -1; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
   struct snapshot *snap = alloc_snapshot();
@@ -64,6 +66,7 @@ int snapshot_create_current(void) {
 }
 
 int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame *frame) {
+  if (app_mode) { return -1; }
   struct domain *parent = cell_current_domain_internal();
   struct snapshot *snap = find_snapshot(snap_id);
   if (parent == NULL || snap == NULL) { return -12; }

@@ -3,6 +3,7 @@
 #include "arch/aarch64/regs.h"
 #include "arch/aarch64/signal_frame.h"
 #include "numbers.h"
+#include "init/app.h"
 #include "usercopy.h"
 #include "fd/handlers.h"
 #include "fs/handlers.h"
@@ -365,6 +366,7 @@ l_spore_apply_policy: {
   return rc == 0 ? 0 : -(int64_t)EPERM;
 }
 l_spore_shutdown:
+  if (app_mode) { return -EPERM; }
   if (cell_current_euid() != 0) {
     kprintf("[kernel] shutdown denied uid=%d euid=%d\n", (int)cell_current_uid(), (int)cell_current_euid());
     return -(int64_t)EPERM;

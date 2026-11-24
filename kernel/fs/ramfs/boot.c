@@ -13,7 +13,7 @@ static uint32_t ramfs_smp_possible_cpu_count(void) {
 }
 #endif
 
-static bool add_ro_file(struct ramfs *fs, const char *path, const void *data, uint64_t size) {
+bool ramfs_add_boot_file(struct ramfs *fs, const char *path, const void *data, uint64_t size, uint16_t mode) {
   if (path == NULL || path[0] != '/' || path[1] == '\0') { return false; }
   int parent = 0;
   const char *p = path + 1;
@@ -47,7 +47,7 @@ static bool add_ro_file(struct ramfs *fs, const char *path, const void *data, ui
   if (index < 0) { return false; }
   ramfs_inode_at(fs, index)->ro_data = data;
   ramfs_inode_at(fs, index)->size = size;
-  ramfs_inode_at(fs, index)->mode = 0100444u;
+  ramfs_inode_at(fs, index)->mode = 0100000u | mode;
   return true;
 }
 
@@ -181,7 +181,7 @@ bool ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *
     const struct spore_boot_module *m = &modules[i];
     struct ramfs_node existing;
     if (*m->path != '/' || ramfs_lookup_node(fs, m->path, &existing)) { continue; }
-    if (!add_ro_file(fs, m->path, (const void *)(uintptr_t)(fs->hhdm_offset + m->phys_addr), m->size)) { return false; }
+    if (!ramfs_add_boot_file(fs, m->path, (const void *)(uintptr_t)(fs->hhdm_offset + m->phys_addr), m->size, 0444)) { return false; }
   }
   return true;
 }

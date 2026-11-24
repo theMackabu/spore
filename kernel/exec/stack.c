@@ -67,13 +67,7 @@ static void free_pages(uint64_t pa, uint64_t pages) {
   }
 }
 
-bool build_initial_stack(struct user_address_space *as, const struct loaded_elf *elf, uint64_t *stack_pointer) {
-  const char *argv[] = {"/sbin/init"};
-  const struct exec_stack_credentials creds = {0};
-  return build_initial_stack_args(as, elf, argv, 1, NULL, 0, &creds, stack_pointer);
-}
-
-bool build_initial_stack_args(struct user_address_space *as, const struct loaded_elf *elf, const char *const argv[],
+bool build_initial_stack_args(struct user_address_space *as, const struct loaded_elf *elf, const char *exec_path, const char *const argv[],
                               uint64_t argc, const char *const envp[], uint64_t envc,
                               const struct exec_stack_credentials *creds, uint64_t *stack_pointer) {
   uint64_t cursor = USER_STACK_TOP;
@@ -105,6 +99,10 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     if (!stack_copy_to_user(as, cursor, envp[i - 1], len)) { goto out; }
   }
 
+  size_t path_len = kstrlen(exec_path) + 1;
+  cursor -= path_len;
+  uint64_t execfn = cursor;
+  if (!stack_copy_to_user(as, cursor, exec_path, path_len)) { goto out; }
   uint64_t arg_end = cursor;
   for (uint64_t i = argc; i > 0; --i) {
     size_t len = kstrlen(argv[i - 1]) + 1;
@@ -145,7 +143,7 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
     {AT_SECURE, creds->uid != creds->euid || creds->gid != creds->egid},
     {AT_RANDOM, random_va},
     {AT_HWCAP2, 0},
-    {AT_EXECFN, argc > 0 ? argv_va[0] : 0},
+    {AT_EXECFN, execfn},
     {AT_MINSIGSTKSZ, SPORE_MINSIGSTKSZ},
     {AT_NULL, 0},
   };

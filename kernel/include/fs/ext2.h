@@ -116,6 +116,7 @@ bool ext2_is_dir(const struct ext2_node *node);
 bool ext2_is_regular(const struct ext2_node *node);
 bool ext2_is_symlink(const struct ext2_node *node);
 bool ext2_info(struct ext2_fs *fs, struct ext2_info *out);
+bool ext2_shutdown(struct ext2_fs *fs);
 bool ext2_flush(struct ext2_fs *fs);
 bool ext2_drop_cache(struct ext2_fs *fs);
 uint64_t ext2_cache_used_pages(void);

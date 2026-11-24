@@ -98,6 +98,7 @@ int syscall_lookup_at(uint64_t dirfd, uint64_t addr, uint64_t flags, uint8_t rig
 
 
 int syscall_may_change_entry(char *path, bool replacing) {
+  if (vfs_readonly_path(path)) { return -30; }
   if (!cell_fs_path_allowed(path, CELL_FS_WRITE)) { return -EPERM; }
   size_t component = base_name(path) - path;
   size_t split = component > 1 ? component - 1 : 1;

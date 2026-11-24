@@ -1,3 +1,4 @@
+#include "init/app.h"
 #include "../usercopy.h"
 #include "abi/linux/aarch64/layout.h"
 #include "arch/aarch64/regs.h"
@@ -47,6 +48,7 @@ static bool futex_timeout_ticks(const struct timespec64 *timeout, uint64_t *out)
 
 int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
                   uint64_t child_tid) {
+  if (app_mode && (!(flags & CLONE_THREAD) || !(flags & CLONE_VM) || (flags & CLONE_VFORK))) { return -1; }
   const uint64_t signal_mask = 0xff;
   if ((flags & CLONE_VFORK) != 0) {
     const uint64_t allowed_vfork_flags =
