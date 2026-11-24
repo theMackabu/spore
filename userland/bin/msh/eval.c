@@ -363,12 +363,6 @@ static int wait_foreground(pid_t pgrp, pid_t pid) {
 }
 
 static int run_external(struct command *cmd) {
-  struct resolved_exec exec;
-  if (!resolve_exec_path(cmd->argv[0], &exec)) {
-    report_unresolved_command(cmd->argv[0]);
-    return 127;
-  }
-
   pid_t pid = fork();
   if (pid < 0) {
     perror("fork");
@@ -381,6 +375,11 @@ static int run_external(struct command *cmd) {
       _exit(126);
     }
     apply_env_assignments(cmd);
+    struct resolved_exec exec;
+    if (!resolve_exec_path(cmd->argv[0], &exec)) {
+      report_unresolved_command(cmd->argv[0]);
+      _exit(127);
+    }
     exec_resolved(&exec, cmd->argv);
     perror(cmd->argv[0]);
     _exit(127);
@@ -490,7 +489,7 @@ static int run_pipeline(struct command *stages, size_t count, bool background, i
   return result;
 }
 
-static int run_confined(const char *manifest, char **argv, const struct redirs *redir) {
+static int run_confined(const char *manifest, char **argv) {
   if (streq(manifest, "bad-manifest")) {
     puts("spore: spawn rejected: requested caps exceed parent");
     return 1;
@@ -502,10 +501,6 @@ static int run_confined(const char *manifest, char **argv, const struct redirs *
   }
   if (pid == 0) {
     sh_job_child_setup(0);
-    if (apply_redirs(redir) != 0) {
-      perror("redir");
-      _exit(126);
-    }
     char policy[320];
     const char *policy_arg = manifest;
     if (streq(manifest, "fs:/tmp")) {
@@ -710,10 +705,7 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
       return 0;
     }
     if (cmd->argc == 1) { return 0; }
-    if (cmd->argv[1][0] == '-') { return usage("command", "[-v] NAME [ARG...]"); }
-    --cmd->argc;
-    memmove(cmd->argv, cmd->argv + 1, (cmd->argc + 1) * sizeof(cmd->argv[0]));
-    return run_builtin(cmd, last_status, handled);
+    return usage("command", "[-v] NAME [ARG...]");
   }
   if (streq(cmd->argv[0], "help")) {
     puts("builtins: alias unalias . source cd pwd exit command help export unset set select jobs wait fg kill test [ "
@@ -861,12 +853,20 @@ static int run_builtin(struct command *cmd, int last_status, bool *handled) {
     setenv(cmd->argv[1], cmd->argv[n + 1], 1);
     return 0;
   }
-  if ((streq(cmd->argv[0], "confine") || streq(cmd->argv[0], "runc")) && cmd->argc >= 3) {
-    return run_confined(cmd->argv[1], &cmd->argv[2], &cmd->redir);
+  if (streq(cmd->argv[0], "confine") || streq(cmd->argv[0], "runc")) {
+    if (cmd->argc < 3) { return usage(cmd->argv[0], "PROFILE COMMAND [ARG...]"); }
+    return run_confined(cmd->argv[1], &cmd->argv[2]);
   }
 
   *handled = false;
   return 0;
+}
+
+static void unwrap_command(struct command *cmd) {
+  while (cmd->argc > 1 && streq(cmd->argv[0], "command") && cmd->argv[1][0] != '-') {
+    --cmd->argc;
+    memmove(cmd->argv, cmd->argv + 1, (cmd->argc + 1) * sizeof(cmd->argv[0]));
+  }
 }
 
 static int execute_tokens(struct parser *parser, int last_status) {
@@ -900,10 +900,13 @@ static int execute_tokens(struct parser *parser, int last_status) {
       }
     }
 
+    for (size_t i = 0; i < stage_count; ++i) { unwrap_command(&stages[i]); }
     if ((stages[0].argc > 0 || stages[0].envc > 0) && should_run) {
       trace_command(&stages[0]);
       if (stage_count > 1) {
         status = run_pipeline(stages, stage_count, background, status);
+      } else if (stages[0].argc && !is_builtin_name(stages[0].argv[0]) && !all_assignments(&stages[0])) {
+        status = run_external(&stages[0]);
       } else {
         bool handled = false;
         int builtin_status = run_builtin_with_redirs(&stages[0], status, &handled);
