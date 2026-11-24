@@ -114,7 +114,6 @@ struct open_file {
       uint16_t tcp_listen_backlog, tcp_pending_count;
       struct open_file *tcp_half_open, *tcp_ready_head, **tcp_ready_tail;
       struct open_file *tcp_listener, *tcp_pending_next, **tcp_pending_link;
-      uint32_t tcp_rx_len;
       uint8_t tcp_state;
       uint8_t tcp_error;
       uint8_t tcp_ooo_count;

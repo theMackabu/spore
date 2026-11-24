@@ -87,6 +87,7 @@ int64_t tcp_write_stream(struct open_file *file, uint64_t len, tcp_copy_payload 
 int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
                                              uint32_t flags);
 int64_t tcp_read_stream(struct open_file *file, uint64_t len, uint32_t flags, socket_copy_out copy, void *destination);
+uint32_t tcp_rx_available(const struct open_file *file);
 bool tcp_recv_waitall_pending(const struct open_file *file, uint64_t want, uint32_t flags);
 void tcp_init_socket(struct open_file *file);
 void tcp_release_file(struct open_file *file);

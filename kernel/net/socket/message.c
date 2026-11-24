@@ -49,7 +49,7 @@ int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *file, uin
   if (!msg_addr && !cursor.capacity) { return 0; }
   bool tcp = file->socket_proto == IPPROTO_TCP;
   if (tcp && (tcp_recv_waitall_pending(file, cursor.capacity, flags) ||
-              (cursor.capacity && !file->tcp_rx_len && !file->tcp_fin && !file->tcp_error))) { return -EAGAIN; }
+              (cursor.capacity && !tcp_rx_available(file) && !file->tcp_fin && !file->tcp_error))) { return -EAGAIN; }
   int32_t msg_flags = 0;
   if (!tcp && !file->udp_error && !file->dgram_rx_count) { return -EAGAIN; }
   if (msg_addr && (tcp || !file->udp_error)) {

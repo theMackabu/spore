@@ -69,7 +69,8 @@ void tcp_receive_segment(struct open_file *file, uint32_t seq, const uint8_t *da
   if (file->tcp_fin) { return; }
   uint32_t end = seq + len;
   uint32_t limit = socket_effective_buffer(file, true);
-  uint32_t room = file->tcp_rx_len < limit ? limit - file->tcp_rx_len : 0;
+  uint32_t used = tcp_rx_available(file);
+  uint32_t room = used < limit ? limit - used : 0;
   if (fin && end - file->tcp_ack <= room) {
     file->tcp_fin_pending = true;
     file->tcp_fin_seq = end;

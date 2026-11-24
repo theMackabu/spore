@@ -77,7 +77,8 @@ void tcp_ack_current_state(struct open_file *file) {
 bool tcp_recv_waitall_pending(const struct open_file *file, uint64_t want, uint32_t flags) {
   if (!(flags & MSG_WAITALL) || file->tcp_fin || file->tcp_error) { return false; }
   uint32_t limit = socket_effective_buffer(file, true);
-  return file->tcp_rx_len < want && file->tcp_rx_len < limit;
+  uint32_t used = tcp_rx_available(file);
+  return used < want && used < limit;
 }
 
 void tcp_init_socket(struct open_file *file) {
@@ -91,7 +92,7 @@ int tcp_poll_events(const struct open_file *file, int events) {
     net_poll();
     if (file->tcp_state == TCP_LISTEN) {
       if (file->tcp_ready_head) { ready |= CELL_POLLIN; }
-    } else if (file->tcp_rx_len >= socket_effective_rcvlowat(file) || file->tcp_fin || file->tcp_error) {
+    } else if (tcp_rx_available(file) >= socket_effective_rcvlowat(file) || file->tcp_fin || file->tcp_error) {
       ready |= CELL_POLLIN;
     }
   }

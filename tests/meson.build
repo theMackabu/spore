@@ -128,7 +128,7 @@ test_net = executable('test_net',
 
 test('net', test_net)
 
-test_tcp_stream = executable('test_tcp_stream', tcp_tx_sources + tcp_rx_sources + pmm_sources, 'test_tcp_stream.c',
+test_tcp_stream = executable('test_tcp_stream', tcp_tx_sources + tcp_rx_sources + page_ring_sources + pmm_sources, 'test_tcp_stream.c',
   link_with: host_mem,
   link_args: host_kernel_rust.full_path(),
   link_depends: host_kernel_rust,
@@ -136,3 +136,10 @@ test_tcp_stream = executable('test_tcp_stream', tcp_tx_sources + tcp_rx_sources 
   native: true)
 
 test('tcp-stream', test_tcp_stream)
+
+test_page_ring = executable('test_page_ring', page_ring_sources + pmm_sources, 'test_page_ring.c',
+  link_with: host_mem,
+  include_directories: test_include,
+  native: true)
+
+test('page-ring', test_page_ring)

@@ -6,7 +6,8 @@ constexpr uint8_t RECEIVE_WINDOW_SCALE = 2;
 
 static uint16_t advertised_window(const struct open_file *file, uint8_t scale) {
   uint32_t limit = socket_effective_buffer(file, true);
-  uint32_t room = file->tcp_rx_len >= limit ? 0 : limit - file->tcp_rx_len;
+  uint32_t used = tcp_rx_available(file);
+  uint32_t room = used >= limit ? 0 : limit - used;
   room >>= scale;
   return room > UINT16_MAX ? UINT16_MAX : (uint16_t)room;
 }
