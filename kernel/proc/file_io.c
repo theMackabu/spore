@@ -69,18 +69,18 @@ int64_t cell_read_generated(struct domain *domain, struct open_file *file, uint6
   return copied ? (int64_t)io.len : -14;
 }
 
-int64_t cell_block_device_io(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, bool write) {
+int64_t cell_block_device_io(struct domain *domain, struct open_file *file, uint64_t *offset, uint64_t buf, size_t len, bool write) {
   struct user_address_space *as = cell_domain_as(domain);
   struct io_buffer io = io_buffer(as, buf, len, write ? VMM_ACCESS_READ : VMM_ACCESS_WRITE);
   if (write) {
     if (!io.direct && !vmm_copy_from_user(as, io.data, buf, io.len)) { return -14; }
-    if (!virtio_blk_write(file->offset, io.data, (uint32_t)io.len)) { return -5; }
+    if (!virtio_blk_write(*offset, io.data, (uint32_t)io.len)) { return -5; }
   } else {
-    bool ok = file->node.device == RAMFS_DEV_BLK_BOOT ? virtio_blk_read_boot(file->offset, io.data, (uint32_t)io.len)
-                                                       : virtio_blk_read(file->offset, io.data, (uint32_t)io.len);
+    bool ok = file->node.device == RAMFS_DEV_BLK_BOOT ? virtio_blk_read_boot(*offset, io.data, (uint32_t)io.len)
+                                                       : virtio_blk_read(*offset, io.data, (uint32_t)io.len);
     if (!ok) { return -5; }
     if (!io.direct && !vmm_copy_to_user(as, buf, io.data, io.len)) { return -14; }
   }
-  file->offset += io.len;
+  *offset += io.len;
   return (int64_t)io.len;
 }

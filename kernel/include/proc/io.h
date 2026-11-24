@@ -2,9 +2,9 @@
 
 #include "arch/aarch64/regs.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame);
-int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame);
-int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame);
+int64_t cell_fd_positioned_io(int fd, uint64_t buf, uint64_t len, int64_t position, bool write);

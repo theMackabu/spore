@@ -418,9 +418,9 @@ l_readv:
 l_writev:
   return sys_writev(f, a0, a1, a2);
 l_pread64:
-  return sys_pread64(f, a0, a1, a2, a3);
+  return sys_pread64(a0, a1, a2, a3);
 l_pwrite64:
-  return sys_pwrite64(f, a0, a1, a2, a3);
+  return sys_pwrite64(a0, a1, a2, a3);
 l_pselect6:
   return sys_pselect6(f, a0, a1, a2, a3, a4, a5);
 l_ppoll:

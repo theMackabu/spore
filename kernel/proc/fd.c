@@ -175,7 +175,6 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   }
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   cell_copy_open_path(file, path);
-  if (file->type == OPEN_VFS && (flags & CELL_O_APPEND) != 0) { file->offset = node->size; }
   bool pipe = file->type == OPEN_PIPE;
   int fd = cell_install_fd(domain, file, flags & CELL_O_CLOEXEC);
   if (fd >= 0) {

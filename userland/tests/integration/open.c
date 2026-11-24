@@ -108,8 +108,29 @@ static int inode_times(const char *name) {
   return ok;
 }
 
+static int positioned_io(void) {
+  int fd = open("/tmp/positioned-io", O_CREAT | O_EXCL | O_RDWR | O_APPEND, 0600);
+  if (fd < 0) { return 0; }
+  char text[8] = {0};
+  int ok = write(fd, "ab", 2) == 2 && pwrite(fd, "C", 1, 0) == 1 && lseek(fd, 0, SEEK_CUR) == 2 &&
+           pread(fd, text, 3, 0) == 3 && !memcmp(text, "abC", 3) && lseek(fd, 0, SEEK_CUR) == 2 &&
+           pread(fd, text, 1, -1) == -1 && errno == EINVAL;
+  close(fd); unlink("/tmp/positioned-io");
+  int p[2];
+  if (pipe(p)) { return 0; }
+  ok = ok && pread(p[0], text, 1, 0) == -1 && errno == ESPIPE &&
+       pwrite(p[1], "x", 1, 0) == -1 && errno == ESPIPE && lseek(p[1], 0, SEEK_SET) == -1 && errno == ESPIPE;
+  close(p[0]); close(p[1]);
+  fd = open("/proc/meminfo", O_RDONLY);
+  ok = ok && fd >= 0 && read(fd, text, 3) == 3 && !memcmp(text, "Mem", 3) &&
+       pread(fd, text, 4, 4) == 4 && !memcmp(text, "otal", 4) &&
+       read(fd, text, 5) == 5 && !memcmp(text, "Total", 5);
+  if (fd >= 0) { close(fd); }
+  return ok;
+}
+
 int integration_open_suite(void) {
-  int ok = creation_mask() && deep_directory() && open_flags() && inode_times("/inode-times") && inode_times("/tmp/inode-times");
+  int ok = creation_mask() && deep_directory() && open_flags() && positioned_io() && inode_times("/inode-times") && inode_times("/tmp/inode-times");
   printf("[spore] pathname, umask and descriptor opens: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }

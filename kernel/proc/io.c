@@ -31,15 +31,7 @@ enum {
   ENOTCONN = 107,
 };
 
-static struct domain *current_domain(void) {
-  return cell_current_domain_internal();
-}
-
-static int64_t write_console_from_user(struct domain *domain, uint64_t buf, uint64_t len) {
-  return cell_tty_write_console_from_user(domain, buf, len);
-}
-
-static int64_t write_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len) {
+static int64_t write_device(struct open_file *file, struct domain *domain, uint64_t *offset, uint64_t buf, uint64_t len) {
   if (len == 0) { return 0; }
   switch (file->node.device) {
   case RAMFS_DEV_NULL:
@@ -51,12 +43,12 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
     return -28;
   case RAMFS_DEV_CONSOLE:
   case RAMFS_DEV_TTY:
-    return write_console_from_user(domain, buf, len);
+    return cell_tty_write_console_from_user(domain, buf, len);
   case RAMFS_DEV_PTMX:
   case RAMFS_DEV_PTS:
     return -EINVAL;
   case RAMFS_DEV_BLK_ROOT:
-    return cell_block_device_io(domain, file, buf, len, true);
+    return cell_block_device_io(domain, file, offset, buf, len, true);
   default:
     return -EINVAL;
   }
@@ -64,7 +56,7 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
 
 static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame);
 
-static int64_t read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
+static int64_t read_device(struct open_file *file, struct domain *domain, uint64_t *offset, uint64_t buf, uint64_t len,
                            struct trap_frame *frame) {
   if (len == 0) { return 0; }
   switch (file->node.device) {
@@ -89,14 +81,30 @@ static int64_t read_device(struct open_file *file, struct domain *domain, uint64
     return -EINVAL;
   case RAMFS_DEV_BLK_ROOT:
   case RAMFS_DEV_BLK_BOOT:
-    return cell_block_device_io(domain, file, buf, len, false);
-  default:
-    return cell_procfs_read_device(file, domain, buf, len);
+    return cell_block_device_io(domain, file, offset, buf, len, false);
+  default: {
+    int64_t got = cell_procfs_read_device(file, domain, buf, len, *offset);
+    if (got > 0) { *offset += (uint64_t)got; }
+    return got;
+  }
   }
 }
 
+static int64_t write_vfs(struct open_file *file, struct domain *domain, uint64_t *offset, uint64_t buf, uint64_t len) {
+  if (file->node.device != RAMFS_DEV_NONE) { return write_device(file, domain, offset, buf, len); }
+  uint64_t off = *offset;
+  if (file->flags & CELL_O_APPEND) {
+    struct vfs_node fresh;
+    if (!vfs_refresh(&file->node, &fresh)) { return -5; }
+    off = fresh.size;
+  }
+  int64_t wrote = cell_write_regular(domain, file, off, buf, len);
+  if (wrote > 0) { *offset = off + (uint64_t)wrote; }
+  return wrote;
+}
+
 int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
-  struct domain *domain = current_domain();
+  struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_file_at(domain, fd);
   if (file == NULL) { return -9; }
   if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
@@ -127,18 +135,9 @@ int64_t cell_fd_write(int fd, uint64_t buf, uint64_t len, struct trap_frame *fra
   }
   if (file->type != OPEN_STDOUT && file->type != OPEN_STDIN) {
     if (file->type != OPEN_VFS) { return -22; }
-    if (file->node.device != RAMFS_DEV_NONE) { return write_device(file, domain, buf, len); }
-    uint64_t off = file->offset;
-    if (file->flags & CELL_O_APPEND) {
-      struct vfs_node fresh;
-      if (!vfs_refresh(&file->node, &fresh)) { return -5; }
-      off = fresh.size;
-    }
-    int64_t wrote = cell_write_regular(domain, file, off, buf, len);
-    if (wrote > 0) { file->offset = off + (uint64_t)wrote; }
-    return wrote;
+    return write_vfs(file, domain, &file->offset, buf, len);
   }
-  return write_console_from_user(domain, buf, len);
+  return cell_tty_write_console_from_user(domain, buf, len);
 }
 
 static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame) {
@@ -153,7 +152,7 @@ static int64_t deliver_tty_signal_or_eintr(struct trap_frame *frame) {
 }
 
 int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *frame) {
-  struct domain *domain = current_domain();
+  struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_file_at(domain, fd);
   if (file == NULL) { return -9; }
   if (file->type == OPEN_EVENTFD) { return cell_eventfd_io(domain, file, buf, len, false, frame); }
@@ -188,30 +187,26 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
     return cell_block_current(frame, (struct thread_wait){.reason = WAIT_STDIN, .target = -1, .buf = buf, .len = len});
   }
   if (file->type == OPEN_VFS && !linux_open_readable(file->flags)) { return -9; }
-  if (file->type != OPEN_VFS || file->node.is_dir) { return -22; }
-  if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, buf, len, frame); }
+  if (file->type != OPEN_VFS) { return -9; }
+  if (file->node.is_dir) { return -21; }
+  if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, &file->offset, buf, len, frame); }
   int64_t got = cell_read_regular(domain, file, file->offset, buf, len);
   if (got > 0) { file->offset += (uint64_t)got; }
   return got;
 }
 
-int64_t cell_fd_pread(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {
-  (void)frame;
-  struct domain *domain = current_domain();
+int64_t cell_fd_positioned_io(int fd, uint64_t buf, uint64_t len, int64_t position, bool write) {
+  if (position < 0) { return -EINVAL; }
+  struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_file_at(domain, fd);
-  if (file == NULL) { return -9; }
-  if (file->type == OPEN_VFS && !linux_open_readable(file->flags)) { return -9; }
-  if (file->type != OPEN_VFS || file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -22; }
-  return cell_read_regular(domain, file, off, buf, len);
-}
-
-int64_t cell_fd_pwrite(int fd, uint64_t buf, uint64_t len, uint64_t off, struct trap_frame *frame) {
-  (void)frame;
-  struct domain *domain = current_domain();
-  struct open_file *file = cell_file_at(domain, fd);
-  if (file == NULL) { return -9; }
-  if (file->type == OPEN_VFS && !linux_open_writable(file->flags)) { return -9; }
-  if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir) { return -22; }
+  if (!file) { return -9; }
+  if ((file->type == OPEN_VFS || file->type == OPEN_PIPE) &&
+      !(write ? linux_open_writable(file->flags) : linux_open_readable(file->flags))) { return -9; }
+  if (file->type != OPEN_VFS || file->node.device == RAMFS_DEV_CONSOLE || file->node.device == RAMFS_DEV_TTY) { return -29; }
+  if (file->node.is_dir) { return -21; }
   if (!len) { return 0; }
-  return cell_write_regular(domain, file, off, buf, len);
+  uint64_t offset = (uint64_t)position;
+  if (write) { return write_vfs(file, domain, &offset, buf, len); }
+  if (file->node.device != RAMFS_DEV_NONE) { return read_device(file, domain, &offset, buf, len, NULL); }
+  return cell_read_regular(domain, file, offset, buf, len);
 }

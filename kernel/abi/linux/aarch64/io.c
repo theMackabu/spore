@@ -29,14 +29,14 @@ int64_t sys_read(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t l
   return cell_fd_read((int)fd, buf, len, frame);
 }
 
-int64_t sys_pread64(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len, uint64_t off) {
+int64_t sys_pread64(uint64_t fd, uint64_t buf, uint64_t len, uint64_t off) {
   if (!syscall_user_writable(buf, len)) { return -(int64_t)EFAULT; }
-  return cell_fd_pread((int)fd, buf, len, off, frame);
+  return cell_fd_positioned_io((int)fd, buf, len, (int64_t)off, false);
 }
 
-int64_t sys_pwrite64(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t len, uint64_t off) {
+int64_t sys_pwrite64(uint64_t fd, uint64_t buf, uint64_t len, uint64_t off) {
   if (!syscall_user_readable(buf, len)) { return -(int64_t)EFAULT; }
-  return cell_fd_pwrite((int)fd, buf, len, off, frame);
+  return cell_fd_positioned_io((int)fd, buf, len, (int64_t)off, true);
 }
 
 int64_t sys_writev(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt) {

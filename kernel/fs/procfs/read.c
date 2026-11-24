@@ -261,12 +261,18 @@ static size_t proc_pid_proc_stat_text(char *dst, size_t cap, const struct proc_t
   return len;
 }
 
-static int64_t read_cmdline(struct open_file *file, struct domain *caller, uint64_t buf, size_t len) {
+struct proc_read {
+  struct domain *domain;
+  uint64_t buf, len, offset;
+};
+
+static int64_t read_cmdline(struct open_file *file, const struct proc_read *out) {
   const struct domain *target = cell_find_domain(file->node.proc.pid);
   if (target == NULL || target->zombie) { return 0; }
   const struct user_address_space *as = cell_domain_as_const(target);
-  if (as == NULL || file->offset >= as->arg_end - as->arg_start) { return 0; }
-  uint64_t src = as->arg_start + file->offset;
+  if (as == NULL || out->offset >= as->arg_end - as->arg_start) { return 0; }
+  uint64_t src = as->arg_start + out->offset;
+  uint64_t len = out->len;
   if (len > as->arg_end - src) { len = as->arg_end - src; }
   size_t done = 0;
   uint8_t bytes[512];
@@ -275,13 +281,12 @@ static int64_t read_cmdline(struct open_file *file, struct domain *caller, uint6
     if (chunk > sizeof(bytes)) { chunk = sizeof(bytes); }
     if (chunk > len - done) { chunk = len - done; }
     if (!vmm_copy_from_user(as, bytes, src + done, chunk)) { break; }
-    if (!vmm_copy_to_user(cell_domain_as(caller), buf + done, bytes, chunk)) {
+    if (!vmm_copy_to_user(cell_domain_as(out->domain), out->buf + done, bytes, chunk)) {
       if (done == 0) { return -14; }
       break;
     }
     done += chunk;
   }
-  file->offset += done;
   return (int64_t)done;
 }
 
@@ -323,21 +328,17 @@ static size_t proc_pid_exe_text(char *dst, size_t cap, const struct proc_task *t
   return len;
 }
 
-static int64_t read_text_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
-                                const char *text, size_t text_len) {
-  if (file->offset >= text_len) { return 0; }
-  size_t chunk = text_len - (size_t)file->offset;
-  if (chunk > len) { chunk = (size_t)len; }
-  if (!vmm_copy_to_user(cell_domain_as(domain), buf, text + file->offset, chunk)) { return -14; }
-  file->offset += chunk;
-  return (int64_t)chunk;
+static int64_t read_text_device(const struct proc_read *out, const char *text, size_t text_len) {
+  if (out->offset >= text_len) { return 0; }
+  size_t chunk = text_len - out->offset;
+  if (chunk > out->len) { chunk = out->len; }
+  return vmm_copy_to_user(cell_domain_as(out->domain), out->buf, text + out->offset, chunk) ? (int64_t)chunk : -14;
 }
 
-static int64_t read_generated_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
-                                     size_t (*fill)(char *, size_t)) {
+static int64_t read_generated_device(const struct proc_read *out, size_t (*fill)(char *, size_t)) {
   char text[4096];
   size_t text_len = fill(text, sizeof(text));
-  return read_text_device(file, domain, buf, len, text, text_len);
+  return read_text_device(out, text, text_len);
 }
 
 static bool sys_cpu_in_set(uint32_t cpu, enum ramfs_device device) {
@@ -416,7 +417,7 @@ static size_t sys_cpu_core_online_text(char *dst, size_t cap, const char *path) 
   return len;
 }
 
-static int64_t read_generated_pid_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
+static int64_t read_generated_pid_device(struct open_file *file, const struct proc_read *out,
                                          size_t (*fill)(char *, size_t, const struct proc_task *)) {
   struct proc_task task = {.domain = cell_find_domain(file->node.proc.pid)};
   if (task.domain == NULL) { return 0; }
@@ -426,74 +427,75 @@ static int64_t read_generated_pid_device(struct open_file *file, struct domain *
   }
   char text[4096];
   size_t text_len = fill(text, sizeof(text), &task);
-  return read_text_device(file, domain, buf, len, text, text_len);
+  return read_text_device(out, text, text_len);
 }
 
-int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len) {
+int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len, uint64_t offset) {
+  struct proc_read out = {domain, buf, len, offset};
   switch (file->node.device) {
   case RAMFS_DEV_PROCINFO:
-    return read_generated_device(file, domain, buf, len, procinfo_text);
+    return read_generated_device(&out, procinfo_text);
   case RAMFS_DEV_MEMINFO:
-    return read_generated_device(file, domain, buf, len, proc_meminfo_text);
+    return read_generated_device(&out, proc_meminfo_text);
   case RAMFS_DEV_CPUINFO:
-    return read_generated_device(file, domain, buf, len, proc_cpuinfo_text);
+    return read_generated_device(&out, proc_cpuinfo_text);
   case RAMFS_DEV_UPTIME:
-    return read_generated_device(file, domain, buf, len, proc_uptime_text);
+    return read_generated_device(&out, proc_uptime_text);
   case RAMFS_DEV_LOADAVG:
-    return read_generated_device(file, domain, buf, len, proc_loadavg_text);
+    return read_generated_device(&out, proc_loadavg_text);
   case RAMFS_DEV_MOUNTS:
-    return read_generated_device(file, domain, buf, len, proc_mounts_text);
+    return read_generated_device(&out, proc_mounts_text);
   case RAMFS_DEV_STAT:
-    return read_generated_device(file, domain, buf, len, proc_stat_text);
+    return read_generated_device(&out, proc_stat_text);
   case RAMFS_DEV_NET_DEV:
-    return read_generated_device(file, domain, buf, len, proc_net_dev_text);
+    return read_generated_device(&out, proc_net_dev_text);
   case RAMFS_DEV_KMSG:
-    return read_generated_device(file, domain, buf, len, proc_kmsg_text);
+    return read_generated_device(&out, proc_kmsg_text);
   case RAMFS_DEV_FILESYSTEMS:
-    return read_generated_device(file, domain, buf, len, proc_filesystems_text);
+    return read_generated_device(&out, proc_filesystems_text);
   case RAMFS_DEV_PARTITIONS:
-    return read_generated_device(file, domain, buf, len, proc_partitions_text);
+    return read_generated_device(&out, proc_partitions_text);
   case RAMFS_DEV_DEVICES:
-    return read_generated_device(file, domain, buf, len, proc_devices_text);
+    return read_generated_device(&out, proc_devices_text);
   case RAMFS_DEV_FSSTATS:
-    return read_generated_device(file, domain, buf, len, proc_fsstats_text);
+    return read_generated_device(&out, proc_fsstats_text);
   case RAMFS_DEV_PROC_PID_STAT:
-    return read_generated_pid_device(file, domain, buf, len, proc_pid_proc_stat_text);
+    return read_generated_pid_device(file, &out, proc_pid_proc_stat_text);
   case RAMFS_DEV_PROC_PID_STATUS:
-    return read_generated_pid_device(file, domain, buf, len, proc_pid_status_text);
+    return read_generated_pid_device(file, &out, proc_pid_status_text);
   case RAMFS_DEV_PROC_PID_CMDLINE:
-    return read_cmdline(file, domain, buf, len);
+    return read_cmdline(file, &out);
   case RAMFS_DEV_PROC_PID_STATM:
-    return read_generated_pid_device(file, domain, buf, len, proc_pid_statm_text);
+    return read_generated_pid_device(file, &out, proc_pid_statm_text);
   case RAMFS_DEV_PROC_PID_COMM:
-    return read_generated_pid_device(file, domain, buf, len, proc_pid_comm_text);
+    return read_generated_pid_device(file, &out, proc_pid_comm_text);
   case RAMFS_DEV_PROC_PID_MOUNTINFO:
-    return read_generated_device(file, domain, buf, len, proc_mountinfo_text);
+    return read_generated_device(&out, proc_mountinfo_text);
   case RAMFS_DEV_PROC_PID_MOUNTS:
-    return read_generated_device(file, domain, buf, len, proc_mounts_text);
+    return read_generated_device(&out, proc_mounts_text);
   case RAMFS_DEV_PROC_PID_CWD:
-    return read_generated_pid_device(file, domain, buf, len, proc_pid_cwd_text);
+    return read_generated_pid_device(file, &out, proc_pid_cwd_text);
   case RAMFS_DEV_PROC_PID_EXE:
-    return read_generated_pid_device(file, domain, buf, len, proc_pid_exe_text);
+    return read_generated_pid_device(file, &out, proc_pid_exe_text);
   case RAMFS_DEV_FS_ROOT:
-    return read_generated_device(file, domain, buf, len, proc_fs_root_text);
+    return read_generated_device(&out, proc_fs_root_text);
   case RAMFS_DEV_FS_BOOT:
-    return read_generated_device(file, domain, buf, len, proc_fs_boot_text);
+    return read_generated_device(&out, proc_fs_boot_text);
   case RAMFS_DEV_FS_RAM0:
-    return read_generated_device(file, domain, buf, len, proc_fs_ram0_text);
+    return read_generated_device(&out, proc_fs_ram0_text);
   case RAMFS_DEV_FS_TMP:
-    return read_generated_device(file, domain, buf, len, proc_fs_tmp_text);
+    return read_generated_device(&out, proc_fs_tmp_text);
   case RAMFS_DEV_SYS_CPU_POSSIBLE:
   case RAMFS_DEV_SYS_CPU_PRESENT:
   case RAMFS_DEV_SYS_CPU_ONLINE: {
     char text[128] = {0};
     size_t text_len = sys_cpu_list_text(text, sizeof(text), file->node.device);
-    return read_text_device(file, domain, buf, len, text, text_len);
+    return read_text_device(&out, text, text_len);
   }
   case RAMFS_DEV_SYS_CPU_CORE_ONLINE: {
     char text[4] = {0};
     size_t text_len = sys_cpu_core_online_text(text, sizeof(text), file->path);
-    return read_text_device(file, domain, buf, len, text, text_len);
+    return read_text_device(&out, text, text_len);
   }
   default:
     return -22;
