@@ -255,7 +255,7 @@ fn launch(config: Config) -> io::Result<i32> {
     if let Some(boot) = direct {
         boot.append(&mut q, &image)?;
     } else {
-        append_firmware(&mut q, mode, &image, vars.as_deref())?;
+        append_firmware(&mut q, &image, vars.as_deref())?;
     }
     if let Some(r) = root {
         q.extend([
@@ -302,12 +302,7 @@ fn launch(config: Config) -> io::Result<i32> {
     super::harness::run(&q, mode, timings)
 }
 
-fn append_firmware(
-    q: &mut Vec<OsString>,
-    mode: &str,
-    image: &OsStr,
-    vars: Option<&OsStr>,
-) -> io::Result<()> {
+fn append_firmware(q: &mut Vec<OsString>, image: &OsStr, vars: Option<&OsStr>) -> io::Result<()> {
     let dirs = firmware_dirs(&q[0]);
     let Some(firmware) = find(&dirs, &["edk2-aarch64-code.fd"]) else {
         return Err(io::Error::other("edk2-aarch64-code.fd not found"));
@@ -332,12 +327,7 @@ fn append_firmware(
     }
     q.extend([
         "-boot".into(),
-        (if mode == "app" {
-            "order=d,menu=on,splash-time=0,strict=on"
-        } else {
-            "order=d,menu=off,strict=on"
-        })
-        .into(),
+        "order=d,menu=on,splash-time=0,strict=on".into(),
         "-drive".into(),
         drive(
             "if=pflash,format=raw,readonly=on,file=",
