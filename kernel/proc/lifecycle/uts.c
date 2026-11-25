@@ -1,3 +1,4 @@
+#include "proc/namespace.h"
 #include "proc/uts.h"
 #include "proc/thread.h"
 #include "proc/capabilities.h"
@@ -6,11 +7,14 @@
 #include "proc/domain.h"
 
 struct uts_namespace {
+  uint64_t ino;
   unsigned refs;
   struct user_namespace *owner;
   char hostname[UTS_NAME_SIZE];
   char domainname[UTS_NAME_SIZE];
 };
+
+uint64_t uts_ino(const struct uts_namespace *ns) { return ns->ino; }
 
 static struct object_pool namespaces;
 static struct uts_namespace initial = {.hostname = "spore.local", .domainname = "Spore"};
@@ -35,6 +39,7 @@ int uts_unshare(struct thread *leader) {
   struct uts_namespace *copy = pool_alloc(&namespaces);
   if (!copy) { return -12; }
   *copy = domain->uts ? *domain->uts : initial;
+  copy->ino = namespace_new_ino();
   copy->refs = 1;
   copy->owner = userns_retain(domain->user_ns);
   uts_release(domain->uts);

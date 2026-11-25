@@ -4,6 +4,7 @@
 #include "fs/notify.h"
 #include "net/net.h"
 #include "proc/signal.h"
+#include "proc/signalfd.h"
 
 #include "arch/regs.h"
 #include "proc/accounting.h"
@@ -21,8 +22,9 @@ enum { EFAULT = 14, EINVAL = 22 };
 
 static bool poll_waking;
 
-int cell_file_poll_events(struct open_file *file, int events) {
+int cell_thread_poll_events(struct thread *thread, struct open_file *file, int events) {
   if (!file) { return CELL_POLLNVAL; }
+  if (file->type == OPEN_SIGNALFD) { return cell_signalfd_ready(thread, file) ? events & CELL_POLLIN : 0; }
   if (file->type == OPEN_URING) { return uring_poll(&file->ring, events); }
   if (file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
     return cell_socket_poll_events(file, events);
@@ -64,6 +66,10 @@ int cell_file_poll_events(struct open_file *file, int events) {
   return revents;
 }
 
+int cell_file_poll_events(struct open_file *file, int events) {
+  return cell_thread_poll_events(cell_current_thread_internal(), file, events);
+}
+
 static int64_t ppoll_check(struct thread *thread, bool commit) {
   if (thread == NULL || thread->domain == NULL || thread->wait.poll_nfds > MAX_FDS) { return -EINVAL; }
   int64_t ready = 0;
@@ -73,7 +79,7 @@ static int64_t ppoll_check(struct thread *thread, bool commit) {
     if (!vmm_copy_from_user(cell_domain_as(thread->domain), &pfd, addr, sizeof(pfd))) { return -EFAULT; }
 
     int revents = 0;
-    if (pfd.fd >= 0) { revents = cell_file_poll_events(cell_file_at(thread->domain, pfd.fd), pfd.events); }
+    if (pfd.fd >= 0) { revents = cell_thread_poll_events(thread, cell_file_at(thread->domain, pfd.fd), pfd.events); }
     if (revents != 0) { ++ready; }
     if (commit) {
       pfd.revents = (int16_t)revents;
@@ -103,7 +109,7 @@ static int64_t pselect_check(struct thread *thread, bool commit) {
       unsigned pos = (unsigned)__builtin_ctzll(bits);
       uint64_t bit = UINT64_C(1) << pos;
       int events = (read & bit ? CELL_POLLIN : 0) | (write & bit ? CELL_POLLOUT : 0);
-      int revents = cell_file_poll_events(cell_file_at(thread->domain, 64 * i + pos), events);
+      int revents = cell_thread_poll_events(thread, cell_file_at(thread->domain, 64 * i + pos), events);
       if (revents & CELL_POLLNVAL) { return -9; }
       if ((read & bit) && (revents & (CELL_POLLIN | CELL_POLLHUP | CELL_POLLERR))) { sets[0][i] |= bit; ++ready; }
       if ((write & bit) && (revents & (CELL_POLLOUT | CELL_POLLERR))) { sets[1][i] |= bit; ++ready; }

@@ -157,10 +157,18 @@ int integration_seccomp(void) {
 
 
 int integration_uts_namespace(void) {
+  struct stat original;
+  if (stat("/proc/self/ns/uts", &original)) { return 0; }
   char before[65], after[65];
   if (gethostname(before, sizeof(before))) { return 0; }
   pid_t child = syscall(SYS_clone, CLONE_NEWUTS | SIGCHLD, 0, 0, 0, 0);
   if (child == 0) {
+    struct stat shared, copied;
+    int nsfd = open("/proc/self/ns/uts", O_RDONLY | O_CLOEXEC);
+    if (nsfd < 0 || fstat(nsfd, &copied) || copied.st_ino == original.st_ino ||
+        copied.st_dev != original.st_dev || unshare(CLONE_NEWUTS) || stat("/proc/self/ns/uts", &shared) ||
+        shared.st_ino == copied.st_ino || fstat(nsfd, &shared) || shared.st_ino != copied.st_ino) { _exit(7); }
+    close(nsfd);
     if (gethostname(after, sizeof(after)) || strcmp(before, after) || sethostname("private", 7)) { _exit(1); }
     pid_t next = fork();
     if (!next) {

@@ -16,6 +16,7 @@ struct mount_entry {
 };
 
 struct mount_namespace {
+  uint64_t ino;
   unsigned refs;
   struct user_namespace *owner;
   struct mount_entry *mounts;
@@ -24,6 +25,8 @@ struct mount_namespace {
 
 static struct mount_namespace initial;
 static struct mount_namespace *namespaces = &initial;
+uint64_t mountns_ino(const struct mount_namespace *ns) { return ns->ino; }
+
 static struct object_pool namespace_pool, mount_pool, fs_pool;
 static size_t live_entries;
 static uint32_t next_device = 0x10000;
@@ -82,6 +85,7 @@ int mountns_unshare(struct thread *thread) {
   const struct mount_namespace *original = view(d);
   struct mount_namespace *ns = allocate(&namespace_pool, sizeof(*ns));
   if (!ns) { return -12; }
+  ns->ino = namespace_new_ino();
   ns->refs = 1;
   ns->owner = userns_retain(d->user_ns);
   ns->next = namespaces;

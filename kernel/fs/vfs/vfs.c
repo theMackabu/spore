@@ -313,6 +313,7 @@ int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
 }
 
 bool vfs_retain_node(const struct vfs_node *node) {
+  if (node->backend == VFS_NSFS) { namespace_retain(node->ns); }
   if (node->backend == VFS_EXT2) { return ext2_retain_inode(vfs_root_ext2, node->ext2.ino); }
   if (node->backend == VFS_RAMFS) {
     struct ramfs *fs = node->ramfs.fs;
@@ -323,6 +324,7 @@ bool vfs_retain_node(const struct vfs_node *node) {
 }
 
 void vfs_release_node(const struct vfs_node *node) {
+  if (node->backend == VFS_NSFS) { namespace_release(node->ns); }
   if (node->backend == VFS_EXT2) { ext2_release_inode(vfs_root_ext2, node->ext2.ino); }
   if (node->backend == VFS_RAMFS) {
     struct ramfs *fs = node->ramfs.fs;
@@ -405,6 +407,7 @@ int64_t vfs_writeback(const struct vfs_node *node, uint64_t off, const void *src
 }
 
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
+  if (node->backend == VFS_NSFS) { *out = *node; return true; }
   if (node->backend == VFS_RAMFS) {
     struct ramfs_node fresh;
     if (!ramfs_refresh_node(node->ramfs.fs, node->ramfs.index, &fresh)) { return false; }

@@ -20,7 +20,7 @@ struct uring_pending {
   uint32_t first_completion;
   uint32_t cflags, last_ready;
   uint64_t interval;
-  int pid, result;
+  int pid, tid, result;
   bool finished;
 };
 
@@ -48,6 +48,7 @@ static int defer(struct open_file *owner, struct open_file *target, const struct
                               .sqe = *e,
                               .deadline = deadline,
                               .pid = domain->id,
+                              .tid = cell_current_tid(),
                               .context = cell_domain_as(domain)->context_id,
                               .first_completion = r->cq_tail - r->timeout_cqes};
   if (e->opcode == OP_READV || e->opcode == OP_WRITEV) {
@@ -282,7 +283,8 @@ static int check(struct uring_pending *p, struct uring *r) {
     return now_ns() >= p->deadline ? -62 : URING_PENDING;
   }
   if (p->sqe.opcode == OP_POLL_ADD) {
-    int rc = cell_file_poll_events(p->target, p->sqe.op_flags);
+    int rc = p->target->type == OPEN_SIGNALFD ? cell_thread_poll_events(cell_find_thread(p->tid), p->target, p->sqe.op_flags)
+                                              : cell_file_poll_events(p->target, p->sqe.op_flags);
     if ((p->sqe.len & 1) && !(p->sqe.len & 8)) {
       unsigned previous = p->last_ready;
       p->last_ready = rc;

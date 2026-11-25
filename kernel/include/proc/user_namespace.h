@@ -9,6 +9,7 @@ struct thread;
 struct id_map { uint32_t outer, inner; bool mapped; };
 struct user_namespace {
   unsigned refs;
+  uint64_t ino;
   bool groups_denied;
   struct id_map uid, gid;
 };

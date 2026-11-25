@@ -97,7 +97,7 @@ static struct vfs_lookup_cache_entry *victim(struct vfs_lookup_cache_entry *set)
 }
 
 void vfs_lookup_cache_put(const char *path, bool lstat, const struct vfs_node *node) {
-  if (node == NULL || node->backend == VFS_PROC) { return; }
+  if (node == NULL || node->backend == VFS_PROC || node->backend == VFS_NSFS) { return; }
   size_t len;
   struct vfs_lookup_cache_entry *set;
   if (!cache_path(path, lstat, &len, &set)) { return; }

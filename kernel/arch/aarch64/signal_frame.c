@@ -42,7 +42,7 @@ static void fill_signal_context(struct signal_frame64 *frame, const struct threa
   frame->ucontext.uc_stack.ss_flags = thread_on_sigaltstack(thread) ? SS_ONSTACK : thread->sigaltstack_flags;
   frame->ucontext.uc_stack.ss_size = thread->sigaltstack_size;
   frame->ucontext.uc_sigmask = thread->signal_mask;
-  frame->ucontext.uc_mcontext.fault_address = info->si_code > 0 ? info->si_addr : 0;
+  frame->ucontext.uc_mcontext.fault_address = info->si_code > 0 && info->si_signo != 17 ? info->si_addr : 0;
   for (size_t i = 0; i < 31; ++i) {
     frame->ucontext.uc_mcontext.regs[i] = thread->tf.x[i];
   }

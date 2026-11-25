@@ -16,6 +16,7 @@ struct siginfo_fields64 {
     uint64_t si_addr;
     struct signal_sender sender;
   };
+  int32_t child_status;
 };
 
 struct siginfo64 {

@@ -1,5 +1,6 @@
 #include "abi/linux/shared/open.h"
 #include "proc/fd.h"
+#include "proc/signalfd.h"
 #include "proc/epoll.h"
 #include "flock.h"
 
@@ -53,6 +54,7 @@ void cell_release_open_file(struct open_file *file) {
   if (file == NULL || file->refcount == 0) { return; }
   --file->refcount;
   if (file->refcount == 0) {
+    if (file->type == OPEN_SIGNALFD) { cell_signalfd_close(); }
     if (file->type == OPEN_URING) { uring_release(&file->ring); }
     if (file->type == OPEN_VFS || file->type == OPEN_PIPE) { fsnotify_closed(file); }
     if (file->epoll_observers || file->type == OPEN_EPOLL) { cell_epoll_release_file(file); }

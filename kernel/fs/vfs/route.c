@@ -37,6 +37,7 @@ bool vfs_readonly_path(const char *path) {
 }
 
 bool vfs_readonly_node(const struct vfs_node *node) {
+  if (node->backend == VFS_NSFS) { return true; }
   return app_mode && node->backend == VFS_RAMFS && node->ramfs.mount == RAMFS_MOUNT_RAM0;
 }
 
@@ -319,6 +320,10 @@ static bool mount_stats(size_t index, struct vfs_fs_info *out) {
 }
 
 bool vfs_device_fs_info(uint64_t dev_id, struct vfs_fs_info *out) {
+  if (dev_id == VFS_DEV_NSFS) {
+    *out = (struct vfs_fs_info){.magic = 0x6e736673, .block_size = PAGE_SIZE};
+    return true;
+  }
   if (dev_id >= 0x10000) { dev_id = VFS_DEV_TMPFS; }
   for (size_t i = 0; i < mount_count(); ++i) {
     if (vfs_mount_at(i)->device == dev_id) { return mount_stats(i, out); }

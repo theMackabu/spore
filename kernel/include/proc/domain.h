@@ -1,4 +1,5 @@
 #pragma once
+#include "abi/linux/shared/signal.h"
 
 #include "proc/limits.h"
 #include "proc/fdtable.h"
@@ -67,6 +68,7 @@ struct domain {
   struct cpu_budget budget;
   struct signal_action signal_actions[65];
   uint64_t pending_signals;
+  struct siginfo_fields64 pending_child;
   struct parent_notifications *parent_notifications;
 };
 

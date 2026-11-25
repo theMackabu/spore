@@ -62,6 +62,7 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "inotify";
   case WAIT_PTY:
     return "pty";
+  case WAIT_SIGNALFD: return "signalfd";
   case WAIT_EVENTFD:
     return "eventfd";
   case WAIT_FLOCK:

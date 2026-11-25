@@ -25,6 +25,7 @@ static const struct proc_entry {
   {"uid_map", RAMFS_DEV_PROC_UID_MAP, VFS_DT_REG},
   {"gid_map", RAMFS_DEV_PROC_GID_MAP, VFS_DT_REG},
   {"setgroups", RAMFS_DEV_PROC_SETGROUPS, VFS_DT_REG},
+  {"ns", RAMFS_DEV_PROC_PID_NS, VFS_DT_DIR},
   {"fd", RAMFS_DEV_PROC_PID_FD, VFS_DT_DIR},
   {"task", RAMFS_DEV_PROC_PID_TASK, VFS_DT_DIR},
 };
@@ -84,6 +85,40 @@ static bool proc_node(struct vfs_node *out, const struct domain *d, int tid, uns
   return true;
 }
 
+static size_t ns_link(const struct domain *d, enum namespace_kind kind, char *out, size_t cap) {
+  size_t len = 0;
+  proc_append_str(out, cap, &len, namespace_name(kind));
+  proc_append_str(out, cap, &len, ":[");
+  proc_append_u64(out, cap, &len, namespace_ino(namespace_of(d, kind)));
+  proc_append_char(out, cap, &len, ']');
+  return len;
+}
+
+static bool may_inspect_namespace(const struct domain *d) {
+  const struct domain *caller = cell_current_domain_internal();
+  return caller == d || cell_ns_capable(d->user_ns, CAP_SYS_PTRACE) ||
+         (caller && caller->euid == d->uid && caller->euid == d->euid && caller->euid == d->saved_uid &&
+          caller->egid == d->gid && caller->egid == d->egid && caller->egid == d->saved_gid);
+}
+
+static bool namespace_entry(struct vfs_node *out, const struct domain *d, int tid, const char *name, bool follow) {
+  for (unsigned k = 0; k < NS_COUNT; ++k) {
+    if (!str_eq(name, namespace_name(k))) { continue; }
+    if (!follow) {
+      proc_node(out, d, tid, 32 + k, RAMFS_DEV_PROC_PID_NS, VFS_DT_LNK, k);
+      char link[48];
+      out->size = ns_link(d, k, link, sizeof(link));
+      return true;
+    }
+    if (!may_inspect_namespace(d)) { return false; }
+    struct namespace_ref ns = namespace_of(d, k);
+    *out = (struct vfs_node){.backend = VFS_NSFS, .dev_id = VFS_DEV_NSFS, .ino = namespace_ino(ns),
+                             .mode = 0100444, .links_count = 1, .ns = ns};
+    return true;
+  }
+  return false;
+}
+
 static bool live_task(const struct domain *d, int tid) {
   const struct thread *thread = cell_find_thread(tid);
   return thread != NULL && thread->domain == d;
@@ -138,6 +173,7 @@ bool vfs_proc_lookup(const char *path, bool follow_self, struct vfs_node *out) {
       if (*p != '/' && *p != '\0') { return false; }
       if (*p == '/') { ++p; }
     }
+    if (starts_with(p, "ns/")) { return namespace_entry(out, d, tid, p + 3, follow_self); }
     if (starts_with(p, "fd/")) {
       p += 3;
       int fd;
@@ -191,6 +227,10 @@ bool vfs_proc_readlink(const struct vfs_node *node, char *out, size_t cap, size_
   size_t len;
   if (node->device == RAMFS_DEV_PROC_SELF) {
     len = self_target(node->proc.pid, node->proc.tid, buf, sizeof(buf));
+  } else if (node->device == RAMFS_DEV_PROC_PID_NS) {
+    const struct domain *d = cell_find_domain(node->proc.pid);
+    if (!may_inspect_namespace(d)) { return false; }
+    len = ns_link(d, node->proc.fd, buf, sizeof(buf));
   } else if (node->device == RAMFS_DEV_PROC_PID_FD) {
     len = fd_link_target(node->proc.fd, buf, sizeof(buf));
   } else {
@@ -234,6 +274,16 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
   }
   if (dir->backend != VFS_PROC || !dir->is_dir) { return false; }
   int pid = dir->proc.pid, tid = dir->proc.tid;
+  if (dir->device == RAMFS_DEV_PROC_PID_NS) {
+    if (*cursor >= NS_COUNT) { return false; }
+    unsigned kind = (*cursor)++;
+    const char *name = namespace_name(kind);
+    out->ino = proc_ino(pid, tid, 32 + kind);
+    out->type = VFS_DT_LNK;
+    out->name_len = kstrlen(name);
+    kmemcpy(out->name, name, out->name_len + 1);
+    return true;
+  }
   if (dir->device == RAMFS_DEV_PROC_PID_FD) {
     if (pid != cell_current_pid()) { return false; }
     if (*cursor >= MAX_FDS) { return false; }

@@ -29,6 +29,7 @@ enum open_file_type {
   OPEN_UNIX_LISTENER,
   OPEN_EPOLL,
   OPEN_EVENTFD,
+  OPEN_SIGNALFD,
   OPEN_INOTIFY,
   OPEN_URING,
   OPEN_PTY,
@@ -163,6 +164,7 @@ struct open_file {
       uint16_t eventfd_waiters;
       bool eventfd_semaphore;
     };
+    uint64_t signalfd_mask;
     struct inotify_state *inotify;
     struct uring ring;
   };

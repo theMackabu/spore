@@ -1,11 +1,13 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stddef.h>
 
 struct domain;
 struct thread;
 struct uts_namespace;
+uint64_t uts_ino(const struct uts_namespace *ns);
 enum { UTS_NAME_SIZE = 65, CLONE_NEWUTS = 0x04000000 };
 
 bool uts_init(size_t domains);

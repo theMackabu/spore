@@ -2,6 +2,7 @@
 #include "abi/linux/shared/signal.h"
 #include "mm/pool.h"
 #include "proc/signal.h"
+#include "proc/signalfd.h"
 
 #include "arch/regs.h"
 #include "arch/signal_frame.h"
@@ -97,7 +98,7 @@ static bool wait_is_restartable(const struct thread_wait *wait) {
   enum wait_reason reason = wait->reason;
   if (reason == WAIT_FUTEX) { return !wait->has_deadline; }
   return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
-         reason == WAIT_FIFO_OPEN || reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FLOCK || reason == WAIT_EVENTFD;
+         reason == WAIT_FIFO_OPEN || reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FLOCK || reason == WAIT_EVENTFD || reason == WAIT_SIGNALFD;
 }
 
 static bool thread_requires_deferred_signal_frame(const struct thread *thread) {
@@ -107,6 +108,7 @@ static bool thread_requires_deferred_signal_frame(const struct thread *thread) {
 
 static void queue_signal_to_thread(struct thread *thread, int signal) {
   thread->pending_signals |= signal_bit(signal);
+  cell_signalfd_notify(thread->domain);
   smp_notify();
 }
 
@@ -177,6 +179,7 @@ void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *fr
   struct thread *target = signal_target(domain, signal);
   if (target == NULL) {
     domain->pending_signals |= signal_bit(signal);
+    cell_signalfd_notify(domain);
   } else if (target == cell_current_thread_internal() && frame != NULL) {
     cell_signal_current(signal, frame);
   } else if (target->state == THREAD_RUNNABLE && target->running_cpu >= 0) {
@@ -229,6 +232,7 @@ static void dispatch_parent_notifications(void) {
         struct thread *target = signal_target(domain, signal);
         if (!target || target->running_cpu >= 0) {
           domain->pending_signals |= bit;
+          cell_signalfd_notify(domain);
           smp_notify();
         } else {
           struct signal_sender sender = domain->parent_notifications->sender[signal - 1];
@@ -285,6 +289,40 @@ void cell_expire_real_timers(uint64_t now) {
   }
 }
 
+struct siginfo_fields64 cell_pending_signal_info(struct thread *thread, int signal, bool consume) {
+  uint64_t bit = signal_bit(signal);
+  struct domain *domain = thread->domain;
+  struct siginfo_fields64 info = {.si_signo = signal};
+  if (thread->pending_signals & bit) {
+    if (consume) { thread->pending_signals &= ~bit; }
+  } else {
+    if (signal == SIGCHLD && domain->pending_child.si_signo) {
+      info = domain->pending_child;
+      if (consume) { domain->pending_child.si_signo = 0; }
+    } else if (domain->parent_notifications) {
+      info.sender = domain->parent_notifications->sender[signal - 1];
+      if (consume) { domain->parent_notifications->sender[signal - 1] = (struct signal_sender){0}; }
+    }
+    if (consume) { domain->pending_signals &= ~bit; }
+  }
+  return info;
+}
+
+void cell_signal_child_exit(struct domain *parent, struct siginfo_fields64 info) {
+  struct thread *target = signal_target(parent, info.si_signo);
+  if (target && target->running_cpu < 0) {
+    deliver_signal(target, info);
+    return;
+  }
+  uint64_t bit = signal_bit(info.si_signo);
+  if (!(parent->pending_signals & bit)) {
+    parent->pending_child = info;
+    parent->pending_signals |= bit;
+    cell_signalfd_notify(parent);
+    smp_notify();
+  }
+}
+
 bool cell_deliver_pending_signals(struct thread *thread) {
   if (thread == NULL || thread->domain == NULL || (thread->pending_signals | thread->domain->pending_signals) == 0) {
     return false;
@@ -293,12 +331,7 @@ bool cell_deliver_pending_signals(struct thread *thread) {
     uint64_t bit = signal_bit(signal);
     uint64_t *pending = (thread->pending_signals & bit) ? &thread->pending_signals : &thread->domain->pending_signals;
     if ((*pending & bit) == 0 || signal_is_blocked(thread, signal)) { continue; }
-    *pending &= ~bit;
-    struct siginfo_fields64 info = {.si_signo = signal};
-    if (pending == &thread->domain->pending_signals && thread->domain->parent_notifications) {
-      info.sender = thread->domain->parent_notifications->sender[signal - 1];
-      thread->domain->parent_notifications->sender[signal - 1] = (struct signal_sender){0};
-    }
+    struct siginfo_fields64 info = cell_pending_signal_info(thread, signal, true);
     const struct signal_action *action = &thread->domain->signal_actions[signal];
     if (signal != SIGKILL && (action->handler == 1 || (action->handler == 0 && signal_default_ignored(signal)))) {
       continue;

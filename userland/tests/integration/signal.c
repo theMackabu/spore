@@ -10,6 +10,7 @@
 #include <sys/auxv.h>
 #include <sys/epoll.h>
 #include <sys/select.h>
+#include <sys/signalfd.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -441,9 +442,31 @@ static int parent_death_notification(void) {
   return ok;
 }
 
+static int signalfd_child_exit(void) {
+  sigset_t mask, old;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGCHLD);
+  if (sigprocmask(SIG_BLOCK, &mask, &old)) { return 0; }
+  int fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+  struct signalfd_siginfo info;
+  pid_t child = fd < 0 ? -1 : fork();
+  if (!child) { _exit(37); }
+  struct pollfd pfd = {.fd = fd, .events = POLLIN};
+  int status;
+  int ok = child > 0 && poll(&pfd, 1, 1500) == 1 && (pfd.revents & POLLIN) &&
+           read(fd, &info, sizeof(info)) == sizeof(info) && info.ssi_signo == SIGCHLD &&
+           info.ssi_code == CLD_EXITED && info.ssi_pid == (unsigned)child && info.ssi_status == 37 &&
+           read(fd, &info, sizeof(info)) == -1 && errno == EAGAIN;
+  if (child > 0) { ok &= waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 37; }
+  if (fd >= 0) { close(fd); }
+  sigprocmask(SIG_SETMASK, &old, NULL);
+  printf("[spore] signalfd child exit and wait: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
-  return parent_death_notification() && child_signal_notification() && vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
+  return signalfd_child_exit() && parent_death_notification() && child_signal_notification() && vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
          signal_mask_regression() && temporary_mask_regression() && signal_altstack_regression() &&
          signal_interrupted_read_regression() && signal_restart_read_regression() &&
          signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) &&

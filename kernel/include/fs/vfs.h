@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fs/ext2.h"
+#include "proc/namespace.h"
 #include "fs/ramfs.h"
 
 #include <stdbool.h>
@@ -10,6 +11,7 @@
 enum {
   VFS_DEV_EXT2_ROOT = 0x0801,
   VFS_DEV_DEVFS = 0x0005,
+  VFS_DEV_NSFS = 0x0015,
   VFS_DEV_PROC = 0x0006,
   VFS_DEV_RAM0 = 0x0010,
   VFS_DEV_TMPFS = 0x0011,
@@ -23,6 +25,7 @@ enum vfs_backend {
   VFS_RAMFS,
   VFS_EXT2,
   VFS_PROC,
+  VFS_NSFS,
 };
 
 enum {
@@ -50,6 +53,7 @@ struct vfs_node {
   uint64_t mtime;
   uint64_t size;
   union {
+    struct namespace_ref ns;
     struct ramfs_node ramfs;
     struct ext2_node ext2;
     struct {

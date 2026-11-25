@@ -36,6 +36,7 @@ enum wait_reason {
   WAIT_PTY,
   WAIT_FLOCK,
   WAIT_EVENTFD,
+  WAIT_SIGNALFD,
   WAIT_URING,
   WAIT_REASON_COUNT,
 };

@@ -4,6 +4,7 @@
 struct domain;
 struct thread;
 struct mount_namespace;
+uint64_t mountns_ino(const struct mount_namespace *ns);
 
 constexpr uint64_t CLONE_NEWNS = 0x00020000;
 struct mount_namespace *mountns_retain(struct mount_namespace *ns);

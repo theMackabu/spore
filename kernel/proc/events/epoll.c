@@ -23,12 +23,13 @@ struct epoll_watch {
   struct epoll_watch *next, **link, *observer_next, **observer_link;
   struct epoll_watch *ready_prev, *ready_next;
   struct epoll_subscription sources[2];
-  int fd;
+  int fd, signal_tid;
   uint32_t mask, last, pending;
   uint64_t data;
   bool queued, disabled;
 };
 
+static struct epoll_source sampled_signals;
 static struct object_pool watches;
 static struct epoll_source console_input, sampled_ptys;
 static unsigned network_watches;
@@ -57,7 +58,8 @@ static void dequeue(struct epoll_watch *w) {
 
 static void refresh(struct epoll_watch *w, uint32_t activity) {
   if (w->disabled) { return; }
-  uint32_t ready = (uint32_t)cell_file_poll_events(w->target, (int)w->mask);
+  uint32_t ready = w->signal_tid ? cell_thread_poll_events(cell_find_thread(w->signal_tid), w->target, w->mask)
+                                 : cell_file_poll_events(w->target, w->mask);
   uint32_t arrivals = ready & (~w->last | activity);
   w->pending = w->mask & EDGE ? (w->pending & ready) | arrivals : ready;
   w->last = ready;
@@ -89,6 +91,7 @@ void cell_epoll_console_activity(unsigned events) { cell_epoll_source_activity(&
 void cell_epoll_sample_terminals(void) {
   cell_epoll_console_activity(0);
   cell_epoll_source_changed(&sampled_ptys);
+  cell_epoll_source_changed(&sampled_signals);
 }
 
 static void subscribe(struct epoll_watch *w, unsigned i, struct epoll_source *source, unsigned events) {
@@ -119,6 +122,9 @@ static void attach_sources(struct epoll_watch *w) {
   } else if (target->type == OPEN_UNIX_STREAM && target->unix_connected) {
     subscribe(w, 0, cell_pipe_poll_source(target->unix_rx_pipe), CELL_POLLIN);
     subscribe(w, 1, cell_pipe_poll_source(target->unix_tx_pipe), CELL_POLLOUT);
+  } else if (target->type == OPEN_SIGNALFD) {
+    w->signal_tid = cell_current_tid();
+    subscribe(w, 0, &sampled_signals, CELL_POLLIN);
   } else if (target->type == OPEN_PTY) {
     subscribe(w, 0, &sampled_ptys, 0);
   } else if (target->type == OPEN_STDIN || target->type == OPEN_VFS) {

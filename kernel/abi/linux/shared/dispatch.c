@@ -1,5 +1,7 @@
 #include "io_uring/syscalls.h"
 #include "proc/accounting.h"
+#include "proc/signalfd.h"
+#include "abi/linux/shared/usercopy.h"
 #include "abi/linux/shared/dispatch.h"
 #include "arch/platform.h"
 #include "arch/regs.h"
@@ -65,6 +67,7 @@ static bool signal_delivers_to_current(int signal) {
 int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]) {
   static const void *handlers[] = {
     [SYS_GETCWD] = &&l_getcwd,
+    [SYS_SIGNALFD4] = &&l_signalfd4,
     [SYS_EVENTFD2] = &&l_eventfd2,
     [SYS_EPOLL_CREATE1] = &&l_epoll_create1,
     [SYS_EPOLL_CTL] = &&l_epoll_ctl,
@@ -268,6 +271,13 @@ l_pselect6:
   return sys_pselect6(f, a0, a1, a2, a3, a4, a5);
 l_ppoll:
   return sys_ppoll(f, a0, a1, a2, a3, a4);
+l_signalfd4: {
+  uint64_t mask;
+  if (a2 != sizeof(mask)) { return -22; }
+  if (!syscall_user_readable(a1, sizeof(mask)) ||
+      !vmm_copy_from_user(syscall_active_as(), &mask, a1, sizeof(mask))) { return -14; }
+  return cell_signalfd((int)a0, mask, (unsigned)a3);
+}
 l_eventfd2:
   return cell_fd_eventfd(a0, (int)a1);
 l_epoll_create1:

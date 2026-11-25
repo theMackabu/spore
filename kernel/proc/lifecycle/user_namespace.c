@@ -1,3 +1,4 @@
+#include "proc/namespace.h"
 #include "proc/user_namespace.h"
 #include "fs/mount_namespace.h"
 #include "proc/domain.h"
@@ -28,6 +29,7 @@ static int create_user_namespace(struct thread *leader) {
       d->gid != d->egid || d->saved_gid != d->egid || !str_eq(d->chroot, "/")) { return -1; }
   struct user_namespace *ns = pool_alloc(&namespaces);
   if (!ns) { return -12; }
+  ns->ino = namespace_new_ino();
   ns->refs = 1;
   ns->uid.outer = d->euid;
   ns->gid.outer = d->egid;

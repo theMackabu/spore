@@ -9,6 +9,7 @@
 #include "proc/user_namespace.h"
 #include "proc/fd.h"
 #include "proc/eventfd.h"
+#include "proc/signalfd.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/pipe.h"
@@ -167,6 +168,7 @@ int64_t cell_fd_read(int fd, uint64_t buf, uint64_t len, struct trap_frame *fram
   struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_file_at(domain, fd);
   if (file == NULL) { return -9; }
+  if (file->type == OPEN_SIGNALFD) { return cell_signalfd_read(cell_current_thread_internal(), file, buf, len, frame); }
   if (file->type == OPEN_EVENTFD) { return cell_eventfd_io(domain, file, buf, len, false, frame); }
   if (file->type == OPEN_INOTIFY) { return inotify_read(domain, file, buf, len, frame); }
   if (file->type == OPEN_PIPE) {

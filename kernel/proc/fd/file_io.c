@@ -37,6 +37,7 @@ static struct io_buffer io_buffer(const struct user_address_space *as, uint64_t 
 }
 
 int64_t cell_read_regular(struct domain *domain, struct open_file *file, uint64_t off, uint64_t buf, uint64_t len) {
+  if (file->node.backend == VFS_NSFS) { return -22; }
   if (!vfs_refresh(&file->node, &file->node)) { return -5; }
   if (off >= file->node.size || !len) { return 0; }
   if (len > file->node.size - off) { len = file->node.size - off; }
