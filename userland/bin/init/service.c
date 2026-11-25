@@ -268,6 +268,33 @@ int run_oneshot_command(struct unit *unit, const char *cmdline) {
   return rc;
 }
 
+static int64_t monotonic_ms(void) {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) { return -1; }
+  return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void stop_process(struct unit *unit) {
+  pid_t pid = unit->pid;
+  kill(pid, streq(unit->name, "console.service") ? SIGHUP : SIGTERM);
+  int timeout = unit->config.timeout_stop_sec > 0 ? unit->config.timeout_stop_sec : 1;
+  int64_t start = monotonic_ms();
+  for (;;) {
+    pid_t got = waitpid(pid, NULL, WNOHANG);
+    if (got == pid || (got < 0 && errno == ECHILD)) { break; }
+    int64_t now = monotonic_ms();
+    int64_t remaining = start + (int64_t)timeout * 1000 - now;
+    if (start < 0 || now < 0 || remaining <= 0) {
+      kill(pid, SIGKILL);
+      while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+      break;
+    }
+    struct pollfd watch = {.fd = unit->journal.fd, .events = POLLIN};
+    if (poll(&watch, 1, remaining < 10 ? (int)remaining : 10) > 0) { journal_read(unit, &unit->journal); }
+  }
+  unit->pid = 0;
+}
+
 void stop_unit(struct unit *unit) {
   if (unit == NULL || unit->state == STATE_INACTIVE) { return; }
   for (size_t i = 0; i < UNIT_CAP; ++i) {
@@ -278,23 +305,7 @@ void stop_unit(struct unit *unit) {
   }
   unit->state = STATE_DEACTIVATING;
   if (unit->config.exec_stop[0] != '\0') { (void)run_oneshot_command(unit, unit->config.exec_stop); }
-  if (unit->pid > 0) {
-    kill(unit->pid, SIGTERM);
-    time_t deadline = time(NULL) + (unit->config.timeout_stop_sec > 0 ? unit->config.timeout_stop_sec : 1);
-    int status = 0;
-    while (time(NULL) <= deadline) {
-      pid_t got = waitpid(unit->pid, &status, WNOHANG);
-      if (got == unit->pid) {
-        unit->pid = 0;
-        break;
-      }
-    }
-    if (unit->pid > 0) {
-      kill(unit->pid, SIGKILL);
-      (void)waitpid(unit->pid, &status, 0);
-      unit->pid = 0;
-    }
-  }
+  if (unit->pid > 0) { stop_process(unit); }
   journal_finish(unit, &unit->journal);
   unit->state = STATE_INACTIVE;
   unit->inactive_since = time(NULL);

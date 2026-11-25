@@ -230,7 +230,7 @@ fn install(build: &Path, fresh: bool, from: Option<&Path>) -> io::Result<()> {
         if same_base(&base, &current.join("base.ext2"))?
             && fs::read(stage.0.join("image.img"))? == fs::read(current.join("image.img"))?
         {
-            println!("already running the selected build");
+            println!("latest base image is already selected; local configuration is preserved");
             return Ok(());
         }
     }

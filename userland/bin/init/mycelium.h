@@ -172,7 +172,6 @@ void boot_statusf(const char *fmt, ...);
 void boot_infof(const char *fmt, ...);
 void boot_run_login_banner(void);
 void announce_unit_started(struct unit *unit);
-void append_done_line(char *out, size_t cap, const char *fmt, ...);
 
 struct unit *unit_by_name(const char *name);
 struct unit *unit_for_pid(pid_t pid);

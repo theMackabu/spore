@@ -92,20 +92,20 @@ void cat_unit(char *out, size_t cap, const char *name) {
   fclose(f);
 }
 
-void stop_all_reverse(char *out, size_t cap, bool rebooting) {
+static void stop_all_reverse(bool rebooting) {
   shutting_down = true;
-  append_response(out, cap, "mycelium: stopping units in reverse order...\n");
-  boot_log_append("mycelium: stopping units in reverse order...\n");
+  boot_infof("mycelium: stopping units in reverse order...");
   for (int i = UNIT_CAP - 1; i >= 0; --i) {
     if (units[i].used && units[i].state == STATE_ACTIVE && !streq(units[i].name, "shutdown.target")) {
-      append_response(out, cap, "Stopping %s...\n", units[i].name);
+      printf("Stopping %s...\n", units[i].name);
+      fflush(stdout);
       stop_unit(&units[i]);
-      append_done_line(out, cap, "Stopped %s.", units[i].name);
+      boot_statusf("Stopped %s.", units[i].name);
     }
   }
-  append_done_line(out, cap, "Reached target shutdown.target.");
-  append_response(out, cap, "mycelium: %s\n", rebooting ? "rebooting" : "powering off");
-  boot_log_append(rebooting ? "mycelium: rebooting\n" : "mycelium: powering off\n");
+  boot_statusf("Reached target shutdown.target.");
+  boot_infof("mycelium: %s", rebooting ? "rebooting" : "powering off");
+  fflush(stdout);
 }
 
 void handle_command(const char *cmdline, const struct control_peer *peer, char *out, size_t cap) {
@@ -218,8 +218,7 @@ void handle_command(const char *cmdline, const struct control_peer *peer, char *
     append_response(out, cap, "isolated %s\n", argc > 1 ? argv[1] : "multi-user.target");
   } else if (streq(argv[0], "poweroff") || streq(argv[0], "reboot")) {
     bool rebooting = streq(argv[0], "reboot");
-    stop_all_reverse(out, cap, rebooting);
-    write(STDOUT_FILENO, out, strlen(out));
+    stop_all_reverse(rebooting);
     (void)syscall(SYS_SPORE_SHUTDOWN, rebooting ? 1 : 0);
   } else {
     append_response(out, cap, "%s: unknown command\n", argv[0]);
