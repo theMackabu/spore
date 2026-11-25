@@ -12,53 +12,70 @@ pub enum Access {
     Execute,
 }
 
+#[repr(C)]
 #[derive(Clone, Copy)]
-struct Translation {
+pub(super) struct Translation {
     page: u64,
-    access: Access,
     physical: *mut u8,
 }
 
+const EMPTY: Translation = Translation {
+    page: u64::MAX,
+    physical: std::ptr::null_mut(),
+};
+pub const SLOTS: usize = 64;
+const _: () = assert!(
+    std::mem::size_of::<Translation>() == 16 && std::mem::offset_of!(Translation, physical) == 8
+);
+
 pub struct Memory {
     generation: u64,
-    translations: [Option<Translation>; 64],
+    translations: [[Translation; SLOTS]; 3],
 }
-
 impl Memory {
     pub fn new() -> Self {
         Self {
-            translations: [None; 64],
             generation: 0,
+            translations: [[EMPTY; SLOTS]; 3],
         }
     }
-    pub fn invalidate(&mut self) {
-        self.translations.fill(None);
+    pub(super) fn table(&self) -> *const Translation {
+        self.translations[0].as_ptr()
     }
-
+    pub fn sync(&mut self) {
+        let generation = unsafe { (&raw const wasm_tlb_generation).read_volatile() };
+        if self.generation != generation {
+            self.translations = [[EMPTY; SLOTS]; 3];
+            self.generation = generation;
+        }
+    }
+    #[inline]
     fn pointer(&mut self, addr: u64, access: Access) -> Result<*mut u8, super::cpu::Fault> {
         let page = addr >> 12;
-        let slot = page as usize % self.translations.len();
-        let physical = match self.translations[slot] {
-            Some(t) if t.page == page && t.access == access => t.physical,
-            _ => {
-                let physical = unsafe { wasm_translate(page << 12, access as u32) };
-                let generation = unsafe { (&raw const wasm_tlb_generation).read_volatile() };
-                if self.generation != generation {
-                    self.invalidate();
-                    self.generation = generation;
-                }
-                if physical.is_null() {
-                    return Err(super::cpu::Fault::Memory(access, addr));
-                }
-                self.translations[slot] = Some(Translation {
-                    page,
-                    access,
-                    physical,
-                });
-                physical
-            }
+        let slot = page as usize % SLOTS;
+        let cached = self.translations[access as usize][slot];
+        let page_ptr = if cached.page == page {
+            cached.physical
+        } else {
+            self.translate(page, addr, slot, access)?
         };
-        Ok(unsafe { physical.add(addr as usize & 4095) })
+        Ok(unsafe { page_ptr.add(addr as usize & 4095) })
+    }
+    #[cold]
+    fn translate(
+        &mut self,
+        page: u64,
+        addr: u64,
+        slot: usize,
+        access: Access,
+    ) -> Result<*mut u8, super::cpu::Fault> {
+        let physical = unsafe { wasm_translate(page << 12, access as u32) };
+        self.sync();
+        if physical.is_null() {
+            return Err(super::cpu::Fault::Memory(access, addr));
+        }
+        self.translations[access as usize][slot] = Translation { page, physical };
+        Ok(physical)
     }
 
     pub fn require_write(&mut self, addr: u64) -> Result<(), super::cpu::Fault> {
@@ -83,9 +100,21 @@ impl Memory {
     }
 
     pub fn load(&mut self, addr: u64, size: usize) -> Result<u128, super::cpu::Fault> {
-        let first = size.min(4096 - (addr as usize & 4095));
-        let mut bytes = [0; 16];
         let p = self.pointer(addr, Access::Read)?;
+        if (addr as usize & 4095) + size <= 4096 {
+            return Ok(unsafe {
+                match size {
+                    1 => u128::from(p.read()),
+                    2 => u128::from(p.cast::<u16>().read_unaligned()),
+                    4 => u128::from(p.cast::<u32>().read_unaligned()),
+                    8 => u128::from(p.cast::<u64>().read_unaligned()),
+                    16 => p.cast::<u128>().read_unaligned(),
+                    _ => unreachable!(),
+                }
+            });
+        }
+        let first = 4096 - (addr as usize & 4095);
+        let mut bytes = [0; 16];
         unsafe { std::ptr::copy_nonoverlapping(p, bytes.as_mut_ptr(), first) };
         if first < size {
             let next = self.pointer(addr.wrapping_add(first as u64), Access::Read)?;
@@ -97,9 +126,22 @@ impl Memory {
     }
 
     pub fn store(&mut self, addr: u64, size: usize, value: u128) -> Result<(), super::cpu::Fault> {
-        let bytes = value.to_le_bytes();
-        let first = size.min(4096 - (addr as usize & 4095));
         let mut p = self.pointer(addr, Access::Write)?;
+        if (addr as usize & 4095) + size <= 4096 {
+            unsafe {
+                match size {
+                    1 => p.write(value as u8),
+                    2 => p.cast::<u16>().write_unaligned(value as u16),
+                    4 => p.cast::<u32>().write_unaligned(value as u32),
+                    8 => p.cast::<u64>().write_unaligned(value as u64),
+                    16 => p.cast::<u128>().write_unaligned(value),
+                    _ => unreachable!(),
+                }
+            }
+            return Ok(());
+        }
+        let bytes = value.to_le_bytes();
+        let first = 4096 - (addr as usize & 4095);
         if first < size {
             let generation = self.generation;
             let next = self.pointer(addr.wrapping_add(first as u64), Access::Write)?;

@@ -126,7 +126,6 @@ impl Cpu {
             Fault::Alignment(addr) => (7, addr),
             Fault::Memory(_, addr) => (11, addr),
         };
-        self.memory.invalidate();
         self.reservation = None;
         self.idle = unsafe {
             wasm_exception(
@@ -138,15 +137,22 @@ impl Cpu {
                 message.len(),
             )
         };
+        self.memory.sync();
+    }
+
+    pub(super) fn syscall(&mut self) {
+        self.reservation = None;
+        self.idle = unsafe { wasm_syscall(&mut self.f, &mut self.context) };
+        self.memory.sync();
     }
 
     pub fn tick(&mut self, ticks: u32) {
-        self.memory.invalidate();
         self.reservation = None;
         self.idle = unsafe { wasm_timer(&mut self.f, &mut self.context, ticks) };
+        self.memory.sync();
     }
 
-    pub fn step(&mut self) -> Result<(), Fault> {
+    pub fn step(&mut self) -> Result<bool, Fault> {
         let pc = self.f.pc;
         let w = self.memory.fetch(pc)?;
         let rd = w & 31;
@@ -203,11 +209,9 @@ impl Cpu {
             }
             Breakpoint => return Err(Fault::Breakpoint),
             Syscall => {
-                self.memory.invalidate();
-                self.reservation = None;
                 self.f.pc = next;
-                self.idle = unsafe { wasm_syscall(&mut self.f, &mut self.context) };
-                return Ok(());
+                self.syscall();
+                return Ok(true);
             }
             SystemRegister => match w & 0xffffffe0 {
                 0xd53bd040 => self.set(rd, self.context.tls),
@@ -250,6 +254,6 @@ impl Cpu {
             Unknown => return Err(Fault::Instruction(w)),
         }
         self.f.pc = next;
-        Ok(())
+        Ok(next != pc.wrapping_add(4))
     }
 }

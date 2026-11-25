@@ -16,7 +16,7 @@ fn shift(x: u64, kind: u32, amount: u32, bits: u32) -> u64 {
         _ => rotate(x, amount, bits),
     }
 }
-fn logical_mask(n: u32, r: u32, s: u32, bits: u32) -> Option<u64> {
+pub(super) fn logical_mask(n: u32, r: u32, s: u32, bits: u32) -> Option<u64> {
     let pattern = (n << 6) | (!s & 63);
     if pattern < 2 {
         return None;

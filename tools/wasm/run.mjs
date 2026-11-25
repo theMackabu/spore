@@ -51,7 +51,7 @@ async function boot(
     : new TextEncoder().encode([argv0, ...args].map((arg) => arg + "\0").join(""));
   const decoder = new TextDecoder();
   let guest;
-  const blocks = [];
+  let tableBase;
   if (stats) Object.assign(stats, { compiledBlocks: 0, compiledInstructions: 0 });
   const bytes = (ptr, len) => new Uint8Array(guest.memory.buffer, ptr >>> 0, len >>> 0);
   const stop = {};
@@ -59,21 +59,19 @@ async function boot(
   guest = (
     await WebAssembly.instantiate(module, {
       spore: {
-        jit_compile(slot, ptr, len) {
+        jit_compile(slot, slots, ptr, len) {
           try {
             const code = new WebAssembly.Module(bytes(ptr, len));
-            blocks[slot] = new WebAssembly.Instance(code, { spore: { memory: guest.memory } }).exports.run;
+            const fn = new WebAssembly.Instance(code, { spore: { memory: guest.memory } }).exports.run;
+            const table = guest.__indirect_function_table;
+            tableBase ??= table.grow(slots);
+            table.set(tableBase + slot, fn);
             if (stats) ++stats.compiledBlocks;
-            return 1;
+            return tableBase + slot;
           } catch (e) {
             if (e instanceof WebAssembly.CompileError) return 0;
             throw e;
           }
-        },
-        jit_run(slot, frame, budget) {
-          const retired = blocks[slot](frame, budget);
-          if (stats) stats.compiledInstructions += retired;
-          return retired;
         },
         net_send(ptr, len) {
           return network?.send(bytes(ptr, len).slice()) ? 1 : 0;
@@ -171,5 +169,7 @@ async function boot(
   } catch (error) {
     if (error !== stop) throw error;
     return status;
+  } finally {
+    if (stats) stats.compiledInstructions = Number(guest.compiled_instructions());
   }
 }

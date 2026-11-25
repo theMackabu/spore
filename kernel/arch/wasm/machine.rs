@@ -139,11 +139,13 @@ pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
                         continue;
                     }
                 }
-                let before = cpu.f.pc;
-                if let Err(error) = cpu.step() {
-                    cpu.exception(error);
-                }
-                entry = before.wrapping_sub(cpu.f.pc) < 48 * 4;
+                entry = match cpu.step() {
+                    Ok(branch) => branch,
+                    Err(error) => {
+                        cpu.exception(error);
+                        true
+                    }
+                };
                 retired += 1;
             }
         }

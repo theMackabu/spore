@@ -49,4 +49,6 @@ fn main() {
     }
     cc.compile("wasm_kernel");
     println!("cargo:rustc-link-arg=--fatal-warnings");
+    println!("cargo:rustc-link-arg=--export-table");
+    println!("cargo:rustc-link-arg=--growable-table");
 }
