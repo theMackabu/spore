@@ -111,7 +111,7 @@ int64_t sys_openat(struct trap_frame *frame, uint64_t dirfd, uint64_t path_addr,
     (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
     if (!vfs_refresh(&node, &node)) { return -EIO; }
   } else {
-    if ((access & W_OK) && vfs_readonly_node(&node)) { return -30; }
+    if ((access & W_OK) && (node.is_dir || (node.mode & S_IFMT) == S_IFREG) && vfs_readonly_node(&node)) { return -30; }
     if (exclusive) { return -EEXIST; }
     if (nofollow && !path_only && (node.mode & S_IFMT) == S_IFLNK) { return -ELOOP; }
     if (directory && !node.is_dir) { return -ENOTDIR; }

@@ -39,7 +39,7 @@ int vfs_walk(const char *root, const char *base, size_t base_len, const char *pa
     if (!*p && !follow_final) { return 0; }
     struct vfs_node node;
     if (!vfs_lookup_component(out, true, &node)) { return -2; }
-    if (node.backend == VFS_EXT2 && (node.mode & 0170000) == 0120000) {
+    if ((node.backend == VFS_EXT2 || node.backend == VFS_RAMFS) && (node.mode & 0170000) == 0120000) {
       if (++links > 40) { return -40; }
       char *next = todo[links % 2];
       size_t len;

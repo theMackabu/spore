@@ -10,6 +10,7 @@ constexpr uint64_t CLONE_NEWPID = 0x20000000;
 int pidns_create(struct thread *thread, struct pid_namespace **out);
 struct pid_namespace *pidns_retain(struct pid_namespace *ns);
 void pidns_release(struct pid_namespace *ns);
+struct user_namespace *pidns_owner(const struct pid_namespace *ns);
 uint64_t pidns_ino(const struct pid_namespace *ns);
 struct pid_namespace *pidns_active(const struct domain *domain);
 struct pid_namespace *pidns_current(void);

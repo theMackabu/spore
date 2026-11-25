@@ -144,6 +144,7 @@ int cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {
   for (size_t i = vma_first_ending_after(vmas, start); covered < end; ++i) {
     const struct vma *vma = vma_at(vmas, i);
     if (!vma || vma->start > covered) { return -ENOMEM; }
+    if ((prot & VMM_USER_EXEC) && vma->type == VMA_FILE && vfs_mount_flag(vma->file_node.access, MOUNT_NOEXEC)) { return -EACCES; }
     if ((prot & VMM_USER_WRITE) && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) &&
         !vma->shared_may_write) { return -EACCES; }
     if (!(prot & VMM_USER_WRITE) && !flush_shared_file_vma_range(as, vma, start, end)) { return -EIO; }

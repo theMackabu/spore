@@ -94,7 +94,8 @@ static bool fill_statfs(struct linux_statfs64 *st, const struct vfs_node *node) 
   struct vfs_fs_info info;
   if (!vfs_device_fs_info(node->dev_id, &info)) { return false; }
   kmemset(st, 0, sizeof(*st));
-  st->f_type = info.magic;
+  st->f_type = node->backend == VFS_RAMFS && node->ramfs.fs && node->ramfs.fs->devpts ? 0x1cd1 : info.magic;
+  st->f_flags = node->access ? node->access->flags : 0;
   st->f_bsize = info.block_size;
   st->f_blocks = info.block_count;
   st->f_bfree = info.free_blocks;

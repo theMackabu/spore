@@ -91,7 +91,8 @@ struct ramfs {
   uint64_t hhdm_offset;
   uint64_t next_ino;
   uint32_t device, refs, pins;
-  bool nosuid;
+  bool nosuid, devpts;
+  uint16_t pts_mode;
 };
 
 struct ramfs_node {
@@ -123,6 +124,9 @@ bool ramfs_add_boot_file(struct ramfs *fs, const char *path, const void *data, u
 void ramfs_set_now(uint64_t epoch_sec);
 bool ramfs_lookup_node(const struct ramfs *fs, int root, const char *path, struct ramfs_node *out);
 bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct vfs_dirent *out);
+bool ramfs_has_symlinks(void);
+int ramfs_device_node(struct ramfs *fs, int parent, const char *name, enum ramfs_device device, uint16_t mode, uint32_t uid, uint32_t gid);
+bool ramfs_symlink(struct ramfs *fs, int root, const char *target, const char *path);
 bool ramfs_mkdir(struct ramfs *fs, int root, const char *path, uint16_t mode);
 bool ramfs_create(struct ramfs *fs, int root, const char *path, uint16_t mode, struct ramfs_node *out);
 bool ramfs_mkfifo(struct ramfs *fs, int root, const char *path, uint16_t mode, struct ramfs_node *out);

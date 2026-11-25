@@ -155,6 +155,7 @@ static size_t procinfo_text(char *dst, size_t cap) {
 
 
 struct proc_task {
+  struct pid_namespace *view;
   const struct domain *domain;
   const struct thread *thread;
 };
@@ -176,13 +177,13 @@ static size_t proc_pid_status_text(char *dst, size_t cap, const struct proc_task
   proc_append_str(dst, cap, &len, " (");
   proc_append_str(dst, cap, &len, thread_state_text(state));
   proc_append_str(dst, cap, &len, ")\nTgid:\t");
-  proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->id));
+  proc_append_u64(dst, cap, &len, pidns_local(task->view, (uint32_t)domain->id));
   proc_append_str(dst, cap, &len, "\nPid:\t");
-  proc_append_u64(dst, cap, &len, pidns_self_view(task->thread ? task->thread->tid : domain->id));
+  proc_append_u64(dst, cap, &len, pidns_local(task->view, task->thread ? task->thread->tid : domain->id));
   proc_append_str(dst, cap, &len, "\nThreads:\t");
   proc_append_u64(dst, cap, &len, domain->refcount);
   proc_append_str(dst, cap, &len, "\nPPid:\t");
-  proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->parent_id));
+  proc_append_u64(dst, cap, &len, pidns_local(task->view, (uint32_t)domain->parent_id));
   struct user_namespace *view = cell_current_domain_internal()->user_ns;
   proc_append_str(dst, cap, &len, "\nUid:\t");
   proc_append_u64(dst, cap, &len, userns_visible(view, false, domain->uid));
@@ -256,17 +257,17 @@ static size_t proc_pid_proc_stat_text(char *dst, size_t cap, const struct proc_t
   (void)cell_memory_accounting(domain, &mem);
   uint64_t start_time = task->thread ? task->thread->start_ticks : domain->start_ticks;
   uint64_t utime = task->thread ? task->thread->cpu_ticks : domain->cpu_ticks;
-  proc_append_u64(dst, cap, &len, pidns_self_view(task->thread ? task->thread->tid : domain->id));
+  proc_append_u64(dst, cap, &len, pidns_local(task->view, task->thread ? task->thread->tid : domain->id));
   proc_append_str(dst, cap, &len, " (");
   proc_append_str(dst, cap, &len, domain->name);
   proc_append_str(dst, cap, &len, ") ");
   proc_append_char(dst, cap, &len, proc_state_char(task->thread ? task->thread->state : cell_domain_state(domain)));
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->parent_id));
+  proc_append_u64(dst, cap, &len, pidns_local(task->view, (uint32_t)domain->parent_id));
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, pidns_self_view(domain->pgrp_id));
+  proc_append_u64(dst, cap, &len, pidns_local(task->view, domain->pgrp_id));
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, pidns_self_view(domain->session_id));
+  proc_append_u64(dst, cap, &len, pidns_local(task->view, domain->session_id));
   proc_append_str(dst, cap, &len, " 0 0 0 ");
   proc_append_u64(dst, cap, &len, mem.minor_faults);
   proc_append_str(dst, cap, &len, " 0 ");
@@ -463,7 +464,7 @@ static size_t sys_cpu_core_online_text(char *dst, size_t cap, const char *path) 
 
 static int64_t read_generated_pid_device(struct open_file *file, const struct proc_read *out,
                                          size_t (*fill)(char *, size_t, const struct proc_task *)) {
-  struct proc_task task = {.domain = cell_find_domain(file->node.proc.pid)};
+  struct proc_task task = {.domain = cell_find_domain(file->node.proc.pid), .view = vfs_proc_view(file->node.access)};
   if (task.domain == NULL) { return 0; }
   if (file->node.proc.tid != 0) {
     task.thread = cell_find_thread(file->node.proc.tid);
@@ -495,6 +496,7 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
   case RAMFS_DEV_NET_DEV:
     return read_generated_device(&out, proc_net_dev_text);
   case RAMFS_DEV_KMSG:
+    if (domain->user_ns || pidns_active(domain)) { return -1; }
     return read_generated_device(&out, proc_kmsg_text);
   case RAMFS_DEV_FILESYSTEMS:
     return read_generated_device(&out, proc_filesystems_text);

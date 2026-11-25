@@ -67,6 +67,8 @@ uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst,
   return 0;
 }
 
+static uint32_t disk_root(struct ramfs_route route) { return route.root ? route.root : EXT2_ROOT_INO; }
+
 static struct ramfs_route ramfs_for_path(const char *path) {
   struct ramfs_route route = mountns_lookup(path);
   if (!route.boot && !route.fs && (!vfs_root_ext2 || vfs_path_uses_ramfs(path))) { route.fs = vfs_root_ramfs; }
@@ -81,7 +83,7 @@ bool vfs_mkdir(const char *path, uint32_t mode) {
   struct ramfs *fs = route.fs;
   if (!fs && vfs_root_ext2) {
     struct ext2_node node;
-    ok = ext2_mknod(vfs_root_ext2, vfs_disk_path(path), 0040000u | (mode & 07777u), &node) == 0;
+    ok = ext2_mknod_from(vfs_root_ext2, disk_root(route), vfs_disk_path(path), 0040000u | (mode & 07777u), &node) == 0;
   } else {
     ok = fs != NULL && ramfs_mkdir(fs, route.root, route.path, (uint16_t)mode);
   }
@@ -96,7 +98,7 @@ bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
   struct ramfs *fs = route.fs;
   if (!fs && vfs_root_ext2) {
     struct ext2_node node;
-    if (!ext2_create(vfs_root_ext2, vfs_disk_path(path), false, mode, &node)) { return false; }
+    if (!ext2_create_from(vfs_root_ext2, disk_root(route), vfs_disk_path(path), false, mode, &node)) { return false; }
     vfs_from_ext2(&node, out);
     out->mount_id = route.mount_id; out->access = route.access;
     vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
@@ -143,7 +145,7 @@ bool vfs_link_node(const struct vfs_node *node, const char *new_path) {
   struct ramfs_route route = ramfs_for_path(new_path);
   struct ramfs *fs = route.fs;
   if (node->backend == VFS_EXT2 && !fs && (node->mount_id ? node->mount_id : node->dev_id) == (route.mount_id ? route.mount_id : VFS_DEV_EXT2_ROOT)) {
-    ok = ext2_link_inode(vfs_root_ext2, node->ext2.ino, vfs_disk_path(new_path));
+    ok = ext2_link_inode_from(vfs_root_ext2, disk_root(route), node->ext2.ino, vfs_disk_path(new_path));
   } else if (node->backend == VFS_RAMFS && fs && fs == node->ramfs.fs && route.mount_id == node->mount_id) {
     ok = ramfs_link_node(fs, route.root, node->ramfs.index, route.path);
   }
@@ -160,7 +162,7 @@ int vfs_mkspecial(const char *path, uint16_t mode, struct vfs_node *out) {
   struct ramfs *fs = route.fs;
   if (!fs && vfs_root_ext2) {
     struct ext2_node node;
-    int rc = ext2_mknod(vfs_root_ext2, vfs_disk_path(path), mode, &node);
+    int rc = ext2_mknod_from(vfs_root_ext2, disk_root(route), vfs_disk_path(path), mode, &node);
     if (rc) { return rc; }
     vfs_from_ext2(&node, out);
     out->mount_id = route.mount_id; out->access = route.access;
@@ -210,7 +212,7 @@ int vfs_remove(const char *path) {
   struct ramfs_route route = ramfs_for_path(path);
   struct ramfs *fs = route.fs;
   if (!fs && vfs_root_ext2) {
-    rc = ext2_remove(vfs_root_ext2, vfs_disk_path(path));
+    rc = ext2_remove_from(vfs_root_ext2, disk_root(route), vfs_disk_path(path));
   } else {
     rc = fs != NULL ? ramfs_remove(fs, route.root, route.path) : -2;
   }
@@ -226,8 +228,8 @@ bool vfs_link(const char *old_path, const char *new_path) {
   struct ramfs_route a = ramfs_for_path(old_path), b = ramfs_for_path(new_path);
   if (vfs_root_ext2 && !a.fs && !b.fs && a.mount_id == b.mount_id) {
     struct ext2_node original;
-    ok = ext2_lstat(vfs_root_ext2, vfs_disk_path(old_path), &original) &&
-         ext2_link_inode(vfs_root_ext2, original.ino, vfs_disk_path(new_path));
+    ok = ext2_lstat_from(vfs_root_ext2, disk_root(a), vfs_disk_path(old_path), &original) &&
+         ext2_link_inode_from(vfs_root_ext2, disk_root(b), original.ino, vfs_disk_path(new_path));
   } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.mount_id || vfs_paths_share_ramfs(a.path, b.path))) {
     ok = ramfs_link(a.fs, a.root, a.path, b.path);
   }
@@ -238,7 +240,9 @@ bool vfs_link(const char *old_path, const char *new_path) {
 bool vfs_symlink(const char *target, const char *link_path) {
   if (vfs_readonly_path(link_path)) { return false; }
   vfs_update_time_sources();
-  bool ok = vfs_root_ext2 != NULL && !ramfs_for_path(link_path).fs && ext2_symlink(vfs_root_ext2, target, vfs_disk_path(link_path));
+  struct ramfs_route route = ramfs_for_path(link_path);
+  bool ok = route.fs ? ramfs_symlink(route.fs, route.root, target, route.path) :
+                       vfs_root_ext2 && ext2_symlink_from(vfs_root_ext2, disk_root(route), target, vfs_disk_path(link_path));
   if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(link_path, FS_CREATE); }
   return ok;
 }
@@ -310,7 +314,7 @@ int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
   int rc = -18;
   struct ramfs_route a = ramfs_for_path(old_path), b = ramfs_for_path(new_path);
   if (vfs_root_ext2 && !a.fs && !b.fs && a.mount_id == b.mount_id) {
-    rc = ext2_renameat(vfs_root_ext2, vfs_disk_path(old_path), vfs_disk_path(new_path), noreplace);
+    rc = ext2_renameat_from(vfs_root_ext2, disk_root(a), vfs_disk_path(old_path), vfs_disk_path(new_path), noreplace);
   } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.mount_id || vfs_paths_share_ramfs(a.path, b.path))) {
     rc = ramfs_renameat(a.fs, a.root, a.path, b.path, noreplace);
   }

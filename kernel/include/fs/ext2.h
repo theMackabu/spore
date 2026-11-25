@@ -77,12 +77,23 @@ struct ext2_stats {
   uint64_t block_cache_flushes;
 };
 
+constexpr uint32_t EXT2_ROOT_INO = 2;
+
 bool ext2_mount(struct ext2_fs *fs, ext2_read_fn read, void *ctx);
 bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, void *ctx);
 void ext2_set_now(uint32_t epoch_sec);
-bool ext2_locate_entry(struct ext2_fs *fs, const char *path, uint32_t ino, struct vfs_entry_name *name);
-bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out);
-bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out);
+bool ext2_locate_entry_from(struct ext2_fs *fs, uint32_t root, const char *path, uint32_t ino, struct vfs_entry_name *name);
+static inline bool ext2_locate_entry(struct ext2_fs *fs, const char *path, uint32_t ino, struct vfs_entry_name *name) {
+  return ext2_locate_entry_from(fs, EXT2_ROOT_INO, path, ino, name);
+}
+bool ext2_lookup_from(struct ext2_fs *fs, uint32_t root, const char *path, struct ext2_node *out);
+static inline bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+  return ext2_lookup_from(fs, EXT2_ROOT_INO, path, out);
+}
+bool ext2_lstat_from(struct ext2_fs *fs, uint32_t root, const char *path, struct ext2_node *out);
+static inline bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+  return ext2_lstat_from(fs, EXT2_ROOT_INO, path, out);
+}
 bool ext2_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out);
 int64_t ext2_seek_extent(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, bool data);
 bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t off, void *dst, uint32_t len,
@@ -90,24 +101,42 @@ bool ext2_read_file(struct ext2_fs *fs, const struct ext2_node *node, uint64_t o
 int64_t ext2_writeback_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, size_t len);
 int64_t ext2_write_file(struct ext2_fs *fs, struct ext2_node *node, uint64_t off, const void *src, uint64_t len);
 bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size);
-int ext2_mknod(struct ext2_fs *fs, const char *path, uint16_t mode, struct ext2_node *out);
-bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out);
+int ext2_mknod_from(struct ext2_fs *fs, uint32_t root, const char *path, uint16_t mode, struct ext2_node *out);
+static inline int ext2_mknod(struct ext2_fs *fs, const char *path, uint16_t mode, struct ext2_node *out) {
+  return ext2_mknod_from(fs, EXT2_ROOT_INO, path, mode, out);
+}
+bool ext2_create_from(struct ext2_fs *fs, uint32_t root, const char *path, bool dir, uint16_t mode, struct ext2_node *out);
+static inline bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out) {
+  return ext2_create_from(fs, EXT2_ROOT_INO, path, dir, mode, out);
+}
 bool ext2_tmpfile(struct ext2_fs *fs, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable, struct ext2_node *out);
 bool ext2_retain_inode(struct ext2_fs *fs, uint32_t ino);
 void ext2_release_inode(struct ext2_fs *fs, uint32_t ino);
-bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path);
+bool ext2_link_inode_from(struct ext2_fs *fs, uint32_t root, uint32_t ino, const char *new_path);
+static inline bool ext2_link_inode(struct ext2_fs *fs, uint32_t ino, const char *new_path) {
+  return ext2_link_inode_from(fs, EXT2_ROOT_INO, ino, new_path);
+}
 bool ext2_link(struct ext2_fs *fs, const char *old_path, const char *new_path);
-bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path);
+bool ext2_symlink_from(struct ext2_fs *fs, uint32_t root, const char *target, const char *link_path);
+static inline bool ext2_symlink(struct ext2_fs *fs, const char *target, const char *link_path) {
+  return ext2_symlink_from(fs, EXT2_ROOT_INO, target, link_path);
+}
 bool ext2_readlink_node(struct ext2_fs *fs, const struct ext2_node *node, char *out, size_t cap, size_t *len_out);
 bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out);
 bool ext2_set_times(struct ext2_fs *fs, uint32_t ino, uint32_t atime, uint32_t mtime);
 bool ext2_chmod_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t mode);
 bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t uid, uint32_t gid);
-int ext2_remove(struct ext2_fs *fs, const char *path);
+int ext2_remove_from(struct ext2_fs *fs, uint32_t root, const char *path);
+static inline int ext2_remove(struct ext2_fs *fs, const char *path) {
+  return ext2_remove_from(fs, EXT2_ROOT_INO, path);
+}
 static inline bool ext2_unlink(struct ext2_fs *fs, const char *path) {
   return ext2_remove(fs, path) == 0;
 }
-int ext2_renameat(struct ext2_fs *fs, const char *old_path, const char *new_path, bool noreplace);
+int ext2_renameat_from(struct ext2_fs *fs, uint32_t root, const char *old_path, const char *new_path, bool noreplace);
+static inline int ext2_renameat(struct ext2_fs *fs, const char *old_path, const char *new_path, bool noreplace) {
+  return ext2_renameat_from(fs, EXT2_ROOT_INO, old_path, new_path, noreplace);
+}
 static inline bool ext2_rename(struct ext2_fs *fs, const char *old_path, const char *new_path) {
   return ext2_renameat(fs, old_path, new_path, false) == 0;
 }

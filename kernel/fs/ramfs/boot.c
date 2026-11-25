@@ -90,12 +90,7 @@ struct boot_node {
 };
 
 static bool add_device(struct ramfs *fs, int parent, const char *name, enum ramfs_device device, uint16_t mode) {
-  int i = ramfs_add_node(fs, parent, name, false, false);
-  if (i >= 0) {
-    ramfs_inode_at(fs, i)->device = device;
-    ramfs_inode_at(fs, i)->mode = mode;
-  }
-  return i >= 0;
+  return ramfs_device_node(fs, parent, name, device, mode, 0, 0) >= 0;
 }
 
 static int add_mount(struct ramfs *fs, int root, const char *name, enum ramfs_mount mount) {

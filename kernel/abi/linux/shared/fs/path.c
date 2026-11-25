@@ -13,7 +13,7 @@ size_t spore_normalize_path(const char *base, size_t base_len, const char *raw, 
 
 static int resolve_from(const char *base, size_t base_len, const char *raw, size_t len, char *visible, char *out,
                         size_t cap) {
-  if (mountns_current_routes()) {
+  if (mountns_current_routes() || ramfs_has_symlinks()) {
     const char *root = cell_current_chroot();
     int rc = vfs_walk(root, base, base_len, raw, len, false, out, cap);
     if (rc) { return rc; }
@@ -159,6 +159,8 @@ int syscall_lookup_at(uint64_t dirfd, uint64_t addr, uint64_t flags, uint8_t rig
 
 
 int syscall_may_change_entry(char *path, bool replacing) {
+  struct ramfs_route route = mountns_lookup(path);
+  if ((route.fs && route.fs->devpts) || (route.access && route.access->proc_mount)) { return -EPERM; }
   if (vfs_readonly_path(path)) { return -30; }
   if (!cell_fs_path_allowed(path, CELL_FS_WRITE)) { return -EPERM; }
   size_t component = base_name(path) - path;

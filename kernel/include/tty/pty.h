@@ -9,10 +9,9 @@ struct trap_frame;
 
 constexpr int CELL_PTY_CAP = 16;
 
-int cell_pty_open_master(uint32_t flags, const char *path);
-int cell_pty_open_slave(int id, uint32_t flags, const char *path);
+struct ramfs_node;
+int cell_pty_open_node(const struct ramfs_node *node, uint32_t flags, const char *path);
 int cell_pty_open_peer(struct open_file *master, uint32_t flags);
-int cell_pty_id_from_path(const char *path);
 void cell_pty_release_file(struct open_file *file);
 bool cell_pty_file_readable(const struct open_file *file);
 bool cell_pty_file_writable(const struct open_file *file);

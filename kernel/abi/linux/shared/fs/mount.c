@@ -61,13 +61,13 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
   if (rc) { return rc; }
   if (!cell_fs_path_allowed(path, CELL_FS_WRITE)) { return -EPERM; }
   constexpr uint64_t MS_PRIVATE = 1 << 18, MS_SLAVE = 1 << 19, MS_REC = 1 << 14, MS_SILENT = 1 << 15;
-  constexpr uint64_t MS_NOSUID = 2, MS_NODEV = 4;
+  constexpr uint64_t mount_flags = MOUNT_RDONLY | MOUNT_NOSUID | MOUNT_NODEV | MOUNT_NOEXEC;
   if ((flags & 0xffff0000) == 0xc0ed0000) { flags &= 0xffff; }
   flags &= ~MS_SILENT;
   constexpr uint64_t MS_BIND = 4096;
   constexpr uint64_t MS_REMOUNT = 32;
-  if ((flags & ~(uint64_t)(MOUNT_RDONLY | MOUNT_NOSUID | MOUNT_NODEV)) == (MS_BIND | MS_REMOUNT)) {
-    return mountns_remount(path, flags & (MOUNT_RDONLY | MOUNT_NOSUID | MOUNT_NODEV));
+  if ((flags & ~mount_flags) == (MS_BIND | MS_REMOUNT)) {
+    return mountns_remount(path, flags & mount_flags);
   }
   if ((flags & ~MS_REC) == MS_BIND) {
     char src[CELL_PATH_MAX];
@@ -81,24 +81,39 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
     }
     return -EINVAL;
   }
-  if (flags & ~(MS_NOSUID | MS_NODEV)) { return -95; }
+  if (flags & ~mount_flags) { return -95; }
   char name[32];
   if ((rc = syscall_read_user_string(type, name, sizeof(name))) < 0) { return rc; }
-  if (!str_eq(name, "tmpfs")) { return -19; }
-  unsigned mode = 01777;
+  if (str_eq(name, "proc")) { return data ? -EINVAL : mountns_proc(path, flags); }
+  bool pts = str_eq(name, "devpts");
+  if (!pts && !str_eq(name, "tmpfs")) { return -19; }
+  struct devpts_options settings = {.mode = 0600};
+  unsigned mode = pts ? 0755 : 01777;
+  bool fresh = false;
   if (data) {
-    char options[32];
+    char options[128];
     if ((rc = syscall_read_user_string(data, options, sizeof(options))) < 0) { return rc; }
-    if (*options) {
-      if (!starts_with(options, "mode=") || !options[5]) { return -EINVAL; }
-      mode = 0;
-      for (const char *c = options + 5; *c; ++c) {
-        if (*c < '0' || *c > '7' || mode > 0777) { return -EINVAL; }
-        mode = mode * 8 + (*c - '0');
+    char *p = options;
+    while (*p) {
+      char *start = p;
+      while (*p && *p != ',') { ++p; }
+      if (*p) { *p++ = 0; }
+      if (pts && str_eq(start, "newinstance")) { fresh = true; continue; }
+      unsigned *value;
+      if (starts_with(start, "mode=")) { value = pts ? &settings.mode : &mode; start += 5; }
+      else if (pts && starts_with(start, "ptmxmode=")) { value = &settings.ptmxmode; start += 9; }
+      else { return -EINVAL; }
+      if (!*start) { return -EINVAL; }
+      unsigned n = 0;
+      for (; *start; ++start) {
+        if (*start < '0' || *start > '7' || n > 0777) { return -EINVAL; }
+        n = n * 8 + (*start - '0');
       }
+      *value = n;
     }
   }
-  return mountns_tmpfs(path, mode, flags & MS_NOSUID, flags & MS_NODEV);
+  if (pts && !fresh) { return -95; }
+  return mountns_memory(path, mode, flags, pts ? &settings : NULL);
 }
 
 int64_t sys_umount2(uint64_t target, uint64_t flags) {

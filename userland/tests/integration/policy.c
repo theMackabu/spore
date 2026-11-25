@@ -12,6 +12,7 @@
 #include <sys/prctl.h>
 #include <sys/mount.h>
 #include <sys/mman.h>
+#include <sys/ioctl.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -280,13 +281,38 @@ static int tmpfs_bind(void) {
          !umount(dst) && !umount(sub);
 }
 
+static int private_ptys(void) {
+  const char *a = "/tmp/mount-test/pts-a", *b = "/tmp/mount-test/pts-b";
+  const char *opts = "newinstance,ptmxmode=0666,mode=0620";
+  if (mkdir(a, 0755) || mkdir(b, 0755) || mount("devpts", a, "devpts", MS_NOSUID | MS_NOEXEC, opts) ||
+      mount("devpts", b, "devpts", MS_NOSUID | MS_NOEXEC, opts)) { return 0; }
+  if (symlink("pts-a/ptmx", "/tmp/mount-test/ptmx")) { return 0; }
+  int ma = open("/tmp/mount-test/ptmx", O_RDWR), mb = open("/tmp/mount-test/pts-b/ptmx", O_RDWR);
+  unsigned na = 1, nb = 1;
+  int unlock = 0;
+  if (ma < 0 || mb < 0 || ioctl(ma, TIOCGPTN, &na) || ioctl(mb, TIOCGPTN, &nb) || na || nb ||
+      ioctl(ma, TIOCSPTLCK, &unlock) || ioctl(mb, TIOCSPTLCK, &unlock)) { return 0; }
+  int sa = open("/tmp/mount-test/pts-a/0", O_RDWR | O_NONBLOCK);
+  int sb = open("/tmp/mount-test/pts-b/0", O_RDWR | O_NONBLOCK);
+  struct stat xa, xb;
+  char bytes[2];
+  int ok = sa >= 0 && sb >= 0 && !fstat(sa, &xa) && !fstat(sb, &xb) && xa.st_dev != xb.st_dev &&
+           (xa.st_mode & 0777) == 0620 && write(ma, "a\n", 2) == 2 &&
+           read(sb, bytes, 2) == -1 && errno == EAGAIN && read(sa, bytes, 2) == 2 && bytes[0] == 'a';
+  close(ma); close(mb);
+  ok &= access("/tmp/mount-test/pts-a/0", F_OK) == -1 && errno == ENOENT;
+  if (sa >= 0) { close(sa); }
+  if (sb >= 0) { close(sb); }
+  return ok && !umount(a) && !umount(b);
+}
+
 static int isolated_tmpfs(int ready, int resume) {
   const char *dir = "/tmp/mount-test";
   const char *file = "/tmp/mount-test/contents";
   struct stat base, mounted;
   if (stat(dir, &base) || mount("none", dir, "tmpfs", MS_NODEV | MS_NOSUID, "mode=0710") ||
       stat(dir, &mounted) || base.st_dev == mounted.st_dev || (mounted.st_mode & 07777) != 0710) { return 1; }
-  if (!tmpfs_bind()) { return 9; }
+  if (!tmpfs_bind() || !private_ptys()) { return 9; }
   int fd = open(file, O_RDWR | O_CREAT | O_EXCL, 0600);
   if (fd < 0 || write(fd, "private", 7) != 7) { return 2; }
   char *mapped = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -333,6 +359,11 @@ static int pivot_child(void) {
   close(writer);
   if (mount("none", "/copy", NULL, ro, NULL) || open("/copy/etc/motd", O_WRONLY) >= 0 || errno != EROFS ||
       mkdir("/copy/pivot-should-fail", 0700) == 0 || errno != EROFS) { return 8; }
+  if (mkdir("/work", 0700) || mount("/previous/etc", "/work", NULL, MS_BIND, NULL)) { return 13; }
+  int work = open("/work/pivot-probe", O_RDWR | O_CREAT | O_EXCL, 0600);
+  if (work < 0 || write(work, "x", 1) != 1 || stat("/previous/etc/pivot-probe", &clone)) { return 14; }
+  close(work);
+  if (unlink("/work/pivot-probe") || !access("/previous/etc/pivot-probe", F_OK) || umount("/work")) { return 15; }
   if (symlink("/copy", "/previous/pivot-link") || stat("/previous/pivot-link/etc/motd", &clone) ||
       clone.st_ino != old.st_ino || unlink("/previous/pivot-link")) { return 9; }
   if (umount2("/previous", MNT_DETACH) || !access("/previous/etc/motd", F_OK) ||

@@ -31,11 +31,11 @@ bool ext2_parent_inode(struct ext2_fs *fs, const struct ext2_node *dir, uint32_t
   return true;
 }
 
-static bool lookup_path(struct ext2_fs *fs, const char *path, struct ext2_node *out, bool follow_final,
+static bool lookup_path(struct ext2_fs *fs, uint32_t root_ino, const char *path, struct ext2_node *out, bool follow_final,
                         struct vfs_entry_name *location) {
   if (!path || path[0] != '/') { return false; }
   struct ext2_node root, current;
-  if (!ext2_read_inode(fs, EXT2_ROOT_INO, &root)) { return false; }
+  if (!ext2_read_inode(fs, root_ino, &root)) { return false; }
   current = root;
   if (location) { location->parent_ino = 0; }
   char pending[2][256];
@@ -51,7 +51,7 @@ static bool lookup_path(struct ext2_fs *fs, const char *path, struct ext2_node *
     if (len == 2 && name[0] == '.' && name[1] == '.') {
       uint32_t parent;
       if (location) { location->parent_ino = 0; }
-      if (current.ino != EXT2_ROOT_INO &&
+      if (current.ino != root_ino &&
           (!ext2_parent_inode(fs, &current, &parent) || !ext2_read_inode(fs, parent, &current))) { return false; }
       continue;
     }
@@ -81,12 +81,12 @@ static bool lookup_path(struct ext2_fs *fs, const char *path, struct ext2_node *
   }
 }
 
-bool ext2_locate_entry(struct ext2_fs *fs, const char *path, uint32_t ino, struct vfs_entry_name *name) {
+bool ext2_locate_entry_from(struct ext2_fs *fs, uint32_t root_ino, const char *path, uint32_t ino, struct vfs_entry_name *name) {
   struct ext2_node node;
-  if (!lookup_path(fs, path, &node, true, name) || node.ino != ino) { return false; }
+  if (!lookup_path(fs, root_ino, path, &node, true, name) || node.ino != ino) { return false; }
   if (name->parent_ino) { return true; }
   uint32_t parent;
-  if (ino == EXT2_ROOT_INO || !ext2_parent_inode(fs, &node, &parent) || !ext2_read_inode(fs, parent, &node)) { return false; }
+  if (ino == root_ino || !ext2_parent_inode(fs, &node, &parent) || !ext2_read_inode(fs, parent, &node)) { return false; }
   struct vfs_dirent entry;
   uint64_t cursor = 0;
   while (ext2_next_dirent(fs, &node, &cursor, &entry) > 0) {
@@ -99,14 +99,14 @@ bool ext2_locate_entry(struct ext2_fs *fs, const char *path, uint32_t ino, struc
   return false;
 }
 
-bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+bool ext2_lookup_from(struct ext2_fs *fs, uint32_t root_ino, const char *path, struct ext2_node *out) {
   ++ext2_stat_counters.lookup_count;
-  return lookup_path(fs, path, out, true, NULL);
+  return lookup_path(fs, root_ino, path, out, true, NULL);
 }
 
-bool ext2_lstat(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
+bool ext2_lstat_from(struct ext2_fs *fs, uint32_t root_ino, const char *path, struct ext2_node *out) {
   ++ext2_stat_counters.lstat_count;
-  return lookup_path(fs, path, out, false, NULL);
+  return lookup_path(fs, root_ino, path, out, false, NULL);
 }
 
 bool ext2_readlink(struct ext2_fs *fs, const char *path, char *out, size_t cap, size_t *len_out) {

@@ -69,6 +69,7 @@ void cell_release_open_file(struct open_file *file) {
       inotify_close(file);
     } else if (file->type == OPEN_PTY) {
       cell_pty_release_file(file);
+      if (file->node.backend) { vfs_release_node(&file->node); }
     }
     if (file->type == OPEN_VFS && file->node.access && (file->node.mode & 0170000) == 0100000 &&
         linux_open_writable(file->flags)) { --file->node.access->writers; }
@@ -151,11 +152,12 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   if (domain == NULL) { return -12; }
   bool path_only = (flags & LINUX_O_PATH) != 0;
   if (!path_only && (node->mode & CELL_S_IFMT) == 0140000u) { return -ENXIO; }
-  if (!path_only && node->device == RAMFS_DEV_PTMX) { return cell_pty_open_master(flags, path); }
-  if (!path_only && node->device == RAMFS_DEV_PTS) {
-    int id = cell_pty_id_from_path(path);
-    if (id < 0) { return id; }
-    return cell_pty_open_slave(id, flags, path);
+  if (!path_only && (node->device == RAMFS_DEV_PTMX || node->device == RAMFS_DEV_PTS)) {
+    int fd = cell_pty_open_node(&node->ramfs, flags, path);
+    if (fd < 0) { return fd; }
+    if (!vfs_retain_node(node)) { cell_close_domain_fd(domain, fd); return -12; }
+    cell_file_at(domain, fd)->node = *node;
+    return fd;
   }
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
@@ -319,7 +321,8 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
     return true;
   }
   if (file->type == OPEN_PTY) {
-    uint64_t minor = file->pty_master ? 2u : file->pty_id;
+    if (file->node.backend) { return vfs_refresh(&file->node, out); }
+    uint64_t minor = file->pty_master ? 2u : (unsigned)cell_pty_id(file);
     *out = (struct vfs_node){
       .backend = VFS_RAMFS,
       .ino = 100 + (uint64_t)file->pty_id + (file->pty_master ? 0 : 1000),

@@ -10,7 +10,10 @@ struct vfs_node;
 struct vfs_dirent;
 
 bool vfs_proc_node_live(const struct vfs_node *node);
-bool vfs_proc_lookup(const char *path, bool follow_self, struct vfs_node *out);
+struct pid_namespace;
+struct mount_access;
+struct pid_namespace *vfs_proc_view(const struct mount_access *access);
+bool vfs_proc_lookup(const struct mount_access *access, const char *path, bool follow_self, struct vfs_node *out);
 bool vfs_proc_readlink(const struct vfs_node *node, char *out, size_t cap, size_t *len_out);
 bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 

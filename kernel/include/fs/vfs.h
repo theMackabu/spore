@@ -37,9 +37,11 @@ enum {
   VFS_F_SEAL_MASK = RAMFS_F_SEAL_MASK,
 };
 
-enum mount_flag { MOUNT_RDONLY = 1, MOUNT_NOSUID = 2, MOUNT_NODEV = 4 };
+enum mount_flag { MOUNT_RDONLY = 1, MOUNT_NOSUID = 2, MOUNT_NODEV = 4, MOUNT_NOEXEC = 8 };
 struct mount_access {
   unsigned refs, writers, flags;
+  bool proc_mount;
+  struct pid_namespace *proc_view;
 };
 
 static inline bool vfs_mount_flag(const struct mount_access *access, unsigned flag) {

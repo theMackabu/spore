@@ -291,7 +291,7 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     ret = -ENOTDIR;
     goto out_scratch;
   }
-  if ((exec_node.mode & S_IFMT) != S_IFREG || !(exec_node.mode & 0111) || !syscall_node_access_allowed(&exec_node, X_OK)) {
+  if (vfs_mount_flag(exec_node.access, MOUNT_NOEXEC) || (exec_node.mode & S_IFMT) != S_IFREG || !(exec_node.mode & 0111) || !syscall_node_access_allowed(&exec_node, X_OK)) {
     ret = -(int64_t)EACCES;
     goto out_scratch;
   }

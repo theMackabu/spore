@@ -26,6 +26,7 @@ static struct object_pool namespaces, entries;
 
 struct pid_namespace *pidns_active(const struct domain *d) { return d && d->pid_entry ? d->pid_entry->ns : NULL; }
 struct pid_namespace *pidns_current(void) { return pidns_active(cell_current_domain_internal()); }
+struct user_namespace *pidns_owner(const struct pid_namespace *ns) { return ns ? ns->owner : NULL; }
 uint64_t pidns_ino(const struct pid_namespace *ns) { return ns->ino; }
 
 struct pid_namespace *pidns_retain(struct pid_namespace *ns) {

@@ -12,7 +12,9 @@ void mountns_release(struct mount_namespace *ns);
 int mountns_unshare(struct thread *thread);
 bool mountns_has_mounts(void);
 bool mountns_may_mount(void);
-int mountns_tmpfs(const char *path, unsigned mode, bool nosuid, bool nodev);
+struct devpts_options { unsigned mode, ptmxmode; };
+int mountns_proc(const char *target, unsigned flags);
+int mountns_memory(const char *path, unsigned mode, unsigned flags, const struct devpts_options *pts);
 int mountns_unmount(const char *path, bool detach);
 struct ramfs_route {
   struct ramfs *fs;

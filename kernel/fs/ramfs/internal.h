@@ -2,6 +2,7 @@
 
 #include "fs/ramfs.h"
 
+extern size_t ramfs_symlink_count;
 struct ramfs_mem_node {
   bool is_dir;
   bool writable;

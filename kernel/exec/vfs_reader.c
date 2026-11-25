@@ -6,7 +6,7 @@ static bool vfs_elf_read_at(void *ctx, uint64_t offset, void *dst, size_t len) {
 }
 
 bool elf_reader_from_vfs(const struct vfs_node *node, struct elf_reader *reader) {
-  if (node == NULL || reader == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
+  if (node == NULL || vfs_mount_flag(node->access, MOUNT_NOEXEC) || reader == NULL || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
   *reader = (struct elf_reader){
     .read_at = vfs_elf_read_at,
     .ctx = (void *)node,

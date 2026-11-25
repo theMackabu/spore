@@ -322,6 +322,37 @@ bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, 
   return true;
 }
 
+size_t ramfs_symlink_count;
+
+bool ramfs_has_symlinks(void) { return ramfs_symlink_count != 0; }
+
+int ramfs_device_node(struct ramfs *fs, int parent, const char *name, enum ramfs_device device, uint16_t mode,
+                      uint32_t uid, uint32_t gid) {
+  int i = ramfs_add_node(fs, parent, name, false, false);
+  if (i >= 0) {
+    struct ramfs_mem_node *n = ramfs_inode_at(fs, i);
+    n->device = device;
+    n->mode = mode;
+    n->uid = uid;
+    n->gid = gid;
+  }
+  return i;
+}
+
+bool ramfs_symlink(struct ramfs *fs, int root, const char *target, const char *path) {
+  size_t len = kstrlen(target);
+  if (!len || lookup_entry(fs, root, path) >= 0) { return false; }
+  struct ramfs_node link;
+  if (!ramfs_create(fs, root, path, 0777, &link)) { return false; }
+  if (ramfs_write(fs, link.index, 0, target, len) != (int64_t)len) {
+    ramfs_remove(fs, root, path);
+    return false;
+  }
+  ramfs_inode_at(fs, link.index)->mode = 0120777;
+  ++ramfs_symlink_count;
+  return true;
+}
+
 bool ramfs_mkdir(struct ramfs *fs, int root, const char *path, uint16_t mode) {
   int parent;
   const char *name;

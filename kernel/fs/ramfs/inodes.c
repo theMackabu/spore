@@ -68,6 +68,7 @@ static void destroy_inode(const struct ramfs_table *t, struct ramfs_mem_node *no
   if (t->reclaim && node->link_target < 0) {
     t->reclaim(t->owner, node->mount, node->ino);
   }
+  if ((node->mode & 0170000) == 0120000 && node->link_target < 0) { --ramfs_symlink_count; }
   ramfs_free_node_pages(node);
 #if __STDC_HOSTED__
   free(node);

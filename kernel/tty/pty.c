@@ -1,4 +1,5 @@
 #include "tty/pty.h"
+#include "fs/mount_namespace.h"
 
 #include "arch/regs.h"
 #include "lib/kstr.h"
@@ -37,6 +38,10 @@ struct pty_ring {
 
 struct pty {
   bool used;
+  struct ramfs *instance;
+  unsigned number;
+  uint64_t slave_ino;
+  char slave_path[16];
   bool unlocked;
   uint16_t master_refs;
   uint16_t slave_refs;
@@ -161,19 +166,11 @@ static void pty_path(int id, char *out, size_t cap) {
   append_dec(out, cap, &len, (unsigned)id);
 }
 
-int cell_pty_id_from_path(const char *path) {
-  const char *prefix = "/dev/pts/";
-  if (path == NULL || !starts_with(path, prefix)) { return -ENOENT; }
-  const char *p = path + kstrlen(prefix);
-  if (*p == '\0') { return -ENOENT; }
-  int value = 0;
-  while (*p != '\0') {
-    if (*p < '0' || *p > '9') { return -ENOENT; }
-    value = value * 10 + (*p - '0');
-    if (value >= CELL_PTY_CAP) { return -ENOENT; }
-    ++p;
+static int pty_slot(struct ramfs *instance, unsigned number) {
+  for (int i = 0; i < CELL_PTY_CAP; ++i) {
+    if (ptys[i].used && ptys[i].instance == instance && ptys[i].number == number) { return i; }
   }
-  return value;
+  return -ENOENT;
 }
 
 static int install_pty_fd(struct domain *domain, int id, bool master, uint32_t flags, const char *path) {
@@ -190,7 +187,7 @@ static int install_pty_fd(struct domain *domain, int id, bool master, uint32_t f
   return fd;
 }
 
-int cell_pty_open_master(uint32_t flags, const char *path) {
+static int open_master(struct ramfs *instance, uint32_t flags, const char *path) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
   int id = -1;
@@ -207,6 +204,26 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
     ring_release(&ptys[id].to_slave);
     return -12;
   }
+  unsigned number = 0;
+  while (pty_slot(instance, number) >= 0) { ++number; }
+  ptys[id].number = number;
+  ptys[id].instance = instance;
+  if (instance) {
+    char *name = ptys[id].slave_path;
+    name[0] = '/';
+    size_t pos = 1;
+    append_dec(name, sizeof(ptys[id].slave_path), &pos, number);
+    int index = ramfs_device_node(instance, 0, name + 1, RAMFS_DEV_PTS, 0020000 | instance->pts_mode,
+                                  domain->euid, domain->egid);
+    if (index < 0) {
+      ring_release(&ptys[id].to_master); ring_release(&ptys[id].to_slave); return -12;
+    }
+    struct ramfs_node node;
+    ramfs_refresh_node(instance, index, &node);
+    ptys[id].slave_ino = node.ino;
+    ++instance->refs;
+    ++instance->pins;
+  }
   ptys[id].used = true;
   ptys[id].master_refs = 1;
   ptys[id].rows = 38;
@@ -217,6 +234,10 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
   ptys[id].erase = 0x7f;
   int fd = install_pty_fd(domain, id, true, flags, path);
   if (fd < 0) {
+    if (instance) {
+      ramfs_remove(instance, 0, ptys[id].slave_path);
+      --instance->pins; mountns_put_fs(instance);
+    }
     ring_release(&ptys[id].to_master);
     ring_release(&ptys[id].to_slave);
     kmemset(&ptys[id], 0, sizeof(ptys[id]));
@@ -224,7 +245,7 @@ int cell_pty_open_master(uint32_t flags, const char *path) {
   return fd;
 }
 
-int cell_pty_open_slave(int id, uint32_t flags, const char *path) {
+static int cell_pty_open_slave(int id, uint32_t flags, const char *path) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
   if (id < 0 || id >= CELL_PTY_CAP || !ptys[id].used) { return -ENOENT; }
@@ -235,11 +256,26 @@ int cell_pty_open_slave(int id, uint32_t flags, const char *path) {
   return fd;
 }
 
+int cell_pty_open_node(const struct ramfs_node *node, uint32_t flags, const char *path) {
+  struct ramfs *instance = node->fs->devpts ? node->fs : NULL;
+  if (node->device == RAMFS_DEV_PTMX) { return open_master(instance, flags, path); }
+  unsigned number = 0;
+  if (!node->name || !*node->name) { return -ENOENT; }
+  for (const char *p = node->name; *p; ++p) {
+    if (*p < '0' || *p > '9') { return -ENOENT; }
+    number = number * 10 + (*p - '0');
+    if (number >= CELL_PTY_CAP) { return -ENOENT; }
+  }
+  int id = pty_slot(instance, number);
+  if (id < 0 || (instance && ptys[id].slave_ino != node->ino)) { return -ENOENT; }
+  return cell_pty_open_slave(id, flags, path);
+}
+
 int cell_pty_open_peer(struct open_file *master, uint32_t flags) {
   struct pty *pty = pty_for_file(master);
   if (pty == NULL || !master->pty_master) { return -ENOTTY; }
   char path[32];
-  pty_path(master->pty_id, path, sizeof(path));
+  pty_path(pty->number, path, sizeof(path));
   pty->unlocked = true;
   return cell_pty_open_slave(master->pty_id, flags, path);
 }
@@ -248,11 +284,14 @@ void cell_pty_release_file(struct open_file *file) {
   struct pty *pty = pty_for_file(file);
   if (pty == NULL) { return; }
   if (file->pty_master) {
-    if (pty->master_refs > 0) { --pty->master_refs; }
+    if (pty->master_refs > 0 && !--pty->master_refs && pty->instance) {
+      ramfs_remove(pty->instance, 0, pty->slave_path);
+    }
   } else if (pty->slave_refs > 0) {
     --pty->slave_refs;
   }
   if (pty->master_refs == 0 && pty->slave_refs == 0) {
+    if (pty->instance) { --pty->instance->pins; mountns_put_fs(pty->instance); }
     ring_release(&pty->to_master);
     ring_release(&pty->to_slave);
     kmemset(pty, 0, sizeof(*pty));
@@ -306,7 +345,8 @@ uint64_t cell_pty_write_pending(const struct open_file *file) {
 }
 
 int cell_pty_id(const struct open_file *file) {
-  return pty_for_file(file) == NULL ? -ENOTTY : file->pty_id;
+  struct pty *pty = pty_for_file(file);
+  return pty ? (int)pty->number : -ENOTTY;
 }
 
 bool cell_pty_is_master(const struct open_file *file) {
