@@ -22,18 +22,34 @@ struct user_namespace *userns_retain(struct user_namespace *ns) {
 }
 
 void userns_release(struct user_namespace *ns) {
-  if (ns && --ns->refs == 0) { pool_free(&namespaces, ns); }
+  while (ns && !--ns->refs) {
+    struct user_namespace *parent = ns->parent;
+    pool_free(&namespaces, ns);
+    ns = parent;
+  }
+}
+
+bool userns_contains(const struct user_namespace *ancestor, const struct user_namespace *child) {
+  while (child && child != ancestor) { child = child->parent; }
+  return child == ancestor;
 }
 
 static int create_user_namespace(struct thread *leader) {
   struct domain *d = leader->domain;
-  if (d->user_ns || d->refcount != 1) { return -95; }
+  if (d->refcount != 1) { return -95; }
+  struct user_namespace *parent = d->user_ns;
+  if (parent && parent->depth >= 32) { return -28; }
+  if (parent && (!parent->uid.mapped || parent->uid.outer != d->euid ||
+                 !parent->gid.mapped || parent->gid.outer != d->egid)) { return -1; }
   if (!leader->no_new_privs || !d->euid || !d->egid || d->uid != d->euid || d->saved_uid != d->euid ||
       d->gid != d->egid || d->saved_gid != d->egid || !str_eq(d->chroot, "/")) { return -1; }
   struct user_namespace *ns = pool_alloc(&namespaces);
   if (!ns) { return -12; }
   ns->ino = namespace_new_ino();
   ns->refs = 1;
+  ns->parent = parent;
+  ns->depth = parent ? parent->depth + 1 : 1;
+  ns->groups_denied = parent && parent->groups_denied;
   ns->uid.outer = d->euid;
   ns->gid.outer = d->egid;
   d->user_ns = ns;
@@ -71,7 +87,7 @@ static bool number(const char **text, uint32_t *value) {
 }
 
 int userns_write_map(struct domain *actor, struct user_namespace *ns, bool group, bool setgroups, const char *text) {
-  if (!ns || (actor->user_ns && actor->user_ns != ns) || actor->euid != ns->uid.outer) { return -1; }
+  if (!ns || (actor->user_ns != ns && actor->user_ns != ns->parent) || actor->euid != ns->uid.outer) { return -1; }
   if (actor->user_ns == ns && !cell_ns_capable(ns, (group || setgroups) ? CAP_SETGID : CAP_SETUID)) { return -1; }
   if (setgroups) {
     if (!str_eq(text, "deny") && !str_eq(text, "deny\n")) { return -22; }
@@ -84,6 +100,7 @@ int userns_write_map(struct domain *actor, struct user_namespace *ns, bool group
   uint32_t inner, outer, count;
   if (!number(&text, &inner) || !number(&text, &outer) || !number(&text, &count) ||
       inner == UINT32_MAX || count != 1 || (*text && !str_eq(text, "\n"))) { return -22; }
+  if (outer == UINT32_MAX || !userns_translate(ns->parent, group, outer, &outer)) { return -1; }
   if (outer != map->outer || (group && actor->egid != outer)) { return -1; }
   map->inner = inner;
   map->mapped = true;
@@ -115,8 +132,9 @@ int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
     uts_release(d->uts);
     d->uts = old_uts;
     if (flags & CLONE_NEWUSER) {
+      struct user_namespace *parent = userns_retain(d->user_ns->parent);
       userns_release(d->user_ns);
-      d->user_ns = NULL;
+      d->user_ns = parent;
       thread->capabilities = old_caps;
     }
   } else {

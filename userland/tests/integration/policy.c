@@ -244,6 +244,14 @@ int integration_user_namespace(void) {
         mount("none", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV, NULL) || umount("/tmp")) { _exit(4); }
     struct stat st;
     if (stat("/", &st) || st.st_uid != 65534) { _exit(5); }
+    pid_t nested = fork();
+    if (!nested) {
+      if (unshare(CLONE_NEWUSER) || write_map("/proc/self/uid_map", "7 1900 1\n") != -1 ||
+          write_map("/proc/self/uid_map", "7 0 1\n") || write_map("/proc/self/gid_map", "9 0 1\n") ||
+          getuid() != 7 || getgid() != 9 || sethostname("ancestor", 8) == 0) { _exit(9); }
+      _exit(0);
+    }
+    if (nested < 0 || waitpid(nested, &ipc_status, 0) != nested || ipc_status) { _exit(10); }
     execl("/bin/exec_child", "exec_child", "mapped-user", (char *)NULL);
     _exit(6);
   }

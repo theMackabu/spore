@@ -519,14 +519,14 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
       const char text[] = "0 0 4294967295\n";
       return read_text_device(&out, text, sizeof(text) - 1);
     }
-    if (!ns || (domain->user_ns && domain->user_ns != ns)) { return -1; }
+    if (!ns || (domain->user_ns != ns && !userns_contains(domain->user_ns, ns))) { return -1; }
     const struct id_map *map = group ? &ns->gid : &ns->uid;
     if (!map->mapped) { return 0; }
     char text[40] = {};
     size_t size = 0;
     proc_append_u64(text, sizeof(text), &size, map->inner);
     proc_append_char(text, sizeof(text), &size, ' ');
-    proc_append_u64(text, sizeof(text), &size, map->outer);
+    proc_append_u64(text, sizeof(text), &size, userns_visible(domain->user_ns == ns ? ns->parent : domain->user_ns, group, map->outer));
     proc_append_str(text, sizeof(text), &size, " 1\n");
     return read_text_device(&out, text, size);
   }

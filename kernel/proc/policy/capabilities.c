@@ -15,7 +15,7 @@ struct linux_caps cell_initial_caps(void) {
 
 bool cell_ns_capable(const struct user_namespace *owner, enum linux_capability cap) {
   struct thread *t = cell_current_thread_internal();
-  return t && (!t->domain->user_ns || t->domain->user_ns == owner) && (t->capabilities.effective & (1u << cap));
+  return t && userns_contains(t->domain->user_ns, owner) && (t->capabilities.effective & (1u << cap));
 }
 
 bool cell_capable(enum linux_capability cap) {
