@@ -37,11 +37,15 @@ void proc_append_u64(char *dst, size_t cap, size_t *len, uint64_t value) {
   proc_append_u64_pad(dst, cap, len, value, 0);
 }
 
-void proc_append_hex(char *dst, size_t cap, size_t *len, uint64_t value, size_t digits) {
+void proc_append_hex_digits(char *dst, size_t cap, size_t *len, uint64_t value, size_t digits) {
   static const char hex[] = "0123456789abcdef";
-  proc_append_str(dst, cap, len, "0x");
   while (digits) {
     --digits;
     proc_append_char(dst, cap, len, hex[(value >> (digits * 4)) & 0xf]);
   }
+}
+
+void proc_append_hex(char *dst, size_t cap, size_t *len, uint64_t value, size_t digits) {
+  proc_append_str(dst, cap, len, "0x");
+  proc_append_hex_digits(dst, cap, len, value, digits);
 }

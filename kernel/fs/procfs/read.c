@@ -201,6 +201,22 @@ static size_t proc_pid_status_text(char *dst, size_t cap, const struct proc_task
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, userns_visible(view, true, domain->groups[i]));
   }
+  const struct thread *thread = task->thread ? task->thread : cell_find_thread(domain->id);
+  if (thread) {
+    const struct linux_caps *caps = &thread->capabilities;
+    proc_append_str(dst, cap, &len, "\nCapInh:\t");
+    proc_append_hex_digits(dst, cap, &len, caps->inheritable, 16);
+    proc_append_str(dst, cap, &len, "\nCapPrm:\t");
+    proc_append_hex_digits(dst, cap, &len, caps->permitted, 16);
+    proc_append_str(dst, cap, &len, "\nCapEff:\t");
+    proc_append_hex_digits(dst, cap, &len, caps->effective, 16);
+    proc_append_str(dst, cap, &len, "\nCapBnd:\t");
+    proc_append_hex_digits(dst, cap, &len, caps->bounding, 16);
+    proc_append_str(dst, cap, &len, "\nNoNewPrivs:\t");
+    proc_append_u64(dst, cap, &len, thread->no_new_privs);
+  }
+  proc_append_str(dst, cap, &len, "\nSeccomp:\t");
+  proc_append_u64(dst, cap, &len, domain->filter ? 2 : 0);
   proc_append_str(dst, cap, &len, "\nVmSize:\t");
   proc_append_u64(dst, cap, &len, mem.virtual_pages * 4);
   proc_append_str(dst, cap, &len, " kB\nVmRSS:\t");
