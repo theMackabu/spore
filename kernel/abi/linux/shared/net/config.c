@@ -2,6 +2,7 @@
 #include "handlers.h"
 #include "net/net.h"
 #include "proc/domain.h"
+#include "proc/capabilities.h"
 
 enum { EPERM = 1, EFAULT = 14, EINVAL = 22 };
 
@@ -31,7 +32,7 @@ int64_t sys_spore_net_config(uint64_t op, uint64_t cfg_addr) {
              : -(int64_t)EFAULT;
   }
   if (op == 1) {
-    if (cell_current_euid() != 0) { return -(int64_t)EPERM; }
+    if (!cell_capable(CAP_NET_ADMIN)) { return -(int64_t)EPERM; }
     struct net_config64 in;
     if (!syscall_user_readable(cfg_addr, sizeof(in)) ||
         !vmm_copy_from_user(syscall_active_as(), &in, cfg_addr, sizeof(in))) {

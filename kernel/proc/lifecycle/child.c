@@ -50,6 +50,7 @@ static int wait_result(struct domain *parent, int pid, uint64_t status_addr, uin
 void cell_wake_parent_of(struct domain *child) {
   cell_wake_vfork_parent_of(child->id);
   int parent_id = child->parent_id;
+  int signal = child->exit_signal;
   size_t cursor = 0;
   struct thread *thread;
   while ((thread = cell_next_waiter(WAIT_CHILD, &cursor))) {
@@ -59,6 +60,8 @@ void cell_wake_parent_of(struct domain *child) {
     thread->wait.child_servicing = false;
     if (result) { cell_finish_wait(thread, result); smp_notify(); }
   }
+  struct domain *parent = cell_find_domain(parent_id);
+  if (signal && parent && !parent->zombie) { cell_signal_domain(parent, signal, NULL); }
 }
 
 int cell_wait4_options(int pid, uint64_t status_addr, int options, uint64_t usage_addr, struct trap_frame *frame) {

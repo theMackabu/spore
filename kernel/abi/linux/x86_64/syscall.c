@@ -7,6 +7,7 @@
 #include "proc/domain.h"
 #include "proc/policy.h"
 #include "proc/signal.h"
+#include "proc/seccomp.h"
 #include "proc/thread.h"
 
 static const uint16_t operations[] = {
@@ -30,6 +31,7 @@ void linux_x86_64_syscall(struct trap_frame *f) {
   uint64_t args[] = {f->rdi, f->rsi, f->rdx, f->r10, f->r8, f->r9};
   uint64_t op = nr < sizeof(operations) / sizeof(*operations) ? operations[nr] : 0;
   int64_t rc;
+  if (!seccomp_check(f, nr, args, &rc)) { goto done; }
   if (nr == 7) {
     rc = cell_syscall_allowed(SYS_PPOLL) ? sys_poll_ms(f, args[0], args[1], (int)args[2]) : -1;
   } else if (nr == 158) {

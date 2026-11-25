@@ -1,6 +1,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <linux/capability.h>
+#include <sys/prctl.h>
 #include <sys/auxv.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -25,6 +28,17 @@ int main(int argc, char **argv) {
     return got == sizeof(expected) && memcmp(bytes, expected, sizeof(expected)) == 0 ? 0 : 43;
   }
   const char *arg = argc > 1 ? argv[1] : "missing";
+  if (strcmp(arg, "mapped-user") == 0) {
+    return !getuid() && !getgid() && !getauxval(AT_EUID) && !getauxval(AT_EGID) ? 0 : 43;
+  }
+  if (strcmp(arg, "cap-bound") == 0) {
+    struct __user_cap_header_struct hdr = {_LINUX_CAPABILITY_VERSION_3, 0};
+    struct __user_cap_data_struct caps[2];
+    return !syscall(SYS_capget, &hdr, caps) && !(caps[0].permitted & (1u << CAP_SYS_ADMIN)) ? 0 : 43;
+  }
+  if (strcmp(arg, "filtered") == 0) {
+    return prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1 && syscall(SYS_getppid) == -1 && errno == EACCES ? 0 : 43;
+  }
   if (strcmp(arg, "poison-data") == 0) {
     exec_private_data = 0x5a5a5a5a;
     printf("[spore] exec child: poisoned private data\n");

@@ -7,6 +7,7 @@
 #include "fs/vfs.h"
 #include "proc/accounting.h"
 #include "proc/domain.h"
+#include "proc/capabilities.h"
 #include "proc/fd.h"
 #include "proc/policy.h"
 
@@ -52,7 +53,7 @@ int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, u
   struct attr_target target;
   int rc = attr_target(dirfd, path_addr, flags, !path_addr, &target);
   if (rc) { return rc; }
-  if (cell_current_euid() && cell_current_euid() != target.node.uid) {
+  if (!cell_capable(CAP_FOWNER) && cell_current_euid() != target.node.uid) {
     if (times[0].tv_nsec != NOW || times[1].tv_nsec != NOW) { return -EPERM; }
     if (!syscall_node_access_allowed(&target.node, W_OK)) { return -EACCES; }
   }
@@ -69,10 +70,8 @@ static int chmod_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descrip
   int rc = attr_target(fd, addr, flags, descriptor, &target);
   if (rc) { return rc; }
   if ((target.node.mode & S_IFMT) == S_IFLNK) { return -95; }
-  if (cell_current_euid()) {
-    if (cell_current_euid() != target.node.uid) { return -EPERM; }
-    if (!cell_in_group(target.node.gid)) { mode &= ~02000u; }
-  }
+  if (cell_current_euid() != target.node.uid && !cell_capable(CAP_FOWNER)) { return -EPERM; }
+  if (!cell_in_group(target.node.gid) && !cell_capable(CAP_FSETID)) { mode &= ~02000u; }
   if (!vfs_chmod_node(&target.node, mode)) { return -EINVAL; }
   notify_attr(&target, FS_ATTRIB);
   return 0;
@@ -96,7 +95,7 @@ static int chown_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descrip
   struct attr_target target;
   int rc = attr_target(fd, addr, flags, descriptor, &target);
   if (rc) { return rc; }
-  if (cell_current_euid() != 0) { return -EPERM; }
+  if (!cell_capable(CAP_CHOWN)) { return -EPERM; }
   uint32_t uid, gid;
   if (!chown_ids(&target.node, uid_arg, gid_arg, &uid, &gid)) { return -EINVAL; }
   if (!vfs_chown_node(&target.node, uid, gid)) { return -EINVAL; }

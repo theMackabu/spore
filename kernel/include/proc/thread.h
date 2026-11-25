@@ -2,6 +2,7 @@
 
 #include "arch/regs.h"
 #include "proc/limits.h"
+#include "proc/capabilities.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -107,6 +108,8 @@ struct thread {
   struct trap_frame tf;
   struct arch_thread_context context;
   struct thread_wait wait;
+  struct linux_caps capabilities;
+  bool no_new_privs;
   uint64_t signal_mask;
   uint64_t pending_signals;
   uint64_t sigaltstack_sp;

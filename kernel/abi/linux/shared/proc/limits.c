@@ -2,6 +2,7 @@
 #include "handlers.h"
 #include "exec/stack.h"
 #include "proc/domain.h"
+#include "proc/capabilities.h"
 
 enum { EPERM = 1, EFAULT = 14, EINVAL = 22 };
 
@@ -24,11 +25,11 @@ int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, uint6
         !vmm_copy_from_user(syscall_active_as(), &next, new_limit, sizeof(next))) { return -EFAULT; }
     if (resource==RLIMIT_FSIZE) {
       if (next.rlim_cur>next.rlim_max) {return -EINVAL;}
-      if (next.rlim_max>domain->fsize_hard && domain->euid) {return -EPERM;}
+      if (next.rlim_max>domain->fsize_hard && !cell_capable(CAP_SYS_RESOURCE)) {return -EPERM;}
     }
     if (resource == RLIMIT_NOFILE) {
       if (next.rlim_cur > next.rlim_max) { return -EINVAL; }
-      if (next.rlim_max > MAX_FDS || (next.rlim_max > domain->nofile_hard && domain->euid != 0)) { return -EPERM; }
+      if (next.rlim_max > MAX_FDS || (next.rlim_max > domain->nofile_hard && !cell_capable(CAP_SYS_RESOURCE))) { return -EPERM; }
     }
   }
   if (old_limit) {

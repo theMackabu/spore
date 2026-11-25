@@ -74,6 +74,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   struct domain *parent = cell_current_domain_internal();
   struct snapshot *snap = find_snapshot(snap_id);
   if (parent == NULL || snap == NULL) { return -12; }
+  if (parent->filter && snap->as.freebsd_abi) { return -1; }
   struct thread *child_thread = cell_alloc_process();
   if (child_thread == NULL) { return -12; }
   struct domain *child_domain = child_thread->domain;

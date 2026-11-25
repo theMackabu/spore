@@ -8,6 +8,9 @@
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/process.h"
+#include "proc/seccomp.h"
+#include "proc/uts.h"
+#include "proc/user_namespace.h"
 #include "proc/thread.h"
 #include "tty/tty.h"
 
@@ -82,6 +85,7 @@ struct thread *cell_alloc_process(void) {
       kmemset(&domains[i], 0, sizeof(domains[i]));
       if (i == domain_slot_limit) { ++domain_slot_limit; }
       domains[i].used = true;
+      domains[i].exit_signal = 17;
       domains[i].umask = 0022;
       domains[i].fsize_soft=domains[i].fsize_hard=UINT64_MAX;
       domains[i].nofile_soft = domains[i].nofile_hard = MAX_FDS;
@@ -107,6 +111,9 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   kmemcpy(dst->exec_path, src->exec_path, sizeof(dst->exec_path));
   kmemcpy(dst->argv0, src->argv0, sizeof(dst->argv0));
   kmemcpy(dst->cmdline, src->cmdline, sizeof(dst->cmdline));
+  dst->user_ns = userns_retain(src->user_ns);
+  dst->uts = uts_retain(src->uts);
+  dst->filter = seccomp_inherit(src->filter);
   dst->caps = cell_policy_retain(src->caps);
   dst->budget = src->budget;
   dst->fsize_soft=src->fsize_soft;dst->fsize_hard=src->fsize_hard;
@@ -135,6 +142,7 @@ void cell_destroy_domain(struct domain *domain) {
       struct domain *child = cell_domain_slot(i);
       if (child == NULL || !child->used || child->parent_id != domain->id) { continue; }
       child->parent_id = reparent_to;
+      child->exit_signal = 17;
       if (child->zombie && reparent_to != 0) { cell_wake_parent_of(child); }
     }
   }
@@ -150,6 +158,12 @@ void cell_destroy_domain(struct domain *domain) {
   cell_close_all_fds(domain);
   cell_mm_release(domain->mm);
   domain->mm = NULL;
+  userns_release(domain->user_ns);
+  domain->user_ns = NULL;
+  uts_release(domain->uts);
+  domain->uts = NULL;
+  seccomp_release(domain->filter);
+  domain->filter = NULL;
   cell_policy_release(domain->caps);
   domain->caps = NULL;
   domain->used = false;
@@ -282,11 +296,14 @@ int cell_setres_ids(bool group, uint32_t real, uint32_t effective, uint32_t save
   uint32_t *real_id = group ? &domain->gid : &domain->uid;
   uint32_t *effective_id = group ? &domain->egid : &domain->euid;
   uint32_t *saved_id = group ? &domain->saved_gid : &domain->saved_uid;
-  if (domain->euid != 0 && (!held_id(real, *real_id, *effective_id, *saved_id) || !held_id(effective, *real_id, *effective_id, *saved_id) ||
+  uint32_t old_euid = domain->euid;
+  bool had_root = !domain->uid || !domain->euid || !domain->saved_uid;
+  if (!cell_capable(group ? CAP_SETGID : CAP_SETUID) && (!held_id(real, *real_id, *effective_id, *saved_id) || !held_id(effective, *real_id, *effective_id, *saved_id) ||
                         !held_id(saved, *real_id, *effective_id, *saved_id))) { return -EPERM; }
   if (real != UINT32_MAX) { *real_id = real; }
   if (effective != UINT32_MAX) { *effective_id = effective; }
   if (saved != UINT32_MAX) { *saved_id = saved; }
+  if (!group) { cell_caps_after_setuid(domain, old_euid, had_root); }
   return 0;
 }
 
@@ -294,8 +311,8 @@ int cell_setuid_current(uint32_t uid) {
   if (uid == UINT32_MAX) { return -EINVAL; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -ESRCH; }
-  if (domain->euid != 0 && uid != domain->uid && uid != domain->saved_uid) { return -EPERM; }
-  if (domain->euid == 0) { return cell_setres_ids(false, uid, uid, uid); }
+  if (!cell_capable(CAP_SETUID) && uid != domain->uid && uid != domain->saved_uid) { return -EPERM; }
+  if (cell_capable(CAP_SETUID)) { return cell_setres_ids(false, uid, uid, uid); }
   return cell_setres_ids(false, UINT32_MAX, uid, UINT32_MAX);
 }
 
@@ -303,8 +320,8 @@ int cell_setgid_current(uint32_t gid) {
   if (gid == UINT32_MAX) { return -EINVAL; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -ESRCH; }
-  if (domain->euid != 0 && gid != domain->gid && gid != domain->saved_gid) { return -EPERM; }
-  if (domain->euid == 0) { return cell_setres_ids(true, gid, gid, gid); }
+  if (!cell_capable(CAP_SETGID) && gid != domain->gid && gid != domain->saved_gid) { return -EPERM; }
+  if (cell_capable(CAP_SETGID)) { return cell_setres_ids(true, gid, gid, gid); }
   return cell_setres_ids(true, UINT32_MAX, gid, UINT32_MAX);
 }
 
@@ -315,6 +332,7 @@ void cell_apply_exec_creds(uint32_t mode, uint32_t uid, uint32_t gid) {
   if ((mode & 02000u) != 0) { domain->egid = gid; }
   domain->saved_uid = domain->euid;
   domain->saved_gid = domain->egid;
+  cell_caps_after_exec(domain);
 }
 
 const char *cell_current_cwd(void) {

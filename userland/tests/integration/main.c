@@ -88,6 +88,10 @@ int main(void) {
   ok_all = ok_all && integration_socket_suite();
   int ok_v3f = integration_egress_demo();
   ok_all = ok_all && ok_v3f;
+  ok_all &= integration_seccomp();
+  ok_all &= integration_uts_namespace();
+  ok_all &= integration_user_namespace();
+  ok_all &= integration_capabilities();
   ok_all = ok_all && integration_signal_suite();
   ok_all = ok_all && integration_memory_suite();
   ok_all = ok_all && integration_fork_suite();

@@ -4,6 +4,7 @@
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
+#include "proc/capabilities.h"
 #include "proc/fd.h"
 #include "proc/policy.h"
 
@@ -138,7 +139,7 @@ int syscall_may_change_entry(char *path, bool replacing) {
   if (!parent.is_dir) { return -ENOTDIR; }
   if (!syscall_node_access_allowed(&parent, W_OK | X_OK)) { return -EACCES; }
   uint32_t euid = cell_current_euid();
-  if (replacing && (parent.mode & 01000u) && euid && euid != parent.uid) {
+  if (replacing && (parent.mode & 01000u) && !cell_capable(CAP_FOWNER) && euid != parent.uid) {
     struct vfs_node victim;
     if (vfs_lstat(path, &victim) && euid != victim.uid) { return -EPERM; }
   }
@@ -146,7 +147,9 @@ int syscall_may_change_entry(char *path, bool replacing) {
 }
 
 bool syscall_node_access_allowed(const struct vfs_node *node, uint64_t mask) {
-  if (mask == 0 || cell_current_euid() == 0) { return true; }
+  if (mask == 0) { return true; }
+  if (cell_capable(CAP_DAC_OVERRIDE) && (!(mask & X_OK) || node->is_dir || (node->mode & 0111))) { return true; }
+  if (cell_capable(CAP_DAC_READ_SEARCH) && !(mask & W_OK) && (!(mask & X_OK) || node->is_dir)) { return true; }
   uint32_t bits = node->mode & 0777u;
   if (cell_current_euid() == node->uid) {
     bits >>= 6;

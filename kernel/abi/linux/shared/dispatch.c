@@ -17,6 +17,7 @@
 #include "lib/kprintf.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
+#include "proc/capabilities.h"
 #include "proc/eventfd.h"
 #include "proc/fd.h"
 #include "proc/futex.h"
@@ -26,6 +27,9 @@
 #include "proc/poll.h"
 #include "proc/process.h"
 #include "proc/signal.h"
+#include "proc/seccomp.h"
+#include "proc/uts.h"
+#include "proc/user_namespace.h"
 #include "proc/snapshot.h"
 #include "proc/thread.h"
 #include "fs/vfs.h"
@@ -142,9 +146,14 @@ int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]
     [SYS_GETRESUID] = &&l_getresuid,
     [SYS_SETRESGID] = &&l_setresgid,
     [SYS_GETRESGID] = &&l_getresgid,
+    [SYS_CAPGET] = &&l_capget,
+    [SYS_CAPSET] = &&l_capset,
+    [SYS_SECCOMP] = &&l_seccomp,
     [SYS_GETGROUPS] = &&l_getgroups,
     [SYS_SETGROUPS] = &&l_setgroups,
     [SYS_UNAME] = &&l_uname,
+    [SYS_UNSHARE] = &&l_unshare,
+    [SYS_SETDOMAINNAME] = &&l_setdomainname,
     [SYS_SETHOSTNAME] = &&l_sethostname,
     [SYS_GETRLIMIT] = &&l_getrlimit,
     [SYS_SETRLIMIT] = &&l_setrlimit,
@@ -298,17 +307,17 @@ l_getsid:
 l_setsid:
   return cell_setsid_current();
 l_getuid:
-  return cell_current_uid();
+  return userns_visible(cell_current_domain_internal()->user_ns, false, cell_current_uid());
 l_geteuid:
-  return cell_current_euid();
+  return userns_visible(cell_current_domain_internal()->user_ns, false, cell_current_euid());
 l_getgid:
-  return cell_current_gid();
+  return userns_visible(cell_current_domain_internal()->user_ns, true, cell_current_gid());
 l_getegid:
-  return cell_current_egid();
+  return userns_visible(cell_current_domain_internal()->user_ns, true, cell_current_egid());
 l_setuid:
-  return cell_setuid_current((uint32_t)a0);
+  return sys_set_ids(false, true, a0, UINT32_MAX, UINT32_MAX);
 l_setgid:
-  return cell_setgid_current((uint32_t)a0);
+  return sys_set_ids(true, true, a0, UINT32_MAX, UINT32_MAX);
 l_clone:
   return sys_clone(f, a0, a1, a2, a3, a4);
 l_futex: {
@@ -371,7 +380,7 @@ l_spore_apply_policy: {
 }
 l_spore_shutdown:
   if (app_mode) { return -EPERM; }
-  if (cell_current_euid() != 0) {
+  if (!cell_capable(CAP_SYS_BOOT)) {
     kprintf("[kernel] shutdown denied uid=%d euid=%d\n", (int)cell_current_uid(), (int)cell_current_euid());
     return -(int64_t)EPERM;
   }
@@ -486,21 +495,31 @@ l_prlimit64:
 l_sysinfo:
   return sys_sysinfo(a0);
 l_setresuid:
-  return cell_setres_ids(false, a0, a1, a2);
+  return sys_set_ids(false, false, a0, a1, a2);
 l_getresuid:
   return sys_getres_ids(false, a0, a1, a2);
 l_setresgid:
-  return cell_setres_ids(true, a0, a1, a2);
+  return sys_set_ids(true, false, a0, a1, a2);
 l_getresgid:
   return sys_getres_ids(true, a0, a1, a2);
+l_capget:
+  return sys_capabilities(false, a0, a1);
+l_capset:
+  return sys_capabilities(true, a0, a1);
+l_seccomp:
+  return sys_seccomp(a0, a1, a2);
 l_getgroups:
   return sys_getgroups((int)a0, a1);
 l_setgroups:
   return sys_setgroups(a0, a1);
 l_uname:
   return sys_uname(a0, SPORE_MACHINE);
+l_unshare:
+  return cell_unshare_namespaces(cell_current_thread_internal(), a0);
+l_setdomainname:
+  return sys_set_uts_name(false, a0, a1);
 l_sethostname:
-  return sys_sethostname(a0, a1);
+  return sys_set_uts_name(true, a0, a1);
 l_umask:
   return cell_set_umask(a0);
 l_prctl:

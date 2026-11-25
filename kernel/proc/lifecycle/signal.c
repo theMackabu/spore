@@ -84,6 +84,11 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
   cell_wake_parent_of(domain);
 }
 
+void cell_terminate_current(int signal, struct trap_frame *frame) {
+  terminate_domain_by_signal(cell_current_domain_internal(), signal);
+  cell_schedule(frame);
+}
+
 static bool wait_is_restartable(const struct thread_wait *wait) {
   enum wait_reason reason = wait->reason;
   if (reason == WAIT_FUTEX) { return !wait->has_deadline; }
@@ -230,73 +235,46 @@ bool cell_signal_current_fault(int signal, struct trap_frame *frame, uint64_t fa
   return delivered && !ignored;
 }
 
-int cell_kill(int pid, int signal) {
-  if (pid == 0 || pid < -1) {
-    int pgrp = pid == 0 ? cell_getpgid(0) : -pid;
-    int delivered = 0;
-    for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
-      struct domain *domain = cell_domain_slot(i);
-      if (domain != NULL && domain->used && !domain->zombie && domain->pgrp_id == pgrp) {
-        if (signal == 0) {
-          ++delivered;
-          continue;
-        }
-        if (!signal_is_supported(signal)) {
-          ++delivered;
-          continue;
-        }
-        (void)cell_deliver_signal_to_thread(cell_thread_for_domain(domain), signal);
-        ++delivered;
-      }
-    }
-    return delivered == 0 ? -ESRCH : 0;
-  }
-  struct domain *domain = cell_find_domain(pid);
-  if (domain == NULL || domain->zombie) { return -ESRCH; }
-  if (signal == 0) { return 0; }
-  if (!signal_is_supported(signal)) { return 0; }
-  (void)cell_deliver_signal_to_thread(cell_thread_for_domain(domain), signal);
+static bool may_signal(const struct domain *target, int signal) {
+  const struct domain *sender = cell_current_domain_internal();
+  return sender == target || cell_capable(CAP_KILL) ||
+         sender->uid == target->uid || sender->uid == target->saved_uid ||
+         sender->euid == target->uid || sender->euid == target->saved_uid ||
+         (signal == SIGCONT && sender->session_id == target->session_id);
+}
+
+static int send_user_signal(struct thread *thread, int signal) {
+  if (!thread || !thread->domain || thread->domain->zombie) { return -ESRCH; }
+  if (!may_signal(thread->domain, signal)) { return -1; }
+  if (signal && signal_is_supported(signal)) { (void)cell_deliver_signal_to_thread(thread, signal); }
   return 0;
 }
 
-int cell_tkill(int tid, int signal) {
-  if (signal == 0) {
-    for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-      struct thread *thread = cell_thread_slot(i);
-      if (thread != NULL && thread->state != THREAD_UNUSED && thread->tid == tid) { return 0; }
+int cell_kill(int pid, int signal) {
+  if ((unsigned)signal >= NSIG) { return -22; }
+  if (pid == 0 || pid < -1) {
+    int64_t pgrp = pid == 0 ? cell_getpgid(0) : -(int64_t)pid;
+    int result = -ESRCH;
+    for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
+      struct domain *domain = cell_domain_slot(i);
+      if (!domain || !domain->used || domain->zombie || domain->pgrp_id != pgrp) { continue; }
+      int rc = send_user_signal(cell_thread_for_domain(domain), signal);
+      if (result != 0) { result = rc; }
     }
-    return -ESRCH;
+    return result;
   }
-  if (!signal_is_supported(signal)) { return 0; }
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state == THREAD_UNUSED || thread->tid != tid || thread->domain == NULL) { continue; }
-    (void)cell_deliver_signal_to_thread(thread, signal);
-    return 0;
-  }
-  return -ESRCH;
+  struct domain *domain = cell_find_domain(pid);
+  return domain ? send_user_signal(cell_thread_for_domain(domain), signal) : -ESRCH;
+}
+
+int cell_tkill(int tid, int signal) {
+  if ((unsigned)signal >= NSIG) { return -22; }
+  return send_user_signal(cell_find_thread(tid), signal);
 }
 
 int cell_tgkill(int pid, int tid, int signal) {
-  struct domain *domain = cell_find_domain(pid);
-  if (domain == NULL || domain->zombie) { return -ESRCH; }
-  if (signal == 0) {
-    for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-      struct thread *thread = cell_thread_slot(i);
-      if (thread != NULL && thread->state != THREAD_UNUSED && thread->tid == tid && thread->domain == domain) {
-        return 0;
-      }
-    }
-    return -ESRCH;
-  }
-  if (!signal_is_supported(signal)) { return 0; }
-  for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
-    struct thread *thread = cell_thread_slot(i);
-    if (thread == NULL || thread->state == THREAD_UNUSED || thread->tid != tid || thread->domain != domain) {
-      continue;
-    }
-    (void)cell_deliver_signal_to_thread(thread, signal);
-    return 0;
-  }
-  return -ESRCH;
+  if ((unsigned)signal >= NSIG) { return -22; }
+  struct thread *thread = cell_find_thread(tid);
+  if (!thread || !thread->domain || thread->domain->id != pid) { return -ESRCH; }
+  return send_user_signal(thread, signal);
 }

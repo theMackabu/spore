@@ -1,6 +1,8 @@
 #include "proc/process.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
+#include "proc/uts.h"
+#include "proc/user_namespace.h"
 #include "proc/memory.h"
 #include "proc/fd.h"
 #include "arch/smp.h"
@@ -28,7 +30,7 @@ static void inherit_fork_context(struct thread *child, const struct thread *pare
   trap_set_result(&child->tf, 0);
 }
 
-int cell_fork_current(struct trap_frame *frame) {
+int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t child_tid) {
   struct domain *parent = cell_current_domain_internal();
   if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
   struct thread *child_thread = cell_alloc_process();
@@ -42,9 +44,21 @@ int cell_fork_current(struct trap_frame *frame) {
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child_domain, parent);
+  int ns_rc = cell_unshare_namespaces(child_thread, flags & (CLONE_NEWUSER | CLONE_NEWUTS));
+  if (ns_rc) { cell_destroy_domain(child_domain); return ns_rc; }
   if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
   child_domain->parent_id = parent->id;
+  child_domain->exit_signal = flags & 0xff;
   inherit_fork_context(child_thread, cell_current_thread_internal());
+  if (newsp) { trap_set_stack(&child_thread->tf, newsp); }
+  if (flags & CLONE_CHILD_CLEARTID) { child_thread->clear_child_tid = child_tid; }
+  if (flags & CLONE_CHILD_SETTID) {
+    uint32_t tid = child_thread->tid;
+    if (!vmm_copy_to_user(cell_domain_as(child_domain), child_tid, &tid, sizeof(tid))) {
+      cell_destroy_domain(child_domain);
+      return -EFAULT;
+    }
+  }
   trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)child_domain->id);
   copy_cstr(child_domain->name, sizeof(child_domain->name), parent->name);
   smp_notify();
@@ -66,6 +80,7 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   cell_copy_domain_metadata(child, parent);
   if (!cell_copy_fd_table(child, parent)) { cell_destroy_domain(child); return -12; }
   child->parent_id = parent->id;
+  child->exit_signal = flags & 0xff;
   inherit_fork_context(child_thread, cell_current_thread_internal());
   if (newsp != 0) { trap_set_stack(&child_thread->tf, newsp); }
   if ((flags & CLONE_SETTLS) != 0) { child_thread->context.thread_pointer = tls;

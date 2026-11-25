@@ -14,6 +14,7 @@ struct signal_action {
   uint64_t mask;
 };
 
+void cell_terminate_current(int signal, struct trap_frame *frame);
 void cell_expire_real_timers(uint64_t now);
 void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *frame);
 bool cell_deliver_signal_to_thread(struct thread *thread, int signal);

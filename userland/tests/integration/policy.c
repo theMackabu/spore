@@ -1,6 +1,15 @@
 #include "integration_socket.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <linux/capability.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <stddef.h>
+#include <sched.h>
+#include <string.h>
+#include <sys/prctl.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -109,5 +118,115 @@ int integration_egress_demo(void) {
          ok ? "PASS" : "FAIL", wrong_port ? "PASS" : "FAIL", cidr_in ? "PASS" : "FAIL", cidr_out ? "PASS" : "FAIL",
          connect_null ? "PASS" : "FAIL", connect_spoof ? "PASS" : "FAIL", connect_setpeer ? "PASS" : "FAIL",
          escalation ? "PASS" : "FAIL");
+  return ok;
+}
+
+static int check_filter(unsigned action) {
+  pid_t child = fork();
+  if (child == 0) {
+    struct sock_filter code[] = {
+      BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+      BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getppid, 0, 1),
+      BPF_STMT(BPF_RET | BPF_K, action),
+      BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog program = {.len = sizeof(code) / sizeof(code[0]), .filter = code};
+    if (setuid(1000) || prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+        syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program)) { _exit(1); }
+    if (action == SECCOMP_RET_KILL_PROCESS) { syscall(SYS_getppid); _exit(2); }
+    pid_t next = fork();
+    if (!next) {
+      execl("/bin/exec_child", "exec_child", "filtered", (char *)NULL);
+      _exit(3);
+    }
+    int status;
+    _exit(next > 0 && waitpid(next, &status, 0) == next && status == 0 ? 0 : 4);
+  }
+  int status;
+  if (child < 0 || waitpid(child, &status, 0) != child) { return 0; }
+  return action == SECCOMP_RET_KILL_PROCESS ? WIFSIGNALED(status) && WTERMSIG(status) == SIGSYS : status == 0;
+}
+
+int integration_seccomp(void) {
+  int ok = check_filter(SECCOMP_RET_ERRNO | EACCES) && check_filter(SECCOMP_RET_KILL_PROCESS);
+  printf("[spore] seccomp syscall denial, inheritance and termination: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
+
+int integration_uts_namespace(void) {
+  char before[65], after[65];
+  if (gethostname(before, sizeof(before))) { return 0; }
+  pid_t child = syscall(SYS_clone, CLONE_NEWUTS | SIGCHLD, 0, 0, 0, 0);
+  if (child == 0) {
+    if (gethostname(after, sizeof(after)) || strcmp(before, after) || sethostname("private", 7)) { _exit(1); }
+    pid_t next = fork();
+    if (!next) {
+      if (gethostname(after, sizeof(after)) || strcmp(after, "private") || unshare(CLONE_NEWUTS) ||
+          sethostname("nested", 6)) { _exit(2); }
+      _exit(0);
+    }
+    int status;
+    _exit(next > 0 && waitpid(next, &status, 0) == next && status == 0 &&
+          !gethostname(after, sizeof(after)) && !strcmp(after, "private") ? 0 : 3);
+  }
+  int status;
+  int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0 &&
+           !gethostname(after, sizeof(after)) && !strcmp(after, before);
+  printf("[spore] private UTS hostname and fork inheritance: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
+int integration_capabilities(void) {
+  pid_t child = fork();
+  if (!child) {
+    struct __user_cap_header_struct hdr = {_LINUX_CAPABILITY_VERSION_3, 0};
+    struct __user_cap_data_struct caps[2];
+    uint32_t bit = 1u << CAP_SYS_ADMIN;
+    if (syscall(SYS_capget, &hdr, caps) || !(caps[0].effective & bit) ||
+        prctl(PR_CAPBSET_DROP, CAP_SYS_ADMIN, 0, 0, 0) ||
+        prctl(PR_CAPBSET_READ, CAP_SYS_ADMIN, 0, 0, 0) != 0) { _exit(1); }
+    caps[0].effective &= ~bit;
+    caps[0].permitted &= ~bit;
+    if (syscall(SYS_capset, &hdr, caps) || unshare(CLONE_NEWUTS) != -1 || errno != EPERM) { _exit(2); }
+    caps[0].permitted |= bit;
+    if (syscall(SYS_capset, &hdr, caps) != -1 || errno != EPERM) { _exit(3); }
+    execl("/bin/exec_child", "exec_child", "cap-bound", (char *)NULL);
+    _exit(4);
+  }
+  int status;
+  int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
+  printf("[spore] capability drop and exec bounding set: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
+static int write_map(const char *path, const char *text) {
+  int fd = open(path, O_WRONLY);
+  if (fd < 0) { return -1; }
+  ssize_t rc = write(fd, text, strlen(text));
+  int saved = errno;
+  close(fd);
+  errno = saved;
+  return rc == (ssize_t)strlen(text) ? 0 : -1;
+}
+
+int integration_user_namespace(void) {
+  pid_t child = fork();
+  if (!child) {
+    if (setgid(1000) || setuid(1000) || prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+        unshare(CLONE_NEWUSER) || getuid() != 65534 || getgid() != 65534) { _exit(1); }
+    if (write_map("/proc/self/uid_map", "0 1000 1\n") ||
+        write_map("/proc/self/setgroups", "deny\n") || write_map("/proc/self/gid_map", "0 1000 1\n") ||
+        getuid() != 0 || getgid() != 0) { _exit(2); }
+    if (sethostname("global", 6) != -1 || errno != EPERM || setuid(1000) != -1 || errno != EINVAL) { _exit(3); }
+    if (unshare(CLONE_NEWUTS) || sethostname("child", 5)) { _exit(4); }
+    struct stat st;
+    if (stat("/", &st) || st.st_uid != 65534) { _exit(5); }
+    execl("/bin/exec_child", "exec_child", "mapped-user", (char *)NULL);
+    _exit(6);
+  }
+  int status;
+  int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
+  printf("[spore] private user and group mappings: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }

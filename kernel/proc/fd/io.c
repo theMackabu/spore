@@ -6,6 +6,7 @@
 #include "arch/regs.h"
 #include "net/net.h"
 #include "proc/domain.h"
+#include "proc/user_namespace.h"
 #include "proc/fd.h"
 #include "proc/eventfd.h"
 #include "proc/limits.h"
@@ -34,6 +35,22 @@ enum {
 static int64_t write_device(struct open_file *file, struct domain *domain, uint64_t *offset, uint64_t buf, uint64_t len) {
   if (len == 0) { return 0; }
   switch (file->node.device) {
+  case RAMFS_DEV_PROC_UID_MAP:
+  case RAMFS_DEV_PROC_GID_MAP:
+  case RAMFS_DEV_PROC_SETGROUPS: {
+    char text[96];
+    if (*offset || len >= sizeof(text)) { return -22; }
+    if (!vmm_copy_from_user(cell_domain_as(domain), text, buf, len)) { return -14; }
+    for (size_t i = 0; i < len; ++i) { if (!text[i]) { return -22; } }
+    text[len] = 0;
+    struct domain *target = cell_find_domain(file->node.proc.pid);
+    if (!target) { return -3; }
+    int rc = userns_write_map(domain, target->user_ns, file->node.device == RAMFS_DEV_PROC_GID_MAP,
+                             file->node.device == RAMFS_DEV_PROC_SETGROUPS, text);
+    if (rc) { return rc; }
+    *offset += len;
+    return (int64_t)len;
+  }
   case RAMFS_DEV_NULL:
   case RAMFS_DEV_ZERO:
   case RAMFS_DEV_RANDOM:

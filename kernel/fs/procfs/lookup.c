@@ -22,6 +22,9 @@ static const struct proc_entry {
   {"mountinfo", RAMFS_DEV_PROC_PID_MOUNTINFO, VFS_DT_REG},
   {"cwd", RAMFS_DEV_PROC_PID_CWD, VFS_DT_LNK},
   {"exe", RAMFS_DEV_PROC_PID_EXE, VFS_DT_LNK},
+  {"uid_map", RAMFS_DEV_PROC_UID_MAP, VFS_DT_REG},
+  {"gid_map", RAMFS_DEV_PROC_GID_MAP, VFS_DT_REG},
+  {"setgroups", RAMFS_DEV_PROC_SETGROUPS, VFS_DT_REG},
   {"fd", RAMFS_DEV_PROC_PID_FD, VFS_DT_DIR},
   {"task", RAMFS_DEV_PROC_PID_TASK, VFS_DT_DIR},
 };
@@ -72,6 +75,9 @@ static bool proc_node(struct vfs_node *out, const struct domain *d, int tid, uns
     .mtime = now,
     .proc = {.pid = d->id, .tid = tid, .fd = fd},
   };
+  if (device == RAMFS_DEV_PROC_UID_MAP || device == RAMFS_DEV_PROC_GID_MAP || device == RAMFS_DEV_PROC_SETGROUPS) {
+    out->mode = 0100644u;
+  }
   if (device == RAMFS_DEV_PROC_PID_CWD || device == RAMFS_DEV_PROC_PID_EXE) {
     out->size = kstrlen(process_link(d, device));
   }

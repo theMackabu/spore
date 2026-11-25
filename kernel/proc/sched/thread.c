@@ -83,6 +83,9 @@ struct thread *cell_alloc_thread(struct domain *domain, bool leader) {
       threads[i].start_ticks = cell_uptime_ticks();
       threads[i].running_cpu = -1;
       threads[i].domain = domain;
+      const struct thread *parent = cell_current_thread_internal();
+      threads[i].capabilities = parent ? parent->capabilities : cell_initial_caps();
+      threads[i].no_new_privs = parent && parent->no_new_privs;
       threads[i].wait.target = -1;
       threads[i].sigaltstack_flags = 2;
       ++domain->refcount;

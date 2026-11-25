@@ -24,6 +24,7 @@ struct domain {
   uint16_t umask;
   bool used;
   bool zombie;
+  uint8_t exit_signal;
   int exit_status;
   int term_signal;
   uint32_t uid;
@@ -57,6 +58,9 @@ struct domain {
   char cwd[CELL_PATH_MAX];
   char chroot[CELL_PATH_MAX];
   struct capability_set *caps;
+  struct seccomp_filter *filter;
+  struct uts_namespace *uts;
+  struct user_namespace *user_ns;
   struct cpu_budget budget;
   struct signal_action signal_actions[65];
   uint64_t pending_signals;

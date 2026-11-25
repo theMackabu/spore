@@ -2,6 +2,7 @@
 #include "handlers.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
+#include "proc/seccomp.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 
@@ -10,6 +11,10 @@ enum {
   PR_SET_DUMPABLE = 4,
   PR_SET_NAME = 15,
   PR_GET_NAME = 16,
+  PR_CAPBSET_READ = 23,
+  PR_CAPBSET_DROP = 24,
+  PR_GET_SECCOMP = 21,
+  PR_SET_SECCOMP = 22,
   PR_SET_NO_NEW_PRIVS = 38,
   PR_GET_NO_NEW_PRIVS = 39,
   PR_SET_VMA = 0x53564d41,
@@ -21,6 +26,13 @@ enum {
 
 int64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
   switch (option) {
+  case PR_CAPBSET_READ:
+  case PR_CAPBSET_DROP:
+    return arg2 > 40 || arg3 || arg4 || arg5 ? -EINVAL : cell_cap_bound(option == PR_CAPBSET_DROP, arg2);
+  case PR_GET_SECCOMP:
+    return cell_current_domain_internal()->filter ? 2 : 0;
+  case PR_SET_SECCOMP:
+    return arg2 == 2 ? sys_seccomp(1, 0, arg3) : -EINVAL;
   case PR_GET_DUMPABLE:
     return 1;
   case PR_SET_DUMPABLE:
@@ -54,9 +66,12 @@ int64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, 
              : -(int64_t)EFAULT;
   }
   case PR_SET_NO_NEW_PRIVS:
-    return arg2 == 1 && arg3 == 0 && arg4 == 0 && arg5 == 0 ? 0 : -(int64_t)EINVAL;
-  case PR_GET_NO_NEW_PRIVS:
+    if (arg2 != 1 || arg3 || arg4 || arg5) { return -EINVAL; }
+    cell_current_thread_internal()->no_new_privs = true;
     return 0;
+  case PR_GET_NO_NEW_PRIVS:
+    if (arg2 || arg3 || arg4 || arg5) { return -EINVAL; }
+    return cell_current_thread_internal()->no_new_privs;
   case PR_SET_VMA:
     return arg2 == PR_SET_VMA_ANON_NAME ? 0 : -(int64_t)EINVAL;
   default:

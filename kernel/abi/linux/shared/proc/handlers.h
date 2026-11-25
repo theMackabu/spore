@@ -5,8 +5,10 @@
 
 struct trap_frame;
 
+int64_t sys_set_ids(bool group, bool single, uint32_t real, uint32_t effective, uint32_t saved);
 int64_t sys_getres_ids(bool group, uint64_t real, uint64_t effective, uint64_t saved);
 int64_t sys_getgroups(int count, uint64_t list);
+int64_t sys_capabilities(bool set, uint64_t header, uint64_t data);
 int64_t sys_setgroups(uint64_t count, uint64_t list);
 int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, uint64_t old_limit);
 int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr);

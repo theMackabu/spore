@@ -1,4 +1,4 @@
-#include "../fs/path.h"
+#include "../fs/file_abi.h"
 #include "../usercopy.h"
 #include "init/app.h"
 #include "handlers.h"
@@ -11,6 +11,8 @@
 #include "mm/vmm.h"
 #include "proc/domain.h"
 #include "proc/limits.h"
+#include "proc/fd.h"
+#include "proc/user_namespace.h"
 #include "proc/policy.h"
 #include "proc/process.h"
 #include "proc/thread.h"
@@ -22,15 +24,7 @@
 #include <stdint.h>
 
 enum {
-  E2BIG = 7,
-  AT_FDCWD = -100,
-  EFAULT = 14,
-  EACCES = 13,
   ENOMEM = 12,
-  EINVAL = 22,
-  ENOENT = 2,
-  EPERM = 1,
-  X_OK = 1,
   EXEC_ARG_MAX_BYTES = USER_STACK_SIZE / 16,
 };
 
@@ -205,8 +199,9 @@ static bool parse_shebang_node(const struct vfs_node *node, char *interp, size_t
 
 int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
   if (app_mode) { return -EPERM; }
-  char path[CELL_PATH_MAX];
-  int64_t path_rc = syscall_copy_resolved_path_at(AT_FDCWD, path_addr, path, sizeof(path));
+  struct syscall_path name;
+  char *path = name.resolved;
+  int64_t path_rc = syscall_read_path_at(AT_FDCWD, path_addr, &name);
   if (path_rc) { return path_rc; }
   if (!cell_fs_path_allowed(path, CELL_FS_EXEC)) { return -(int64_t)EPERM; }
 
@@ -257,11 +252,46 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
   }
 
   struct vfs_node exec_node;
-  if (!vfs_lookup(path, &exec_node)) {
-    ret = -(int64_t)ENOENT;
+  int proc_fd = -1;
+  const char *exe_name = path;
+  if (syscall_proc_fd_number(path, &proc_fd)) {
+    struct open_file *file = cell_file_at(cell_current_domain_internal(), proc_fd);
+    if (!file) {
+      ret = -ENOENT;
+      goto out_scratch;
+    }
+    if (file->type != OPEN_VFS) {
+      ret = -EACCES;
+      goto out_scratch;
+    }
+    if (!cell_fd_stat(proc_fd, &exec_node)) {
+      ret = -ENOENT;
+      goto out_scratch;
+    }
+    if (!cell_fs_exec_fd_allowed(file->path, &exec_node)) {
+      ret = -EPERM;
+      goto out_scratch;
+    }
+    if (cell_fd_path(proc_fd, name.visible, sizeof(name.visible))) { exe_name = name.visible; }
+  } else {
+    kmemcpy(name.visible, path, kstrlen(path) + 1);
+    ret = syscall_follow_final_links(name.visible);
+    if (ret) { goto out_scratch; }
+    exe_name = name.visible;
+    if (!cell_fs_path_allowed(exe_name, CELL_FS_EXEC)) {
+      ret = -EPERM;
+      goto out_scratch;
+    }
+    if (!vfs_lookup(exe_name, &exec_node)) {
+      ret = -ENOENT;
+      goto out_scratch;
+    }
+  }
+  if (name.trailing_slash && !exec_node.is_dir) {
+    ret = -ENOTDIR;
     goto out_scratch;
   }
-  if (!syscall_node_access_allowed(&exec_node, X_OK)) {
+  if ((exec_node.mode & S_IFMT) != S_IFREG || !(exec_node.mode & 0111) || !syscall_node_access_allowed(&exec_node, X_OK)) {
     ret = -(int64_t)EACCES;
     goto out_scratch;
   }
@@ -275,6 +305,10 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
   bool shebang_has_arg = false;
   if (parse_shebang_node(&exec_node, shebang_interp, sizeof(shebang_interp), shebang_arg, sizeof(shebang_arg),
                          &shebang_has_arg)) {
+    if (proc_fd >= 0 && (cell_fd_get_fd_flags(proc_fd) & 1)) {
+      ret = -ENOENT;
+      goto out_scratch;
+    }
     if (!vfs_lookup(shebang_interp, &exec_node) || !elf_reader_from_vfs(&exec_node, &exec_reader)) {
       ret = -(int64_t)ENOENT;
       goto out_scratch;
@@ -322,6 +356,12 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     goto out_scratch;
   }
   enum elf_load_status status = elf_load_program(&new_as, &new_vmas, &exec_reader, &elf, interp_path, sizeof(interp_path));
+  if (status == ELF_LOADED && new_as.freebsd_abi && cell_current_domain_internal()->filter) {
+    vmm_destroy(&new_as);
+    vma_list_destroy(&new_vmas);
+    ret = -EPERM;
+    goto out_scratch;
+  }
   if (status != ELF_LOADED) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
@@ -334,9 +374,15 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     .gid = cell_current_gid(),
     .egid = cell_current_egid(),
   };
-  if ((exec_node.mode & 04000u) != 0) { creds.euid = exec_node.uid; }
-  if ((exec_node.mode & 02000u) != 0) { creds.egid = exec_node.gid; }
+  uint32_t mode = cell_current_thread_internal()->no_new_privs ? exec_node.mode & ~06000u : exec_node.mode;
+  if ((mode & 04000u) != 0) { creds.euid = exec_node.uid; }
+  if ((mode & 02000u) != 0) { creds.egid = exec_node.gid; }
 
+  struct user_namespace *ns = cell_current_domain_internal()->user_ns;
+  creds.uid = userns_visible(ns, false, creds.uid);
+  creds.euid = userns_visible(ns, false, creds.euid);
+  creds.gid = userns_visible(ns, true, creds.gid);
+  creds.egid = userns_visible(ns, true, creds.egid);
   if (!build_initial_stack_args(&new_as, &elf, path, argv, argc, envp, envc, &creds, &user_sp)) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
@@ -351,13 +397,13 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     goto out_scratch;
   }
   kprintf("[spore] execve %s\n", path);
-  if (!cell_exec_replace(&new_as, &new_vmas, elf.runtime_entry, user_sp, frame, path, argv, argc)) {
+  if (!cell_exec_replace(&new_as, &new_vmas, elf.runtime_entry, user_sp, frame, exe_name, argv, argc)) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
     ret = -(int64_t)ENOMEM;
     goto out_scratch;
   }
-  cell_apply_exec_creds(exec_node.mode, exec_node.uid, exec_node.gid);
+  cell_apply_exec_creds(mode, exec_node.uid, exec_node.gid);
   (void)cell_deliver_pending_signals_current(frame);
   ret = CELL_SWITCHED;
 

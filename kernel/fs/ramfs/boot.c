@@ -135,6 +135,9 @@ static bool populate_dev(struct ramfs *fs, int dev) {
 }
 
 static bool populate_proc(struct ramfs *fs, int proc) {
+  static const char overflow_id[] = "65534\n";
+  if (!ramfs_add_boot_file(fs, "/proc/sys/kernel/overflowuid", overflow_id, sizeof(overflow_id) - 1, 0444) ||
+      !ramfs_add_boot_file(fs, "/proc/sys/kernel/overflowgid", overflow_id, sizeof(overflow_id) - 1, 0444)) { return false; }
   int net = ramfs_add_node(fs, proc, "net", true, true);
   if (!add_device(fs, net, "dev", RAMFS_DEV_NET_DEV, READ_ONLY_FILE)) { return false; }
   static const struct boot_node files[] = {

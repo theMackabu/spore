@@ -147,6 +147,24 @@ int integration_timer_budget_demo(void) {
   return ok_compute && ok_budget;
 }
 
+static int exec_unlinked_alias(void) {
+  pid_t child = fork();
+  if (child == 0) {
+    char alias[64], procfd[32];
+    snprintf(alias, sizeof(alias), "/exec-alias-%d", getpid());
+    if (symlink("/bin/exec_child", alias) < 0) { perror("symlink exec alias"); _exit(98); }
+    int fd = open(alias, O_PATH | O_CLOEXEC);
+    if (fd < 0) { perror("open exec alias"); unlink(alias); _exit(98); }
+    if (unlink(alias) < 0) { perror("unlink exec alias"); _exit(98); }
+    snprintf(procfd, sizeof(procfd), "/proc/self/fd/%d", fd);
+    execl(procfd, "exec_child", "ok", (char *)NULL);
+    perror("exec procfd");
+    _exit(99);
+  }
+  int status;
+  return child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 42;
+}
+
 int integration_exec_demo(void) {
   pid_t pid = fork();
   if (pid < 0) { return 0; }
@@ -158,7 +176,7 @@ int integration_exec_demo(void) {
   }
   int status = 0;
   pid_t got = waitpid(pid, &status, 0);
-  int ok = got == pid && WIFEXITED(status) && WEXITSTATUS(status) == 42;
+  int ok = got == pid && WIFEXITED(status) && WEXITSTATUS(status) == 42 && exec_unlinked_alias();
   printf("[spore] execve demo: child exit 42: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }

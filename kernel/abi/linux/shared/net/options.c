@@ -1,6 +1,8 @@
 #include "abi/linux/shared/socket_options.h"
 #include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
+#include "proc/domain.h"
+#include "proc/user_namespace.h"
 #include "socket_abi.h"
 #include "abi/linux/shared/layout.h"
 #include "net/socket.h"
@@ -36,8 +38,8 @@ int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     if (!cell_fd_unix_peer_cred((int)fd, &peer)) { return -(int64_t)ENOTCONN; }
     struct ucred64 out = {
       .pid = peer.pid,
-      .uid = peer.uid,
-      .gid = peer.gid,
+      .uid = userns_visible(cell_current_domain_internal()->user_ns, false, peer.uid),
+      .gid = userns_visible(cell_current_domain_internal()->user_ns, true, peer.gid),
     };
     uint32_t out_len = sizeof(out);
     if (!vmm_copy_to_user(syscall_active_as(), optval, &out, sizeof(out)) ||

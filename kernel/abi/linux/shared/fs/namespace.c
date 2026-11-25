@@ -5,6 +5,7 @@
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
+#include "proc/capabilities.h"
 #include "proc/fd.h"
 #include "proc/policy.h"
 
@@ -28,7 +29,7 @@ int64_t sys_chdir(uint64_t path_addr) {
 }
 
 int64_t sys_chroot(uint64_t path_addr) {
-  if (cell_current_euid()) { return -EPERM; }
+  if (!cell_capable(CAP_SYS_CHROOT)) { return -EPERM; }
   char path[CELL_PATH_MAX];
   int64_t rc = syscall_copy_resolved_path_at(AT_FDCWD, path_addr, path, sizeof(path));
   if (rc) { return rc; }
@@ -165,7 +166,7 @@ int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirf
   }
   int fd = -1;
   if (first == 0) {
-    if (!(flags & AT_EMPTY_PATH) || cell_current_euid() != 0) { return -ENOENT; }
+    if (!(flags & AT_EMPTY_PATH) || !cell_capable(CAP_DAC_READ_SEARCH)) { return -ENOENT; }
     fd = (int)old_dirfd;
   } else {
     rc = syscall_copy_resolved_path_at(old_dirfd, old_path_addr, old_path, sizeof(old_path));
@@ -179,7 +180,7 @@ int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirf
   if (open_flags < 0 || !cell_fd_stat(fd, &src)) { return first == 0 ? -EBADF : -ENOENT; }
   if (src.is_dir) { return -EPERM; }
   if (!(open_flags & O_TMPFILE_BIT)) { return -ENOENT; }
-  if (cell_current_euid() != 0 && cell_current_euid() != src.uid) { return -EPERM; }
+  if (!cell_capable(CAP_FOWNER) && cell_current_euid() != src.uid) { return -EPERM; }
   if (vfs_lstat(new_path, &parent)) { return -EEXIST; }
   size_t component = (size_t)(base_name(new_path) - new_path);
   size_t split = component > 1 ? component - 1 : 1;

@@ -6,6 +6,8 @@
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "proc/fd.h"
+#include "proc/domain.h"
+#include "proc/user_namespace.h"
 
 struct linux_statfs64 {
   uint64_t f_type;
@@ -69,8 +71,8 @@ static void fill_stat(struct linux_stat64 *st, const struct vfs_node *node) {
   st->st_ino = node->ino;
   st->st_mode = node->mode;
   st->st_nlink = node->links_count;
-  st->st_uid = node->uid;
-  st->st_gid = node->gid;
+  st->st_uid = userns_visible(cell_current_domain_internal()->user_ns, false, node->uid);
+  st->st_gid = userns_visible(cell_current_domain_internal()->user_ns, true, node->gid);
   st->st_rdev = node->rdev;
   st->st_size = (int64_t)node->size;
   st->st_blksize = PAGE_SIZE;
@@ -109,8 +111,8 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
   st->stx_mask = STATX_BASIC_STATS;
   st->stx_blksize = PAGE_SIZE;
   st->stx_nlink = node->links_count;
-  st->stx_uid = node->uid;
-  st->stx_gid = node->gid;
+  st->stx_uid = userns_visible(cell_current_domain_internal()->user_ns, false, node->uid);
+  st->stx_gid = userns_visible(cell_current_domain_internal()->user_ns, true, node->gid);
   st->stx_mode = node->mode;
   st->stx_ino = node->ino;
   st->stx_size = node->size;

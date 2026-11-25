@@ -335,9 +335,29 @@ static int absolute_sleep_regression(void) {
   return rc == 0;
 }
 
+static volatile sig_atomic_t child_notice;
+
+static void child_exited(int sig) {
+  child_notice = sig;
+}
+
+static int child_signal_notification(void) {
+  struct sigaction old, action = {.sa_handler = child_exited};
+  if (sigaction(SIGCHLD, &action, &old)) { return 0; }
+  child_notice = 0;
+  pid_t child = fork();
+  if (!child) { _exit(23); }
+  uint64_t end = integration_usec_now() + 1000000;
+  while (child > 0 && !child_notice && integration_usec_now() < end) { usleep(1000); }
+  int status;
+  int ok = child > 0 && child_notice == SIGCHLD && waitpid(child, &status, 0) == child &&
+           WIFEXITED(status) && WEXITSTATUS(status) == 23;
+  return !sigaction(SIGCHLD, &old, NULL) && ok;
+}
+
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
-  return vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
+  return child_signal_notification() && vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
          signal_mask_regression() && temporary_mask_regression() && signal_altstack_regression() &&
          signal_interrupted_read_regression() && signal_restart_read_regression() &&
          signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) &&

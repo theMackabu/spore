@@ -6,6 +6,7 @@
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
+#include "proc/user_namespace.h"
 #include "proc/info.h"
 #include "arch/cpuinfo.h"
 #include "proc/fd.h"
@@ -178,26 +179,27 @@ static size_t proc_pid_status_text(char *dst, size_t cap, const struct proc_task
   proc_append_u64(dst, cap, &len, domain->refcount);
   proc_append_str(dst, cap, &len, "\nPPid:\t");
   proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
+  struct user_namespace *view = cell_current_domain_internal()->user_ns;
   proc_append_str(dst, cap, &len, "\nUid:\t");
-  proc_append_u64(dst, cap, &len, domain->uid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, false, domain->uid));
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->euid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, false, domain->euid));
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->saved_uid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, false, domain->saved_uid));
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->euid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, false, domain->euid));
   proc_append_str(dst, cap, &len, "\nGid:\t");
-  proc_append_u64(dst, cap, &len, domain->gid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, true, domain->gid));
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->egid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, true, domain->egid));
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->saved_gid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, true, domain->saved_gid));
   proc_append_char(dst, cap, &len, '\t');
-  proc_append_u64(dst, cap, &len, domain->egid);
+  proc_append_u64(dst, cap, &len, userns_visible(view, true, domain->egid));
   proc_append_str(dst, cap, &len, "\nGroups:");
   for (unsigned i = 0; i < domain->group_count; ++i) {
     proc_append_char(dst, cap, &len, ' ');
-    proc_append_u64(dst, cap, &len, domain->groups[i]);
+    proc_append_u64(dst, cap, &len, userns_visible(view, true, domain->groups[i]));
   }
   proc_append_str(dst, cap, &len, "\nVmSize:\t");
   proc_append_u64(dst, cap, &len, mem.virtual_pages * 4);
@@ -461,6 +463,32 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
     return read_generated_device(&out, proc_devices_text);
   case RAMFS_DEV_FSSTATS:
     return read_generated_device(&out, proc_fsstats_text);
+  case RAMFS_DEV_PROC_UID_MAP:
+  case RAMFS_DEV_PROC_GID_MAP:
+  case RAMFS_DEV_PROC_SETGROUPS: {
+    const struct domain *target = cell_find_domain(file->node.proc.pid);
+    if (!target) { return -3; }
+    const struct user_namespace *ns = target->user_ns;
+    if (file->node.device == RAMFS_DEV_PROC_SETGROUPS) {
+      const char *text = ns && ns->groups_denied ? "deny\n" : "allow\n";
+      return read_text_device(&out, text, kstrlen(text));
+    }
+    bool group = file->node.device == RAMFS_DEV_PROC_GID_MAP;
+    if (!ns && !domain->user_ns) {
+      const char text[] = "0 0 4294967295\n";
+      return read_text_device(&out, text, sizeof(text) - 1);
+    }
+    if (!ns || (domain->user_ns && domain->user_ns != ns)) { return -1; }
+    const struct id_map *map = group ? &ns->gid : &ns->uid;
+    if (!map->mapped) { return 0; }
+    char text[40] = {};
+    size_t size = 0;
+    proc_append_u64(text, sizeof(text), &size, map->inner);
+    proc_append_char(text, sizeof(text), &size, ' ');
+    proc_append_u64(text, sizeof(text), &size, map->outer);
+    proc_append_str(text, sizeof(text), &size, " 1\n");
+    return read_text_device(&out, text, size);
+  }
   case RAMFS_DEV_PROC_PID_STAT:
     return read_generated_pid_device(file, &out, proc_pid_proc_stat_text);
   case RAMFS_DEV_PROC_PID_STATUS:
