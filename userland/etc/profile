@@ -1,4 +1,4 @@
-export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:.'
+export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:."
 export SHELL='/bin/msh'
 export TERM='xterm-256color'
 export LANG='C.UTF-8'
