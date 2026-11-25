@@ -30,12 +30,14 @@ struct Entry {
 
 pub struct Cache {
     entries: Vec<Entry>,
+    pub threshold: u16,
 }
 
 impl Cache {
     pub fn new() -> Self {
         Self {
-            entries: (0..256).map(|_| Entry::default()).collect(),
+            threshold: 512,
+            entries: (0..1024).map(|_| Entry::default()).collect(),
         }
     }
 
@@ -52,7 +54,7 @@ impl Cache {
             entry.code.clear();
             entry.hits = 0;
         }
-        if entry.hits < 512 {
+        if entry.hits < self.threshold {
             entry.hits += 1;
             return 0;
         }

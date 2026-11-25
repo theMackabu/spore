@@ -45,7 +45,7 @@ pub struct Cpu {
     pub context: Context,
     pub idle: bool,
     pub memory: Memory,
-    decoded: [(u32, super::decode::Op); 256],
+    decoded: Box<[(u32, super::decode::Op)]>,
     pub reservation: Option<(u64, usize)>,
 }
 
@@ -74,7 +74,7 @@ impl Cpu {
             context: Context::default(),
             memory: Memory::new(),
             idle: false,
-            decoded: [(0, super::decode::Op::Unknown); 256],
+            decoded: vec![(0, super::decode::Op::Unknown); 8192].into_boxed_slice(),
             reservation: None,
         }
     }
@@ -159,7 +159,8 @@ impl Cpu {
         let rn = (w >> 5) & 31;
         let mut next = pc.wrapping_add(4);
         use super::decode::Op::*;
-        let slot = &mut self.decoded[((pc >> 2) as usize) & 255];
+        let index = (((pc >> 2) ^ (pc >> 15)) as usize) & (self.decoded.len() - 1);
+        let slot = &mut self.decoded[index];
         if slot.0 != w {
             *slot = (w, super::decode::classify(w));
         }

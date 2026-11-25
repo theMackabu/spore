@@ -98,30 +98,8 @@ pub fn classify(w: u32) -> Op {
     if w & 0x7fe0e000 == 0x1ac04000 {
         return Op::Crc;
     }
-    if matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000 | 0x9eae0000) {
-        return Op::Vector;
-    }
-    if w & 0x7f000000 == 0x1e000000 || w & 0xff000000 == 0x1f000000 {
-        return Op::Float;
-    }
-    if w & 0xbfe0fc00 == 0x2e209c00
-        || w & 0xffffcc00 == 0x4e284800
-        || w & 0xbf20fc00 == 0x0e20e000
-        || w & 0xffe08c00 == 0x5e000000
-        || matches!(w & 0xfffffc00, 0x5e280800 | 0x5e281800 | 0x5e282800)
-    {
-        return Op::Crypto;
-    }
-    if let Some(op) = super::neon_float::classify(w) {
-        return Op::VectorFloat(op);
-    }
-    if w & 0x0e000000 == 0x0e000000
-        && let Some(op) = super::neon_integer::classify(w)
-    {
-        return Op::NeonInteger(op);
-    }
-    if w & 0x1e000000 == 0x0e000000 || w & 0xde000000 == 0x5e000000 {
-        return Op::Vector;
+    if w & 0x0e000000 == 0x0e000000 {
+        return vector_class(w);
     }
     if w & 0xfffff0ff == 0xd503305f {
         return Op::ClearExclusive;
@@ -191,6 +169,33 @@ pub fn classify(w: u32) -> Op {
     }
     if w & 0x7fe00000 == 0x1b000000 {
         return Op::Integer(Integer::MultiplyAdd);
+    }
+    Op::Unknown
+}
+
+fn vector_class(w: u32) -> Op {
+    if matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000 | 0x9eae0000) {
+        return Op::Vector;
+    }
+    if w & 0x7f000000 == 0x1e000000 || w & 0xff000000 == 0x1f000000 {
+        return Op::Float;
+    }
+    if w & 0xbfe0fc00 == 0x2e209c00
+        || w & 0xffffcc00 == 0x4e284800
+        || w & 0xbf20fc00 == 0x0e20e000
+        || w & 0xffe08c00 == 0x5e000000
+        || matches!(w & 0xfffffc00, 0x5e280800 | 0x5e281800 | 0x5e282800)
+    {
+        return Op::Crypto;
+    }
+    if let Some(op) = super::neon_float::classify(w) {
+        return Op::VectorFloat(op);
+    }
+    if let Some(op) = super::neon_integer::classify(w) {
+        return Op::NeonInteger(op);
+    }
+    if w & 0x1e000000 == 0x0e000000 || w & 0xde000000 == 0x5e000000 {
+        return Op::Vector;
     }
     Op::Unknown
 }
