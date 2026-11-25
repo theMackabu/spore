@@ -3,7 +3,7 @@ Description=interactive Spore console
 
 [Service]
 Type=simple
-ExecStart=/bin/msh
+ExecStart=/bin/bash --login
 Restart=always
 RestartSec=1s
 RestartImmediately=yes

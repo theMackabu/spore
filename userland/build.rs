@@ -7,6 +7,7 @@ use std::{
 
 const CC: &str = "aarch64-unknown-linux-musl-gcc";
 const PROGRAMS: &[&str] = &[
+    "bin/confine",
     "bin/logger",
     "bin/myc",
     "bin/reboot",
@@ -93,14 +94,10 @@ fn main() {
             &guest.join("programs").join(dir.file_name().unwrap()),
             &[dir.join("main.c")],
             std::slice::from_ref(&util),
-            false,
+            matches!(*program, "demos/memhog" | "demos/spinner"),
         );
     }
-    for (name, rust) in [
-        ("init", "units.rs"),
-        ("msh", "lexer.rs"),
-        ("dhcpc", "main.rs"),
-    ] {
+    for (name, rust) in [("init", "units.rs"), ("dhcpc", "main.rs")] {
         let dir = Path::new("bin").join(name);
         let lib = guest.join(format!("lib{name}.a"));
         rust_archive(&dir.join(rust), &lib, Some("aarch64-unknown-linux-musl"));

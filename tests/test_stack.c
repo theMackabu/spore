@@ -68,7 +68,7 @@ int main(void) {
     .phent = 56,
     .phnum = 9,
   };
-  const char *argv[] = {"/bin/msh"};
+  const char *argv[] = {"/bin/sh"};
   const struct exec_stack_credentials creds = {
     .uid = 1000,
     .euid = 0,
@@ -77,7 +77,7 @@ int main(void) {
   };
   uint64_t sp = 0;
 
-  assert(build_initial_stack_args(&as, &elf, "/bin/real-msh", argv, 1, NULL, 0, &creds, &sp));
+  assert(build_initial_stack_args(&as, &elf, "/bin/bash", argv, 1, NULL, 0, &creds, &sp));
   assert((sp % 16) == 0);
   size_t mapped_count = 0;
   for (size_t i = 0; i < sizeof(mapped) / sizeof(mapped[0]); ++i) {
@@ -89,7 +89,7 @@ int main(void) {
   assert(read_u64(sp) == 1);
   uint64_t argv0 = read_u64(sp + 8);
   assert(read_u64(sp + 16) == 0);
-  assert(strcmp((const char *)&stack_mem[stack_offset(argv0)], "/bin/msh") == 0);
+  assert(strcmp((const char *)&stack_mem[stack_offset(argv0)], "/bin/sh") == 0);
   assert(read_u64(sp + 24) == 0);
 
   bool saw_phdr = false;
@@ -113,7 +113,7 @@ int main(void) {
     if (key == 25 && value >= TEST_STACK_TOP - TEST_STACK_SIZE && value < TEST_STACK_TOP) { saw_random = true; }
     if (key == 15 && strcmp((const char *)&stack_mem[stack_offset(value)], "aarch64") == 0) { saw_platform = true; }
     if (key == 16 && (value & 0x3) == 0x3) { saw_hwcap = true; }
-    if (key == 31 && strcmp((const char *)&stack_mem[stack_offset(value)], "/bin/real-msh") == 0) { saw_execfn = true; }
+    if (key == 31 && strcmp((const char *)&stack_mem[stack_offset(value)], "/bin/bash") == 0) { saw_execfn = true; }
     if (key == 23 && value == 1) { saw_secure = true; }
     if (key == 11 && value == creds.uid) { saw_uid = true; }
     if (key == 12 && value == creds.euid) { saw_euid = true; }

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+constexpr int SYS_SPORE_APPLY_POLICY = 0x4005;
 constexpr int EXIT_USAGE = 64;
 
 int eprintf(const char *fmt, ...);

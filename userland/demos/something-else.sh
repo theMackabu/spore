@@ -1,3 +1,4 @@
+#!/bin/sh
 echo "something-else: start"
 
 if test "spore" = "spore"; then

@@ -209,7 +209,7 @@ fn accounts(root: &Path) -> io::Result<()> {
         (
             "etc/passwd",
             0o644,
-            "root:x:0:0:root:/root:/bin/msh\nspore:x:1000:1000:spore:/home/spore:/bin/msh\n",
+            "root:x:0:0:root:/root:/bin/bash\nspore:x:1000:1000:spore:/home/spore:/bin/bash\n",
         ),
         (
             "etc/group",
@@ -225,18 +225,6 @@ fn accounts(root: &Path) -> io::Result<()> {
             "etc/sudoers",
             0o440,
             "Defaults !use_pty\nroot ALL=(ALL) ALL\nspore ALL=(ALL) NOPASSWD: ALL\n",
-        ),
-        ("root/.profile", 0o644, "# root login profile for msh\n"),
-        ("root/.mshrc", 0o644, "# interactive root msh startup\n"),
-        (
-            "home/spore/.profile",
-            0o644,
-            "# spore login profile for msh\n",
-        ),
-        (
-            "home/spore/.mshrc",
-            0o644,
-            "# interactive spore msh startup\n",
         ),
     ] {
         let path = root.join(path);

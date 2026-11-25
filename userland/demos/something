@@ -1,4 +1,4 @@
-#!/usr/bin/env msh
+#!/bin/sh
 echo "something: shebang ok"
 
 if [ -d /tmp ]; then

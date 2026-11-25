@@ -80,7 +80,7 @@ void parse_builtin_console(void) {
   struct unit *console = alloc_unit("console.service");
   if (console == NULL) { return; }
   copy_text(console->config.description, sizeof(console->config.description), "interactive console shell");
-  copy_text(console->config.exec_start, sizeof(console->config.exec_start), "/bin/msh");
+  copy_text(console->config.exec_start, sizeof(console->config.exec_start), "/bin/bash --login");
   copy_text(console->config.user, sizeof(console->config.user), "spore");
   copy_text(console->config.standard_output, sizeof(console->config.standard_output), "console");
   copy_text(console->config.standard_error, sizeof(console->config.standard_error), "console");

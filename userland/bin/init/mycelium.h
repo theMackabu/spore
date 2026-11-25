@@ -25,7 +25,6 @@
 #include <unistd.h>
 
 constexpr int SYS_SPORE_SET_BUDGET = 0x4004;
-constexpr int SYS_SPORE_APPLY_POLICY = 0x4005;
 constexpr int SYS_SPORE_SHUTDOWN = 0x4006;
 
 enum {

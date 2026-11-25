@@ -52,7 +52,8 @@ userland/prebuilt/libproc2.so.1.0.1 /lib/libproc2.so.1.0.1
 symlink libproc2.so.1.0.1 /lib/libproc2.so.1
 userland/prebuilt/libmagic.so.1.0.0 /lib/libmagic.so.1.0.0
 symlink libmagic.so.1.0.0 /lib/libmagic.so.1
-userland/bin/msh/msh /bin/msh
+userland/programs/confine /bin/confine
+symlink confine /bin/runc
 userland/prebuilt/bash /bin/bash
 symlink bash /bin/sh
 
@@ -168,7 +169,7 @@ userland/demos/install-claude.sh /home/spore/demos/install-claude.sh
 userland/demos/install-codex.sh /home/spore/demos/install-codex.sh
 userland/prebuilt/licenses/codex-installer /usr/share/licenses/codex-installer/LICENSE
 userland/demos/something /home/spore/demos/something
-userland/demos/something-else.msh /home/spore/demos/something-else.msh
+userland/demos/something-else.sh /home/spore/demos/something-else.sh
 
 symlink libbrotlicommon.so.1.2.1 /usr/lib/libbrotlicommon.so.1
 userland/prebuilt/libbrotlicommon.so.1.2.1 /usr/lib/libbrotlicommon.so.1.2.1
@@ -324,6 +325,9 @@ userland/etc/environment /etc/environment
 userland/etc/ld-musl-aarch64.path /etc/ld-musl-aarch64.path
 userland/etc/profile /etc/profile
 userland/etc/shrc /etc/shrc
+userland/etc/skel/.bashrc /etc/skel/.bashrc
+userland/etc/skel/.bashrc /root/.bashrc
+userland/etc/skel/.bashrc /home/spore/.bashrc
 userland/etc/os-release /etc/os-release
 
 userland/etc/mycelium/boot.target /etc/mycelium/boot.target

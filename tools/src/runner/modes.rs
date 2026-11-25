@@ -195,9 +195,9 @@ impl ShellCheck {
                 "ant\n" => Script::AntFirst,
                 _ => Script::None,
             };
-            if *cmd == "__spore_harness_msh_paste__\n" {
+            if *cmd == "__spore_harness_shell_paste__\n" {
                 input.write_all(
-                    numbered("printf '", "msh-paste", 64, "\\n", "' > /tmp/msh-paste\n").as_bytes(),
+                    numbered("printf '", "shell-paste", 64, "\\n", "' > /tmp/shell-paste\n").as_bytes(),
                 )?;
             } else {
                 input.write_all(cmd.as_bytes())?;

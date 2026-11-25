@@ -141,7 +141,7 @@ static void run_motd_script(const char *path) {
   pid_t pid = fork();
   if (pid < 0) { return; }
   if (pid == 0) {
-    execl("/bin/msh", "msh", path, (char *)NULL);
+    execl(path, path, (char *)NULL);
     _exit(127);
   }
   int status = 0;

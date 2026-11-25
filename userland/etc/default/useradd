@@ -1,2 +1,2 @@
 HOME=/home
-SHELL=/bin/msh
+SHELL=/bin/bash

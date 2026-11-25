@@ -1,8 +1,8 @@
 export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:."
-export SHELL='/bin/msh'
 export TERM='xterm-256color'
 export LANG='C.UTF-8'
 export LC_CTYPE='C.UTF-8'
 export ENV='/etc/shrc'
-export PS1='\e[32m\u@\h\e[0m:\e[34m\w\e[0m\$ '
-alias ls='ls --color=auto'
+case $- in
+  *i*) if [ -n "${BASH_VERSION-}" ] && [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi ;;
+esac
