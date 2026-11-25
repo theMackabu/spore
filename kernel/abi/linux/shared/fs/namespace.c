@@ -42,14 +42,19 @@ int64_t sys_chroot(uint64_t path_addr) {
 }
 
 int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
-  char path[CELL_PATH_MAX];
-  int64_t path_rc = syscall_copy_resolved_path_at(dirfd, path_addr, path, sizeof(path));
+  char raw[CELL_PATH_MAX], path[CELL_PATH_MAX];
+  int64_t size = syscall_read_user_string(path_addr, raw, sizeof(raw));
+  if (size < 0) { return size == -E2BIG ? -ENAMETOOLONG : size; }
+  size_t end = (size_t)size - 1;
+  while (end > 1 && raw[end - 1] == '/') { --end; }
+  raw[end] = 0;
+  int64_t path_rc = syscall_resolve_path_at(dirfd, raw, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
   path_rc = syscall_may_change_entry(path, false);
   if (path_rc) { return path_rc; }
   if (!vfs_mkdir(path, cell_creation_mode(mode))) {
     struct vfs_node existing;
-    if (vfs_lookup(path, &existing)) { return -(int64_t)EEXIST; }
+    if (vfs_lstat(path, &existing)) { return -(int64_t)EEXIST; }
     return -(int64_t)EINVAL;
   }
   (void)vfs_chown(path, cell_current_euid(), cell_current_egid());

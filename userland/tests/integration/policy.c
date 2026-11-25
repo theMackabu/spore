@@ -263,7 +263,7 @@ int integration_user_namespace(void) {
 }
 
 static int tmpfs_bind(void) {
-  const char *src = "/tmp/mount-test/src", *dst = "/tmp/mount-test/bind";
+  const char *src = "/tmp/mount-test/src///", *dst = "/tmp/mount-test/bind";
   if (mkdir(src, 0700) || mkdir(dst, 0700) || mount(src, dst, NULL, MS_BIND | MS_REC, NULL)) { return 0; }
   if (rename(src, "/tmp/mount-test/moved")) { return 0; }
   int fd = open("/tmp/mount-test/bind/test", O_CREAT | O_EXCL | O_RDWR, 0600);
