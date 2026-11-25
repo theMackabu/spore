@@ -62,6 +62,7 @@ static int resolve_at(uint64_t dirfd, const char *raw, size_t len, char *visible
   size_t base_len = 1;
   if (raw[0] != '/') {
     if ((int)dirfd == AT_FDCWD) {
+      if (cell_current_domain_internal()->cwd_covered_mount) { return -116; }
       base = cell_current_cwd();
     } else {
       int rc = syscall_dirfd_path((int)dirfd, dir);

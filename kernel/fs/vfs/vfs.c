@@ -228,7 +228,7 @@ bool vfs_link(const char *old_path, const char *new_path) {
     struct ext2_node original;
     ok = ext2_lstat(vfs_root_ext2, vfs_disk_path(old_path), &original) &&
          ext2_link_inode(vfs_root_ext2, original.ino, vfs_disk_path(new_path));
-  } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.fs->device || vfs_paths_share_ramfs(a.path, b.path))) {
+  } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.mount_id || vfs_paths_share_ramfs(a.path, b.path))) {
     ok = ramfs_link(a.fs, a.root, a.path, b.path);
   }
   if (ok) { vfs_lookup_cache_clear(); fsnotify_linked(new_path); }
@@ -311,7 +311,7 @@ int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
   struct ramfs_route a = ramfs_for_path(old_path), b = ramfs_for_path(new_path);
   if (vfs_root_ext2 && !a.fs && !b.fs && a.mount_id == b.mount_id) {
     rc = ext2_renameat(vfs_root_ext2, vfs_disk_path(old_path), vfs_disk_path(new_path), noreplace);
-  } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.fs->device || vfs_paths_share_ramfs(a.path, b.path))) {
+  } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.mount_id || vfs_paths_share_ramfs(a.path, b.path))) {
     rc = ramfs_renameat(a.fs, a.root, a.path, b.path, noreplace);
   }
   if (!rc) { vfs_lookup_cache_clear(); fsnotify_renamed(&old, &to); }

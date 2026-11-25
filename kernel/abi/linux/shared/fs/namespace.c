@@ -2,6 +2,7 @@
 #include "file_abi.h"
 #include "abi/linux/shared/open.h"
 #include "fs/vfs.h"
+#include "fs/mount_namespace.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
@@ -235,6 +236,12 @@ int64_t sys_fchdir(uint64_t fd) {
   if (!node.is_dir) { return -(int64_t)ENOTDIR; }
   if (!syscall_node_access_allowed(&node, 1)) { return -EACCES; }
   char path[CELL_PATH_MAX];
+  if (mountns_covered_root(&node)) {
+    if (cell_current_chroot()[1]) { return -116; }
+    cell_set_cwd("/");
+    cell_current_domain_internal()->cwd_covered_mount = node.mount_id ? node.mount_id : node.dev_id;
+    return 0;
+  }
   int rc = syscall_dirfd_path((int)fd, path);
   if (rc) { return rc; }
   return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;

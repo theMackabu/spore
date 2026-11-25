@@ -104,6 +104,12 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
 int64_t sys_umount2(uint64_t target, uint64_t flags) {
   if (!mountns_may_mount()) { return -EPERM; }
   if (flags & ~2ull) { return -EINVAL; }
+  char dot[2];
+  if (syscall_read_user_string(target, dot, sizeof(dot)) == 2 && dot[0] == '.' &&
+      !cell_current_cwd()[1] && !cell_current_chroot()[1]) {
+    if (!cell_fs_path_allowed("/", CELL_FS_WRITE)) { return -EPERM; }
+    return mountns_unstack(flags & 2);
+  }
   char path[CELL_PATH_MAX];
   int rc = syscall_copy_resolved_path_at(AT_FDCWD, target, path, sizeof(path));
   if (rc) { return rc; }

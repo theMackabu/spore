@@ -306,7 +306,6 @@ static int pivot_child(void) {
   int status = openat(proc, "self/status", O_RDONLY);
   if (status < 0) { return 4; }
   close(status);
-  close(proc);
   struct stat old, clone;
   if (stat("/previous/etc/motd", &old) || mount("/previous", "/copy", NULL, MS_BIND | MS_REC, NULL) ||
       stat("/copy/etc/motd", &clone) || clone.st_dev != old.st_dev || clone.st_ino != old.st_ino) { return 5; }
@@ -320,7 +319,16 @@ static int pivot_child(void) {
       clone.st_ino != old.st_ino || unlink("/previous/pivot-link")) { return 9; }
   if (umount2("/previous", MNT_DETACH) || !access("/previous/etc/motd", F_OK) ||
       access("/copy/etc/motd", F_OK)) { return 6; }
-  return 0;
+  int staging_root = open("/", O_DIRECTORY | O_RDONLY);
+  if (staging_root < 0 || chdir("/copy") || syscall(SYS_pivot_root, ".", ".") ||
+      fchdir(staging_root) || umount2(".", MNT_DETACH) || chdir("/")) { return 10; }
+  close(staging_root);
+  int descriptors = openat(proc, "self/fd", O_DIRECTORY | O_RDONLY);
+  if (descriptors < 0) { return 12; }
+  close(descriptors);
+  close(proc);
+  return stat("/etc/motd", &clone) || clone.st_ino != old.st_ino ||
+         open("/etc/motd", O_WRONLY) >= 0 || errno != EROFS ? 11 : 0;
 }
 
 static int pivot_namespace(void) {

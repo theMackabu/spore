@@ -58,6 +58,7 @@ struct domain {
   char exec_path[CELL_PATH_MAX];
   char argv0[64];
   char cmdline[160];
+  uint64_t cwd_covered_mount;
   char cwd[CELL_PATH_MAX];
   char chroot[CELL_PATH_MAX];
   struct capability_set *caps;

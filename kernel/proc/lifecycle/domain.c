@@ -106,6 +106,7 @@ struct thread *cell_alloc_process(void) {
 }
 
 void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
+  dst->cwd_covered_mount = src->cwd_covered_mount;
   kmemcpy(dst->cwd, src->cwd, sizeof(dst->cwd));
   kmemcpy(dst->chroot, src->chroot, sizeof(dst->chroot));
   kmemcpy(dst->name, src->name, sizeof(dst->name));
@@ -348,6 +349,7 @@ bool cell_set_cwd(const char *path) {
   if (domain == NULL || path == NULL || path[0] != '/') { return false; }
   size_t len = kstrlen(path);
   if (len >= sizeof(domain->cwd)) { return false; }
+  domain->cwd_covered_mount = 0;
   kmemcpy(domain->cwd, path, len + 1);
   return true;
 }
