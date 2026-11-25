@@ -82,3 +82,7 @@ int runner_poll(int serial, int keyboard, int timeout) {
   if (rc < 0) { return errno == EINTR ? 0 : -1; }
   return (fds[0].revents ? 1 : 0) | (fds[1].revents ? 2 : 0);
 }
+
+void runner_kill_group(int pid) {
+  if (pid > 0) { kill(-pid, SIGKILL); }
+}

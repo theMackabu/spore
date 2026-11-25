@@ -5,10 +5,12 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
 use std::os::fd::{AsFd, AsRawFd};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 unsafe extern "C" {
+    fn runner_kill_group(pid: i32);
     fn runner_terminal_open(interactive: bool, events: i32);
     fn runner_terminal_close();
     fn runner_resized() -> bool;
@@ -48,7 +50,9 @@ impl Drop for Terminal {
 struct Vm(Child);
 impl Drop for Vm {
     fn drop(&mut self) {
-        let _ = self.0.kill();
+        if let Ok(None) = self.0.try_wait() {
+            unsafe { runner_kill_group(self.0.id() as i32) };
+        }
         let _ = self.0.wait();
     }
 }
@@ -115,6 +119,7 @@ fn run_inner(
     let (mut serial, writer) = io::pipe()?;
     let child = Command::new(&argv[0])
         .args(&argv[1..])
+        .process_group(0)
         .stdin(Stdio::piped())
         .stdout(writer.try_clone()?)
         .stderr(writer)
