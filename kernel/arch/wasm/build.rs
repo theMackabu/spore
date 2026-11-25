@@ -38,6 +38,7 @@ fn main() {
         "arch/aarch64/signal_frame.c",
         "arch/aarch64/frame.c",
         "arch/wasm/platform.c",
+        "arch/wasm/input.c",
     ] {
         let path = kernel.join(file);
         println!("cargo:rerun-if-changed={}", path.display());

@@ -2,8 +2,8 @@
 #include <unistd.h>
 
 int main(int argc, char **argv) {
-  if (argc != 2) { return 1; }
-  int fd = open(argv[1], O_RDONLY);
+  if (argc > 2) { return 1; }
+  int fd = argc == 1 ? STDIN_FILENO : open(argv[1], O_RDONLY);
   if (fd < 0) { return 2; }
   char bytes[257];
   ssize_t count;

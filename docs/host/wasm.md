@@ -67,10 +67,10 @@ To boot a system, select only the root disk, click Run and type into the termina
 
 The default is one guest CPU with 64 MiB of RAM. `--smp 4` runs four virtual CPUs in turn on one host worker. Each has its own register bank and scheduler slot. Set `--memory 256M` (or Guest RAM in the browser) for larger workloads. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The interpreter handles a subset
 of A64 integer, branch, load/store, exclusive, scalar floating-point and SIMD instructions. It caches instruction
-classes and address translations. It reports the guest PC on an unsupported instruction or
+classes and address translations. Its Rust JIT compiles frequently executed integer blocks to WebAssembly and checks the instruction bytes before reusing compiled code. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.
 
-Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Batch apps without console input see EOF. Full-system boots use Spore’s TTY. The standalone browser terminal runs offline. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
+Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Piped CLI input uses a guest pipe and delivers EOF when the host writer closes. Full-system boots use Spore’s TTY. The standalone browser terminal runs offline. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
 Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 
 ```sh
@@ -84,4 +84,4 @@ Claude Code is unverified.
 `spore test wasm` builds an ordinary musl ELF and compares its output and exit status
 under QEMU and Wasm. It checks pthreads, futex wakeups, timer preemption, thread-local storage and appliance policy. It also exercises cross-page accesses, permission changes,
 unsupported instructions and the execution budget. `spore bench wasm` times an ARM64
-integer loop using Node with an already compiled module and a fresh instance per run.
+integer loop with the interpreter and JIT on Node, with an already compiled kernel module and a fresh instance per run.

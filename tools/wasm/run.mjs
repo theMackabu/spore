@@ -8,7 +8,7 @@ export class GuestSignal extends Error {
 export async function run(
   kernel,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, writeDisk, readStdin, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
 ) {
   if (!Number.isInteger(memoryMiB) || memoryMiB < 16 || memoryMiB >= 2048) {
     throw new RangeError("Wasm guest RAM must be 16 through 2047 MiB");
@@ -73,6 +73,9 @@ export async function run(
           const {rows = 24, cols = 80} = winsize?.() ?? {};
           return ((rows & 0xffff) << 16) | (cols & 0xffff);
         },
+        stdin_read(ptr, len) {
+          return readStdin?.(bytes(ptr, len)) ?? -1;
+        },
         serial_read() {
           return readByte?.() ?? -1;
         },
@@ -111,7 +114,7 @@ export async function run(
     bytes(ptr, elf.length).set(elf);
     bytes(ptr + elf.length, argv.length).set(argv);
   }
-  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0) | (jit ? 16 : 0);
+  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0) | (jit ? 16 : 0) | (readStdin ? 32 : 0);
   try {
     if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)) {
       throw new Error("cannot initialize guest memory or executable");

@@ -10,8 +10,8 @@ const [spore, wasm, mode] = process.argv.slice(2);
 const kernel = await WebAssembly.compile(fs.readFileSync(wasm));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spore-wasm-"));
 const sources = path.dirname(fileURLToPath(import.meta.url));
-const exec = (cmd, args, expected = 0) => {
-  const result = spawnSync(cmd, args, { timeout: 30000 });
+const exec = (cmd, args, expected = 0, input) => {
+  const result = spawnSync(cmd, args, { timeout: 30000, input });
   if (result.error) throw result.error;
   assert.equal(result.status, expected, result.stderr.toString());
   return result.stdout;
@@ -49,6 +49,10 @@ try {
       "-o",
       reader,
     ]);
+    const stdin = Buffer.alloc(192 * 1024);
+    for (let i = 0; i < stdin.length; i++) stdin[i] = i & 255;
+    assert.deepEqual(exec(spore, ["run", "--wasm", reader], 42, stdin), stdin);
+    assert.deepEqual(exec(spore, ["run", "--wasm", reader], 42, Buffer.alloc(0)), Buffer.alloc(0));
     const disk = path.join(dir, "data.ext2");
     const tree = path.join(dir, "root");
     fs.mkdirSync(tree);

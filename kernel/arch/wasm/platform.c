@@ -30,6 +30,9 @@
 #include "proc/thread.h"
 #include "tty/tty.h"
 
+void wasm_open_input(struct domain *domain);
+void wasm_poll_input(void);
+
 #define HOST(name) __attribute__((import_module("spore"), import_name(name)))
 HOST("clock") uint64_t host_clock(void);
 HOST("random") void host_random(void *, size_t);
@@ -279,7 +282,11 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   boot_load_process(&first, &profile.program, hhdm);
   boot_activate_process(&first);
   syscall_set_address_space(cell_current_as());
-  if (!(devices & 4)) {
+  if (devices & 32) {
+    wasm_open_input(cpus[0].thread->domain);
+    cell_tty_set_oflag(0);
+    wasm_poll_input();
+  } else if (!(devices & 4)) {
     struct vfs_node null;
     if (!vfs_lookup("/dev/null", &null) || cell_fd_close(0) ||
         cell_fd_open_node(&null, 0, "/dev/null", "/dev/null", NULL) != 0) {
@@ -335,6 +342,7 @@ bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsig
   }
   while (ticks--) {
     if (!cpu_id) {
+      wasm_poll_input();
       struct trap_frame *active = cpus[0].idle ? NULL : f;
       uint32_t size = host_winsize();
       if (size != dimensions) {
