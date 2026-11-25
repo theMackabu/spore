@@ -91,21 +91,41 @@ fn wasm_module(build: &Path) -> PathBuf {
         .join("spore_wasm.wasm")
 }
 
-pub fn run_wasm(build: &Path, payload: Option<&Path>, disk: Option<&OsStr>) -> io::Result<i32> {
+fn wasm_command(
+    build: &Path,
+    payload: Option<&Path>,
+    disk: Option<&OsStr>,
+    network: Option<&str>,
+) -> io::Result<Command> {
     let module = wasm_module(build);
     if !module.is_file() {
         return Err(io::Error::other(
             "build the Wasm kernel with spore build --wasm",
         ));
     }
-    status(
-        Command::new("node")
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm/cli.mjs"))
-            .arg(module)
-            .arg(if payload.is_some() { "run" } else { "boot" })
-            .args(payload)
-            .args(disk),
-    )
+    let mut cmd = Command::new("node");
+    cmd.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm/cli.mjs"))
+        .arg(module)
+        .arg(if payload.is_some() { "run" } else { "boot" })
+        .args(payload)
+        .args(disk);
+    if let Some(settings) = network {
+        if payload.is_none() || disk.is_none() {
+            cmd.arg("");
+        }
+        cmd.arg(crate::qemu_default(crate::arch::Arch::Aarch64))
+            .arg(settings);
+    }
+    Ok(cmd)
+}
+
+pub fn run_wasm(
+    build: &Path,
+    payload: Option<&Path>,
+    disk: Option<&OsStr>,
+    network: Option<&str>,
+) -> io::Result<i32> {
+    status(&mut wasm_command(build, payload, disk, network)?)
 }
 
 pub fn userland() -> io::Result<&'static Path> {
@@ -279,6 +299,29 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                 return Ok(rc);
             }
             return status(Command::new(build.join("spore")).arg("run").arg(exe));
+        }
+        (false, Some("wasm-guest")) => {
+            let code = build_wasm(build)?;
+            if code != 0 {
+                return Ok(code);
+            }
+            let code = build_project(build, true, true)?;
+            if code != 0 {
+                return Ok(code);
+            }
+            let disk = build.join("test_root.ext2");
+            let cmd = wasm_command(
+                build,
+                None,
+                Some(disk.as_os_str()),
+                Some("user,id=sporenet"),
+            )?;
+            crate::runner::fixtures::start("integration")?;
+            let argv = std::iter::once(cmd.get_program())
+                .chain(cmd.get_args())
+                .map(OsStr::to_owned)
+                .collect::<Vec<_>>();
+            return crate::runner::harness::run(&argv, "integration", false);
         }
         (_, Some("wasm")) => {
             let rc = build_wasm(build)?;

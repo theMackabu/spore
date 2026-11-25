@@ -18,10 +18,10 @@ Use Alpine’s **aarch64 busybox-static** package for the example. Extract
 executables. The CLI installs the executable under its filename in `/app`, which lets BusyBox
 select its applet. [Alpine package](https://pkgs.alpinelinux.org/package/v3.23/main/aarch64/busybox-static)
 
-Pass an ext2 or ext2+ disk to read its files under `/data`.
+Pass a writable ext2 or ext2+ volume to mount it at `/data`. Writes persist in the supplied volume.
 
 ```sh
-./target/release/spore run --wasm ./busybox.static --data target/release/root.ext2 -- cat /data/etc/os-release
+./target/release/spore run --wasm ./busybox.static --data ./data.ext2 -- ls /data
 ```
 
 ## Full userland
@@ -32,6 +32,17 @@ Pass an ext2 or ext2+ disk to read its files under `/data`.
 ```
 
 The kernel launches `/sbin/init` from `target/release/root.ext2`. To select another root, pass `--root path/to/root.ext2`. Each boot keeps disk writes in a private in-memory snapshot and discards them on exit. Type commands at the guest shell or press Ctrl+] to disconnect.
+
+## Networking in Node
+
+`--net` gives the guest outbound IPv4 networking. A port forward also enables networking.
+
+```sh
+./target/release/spore run --wasm ant -p 8080 --env REVISION=wasm \
+  --file tests/appliance/server.js=/app/server.js -- /app/server.js
+```
+
+The CLI uses QEMU’s user-mode network backend as an Ethernet bridge. The helper uses `-machine none`. Spore executes guest instructions in the Rust interpreter. The listener binds to loopback. In another terminal, `curl http://127.0.0.1:8080/` returns `wasm`, and `curl http://127.0.0.1:8080/quit` stops the guest.
 
 ## Browser
 
@@ -59,7 +70,7 @@ of A64 integer, branch, load/store, exclusive, scalar floating-point and SIMD in
 classes and address translations. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.
 
-Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Batch apps without console input see EOF. Full-system boots use Spore’s TTY. External networking and JIT workloads are still unsupported.
+Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Batch apps without console input see EOF. Full-system boots use Spore’s TTY. The standalone browser page runs offline. JIT workloads remain unverified.
 Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 
 ```sh
@@ -67,6 +78,8 @@ Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 ```
 
 Claude Code is unverified.
+
+`spore test wasm-guest` boots the integration disk with the native suite’s UDP echo and console fixtures.
 
 `spore test wasm` builds an ordinary musl ELF and compares its output and exit status
 under QEMU and Wasm. It checks pthreads, futex wakeups, timer preemption, thread-local storage and appliance policy. It also exercises cross-page accesses, permission changes,

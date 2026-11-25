@@ -32,6 +32,8 @@
 #define HOST(name) __attribute__((import_module("spore"), import_name(name)))
 HOST("clock") uint64_t host_clock(void);
 HOST("random") void host_random(void *, size_t);
+HOST("net_recv") int host_net_recv(void *, size_t);
+HOST("net_send") int host_net_send(const void *, size_t);
 HOST("disk_write") int host_disk_write(uint64_t, const void *, size_t);
 HOST("exception") void host_exception(uint64_t, const char *, size_t);
 HOST("serial_read") int host_serial_read(void);
@@ -159,14 +161,27 @@ void virtio_console_write(const uint8_t *p, size_t n) {
   (void)p;
   (void)n;
 }
+static bool has_net;
+static struct virtio_net_stats net_stats;
 bool virtio_net_send_frame(const void *frame, uint32_t len) {
-  (void)frame;
-  (void)len;
-  return false;
+  if (!has_net || !host_net_send(frame, len)) { return false; }
+  net_stats.tx_bytes += len;
+  ++net_stats.tx_packets;
+  return true;
 }
-void virtio_net_poll(void) {}
+void virtio_net_poll(void) {
+  if (!has_net) { return; }
+  uint8_t frame[1518];
+  for (unsigned i = 0; i < 64; ++i) {
+    int len = host_net_recv(frame, sizeof(frame));
+    if (len <= 0 || (size_t)len > sizeof(frame)) { break; }
+    ++net_stats.rx_packets;
+    net_stats.rx_bytes += len;
+    net_receive_ethernet(frame, len);
+  }
+}
 struct virtio_net_stats virtio_net_stats(void) {
-  return (struct virtio_net_stats){0};
+  return net_stats;
 }
 bool virtio_blk_read(uint64_t off, void *dst, uint32_t n) {
   return host_disk_read(off, dst, n);
@@ -229,6 +244,8 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   syscall_set_boot_time(epoch);
   cell_set_boot_epoch(epoch);
   random_init(epoch);
+  has_net = (devices & 8) != 0;
+  if (has_net) { net_init(); }
   cell_system_init();
   static struct ext2_fs volume;
   struct ext2_fs *disk = NULL;

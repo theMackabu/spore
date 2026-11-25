@@ -27,3 +27,10 @@ pub fn user_network([guest, gateway, mask, dns]: [Ipv4Addr; 4]) -> io::Result<St
     }
     Ok(cfg)
 }
+
+pub fn forwards(mut backend: String, guest: &str, ports: &[(u16, u16)]) -> String {
+    for (host, port) in ports {
+        backend.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-{guest}:{port}"));
+    }
+    backend
+}

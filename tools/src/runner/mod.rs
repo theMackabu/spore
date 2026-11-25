@@ -1,6 +1,6 @@
 pub mod app;
-mod fixtures;
-mod harness;
+pub(crate) mod fixtures;
+pub(crate) mod harness;
 mod modes;
 pub mod qemu;
 mod serial;

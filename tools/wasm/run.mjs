@@ -8,7 +8,7 @@ export class GuestSignal extends Error {
 export async function run(
   kernel,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, write, onException, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, network, write, onException, instructionLimit = 100_000_000, signal } = {},
 ) {
   const system = elf === null;
   if (system && (!readDisk || args.length)) throw new Error("system boot requires a root disk");
@@ -35,6 +35,15 @@ export async function run(
   guest = (
     await WebAssembly.instantiate(module, {
       spore: {
+        net_send(ptr, len) {
+          return network?.send(bytes(ptr, len).slice()) ? 1 : 0;
+        },
+        net_recv(ptr, len) {
+          const frame = network?.receive();
+          if (!frame || frame.length > len) return 0;
+          bytes(ptr, frame.length).set(frame);
+          return frame.length;
+        },
         exception(pc, ptr, len) {
           onException?.(pc, decoder.decode(bytes(ptr, len)));
         },
@@ -76,7 +85,7 @@ export async function run(
     bytes(ptr, elf.length).set(elf);
     bytes(ptr + elf.length, argv.length).set(argv);
   }
-  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0);
+  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0);
   try {
     if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)))) {
       throw new Error("invalid ELF input");
@@ -88,8 +97,8 @@ export async function run(
       signal?.throwIfAborted();
       const count = Math.min(remaining, 100_000);
       const now = performance.now();
-      const ticks = Math.min(64, Math.max(0, Math.floor((now - nextTick) / 10) + 1));
-      nextTick += ticks * 10;
+      const ticks = Number(now >= nextTick);
+      if (ticks) nextTick = now + 10;
       const retired = guest.run_slice(count, ticks);
       if (retired < 0) throw new Error("CPU stopped without a guest result");
       remaining -= retired;

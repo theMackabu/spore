@@ -221,7 +221,7 @@ fn launch(config: Config) -> io::Result<i32> {
         snap,
     } = config;
     let mode = mode.as_str();
-    let (mut net, guest) = if mode == "app" {
+    let (net, guest) = if mode == "app" {
         if let Some(path) = &root {
             let mut magic = [0; 2];
             fs::File::open(path)?.read_exact_at(&mut magic, 1024 + 56)?;
@@ -241,9 +241,7 @@ fn launch(config: Config) -> io::Result<i32> {
     } else {
         ("user,id=sporenet".into(), String::new())
     };
-    for (host, port) in forwards {
-        net.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-{guest}:{port}"));
-    }
+    let net = app_network::forwards(net, &guest, &forwards);
     let qemu = qemu.unwrap_or_else(|| crate::qemu_default(arch));
     let accel = accel.unwrap_or_else(|| default_accelerator(arch).into());
     let machine = match arch {

@@ -26,11 +26,11 @@ Usage:
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
   spore build --wasm                  Build the hosted ARM64 kernel and interpreter
   spore build --wasm ELF -o PAYLOAD [image options] [-- ARG...]
-  spore boot --wasm [--root EXT2]       Boot a disposable snapshot of a userland disk
-  spore run --wasm ELF [image options] [--data EXT2] [-- ARG...]
+  spore boot --wasm [--net] [--root EXT2]       Boot a disposable snapshot of a userland disk
+  spore run --wasm ELF [--net | -p PORT] [image options] [--data EXT2] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
-  spore test [host|guest|shell|appliance|ports|wasm|rng|stress]
+  spore test [host|guest|shell|appliance|ports|wasm|wasm-guest|rng|stress]
   spore bench [guest|inodes|appliance|startup|uring|wasm]
 
 Image options:
@@ -201,12 +201,17 @@ fn execute() -> io::Result<i32> {
     let mut userland = false;
     let mut tests = false;
     let mut wasm = false;
+    let mut net = false;
     let mut qemu_options = false;
     let mut app_options = false;
     while let Some(key) = args.next() {
         if key == "-h" || key == "--help" {
             println!("{HELP}");
             return Ok(0);
+        }
+        if key == "--net" && !build {
+            net = true;
+            continue;
         }
         if key == "--wasm" {
             wasm = true;
@@ -257,8 +262,22 @@ fn execute() -> io::Result<i32> {
                 output = Some(PathBuf::from(value));
                 continue;
             }
-            Some("--exec" | "--argv0" | "--cwd" | "--env" | "--file" | "--lib-dir") if !boot => {
+            Some(
+                "--exec" | "--argv0" | "--cwd" | "--env" | "--file" | "--lib-dir" | "--ip"
+                | "--gateway" | "--dns" | "--netmask",
+            ) if !boot => {
                 pack.extend([PathBuf::from(key), PathBuf::from(value)]);
+                continue;
+            }
+            Some("-p" | "--forward") if !build => {
+                let ports = value
+                    .to_str()
+                    .ok_or_else(|| io::Error::other("expected PORT or HOST:GUEST"))?;
+                let (h, g) = ports.split_once(':').unwrap_or((ports, ports));
+                vm.forwards.push((
+                    positive(h.as_ref(), "host port")?,
+                    positive(g.as_ref(), "guest port")?,
+                ));
                 continue;
             }
             Some("--root") if boot => {
@@ -273,9 +292,6 @@ fn execute() -> io::Result<i32> {
         }
         qemu_options = true;
         match key.to_str() {
-            Some("--ip" | "--gateway" | "--dns" | "--netmask") if !boot => {
-                pack.extend([PathBuf::from(key), PathBuf::from(value)])
-            }
             Some("--memory") if !build => memory = Some(value),
             Some("--accel") if !build => vm.accel = Some(value),
             Some("--cpu") if !build => vm.cpu = Some(value),
@@ -288,16 +304,6 @@ fn execute() -> io::Result<i32> {
             }
             Some("--boot-timeout") if !build => vm.timeout = positive(&value, "boot timeout")?,
             Some("--result") if !build => vm.report = Some(value),
-            Some("-p" | "--forward") if !build => {
-                let ports = value
-                    .to_str()
-                    .ok_or_else(|| io::Error::other("expected PORT or HOST:GUEST"))?;
-                let (h, g) = ports.split_once(':').unwrap_or((ports, ports));
-                vm.forwards.push((
-                    positive(h.as_ref(), "host port")?,
-                    positive(g.as_ref(), "guest port")?,
-                ));
-            }
             _ => {
                 return Err(io::Error::other(format!(
                     "unexpected option {}",
@@ -309,13 +315,21 @@ fn execute() -> io::Result<i32> {
     if wasm {
         if boot {
             if qemu_options || app_options || reset || program.is_some() {
-                return Err(io::Error::other("usage: spore boot --wasm [--root EXT2]"));
+                return Err(io::Error::other(
+                    "usage: spore boot --wasm [--net] [--root EXT2]",
+                ));
             }
-            let base = root.map(PathBuf::from).unwrap_or_else(|| artifacts.join("root.ext2"));
+            let base = root
+                .map(PathBuf::from)
+                .unwrap_or_else(|| artifacts.join("root.ext2"));
             if !base.is_file() {
-                return Err(io::Error::other("supply --root EXT2 or build the userland image with spore build --userland"));
+                return Err(io::Error::other(
+                    "supply --root EXT2 or build the userland image with spore build --userland",
+                ));
             }
-            return system::run_wasm(artifacts, None, Some(base.as_os_str()));
+            let network = (net || !vm.forwards.is_empty())
+                .then(|| app_network::forwards("user,id=sporenet".into(), "", &vm.forwards));
+            return system::run_wasm(artifacts, None, Some(base.as_os_str()), network.as_deref());
         }
         if qemu_options || tests || userland {
             return Err(io::Error::other(
@@ -345,13 +359,42 @@ fn execute() -> io::Result<i32> {
             PathBuf::from("/app").join(basename),
         ];
         options.extend(pack);
+        let default_port = vm
+            .forwards
+            .first()
+            .map(|p| p.1)
+            .filter(|p| vm.forwards.iter().all(|f| f.1 == *p));
+        let mut network = None;
         image::build_image(&payload, |out| {
-            image::app::payload(&elf, &options, None, &tmp.0, out, arch::Arch::Aarch64).map(|_| ())
+            let cfg = image::app::payload(
+                &elf,
+                &options,
+                default_port,
+                &tmp.0,
+                out,
+                arch::Arch::Aarch64,
+            )?;
+            if net || !vm.forwards.is_empty() {
+                network = Some(app_network::forwards(
+                    app_network::user_network(cfg)?,
+                    &cfg[0].to_string(),
+                    &vm.forwards,
+                ));
+            }
+            Ok(())
         })?;
         if build {
             return Ok(0);
         }
-        return system::run_wasm(artifacts, Some(&payload), vm.root.as_deref());
+        return system::run_wasm(
+            artifacts,
+            Some(&payload),
+            vm.root.as_deref(),
+            network.as_deref(),
+        );
+    }
+    if net {
+        return Err(io::Error::other("--net applies to Wasm guests"));
     }
     if let Some(arch) = architecture.as_deref() {
         vm.arch = arch::Arch::parse(arch.to_str().unwrap_or(""))?;
