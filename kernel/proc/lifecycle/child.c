@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/process.h"
 #include "abi/linux/shared/usage.h"
 #include "arch/smp.h"
@@ -18,9 +19,9 @@ static bool domain_has_running_thread(const struct domain *domain) {
 
 static bool matches(const struct domain *child, const struct domain *parent, int pid) {
   if (!child->used || child->parent_id != parent->id) { return false; }
-  if (pid > 0) { return child->id == pid; }
+  if (pid > 0) { return pidns_local(pidns_active(parent), child->id) == pid; }
   if (pid == -1) { return true; }
-  return child->pgrp_id == (pid ? -(int64_t)pid : parent->pgrp_id);
+  return pid ? pidns_local(pidns_active(parent), child->pgrp_id) == -(int64_t)pid : child->pgrp_id == parent->pgrp_id;
 }
 
 static int reap(struct domain *parent, struct domain *child, uint64_t status_addr, uint64_t usage_addr) {
@@ -31,7 +32,7 @@ static int reap(struct domain *parent, struct domain *child, uint64_t status_add
   cell_merge_usage(&usage, &child->children_usage);
   if (usage_addr && linux_write_rusage(parent, usage_addr, &usage) < 0) { return -EFAULT; }
   cell_merge_usage(&parent->children_usage, &usage);
-  int id = child->id;
+  int id = pidns_local(pidns_active(parent), child->id);
   child->parent_id = 0;
   if (child != cell_current_domain_internal() && !domain_has_running_thread(child)) { cell_destroy_domain(child); }
   return id;
@@ -52,8 +53,9 @@ void cell_wake_parent_of(struct domain *child) {
   cell_wake_vfork_parent_of(child->id);
   int parent_id = child->parent_id;
   int signal = child->exit_signal;
+  struct domain *parent = cell_find_domain(parent_id);
   struct siginfo_fields64 info = {.si_signo = signal, .si_code = child->term_signal ? 2 : 1,
-                                  .sender = {child->id, child->uid},
+                                  .sender = {pidns_local(pidns_active(parent), child->id), child->uid},
                                   .child_status = child->term_signal ? child->term_signal : child->exit_status & 255};
   size_t cursor = 0;
   struct thread *thread;
@@ -64,7 +66,6 @@ void cell_wake_parent_of(struct domain *child) {
     thread->wait.child_servicing = false;
     if (result) { cell_finish_wait(thread, result); smp_notify(); }
   }
-  struct domain *parent = cell_find_domain(parent_id);
   if (signal && parent && !parent->zombie) {
     info.sender.uid = userns_visible(parent->user_ns, false, info.sender.uid);
     if (signal == 17) { cell_signal_child_exit(parent, info); }

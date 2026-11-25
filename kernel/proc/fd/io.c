@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "abi/linux/shared/open.h"
 #include "proc/io.h"
 #include "fs/notify.h"
@@ -45,7 +46,7 @@ static int64_t write_device(struct open_file *file, struct domain *domain, uint6
     for (size_t i = 0; i < len; ++i) { if (!text[i]) { return -22; } }
     text[len] = 0;
     struct domain *target = cell_find_domain(file->node.proc.pid);
-    if (!target) { return -3; }
+    if (!target || !pidns_self_view(target->id)) { return -3; }
     int rc = userns_write_map(domain, target->user_ns, file->node.device == RAMFS_DEV_PROC_GID_MAP,
                              file->node.device == RAMFS_DEV_PROC_SETGROUPS, text);
     if (rc) { return rc; }

@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/capabilities.h"
 #include "internal.h"
 #include "net/route.h"
@@ -27,7 +28,7 @@ int route_bind(struct open_file *file, struct route_address address) {
   if (port) {
     if (bound_port(file->net_ns, port)) { return -98; }
   } else {
-    port = cell_current_pid();
+    port = pidns_self_view(cell_current_pid());
     while (!port || bound_port(file->net_ns, port)) { port = next_port--; }
   }
   file->route_pid = port;

@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/info.h"
 #include "lib/kstr.h"
 #include "proc/domain.h"
@@ -22,9 +23,9 @@ static void fill_proc_info(const struct domain *domain, struct proc_info *out) {
   struct thread *thread = cell_thread_for_domain(domain);
   enum thread_state state = cell_domain_state(domain);
   struct proc_info info = {
-    .pid = (uint32_t)domain->id,
-    .tid = thread == NULL ? 0 : (uint32_t)thread->tid,
-    .ppid = (uint32_t)domain->parent_id,
+    .pid = (uint32_t)pidns_self_view(domain->id),
+    .tid = thread == NULL ? 0 : (uint32_t)pidns_self_view(thread->tid),
+    .ppid = (uint32_t)pidns_self_view(domain->parent_id),
     .state = state == THREAD_UNUSED ? THREAD_RUNNABLE : state,
     .wait_reason = 0,
     .resident_pages = mem.resident_pages,
@@ -48,7 +49,7 @@ size_t cell_proc_info(struct proc_info *out, size_t max) {
   size_t count = 0;
   for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
     const struct domain *domain = cell_domain_slot(i);
-    if (domain == NULL || !domain->used) { continue; }
+    if (domain == NULL || !domain->used || !pidns_self_view(domain->id)) { continue; }
     if (count < max && out != NULL) { fill_proc_info(domain, &out[count]); }
     ++count;
   }

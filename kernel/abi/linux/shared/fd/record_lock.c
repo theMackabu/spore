@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/fd/record_lock.h"
 #include "abi/linux/shared/open.h"
 #include "abi/linux/shared/usercopy.h"
@@ -52,7 +53,7 @@ int64_t sys_record_lock(uint64_t fd, uint64_t arg, bool query) {
   if (range.type != RECORD_UNLOCK) {
     lock.whence = 0;
     lock.start = range.start;
-    lock.pid = range.owner;
+    lock.pid = pidns_self_view(range.owner);
     lock.len = range.end > (uint64_t)INT64_MAX ? 0 : (int64_t)(range.end - range.start);
   }
   return syscall_user_writable(arg, sizeof(lock)) && vmm_copy_to_user(as, arg, &lock, sizeof(lock)) ? 0 : -14;

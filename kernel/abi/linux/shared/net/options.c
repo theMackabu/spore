@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "abi/linux/shared/socket_options.h"
 #include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
@@ -39,7 +40,7 @@ int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     struct cell_peer_cred peer;
     if (!cell_fd_unix_peer_cred((int)fd, &peer)) { return -(int64_t)ENOTCONN; }
     struct ucred64 out = {
-      .pid = peer.pid,
+      .pid = pidns_self_view(peer.pid),
       .uid = userns_visible(cell_current_domain_internal()->user_ns, false, peer.uid),
       .gid = userns_visible(cell_current_domain_internal()->user_ns, true, peer.gid),
     };

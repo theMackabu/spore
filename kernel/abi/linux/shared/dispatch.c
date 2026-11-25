@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "io_uring/syscalls.h"
 #include "proc/accounting.h"
 #include "proc/signalfd.h"
@@ -60,6 +61,8 @@ constexpr int64_t SYSCALL_SWITCHED = CELL_SWITCHED;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-label-as-value"
 static bool signal_delivers_to_current(int signal) {
+  struct domain *d = cell_current_domain_internal();
+  if (pidns_init_process(d) && signal > 0 && signal < 65 && d->signal_actions[signal].handler <= 1) { return false; }
   return signal == SIGINT || signal == SIGABRT || signal == SIGKILL || signal == SIGSEGV || signal == SIGPIPE ||
          signal == SIGALRM || signal == SIGTERM || signal == SIGURG;
 }
@@ -306,11 +309,11 @@ l_exit_group:
   cell_exit_group_current((int)a0, f);
   return SYSCALL_SWITCHED;
 l_getpid:
-  return cell_current_pid();
+  return pidns_self_view(cell_current_pid());
 l_getppid:
-  return cell_current_ppid();
+  return pidns_self_view(cell_current_ppid());
 l_gettid:
-  return cell_current_tid();
+  return pidns_self_view(cell_current_tid());
 l_setpgid:
   return cell_setpgid((int)a0, (int)a1);
 l_getpgid:
@@ -344,19 +347,19 @@ l_wait4: {
   return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
 }
 l_kill:
-  if ((int)a0 == cell_current_pid() && signal_delivers_to_current((int)a1)) {
+  if ((int)a0 == pidns_self_view(cell_current_pid()) && signal_delivers_to_current((int)a1)) {
     trap_set_result(f, 0);
     return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_kill((int)a0, (int)a1);
 l_tkill:
-  if ((int)a0 == cell_current_tid() && signal_delivers_to_current((int)a1)) {
+  if ((int)a0 == pidns_self_view(cell_current_tid()) && signal_delivers_to_current((int)a1)) {
     trap_set_result(f, 0);
     return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tkill((int)a0, (int)a1);
 l_tgkill:
-  if ((int)a0 == cell_current_pid() && (int)a1 == cell_current_tid() && signal_delivers_to_current((int)a2)) {
+  if ((int)a0 == pidns_self_view(cell_current_pid()) && (int)a1 == pidns_self_view(cell_current_tid()) && signal_delivers_to_current((int)a2)) {
     trap_set_result(f, 0);
     return cell_signal_current((int)a2, f) ? SYSCALL_SWITCHED : 0;
   }
@@ -384,7 +387,8 @@ l_spore_reap: {
 l_spore_resident:
   return (int64_t)cell_resident_pages(a0, a0 + a1);
 l_spore_set_budget:
-  return cell_set_budget((int)a0, a1);
+  { int pid = pidns_global(pidns_current(), (int)a0);
+    return a0 && !pid ? -3 : cell_set_budget(pid, a1); }
 l_spore_apply_policy: {
   char manifest[sizeof("fs:/tmp;exec:") + CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(a0, manifest, sizeof(manifest))) { return -(int64_t)EFAULT; }
@@ -392,7 +396,7 @@ l_spore_apply_policy: {
   return rc == 0 ? 0 : -(int64_t)EPERM;
 }
 l_spore_shutdown:
-  if (app_mode) { return -EPERM; }
+  if (app_mode || pidns_current()) { return -EPERM; }
   if (!cell_capable(CAP_SYS_BOOT)) {
     kprintf("[kernel] shutdown denied uid=%d euid=%d\n", (int)cell_current_uid(), (int)cell_current_euid());
     return -(int64_t)EPERM;
@@ -534,6 +538,7 @@ l_mount:
 l_umount2:
   return sys_umount2(a0, a1);
 l_unshare:
+  if ((a0 & CLONE_NEWPID) && cell_current_domain_internal()->child_pid_ns != pidns_current()) { return -22; }
   return cell_unshare_namespaces(cell_current_thread_internal(), a0);
 l_setdomainname:
   return sys_set_uts_name(false, a0, a1);
@@ -554,6 +559,7 @@ l_sched_getparam:
 l_getcpu:
   return sys_getcpu(a0,a1);
 l_sched_getaffinity:
+  if ((int)a0 && !cell_find_thread(pidns_global(pidns_current(), (int)a0))) { return -3; }
   return sys_sched_getaffinity(a2, a1);
 l_set_tid_address:
   return cell_set_tid_address_current(a0);

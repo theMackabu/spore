@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "fs/procfs.h"
 #include "fs/procfs_format.h"
 #include "fs/vfs.h"
@@ -126,10 +127,10 @@ static bool live_task(const struct domain *d, int tid) {
 
 static size_t self_target(int pid, int tid, char *out, size_t cap) {
   size_t len = 0;
-  proc_append_u64(out, cap, &len, pid);
+  proc_append_u64(out, cap, &len, pidns_self_view(pid));
   if (tid) {
     proc_append_str(out, cap, &len, "/task/");
-    proc_append_u64(out, cap, &len, tid);
+    proc_append_u64(out, cap, &len, pidns_self_view(tid));
   }
   return len;
 }
@@ -151,6 +152,7 @@ bool vfs_proc_lookup(const char *path, bool follow_self, struct vfs_node *out) {
   } else if (!parse_number(&p, &pid)) {
     return false;
   }
+  if (!self) { pid = pidns_global(pidns_current(), pid); }
   const struct domain *d = cell_find_domain(pid);
   if (d == NULL) {
     const struct thread *t = cell_find_thread(pid);
@@ -169,7 +171,7 @@ bool vfs_proc_lookup(const char *path, bool follow_self, struct vfs_node *out) {
     ++p;
     if (tid == 0 && starts_with(p, "task/")) {
       p += 5;
-      if (!parse_number(&p, &tid) || !live_task(d, tid)) { return false; }
+      if (!parse_number(&p, &tid) || !(tid = pidns_global(pidns_current(), tid)) || !live_task(d, tid)) { return false; }
       if (*p != '/' && *p != '\0') { return false; }
       if (*p == '/') { ++p; }
     }
@@ -194,7 +196,7 @@ bool vfs_proc_lookup(const char *path, bool follow_self, struct vfs_node *out) {
 
 bool vfs_proc_node_live(const struct vfs_node *node) {
   const struct domain *d = cell_find_domain(node->proc.pid);
-  if (d == NULL || (node->proc.tid != 0 && !live_task(d, node->proc.tid))) { return false; }
+  if (d == NULL || !pidns_self_view(d->id) || (node->proc.tid != 0 && !live_task(d, node->proc.tid))) { return false; }
   if (node->device == RAMFS_DEV_PROC_PID_FD && node->proc.fd >= 0) {
     return d->id == cell_current_pid() && cell_fd_get_fd_flags(node->proc.fd) >= 0;
   }
@@ -266,9 +268,9 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
     }
     for (uint64_t i = *cursor - RAMFS_DIR_END - 2, end = cell_domain_slot_limit(); i < end; ++i) {
       const struct domain *d = cell_domain_slot(i);
-      if (!d->used) { continue; }
+      if (!d->used || !pidns_self_view(d->id)) { continue; }
       *cursor = RAMFS_DIR_END + 2 + i + 1;
-      return numbered_dirent(out, proc_ino(d->id, 0, 0), VFS_DT_DIR, d->id);
+      return numbered_dirent(out, proc_ino(d->id, 0, 0), VFS_DT_DIR, pidns_self_view(d->id));
     }
     return false;
   }
@@ -299,7 +301,7 @@ bool vfs_proc_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct v
       const struct thread *t = cell_thread_slot(i);
       if (t->state == THREAD_UNUSED || t->domain == NULL || t->domain->id != pid) { continue; }
       *cursor = i + 1;
-      return numbered_dirent(out, proc_ino(pid, t->tid, 0), VFS_DT_DIR, t->tid);
+      return numbered_dirent(out, proc_ino(pid, t->tid, 0), VFS_DT_DIR, pidns_self_view(t->tid));
     }
     return false;
   }

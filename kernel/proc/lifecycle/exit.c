@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/process.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
@@ -73,6 +74,8 @@ void cell_exit_group_current(int status, struct trap_frame *frame) {
       if (sibling->running_cpu >= 0) {
         sibling->state = THREAD_ZOMBIE;
       } else {
+        pidns_drop_id(sibling->pid_entry);
+        sibling->pid_entry = NULL;
         sibling->state = THREAD_UNUSED;
         sibling->running_cpu = -1;
         sibling->domain = NULL;

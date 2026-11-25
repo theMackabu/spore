@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "init/app.h"
 #include "abi/linux/shared/signal.h"
 #include "mm/pool.h"
@@ -247,7 +248,25 @@ static void dispatch_parent_notifications(void) {
 }
 
 void cell_reparent_children(struct domain *parent, int exiting_tid, int survivor_tid) {
-  struct domain *init = survivor_tid ? parent : cell_find_domain(1);
+  if (!survivor_tid && !exiting_tid && pidns_mark_dead(parent)) {
+    static bool sweeping;
+    if (!sweeping) {
+      sweeping = true;
+      bool killed;
+      do {
+        killed = false;
+        for (size_t i = 0; i < cell_domain_slot_limit(); ++i) {
+          struct domain *d = cell_domain_slot(i);
+          if (d->used && !d->zombie && pidns_has_dead_parent(d)) {
+            terminate_domain_by_signal(d, SIGKILL);
+            killed = true;
+          }
+        }
+      } while (killed);
+      sweeping = false;
+    }
+  }
+  struct domain *init = survivor_tid ? parent : cell_find_domain(pidns_reaper(parent));
   int adopt_pid = init && !init->zombie ? init->id : 0;
   int adopt_tid = survivor_tid ? survivor_tid : adopt_pid;
   bool queued = false;
@@ -271,7 +290,7 @@ void cell_reparent_children(struct domain *parent, int exiting_tid, int survivor
       unsigned signal = t->parent_death_signal;
       uint64_t bit = signal_bit(signal);
       if ((child->pending_signals | child->parent_notifications->queued) & bit) { continue; }
-      child->parent_notifications->sender[signal - 1] = (struct signal_sender){parent->id, userns_visible(child->user_ns, false, parent->uid)};
+      child->parent_notifications->sender[signal - 1] = (struct signal_sender){pidns_local(pidns_active(child), parent->id), userns_visible(child->user_ns, false, parent->uid)};
       child->parent_notifications->queued |= bit;
       queued = true;
     }
@@ -386,36 +405,41 @@ static bool may_signal(const struct domain *target, int signal) {
 
 static int send_user_signal(struct thread *thread, int signal) {
   if (!thread || !thread->domain || thread->domain->zombie) { return -ESRCH; }
-  if (!may_signal(thread->domain, signal)) { return -1; }
+  struct domain *victim = thread->domain;
+  if (!may_signal(victim, signal)) { return -1; }
+  if (signal && pidns_init_process(victim) && victim->signal_actions[signal].handler <= 1 &&
+      !(signal == SIGKILL && pidns_active(victim) != pidns_current())) { return 0; }
   if (signal && signal_is_supported(signal)) { (void)cell_deliver_signal_to_thread(thread, signal); }
   return 0;
 }
 
 int cell_kill(int pid, int signal) {
   if ((unsigned)signal >= NSIG) { return -22; }
-  if (pid == 0 || pid < -1) {
-    int64_t pgrp = pid == 0 ? cell_getpgid(0) : -(int64_t)pid;
+  if (pid <= 0) {
+    if (pid == INT32_MIN) { return -ESRCH; }
+    int pgrp = pid == 0 ? cell_current_domain_internal()->pgrp_id : pidns_global(pidns_current(), -pid);
     int result = -ESRCH;
     for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
       struct domain *domain = cell_domain_slot(i);
-      if (!domain || !domain->used || domain->zombie || domain->pgrp_id != pgrp) { continue; }
+      if (!domain || !domain->used || domain->zombie || !pidns_self_view(domain->id)) { continue; }
+      if (pid == -1 ? (domain == cell_current_domain_internal() || pidns_self_view(domain->id) == 1) : domain->pgrp_id != pgrp) { continue; }
       int rc = send_user_signal(cell_thread_for_domain(domain), signal);
       if (result != 0) { result = rc; }
     }
     return result;
   }
-  struct domain *domain = cell_find_domain(pid);
+  struct domain *domain = cell_find_domain(pidns_global(pidns_current(), pid));
   return domain ? send_user_signal(cell_thread_for_domain(domain), signal) : -ESRCH;
 }
 
 int cell_tkill(int tid, int signal) {
   if ((unsigned)signal >= NSIG) { return -22; }
-  return send_user_signal(cell_find_thread(tid), signal);
+  return send_user_signal(cell_find_thread(pidns_global(pidns_current(), tid)), signal);
 }
 
 int cell_tgkill(int pid, int tid, int signal) {
   if ((unsigned)signal >= NSIG) { return -22; }
-  struct thread *thread = cell_find_thread(tid);
-  if (!thread || !thread->domain || thread->domain->id != pid) { return -ESRCH; }
+  struct thread *thread = cell_find_thread(pidns_global(pidns_current(), tid));
+  if (!thread || !thread->domain || pidns_self_view(thread->domain->id) != pid) { return -ESRCH; }
   return send_user_signal(thread, signal);
 }

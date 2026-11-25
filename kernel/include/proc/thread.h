@@ -100,6 +100,7 @@ struct thread_wait {
 };
 
 struct thread {
+  struct pid_entry *pid_entry;
   int tid;
   int running_cpu;
   uint64_t cpu_ticks, minor_faults, major_faults;

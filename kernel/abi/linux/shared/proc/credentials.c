@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "../usercopy.h"
 #include "handlers.h"
 #include "proc/domain.h"
@@ -68,8 +69,8 @@ int64_t sys_capabilities(bool set, uint64_t header, uint64_t data) {
   if (!set && !data) { return 0; }
   if (hdr.pid < 0) { return -22; }
   struct thread *self = cell_current_thread_internal();
-  if (set && hdr.pid && hdr.pid != self->tid) { return -1; }
-  struct thread *task = hdr.pid ? cell_find_thread(hdr.pid) : self;
+  if (set && hdr.pid && hdr.pid != pidns_self_view(self->tid)) { return -1; }
+  struct thread *task = hdr.pid ? cell_find_thread(pidns_global(pidns_current(), hdr.pid)) : self;
   if (!task || !task->domain) { return -3; }
   size_t bytes = hdr.version == version1 ? sizeof(caps[0]) : sizeof(caps);
   if (!set) {

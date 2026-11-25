@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "init/app.h"
 #include "abi/linux/shared/usercopy.h"
 #include "abi/linux/shared/layout.h"
@@ -72,6 +73,9 @@ static bool futex_deadline(struct timespec64 ts, bool absolute, bool realtime, u
 int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
                   uint64_t child_tid) {
   if (app_mode && (!(flags & CLONE_THREAD) || !(flags & CLONE_VM) || (flags & CLONE_VFORK))) { return -1; }
+  struct domain *d = cell_current_domain_internal();
+  if (((flags & CLONE_THREAD) && ((flags & CLONE_NEWPID) || d->child_pid_ns != pidns_active(d))) ||
+      ((flags & CLONE_NEWPID) && d->child_pid_ns != pidns_active(d))) { return -EINVAL; }
   if ((flags & CLONE_NEWIPC) && (flags & CLONE_SYSVSEM)) { return -EINVAL; }
   const uint64_t signal_mask = 0xff;
   uint64_t exit_signal = flags & signal_mask;
@@ -83,8 +87,8 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
     return cell_vfork_current(f, newsp, flags, parent_tid, tls, child_tid);
   }
   if ((flags & CLONE_VM) == 0) {
-    if (flags & ~(signal_mask | CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) { return -ENOSYS; }
-    return cell_fork_current(f, flags, newsp, child_tid);
+    if (flags & ~(signal_mask | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_PARENT_SETTID | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) { return -ENOSYS; }
+    return cell_fork_current(f, flags, newsp, parent_tid, child_tid);
   }
 
   const uint64_t allowed_thread_flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |

@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/namespace.h"
 #include "proc/user_namespace.h"
 #include "proc/ipc_namespace.h"
@@ -90,7 +91,7 @@ int userns_write_map(struct domain *actor, struct user_namespace *ns, bool group
 }
 
 int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
-  if (flags & ~(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET)) { return -22; }
+  if (flags & ~(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID)) { return -22; }
   struct domain *d = thread->domain;
   struct linux_caps old_caps = thread->capabilities;
   struct uts_namespace *old_uts = uts_retain(d->uts);
@@ -99,13 +100,16 @@ int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
     rc = create_user_namespace(thread);
     if (rc) { uts_release(old_uts); return rc; }
   }
+  struct pid_namespace *pid = NULL;
   struct net_namespace *net = NULL;
   struct ipc_namespace *ipc = NULL;
-  if (flags & CLONE_NEWIPC) { rc = ipcns_create(thread, &ipc); }
+  if (flags & CLONE_NEWPID) { rc = pidns_create(thread, &pid); }
+  if (!rc && (flags & CLONE_NEWIPC)) { rc = ipcns_create(thread, &ipc); }
   if (!rc && (flags & CLONE_NEWNET)) { rc = netns_create(thread, &net); }
   if (!rc && (flags & CLONE_NEWUTS)) { rc = uts_unshare(thread); }
   if (!rc && (flags & CLONE_NEWNS)) { rc = mountns_unshare(thread); }
   if (rc) {
+    pidns_release(pid);
     netns_release(net);
     ipcns_release(ipc);
     uts_release(d->uts);
@@ -117,6 +121,7 @@ int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
     }
   } else {
     uts_release(old_uts);
+    if (pid) { pidns_release(d->child_pid_ns); d->child_pid_ns = pid; }
     if (net) { netns_release(d->net_ns); d->net_ns = net; }
     if (ipc) {
       ipcns_release(d->ipc_ns);

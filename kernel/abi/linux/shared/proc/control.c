@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
 #include "proc/domain.h"
@@ -92,7 +93,7 @@ int64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, 
 
 int64_t sys_sched_getscheduler(int tid) {
   if (tid < 0) { return -EINVAL; }
-  if (tid && !cell_find_thread(tid)) { return -ESRCH; }
+  if (tid && !cell_find_thread(pidns_global(pidns_current(), tid))) { return -ESRCH; }
   return 0;
 }
 

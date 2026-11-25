@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "mm/table.h"
 #include "proc/domain.h"
 #include "proc/accounting.h"
@@ -115,6 +116,9 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   kmemcpy(dst->exec_path, src->exec_path, sizeof(dst->exec_path));
   kmemcpy(dst->argv0, src->argv0, sizeof(dst->argv0));
   kmemcpy(dst->cmdline, src->cmdline, sizeof(dst->cmdline));
+  dst->child_pid_ns = pidns_retain(src->child_pid_ns);
+  dst->pgrp_entry = pidns_retain_id(src->pgrp_entry);
+  dst->session_entry = pidns_retain_id(src->session_entry);
   dst->parent_tid = cell_current_tid();
   dst->user_ns = userns_retain(src->user_ns);
   dst->mount_ns = mountns_retain(src->mount_ns);
@@ -148,6 +152,8 @@ void cell_destroy_domain(struct domain *domain) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) {
       cell_clear_wait(thread);
+      pidns_drop_id(thread->pid_entry);
+      thread->pid_entry = NULL;
       thread->state = THREAD_UNUSED;
       thread->running_cpu = -1;
       thread->domain = NULL;
@@ -161,6 +167,12 @@ void cell_destroy_domain(struct domain *domain) {
   domain->user_ns = NULL;
   mountns_release(domain->mount_ns);
   domain->mount_ns = NULL;
+  pidns_drop_id(domain->pid_entry);
+  pidns_drop_id(domain->session_entry);
+  pidns_drop_id(domain->pgrp_entry);
+  pidns_release(domain->child_pid_ns);
+  domain->pid_entry = domain->session_entry = domain->pgrp_entry = NULL;
+  domain->child_pid_ns = NULL;
   netns_release(domain->net_ns);
   domain->net_ns = NULL;
   ipcns_release(domain->ipc_ns);
@@ -220,34 +232,53 @@ void cell_set_current_name(const char *name) {
 }
 
 int cell_getpgid(int pid) {
-  struct domain *domain = pid == 0 ? cell_current_domain_internal() : cell_find_domain(pid);
-  return domain == NULL ? -ESRCH : domain->pgrp_id;
+  struct domain *domain = pid == 0 ? cell_current_domain_internal() : cell_find_domain(pidns_global(pidns_current(), pid));
+  return domain == NULL ? -ESRCH : pidns_self_view(domain->pgrp_id);
 }
 
 int cell_setpgid(int pid, int pgid) {
   struct domain *current = cell_current_domain_internal();
   if (current == NULL) { return -ESRCH; }
-  struct domain *target = pid == 0 ? current : cell_find_domain(pid);
+  struct domain *target = pid == 0 ? current : cell_find_domain(pidns_global(pidns_current(), pid));
   if (target == NULL) { return -ESRCH; }
   if (target != current && target->parent_id != current->id) { return -EPERM; }
-  if (pgid == 0) { pgid = target->id; }
   if (pgid < 0) { return -EINVAL; }
+  pgid = pgid ? pidns_global(pidns_current(), pgid) : target->id;
+  if (!pgid) { return -EPERM; }
+  if (pidns_current()) {
+    if (target->session_id != current->session_id || target->session_id == target->id) { return -EPERM; }
+    if (pgid != target->id) {
+      bool found = false;
+      for (size_t i = 0; i < cell_domain_slot_limit(); ++i) {
+        const struct domain *member = cell_domain_slot(i);
+        if (member->used && member->session_id == current->session_id && member->pgrp_id == pgid) { found = true; break; }
+      }
+      if (!found) { return -EPERM; }
+    }
+  }
+  struct pid_entry *id = pidns_hold_id(pidns_current(), pgid);
+  pidns_drop_id(target->pgrp_entry);
+  target->pgrp_entry = id;
   target->pgrp_id = pgid;
   return 0;
 }
 
 int cell_getsid(int pid) {
-  struct domain *domain = pid == 0 ? cell_current_domain_internal() : cell_find_domain(pid);
-  return domain == NULL ? -ESRCH : domain->session_id;
+  struct domain *domain = pid == 0 ? cell_current_domain_internal() : cell_find_domain(pidns_global(pidns_current(), pid));
+  return domain == NULL ? -ESRCH : pidns_self_view(domain->session_id);
 }
 
 int cell_setsid_current(void) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -ESRCH; }
   if (domain->pgrp_id == domain->id) { return -EPERM; }
+  pidns_drop_id(domain->session_entry);
+  pidns_drop_id(domain->pgrp_entry);
+  domain->pgrp_entry = pidns_hold_id(pidns_current(), domain->id);
+  domain->session_entry = pidns_hold_id(pidns_current(), domain->id);
   domain->session_id = domain->id;
   domain->pgrp_id = domain->id;
-  return domain->session_id;
+  return pidns_self_view(domain->session_id);
 }
 
 uint16_t cell_creation_mode(uint32_t mode) {

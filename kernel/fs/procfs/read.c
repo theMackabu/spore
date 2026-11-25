@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "fs/mount_namespace.h"
 #include "fs/procfs.h"
 
@@ -105,12 +106,12 @@ static size_t procinfo_text(char *dst, size_t cap) {
                   "name exec_path cwd cmdline\n");
   for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
     const struct domain *domain = cell_domain_slot(i);
-    if (domain == NULL || !domain->used) { continue; }
+    if (domain == NULL || !domain->used || !pidns_self_view(domain->id)) { continue; }
     struct cell_memory_accounting mem = {0};
     (void)cell_memory_accounting(domain, &mem);
-    proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
+    proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->id));
     proc_append_char(dst, cap, &len, ' ');
-    proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
+    proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->parent_id));
     proc_append_char(dst, cap, &len, ' ');
     proc_append_str(dst, cap, &len, domain_state_text(domain));
     proc_append_char(dst, cap, &len, ' ');
@@ -175,13 +176,13 @@ static size_t proc_pid_status_text(char *dst, size_t cap, const struct proc_task
   proc_append_str(dst, cap, &len, " (");
   proc_append_str(dst, cap, &len, thread_state_text(state));
   proc_append_str(dst, cap, &len, ")\nTgid:\t");
-  proc_append_u64(dst, cap, &len, (uint32_t)domain->id);
+  proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->id));
   proc_append_str(dst, cap, &len, "\nPid:\t");
-  proc_append_u64(dst, cap, &len, task->thread ? task->thread->tid : domain->id);
+  proc_append_u64(dst, cap, &len, pidns_self_view(task->thread ? task->thread->tid : domain->id));
   proc_append_str(dst, cap, &len, "\nThreads:\t");
   proc_append_u64(dst, cap, &len, domain->refcount);
   proc_append_str(dst, cap, &len, "\nPPid:\t");
-  proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
+  proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->parent_id));
   struct user_namespace *view = cell_current_domain_internal()->user_ns;
   proc_append_str(dst, cap, &len, "\nUid:\t");
   proc_append_u64(dst, cap, &len, userns_visible(view, false, domain->uid));
@@ -255,17 +256,17 @@ static size_t proc_pid_proc_stat_text(char *dst, size_t cap, const struct proc_t
   (void)cell_memory_accounting(domain, &mem);
   uint64_t start_time = task->thread ? task->thread->start_ticks : domain->start_ticks;
   uint64_t utime = task->thread ? task->thread->cpu_ticks : domain->cpu_ticks;
-  proc_append_u64(dst, cap, &len, task->thread ? task->thread->tid : domain->id);
+  proc_append_u64(dst, cap, &len, pidns_self_view(task->thread ? task->thread->tid : domain->id));
   proc_append_str(dst, cap, &len, " (");
   proc_append_str(dst, cap, &len, domain->name);
   proc_append_str(dst, cap, &len, ") ");
   proc_append_char(dst, cap, &len, proc_state_char(task->thread ? task->thread->state : cell_domain_state(domain)));
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, (uint32_t)domain->parent_id);
+  proc_append_u64(dst, cap, &len, pidns_self_view((uint32_t)domain->parent_id));
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, domain->pgrp_id);
+  proc_append_u64(dst, cap, &len, pidns_self_view(domain->pgrp_id));
   proc_append_char(dst, cap, &len, ' ');
-  proc_append_u64(dst, cap, &len, domain->session_id);
+  proc_append_u64(dst, cap, &len, pidns_self_view(domain->session_id));
   proc_append_str(dst, cap, &len, " 0 0 0 ");
   proc_append_u64(dst, cap, &len, mem.minor_faults);
   proc_append_str(dst, cap, &len, " 0 ");
@@ -474,6 +475,7 @@ static int64_t read_generated_pid_device(struct open_file *file, const struct pr
 }
 
 int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len, uint64_t offset) {
+  if (file->node.backend == VFS_PROC && !pidns_self_view(file->node.proc.pid)) { return -2; }
   struct proc_read out = {domain, buf, len, offset};
   switch (file->node.device) {
   case RAMFS_DEV_PROCINFO:

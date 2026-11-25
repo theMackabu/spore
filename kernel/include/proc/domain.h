@@ -68,6 +68,8 @@ struct domain {
   struct user_namespace *user_ns;
   struct ipc_namespace *ipc_ns;
   struct net_namespace *net_ns;
+  struct pid_namespace *child_pid_ns;
+  struct pid_entry *pid_entry, *pgrp_entry, *session_entry;
   struct cpu_budget budget;
   struct signal_action signal_actions[65];
   uint64_t pending_signals;

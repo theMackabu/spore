@@ -91,6 +91,7 @@ int main(void) {
   ok_all &= integration_seccomp();
   ok_all &= integration_mount_namespace();
   ok_all &= integration_network_namespace();
+  ok_all &= integration_pid_namespace();
   ok_all &= integration_uts_namespace();
   ok_all &= integration_user_namespace();
   ok_all &= integration_capabilities();

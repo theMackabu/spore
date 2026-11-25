@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/process.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
@@ -17,6 +18,8 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
       cell_reparent_children(domain, thread->tid, cell_current_tid());
       cell_clear_wait(thread);
+      pidns_drop_id(thread->pid_entry);
+      thread->pid_entry = NULL;
       thread->state = THREAD_UNUSED;
       thread->domain = NULL;
       if (domain->refcount > 0) { --domain->refcount; }
@@ -35,6 +38,8 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
       struct domain *child = cell_domain_slot(i);
       if (child->used && child->parent_id == domain->id) { child->parent_tid = domain->id; }
     }
+    pidns_drop_id(thread->pid_entry);
+    thread->pid_entry = NULL;
     thread->tid = domain->id;
   }
   thread->clear_child_tid = 0;

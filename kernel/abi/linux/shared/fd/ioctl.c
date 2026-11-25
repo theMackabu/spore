@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
 #include "fs/notify.h"
@@ -229,6 +230,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (tty != 0) { return tty; }
     struct open_file *file = fd_file(fd);
     int pgrp = file != NULL && file->type == OPEN_PTY ? cell_pty_foreground_pgrp(file) : cell_tty_foreground_pgrp();
+    pgrp = pidns_self_view(pgrp);
     return syscall_user_writable(arg, sizeof(pgrp)) && vmm_copy_to_user(syscall_active_as(), arg, &pgrp, sizeof(pgrp))
              ? 0
              : -(int64_t)EFAULT;
@@ -242,6 +244,8 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
       return -(int64_t)EFAULT;
     }
     struct open_file *file = fd_file(fd);
+    pgrp = pidns_global(pidns_current(), pgrp);
+    if (pgrp <= 0 || (pidns_current() && (!file || file->type != OPEN_PTY))) { return -1; }
     int rc = file != NULL && file->type == OPEN_PTY ? cell_pty_set_foreground_pgrp(file, pgrp)
                                                     : cell_tty_set_foreground_pgrp(pgrp);
     return rc == 0 ? 0 : (int64_t)rc;

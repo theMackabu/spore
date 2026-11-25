@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "../usercopy.h"
 #include "handlers.h"
 #include "exec/stack.h"
@@ -17,7 +18,7 @@ int64_t sys_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, uint6
     RLIMIT_NOFILE = 7,
     RLIMIT_AS = 9,
   };
-  if (pid != 0 && (int)pid != cell_current_pid()) { return -(int64_t)EINVAL; }
+  if (pid != 0 && (int)pid != pidns_self_view(cell_current_pid())) { return -(int64_t)EINVAL; }
   struct domain *domain = cell_current_domain_internal();
   struct rlimit64 next;
   if (new_limit) {

@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "init/app.h"
 #include "proc/snapshot.h"
 
@@ -14,6 +15,7 @@
 struct snapshot {
   bool used;
   int id;
+  uint64_t pid_ns_ino;
   struct user_address_space as;
   struct vma_list vmas;
 };
@@ -55,6 +57,7 @@ int snapshot_create_current(void) {
   }
   struct snapshot *snap = alloc_snapshot();
   if (snap == NULL) { return -12; }
+  snap->pid_ns_ino = pidns_current() ? pidns_ino(pidns_current()) : 0;
   struct user_address_space *as = cell_domain_as(domain);
   struct vma_list *vmas = cell_domain_vmas(domain);
   if (as == NULL || vmas == NULL || !vmm_clone(&snap->as, as, VMM_SNAPSHOT)) {
@@ -74,6 +77,7 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   struct domain *parent = cell_current_domain_internal();
   struct snapshot *snap = find_snapshot(snap_id);
   if (parent == NULL || snap == NULL) { return -12; }
+  if (snap->pid_ns_ino != (pidns_current() ? pidns_ino(pidns_current()) : 0)) { return -1; }
   if (parent->filter && snap->as.freebsd_abi) { return -1; }
   struct thread *child_thread = cell_alloc_process();
   if (child_thread == NULL) { return -12; }
@@ -98,15 +102,17 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
     return -12;
   }
   cell_copy_domain_metadata(child_domain, parent);
+  int rc = pidns_allocate(child_domain->child_pid_ns, child_domain->id, &child_domain->pid_entry);
+  if (rc) { cell_destroy_domain(child_domain); return rc; }
   if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
   child_domain->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   cell_save_current(frame);
   child_thread->tf = *frame;
   child_thread->context = cell_current_thread_internal()->context;
-  arch_set_snapshot_entry(&child_thread->tf, entry, arg, (uint64_t)child_domain->id);
+  arch_set_snapshot_entry(&child_thread->tf, entry, arg, (uint64_t)pidns_local(pidns_active(child_domain), child_domain->id));
   smp_notify();
-  return child_domain->id;
+  return pidns_self_view(child_domain->id);
 }
 
 int snapshot_reap(int pid, uint64_t status_addr, struct trap_frame *frame) {

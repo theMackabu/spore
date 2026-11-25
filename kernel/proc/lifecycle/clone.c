@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "proc/process.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
@@ -33,7 +34,7 @@ static void inherit_fork_context(struct thread *child, const struct thread *pare
   trap_set_result(&child->tf, 0);
 }
 
-int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t child_tid) {
+int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t child_tid) {
   struct domain *parent = cell_current_domain_internal();
   if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
   struct thread *child_thread = cell_alloc_process();
@@ -47,7 +48,9 @@ int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, 
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child_domain, parent);
-  int ns_rc = cell_unshare_namespaces(child_thread, flags & (CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWNET));
+  int ns_rc = cell_unshare_namespaces(child_thread, flags & (CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID));
+  if (ns_rc) { cell_destroy_domain(child_domain); return ns_rc; }
+  ns_rc = pidns_allocate(child_domain->child_pid_ns, child_domain->id, &child_domain->pid_entry);
   if (ns_rc) { cell_destroy_domain(child_domain); return ns_rc; }
   if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
   child_domain->parent_id = parent->id;
@@ -56,16 +59,24 @@ int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, 
   if (newsp) { trap_set_stack(&child_thread->tf, newsp); }
   if (flags & CLONE_CHILD_CLEARTID) { child_thread->clear_child_tid = child_tid; }
   if (flags & CLONE_CHILD_SETTID) {
-    uint32_t tid = child_thread->tid;
+    uint32_t tid = pidns_local(pidns_active(child_domain), child_thread->tid);
     if (!vmm_copy_to_user(cell_domain_as(child_domain), child_tid, &tid, sizeof(tid))) {
       cell_destroy_domain(child_domain);
       return -EFAULT;
     }
   }
-  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)child_domain->id);
+  if (flags & CLONE_PARENT_SETTID) {
+    int tid = pidns_self_view(child_domain->id);
+    if (!cell_domain_ensure_user_range(parent, parent_tid, sizeof(tid), VMM_ACCESS_WRITE) ||
+        !vmm_copy_to_user(cell_domain_as(parent), parent_tid, &tid, sizeof(tid))) {
+      cell_destroy_domain(child_domain);
+      return -EFAULT;
+    }
+  }
+  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)pidns_self_view(child_domain->id));
   copy_cstr(child_domain->name, sizeof(child_domain->name), parent->name);
   smp_notify();
-  return child_domain->id;
+  return pidns_self_view(child_domain->id);
 }
 
 int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags, uint64_t parent_tid, uint64_t tls,
@@ -81,6 +92,8 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child, parent);
+  int rc = pidns_allocate(child->child_pid_ns, child->id, &child->pid_entry);
+  if (rc) { cell_destroy_domain(child); return rc; }
   if (!cell_copy_fd_table(child, parent)) { cell_destroy_domain(child); return -12; }
   child->parent_id = parent->id;
   child->exit_signal = flags & 0xff;
@@ -93,7 +106,7 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   }
   child_thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
   if ((flags & CLONE_PARENT_SETTID) != 0 && parent_tid != 0) {
-    uint32_t pid = (uint32_t)child->id;
+    uint32_t pid = pidns_self_view(child->id);
     struct user_address_space *as = cell_domain_as(parent);
     if (as == NULL || !vmm_copy_to_user(as, parent_tid, &pid, sizeof(pid))) {
       cell_release_thread(child_thread);
@@ -102,7 +115,7 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
     }
   }
   if ((flags & CLONE_CHILD_SETTID) != 0 && child_tid != 0) {
-    uint32_t pid = (uint32_t)child->id;
+    uint32_t pid = pidns_local(pidns_active(child), child->id);
     struct user_address_space *as = cell_domain_as(child);
     if (as == NULL || !vmm_copy_to_user(as, child_tid, &pid, sizeof(pid))) {
       cell_release_thread(child_thread);
@@ -110,8 +123,8 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
       return -EFAULT;
     }
   }
-  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)child->id);
-  trap_set_result(frame, (uint64_t)child->id);
+  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)pidns_self_view(child->id));
+  trap_set_result(frame, (uint64_t)pidns_self_view(child->id));
   copy_cstr(child->name, sizeof(child->name), parent->name);
   cell_current_thread_internal()->running_cpu = -1;
   cell_current_thread_internal()->wait.reason = WAIT_VFORK;
@@ -144,22 +157,22 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   }
   thread->clear_child_tid = ((flags & CLONE_CHILD_CLEARTID) != 0) ? child_tid : 0;
   if ((flags & CLONE_PARENT_SETTID) != 0 && parent_tid != 0) {
-    uint32_t tid = (uint32_t)thread->tid;
+    uint32_t tid = pidns_self_view(thread->tid);
     struct user_address_space *as = cell_domain_as(domain);
     if (as != NULL) { (void)vmm_copy_to_user(as, parent_tid, &tid, sizeof(tid)); }
   }
   if ((flags & CLONE_CHILD_SETTID) != 0 && child_tid != 0) {
-    uint32_t tid = (uint32_t)thread->tid;
+    uint32_t tid = pidns_self_view(thread->tid);
     struct user_address_space *as = cell_domain_as(domain);
     if (as != NULL) { (void)vmm_copy_to_user(as, child_tid, &tid, sizeof(tid)); }
   }
-  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)thread->tid);
+  trap_set_result(&cell_current_thread_internal()->tf, (uint64_t)pidns_self_view(thread->tid));
   smp_notify();
-  return thread->tid;
+  return pidns_self_view(thread->tid);
 }
 
 int cell_set_tid_address_current(uint64_t clear_child_tid) {
   if (cell_current_thread_internal() == NULL) { return 0; }
   cell_current_thread_internal()->clear_child_tid = clear_child_tid;
-  return cell_current_thread_internal()->tid;
+  return pidns_self_view(cell_current_tid());
 }

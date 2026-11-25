@@ -1,3 +1,4 @@
+#include "proc/pid_namespace.h"
 #include "mm/table.h"
 #include "proc/thread.h"
 
@@ -80,6 +81,7 @@ struct thread *cell_alloc_thread(struct domain *domain, bool leader) {
       kmemset(&threads[i], 0, sizeof(threads[i]));
       if (i >= thread_slot_limit) { thread_slot_limit = i + 1; }
       threads[i].tid = leader ? domain->id : cell_new_task_id();
+      if (!leader && pidns_allocate(pidns_active(domain), threads[i].tid, &threads[i].pid_entry)) { return NULL; }
       threads[i].start_ticks = cell_uptime_ticks();
       threads[i].running_cpu = -1;
       threads[i].domain = domain;
@@ -100,6 +102,8 @@ void cell_release_thread(struct thread *thread) {
   struct domain *domain = thread->domain;
   if (domain->refcount > 0) { --domain->refcount; }
   cell_clear_wait(thread);
+  pidns_drop_id(thread->pid_entry);
+  thread->pid_entry = NULL;
   thread->state = THREAD_UNUSED;
   thread->running_cpu = -1;
   thread->domain = NULL;
@@ -137,7 +141,7 @@ void cell_wake_vfork_parent_of(int child_id) {
   struct thread *thread;
   while ((thread = cell_next_waiter(WAIT_VFORK, &cursor))) {
     if (thread->wait.target == child_id) {
-      cell_finish_wait(thread, child_id);
+      cell_finish_wait(thread, pidns_local(pidns_active(thread->domain), child_id));
     }
   }
 }
