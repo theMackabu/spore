@@ -12,13 +12,13 @@ Spore reached the first userspace write sooner in this run. kwemu finished the B
 | 128 MiB copied with musl `memcpy` | 23.69 (21.71–24.56) | 10.83 (9.40–12.52) |
 | 200,000 ARM SHA256H/SHA256H2 instruction pairs | 11.35 (10.43–13.77) | 3.20 (3.03–3.31) |
 | 200 fork, child exit and parent wait cycles | 4.96 (3.75–7.21) | 4.71 (4.48–6.57) |
-| BusyBox `seq 1 25000 | 2,898.01 (2,823.85–3,132.81) | 381.14 (378.13–401.26) |
+| BusyBox reverse-sort and SHA-256 pipeline, 25,000 lines | 2,898.01 (2,823.85–3,132.81) | 381.14 (378.13–401.26) |
 
 Values are medians, with the observed minimum and maximum in parentheses. The runner discarded one warm-up per engine, then alternated engine order over five measured runs each. Fork timings overlapped across runs.
 
 ## What was measured
 
-The host was an Apple M5 Pro with 64 GB of RAM, macOS 27.0.1 and Node 24.15.0. Each engine booted a fresh copy of the same 16 MiB ext2 disk from host RAM with one virtual CPU, a 128 MiB memory setting, networking disabled and its JIT enabled. The disk contained one static AArch64 musl PID 1 built with GCC 15.2.0 and Alpine’s AArch64 BusyBox 1.37.0-r30. The runner checked the pipeline digest against an independent host sort. [Guest workload](../../tests/wasm/workload.c) · [Runner](../../tests/wasm/compare.mjs)
+The host was an Apple M5 Pro with 64 GB of RAM, macOS 27.0.1 and Node 24.15.0. Each engine booted a fresh copy of the same 16 MiB ext2 disk from host RAM with one virtual CPU, a 128 MiB memory setting, networking disabled and its JIT enabled. The disk contained one static AArch64 musl PID 1 built with GCC 15.2.0 and Alpine’s AArch64 BusyBox 1.37.0-r30. The guest ran `seq 1 25000 | sort -r | sha256sum` with all three applets from that BusyBox build. The runner checked its digest against an independent host sort. [Guest workload](../../tests/wasm/workload.c) · [Runner](../../tests/wasm/compare.mjs)
 
 Boot timing starts immediately before kernel instantiation and ends when the host sees PID 1’s first output marker. Node startup, downloads, disk preparation and initial kernel module compilation happened before timing. The other rows use the guest monotonic clock. Syscall, file and process timings include the behavior of the respective Spore and Linux kernels.
 
