@@ -31,6 +31,8 @@ pub enum Op {
     ReadTls,
     WriteTls,
     ReadDczid,
+    Float,
+    FpControl,
     Vector,
     ClearExclusive,
     Hint,
@@ -71,13 +73,22 @@ pub fn classify(w: u32) -> Op {
     if w & 0xffffffe0 == 0xd53b00e0 {
         return Op::ReadDczid;
     }
-    if w & 0x1e000000 == 0x0e000000 || matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000) {
+    if w & 0x1e000000 == 0x0e000000
+        || w & 0xdf000000 == 0x5e000000
+        || matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000)
+    {
         return Op::Vector;
+    }
+    if w & 0x7f000000 == 0x1e000000 || w & 0xff000000 == 0x1f000000 {
+        return Op::Float;
+    }
+    if w & 0xffdfffc0 == 0xd51b4400 {
+        return Op::FpControl;
     }
     if w & 0xfffff0ff == 0xd503305f {
         return Op::ClearExclusive;
     }
-    if w == 0xd503201f || w == 0xd503245f || w & 0xfffff0ff == 0xd50330bf {
+    if w == 0xd503201f || w == 0xd503245f || w == 0xd50320ff || w & 0xfffff0ff == 0xd50330bf {
         return Op::Hint;
     }
     if (w >> 25) & 5 == 4 {

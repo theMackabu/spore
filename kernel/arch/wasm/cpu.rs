@@ -32,8 +32,8 @@ const _: () = assert!(std::mem::size_of::<Frame>() == 288);
 #[derive(Default)]
 pub struct Context {
     pub v: [u128; 32],
-    fpcr: u64,
-    fpsr: u64,
+    pub fpcr: u64,
+    pub fpsr: u64,
     tls: u64,
 }
 const _: () = assert!(std::mem::size_of::<Context>() == 544);
@@ -211,6 +211,24 @@ impl Cpu {
             }
             ReadDczid => {
                 self.set(rd, 16); // DCZID_EL0.DZP: DC ZVA unavailable.
+            }
+            Float => self.float(w)?,
+            FpControl => {
+                let status = w & 32 != 0;
+                if w & (1 << 21) != 0 {
+                    self.set(
+                        rd,
+                        if status {
+                            self.context.fpsr
+                        } else {
+                            self.context.fpcr
+                        },
+                    );
+                } else if status {
+                    self.context.fpsr = self.reg(rd) & 0xf800009f;
+                } else {
+                    self.context.fpcr = self.reg(rd) & 0x07c00000;
+                }
             }
             Vector => {
                 self.simd(w)?;

@@ -55,12 +55,18 @@ To boot a system, select only the root disk, click Run and send commands through
 ## Current scope
 
 One CPU runs guest threads with 64 MiB of guest RAM. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The interpreter handles a subset
-of A64 integer, branch, load/store, exclusive and SIMD instructions. It caches instruction
+of A64 integer, branch, load/store, exclusive, scalar floating-point and SIMD instructions. It caches instruction
 classes and address translations. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.
 
 Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Batch apps without console input see EOF. Full-system boots use Spore’s TTY. External networking and JIT workloads are still unsupported.
-Ant currently stops on an unsupported ARM64 instruction during startup. Claude Code is unverified.
+Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
+
+```sh
+./target/release/spore run --wasm ant -- -e 'console.log(6 * 7)'
+```
+
+Claude Code is unverified.
 
 `spore test wasm` builds an ordinary musl ELF and compares its output and exit status
 under QEMU and Wasm. It checks pthreads, futex wakeups, timer preemption, thread-local storage and appliance policy. It also exercises cross-page accesses, permission changes,

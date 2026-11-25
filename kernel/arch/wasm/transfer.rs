@@ -92,11 +92,65 @@ impl Cpu {
         Ok(())
     }
 
+    fn structure_lane(&mut self, w: u32, base: u64) -> Result<(), Fault> {
+        let q = (w >> 30) & 1;
+        let op = (w >> 14) & 3;
+        let size = (w >> 10) & 3;
+        let s = (w >> 12) & 1;
+        let load = w & (1 << 22) != 0;
+        let count = 1 + ((w >> 21) & 1) + ((w >> 12) & 2);
+        let m = (w >> 16) & 31;
+        let post = w & (1 << 23) != 0;
+        if !post && m != 0 {
+            return Err(Fault::Instruction(w));
+        }
+        let index = (q << 3) | (s << 2) | size;
+        let (bytes, lane) = match op {
+            0 => (1, index),
+            1 if size & 1 == 0 => (2, index >> 1),
+            2 if size == 0 => (4, index >> 2),
+            2 if size == 1 && s == 0 => (8, q),
+            3 if load && s == 0 => (1 << size, 0),
+            _ => return Err(Fault::Instruction(w)),
+        };
+        let width = bytes * 8;
+        let mask = (1u128 << width) - 1;
+        let shift = lane * width;
+        for r in 0..count {
+            let reg = ((w + r) & 31) as usize;
+            let addr = base.wrapping_add((r * bytes) as u64);
+            let prior = self.context.v[reg];
+            if load {
+                let val = self.memory.load(addr, bytes as usize)?;
+                self.context.v[reg] = if op == 3 {
+                    (val * (u128::MAX / mask)) & if q != 0 { u128::MAX } else { u64::MAX as u128 }
+                } else {
+                    (prior & !(mask << shift)) | (val << shift)
+                };
+            } else {
+                self.reservation = None;
+                self.memory.store(addr, bytes as usize, prior >> shift)?;
+            }
+        }
+        if post {
+            let delta = if m == 31 {
+                (count * bytes) as u64
+            } else {
+                self.reg(m)
+            };
+            self.set_base((w >> 5) & 31, base.wrapping_add(delta));
+        }
+        Ok(())
+    }
+
     pub fn transfer(&mut self, w: u32) -> Result<(), Fault> {
         let (t, n) = (w & 31, (w >> 5) & 31);
         let base = self.base(n);
         if n == 31 && base & 15 != 0 {
             return Err(Fault::Alignment(base));
+        }
+        if w & 0xbf000000 == 0x0d000000 {
+            return self.structure_lane(w, base);
         }
         if w & 0xbf200000 == 0x0c000000 {
             return self.structure(w, base);

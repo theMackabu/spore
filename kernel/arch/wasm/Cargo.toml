@@ -11,3 +11,6 @@ crate-type = ["cdylib", "rlib"]
 [build-dependencies]
 cc = { version = "1", features = ["parallel"] }
 spore-build = { path = "../../../tools/build" }
+
+[target.wasm32-unknown-unknown.dependencies]
+rustc_apfloat = "0.2.3"

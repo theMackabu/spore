@@ -5,6 +5,8 @@ mod cpu;
 #[cfg(target_arch = "wasm32")]
 mod decode;
 #[cfg(target_arch = "wasm32")]
+mod float;
+#[cfg(target_arch = "wasm32")]
 mod machine;
 #[cfg(target_arch = "wasm32")]
 mod memory;

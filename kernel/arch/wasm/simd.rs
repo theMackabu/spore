@@ -17,6 +17,9 @@ impl Cpu {
         let mask = (1u128 << width) - 1;
         let lane = |v: u128, i: u32| (v >> (width * i)) & mask;
         let mut out = 0;
+        if w & 0x8fbffc00 == 0x0e21d800 {
+            return self.convert_lanes(w);
+        }
         if w & 0xfffffc00 == 0x1e260000 {
             self.set(d as u32, a as u32 as u64);
             return Ok(());
@@ -79,45 +82,83 @@ impl Cpu {
                 };
                 out |= ((value << (imm - width)) & ((1 << (2 * width)) - 1)) << (lane * 2 * width);
             }
-        } else if w & 0xbff8fc00 == 0x2f00e400 {
-            let imm = ((w >> 16) & 7) << 5 | (w >> 5) & 31;
-            let mut elem = 0u64;
-            for byte in 0..8 {
-                if imm & (1 << byte) != 0 {
-                    elem |= 0xff << (byte * 8);
+        } else if w & 0x9ff80c00 == 0x0f000400 {
+            let imm = u64::from(((w >> 16) & 7) << 5 | (w >> 5) & 31);
+            let mode = (w >> 12) & 15;
+            let invert = w & (1 << 29) != 0;
+            out = match mode {
+                0..=7 => splat(imm << (8 * (mode / 2)), 32),
+                8..=11 => splat(imm << (8 * ((mode - 8) / 2)), 16),
+                12 => splat((imm << 8) | 255, 32),
+                13 => splat((imm << 16) | 65535, 32),
+                14 if !invert => splat(imm, 8),
+                14 => {
+                    let mut pattern = 0;
+                    for byte in 0..8 {
+                        if imm & (1 << byte) != 0 {
+                            pattern |= 255 << (8 * byte);
+                        }
+                    }
+                    splat(pattern, 64)
                 }
-            }
-            out = if w & (1 << 30) != 0 {
-                splat(elem, 64)
-            } else {
-                u128::from(elem)
+                15 if !invert || w & (1 << 30) != 0 => splat(
+                    super::float::expand_immediate(imm as u32, invert),
+                    if invert { 64 } else { 32 },
+                ),
+                _ => return Err(Fault::Instruction(w)),
             };
-        } else if w & 0xbff8fc00 == 0x0f00e400 {
-            let imm = ((w >> 16) & 7) << 5 | (w >> 5) & 31;
-            out = splat(imm as u64, 8);
-            if w & (1 << 30) == 0 {
-                out &= u64::MAX as u128;
-            }
-        } else if w & 0x9ff89c00 == 0x0f000400 {
-            let imm = ((w >> 16) & 7) << 5 | (w >> 5) & 31;
-            out = splat((imm as u64) << (((w >> 13) & 3) * 8), 32);
-            if w & (1 << 29) != 0 {
+            if invert && mode < 14 {
                 out = !out;
             }
+            if mode < 12 && mode & 1 != 0 {
+                out = if invert {
+                    self.context.v[d] & out
+                } else {
+                    self.context.v[d] | out
+                };
+            }
             if w & (1 << 30) == 0 {
                 out &= u64::MAX as u128;
             }
-        } else if w & 0xff20fc00 == 0x4e208400 || w & 0xff20fc00 == 0x6e208c00 {
-            for i in 0..lanes {
+        } else if matches!(
+            w & 0x9f20fc00,
+            0x0e208400 | 0x0e208c00 | 0x0e203400 | 0x0e203c00
+        ) {
+            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            if width == 64 && count == 1 {
+                return Err(Fault::Instruction(w));
+            }
+            let u = w & (1 << 29) != 0;
+            for i in 0..count {
                 let x = lane(a, i);
                 let y = lane(b, i);
-                let value = if w >> 29 & 1 != 0 {
-                    if x == y { mask } else { 0 }
-                } else {
-                    (x + y) & mask
+                let v = match w & 0xfc00 {
+                    0x8400 if u => x.wrapping_sub(y) & mask,
+                    0x8400 => (x + y) & mask,
+                    0x8c00 => {
+                        if (u && x == y) || (!u && x & y != 0) {
+                            mask
+                        } else {
+                            0
+                        }
+                    }
+                    _ => {
+                        let sign = if u { 0 } else { 1u128 << (width - 1) };
+                        if (x ^ sign) > (y ^ sign) || (x == y && w & 0x800 != 0) {
+                            mask
+                        } else {
+                            0
+                        }
+                    }
                 };
-                out |= value << (i * width);
+                out |= v << (i * width);
             }
+        } else if w & 0xbf3ffc00 == 0x0e31b800 {
+            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            if width >= 64 || count < 4 {
+                return Err(Fault::Instruction(w));
+            }
+            out = (0..count).map(|i| lane(a, i)).sum::<u128>() & mask;
         } else if w & 0x9f20fc00 == 0x0e201c00 {
             let old = self.context.v[d];
             out = match ((w >> 27) & 4) | ((w >> 22) & 3) {
@@ -134,11 +175,18 @@ impl Cpu {
                 out &= u64::MAX as u128;
             }
         } else if matches!(
-            w & 0xbf3ffc00,
+            w & 0xaf3ffc00,
             0x0e208800 | 0x2e208800 | 0x0e209800 | 0x2e209800 | 0x0e20a800
         ) {
-            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
-            if width == 64 && count == 1 {
+            let scalar = w & (1 << 28) != 0;
+            let count = if scalar {
+                1
+            } else if w & (1 << 30) != 0 {
+                lanes
+            } else {
+                lanes / 2
+            };
+            if scalar != (width == 64 && count == 1) {
                 return Err(Fault::Instruction(w));
             }
             for i in 0..count {
@@ -155,10 +203,50 @@ impl Cpu {
                     out |= mask << (i * width);
                 }
             }
-        } else if w & 0xff20bc00 == 0x4e003800 {
-            let start = if w & 0x4000 != 0 { lanes / 2 } else { 0 };
+        } else if w & 0xbf3ffc00 == 0x0e212800 && width < 64 {
             for i in 0..lanes / 2 {
-                out |= (lane(a, start + i) | lane(b, start + i) << width) << (2 * i * width);
+                out |= ((a >> (i * width * 2)) & mask) << (i * width);
+            }
+            if w & (1 << 30) != 0 {
+                out = (out << 64) | (self.context.v[d] & u64::MAX as u128);
+            }
+        } else if matches!(w & 0xbf20bc00, 0x0e003800 | 0x0e001800 | 0x0e002800) {
+            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            if count < 2 {
+                return Err(Fault::Instruction(w));
+            }
+            let part = (w >> 14) & 1;
+            for i in 0..count / 2 {
+                match (w >> 12) & 3 {
+                    1 => {
+                        out |= lane(a, 2 * i + part) << (i * width);
+                        out |= lane(b, 2 * i + part) << ((count / 2 + i) * width);
+                    }
+                    op => {
+                        let j = if op == 2 {
+                            2 * i + part
+                        } else {
+                            part * count / 2 + i
+                        };
+                        out |= (lane(a, j) | lane(b, j) << width) << (2 * i * width);
+                    }
+                }
+            }
+        } else if w & 0xbffffc00 == 0x0e205800 {
+            out = u128::from_le_bytes(a.to_le_bytes().map(|b| b.count_ones() as u8));
+            if w & (1 << 30) == 0 {
+                out &= u64::MAX as u128;
+            }
+        } else if w & 0xbfe08400 == 0x2e000000 {
+            let bytes = if w & (1 << 30) != 0 { 16 } else { 8 };
+            let start = (w >> 11) & 15;
+            if start >= bytes {
+                return Err(Fault::Instruction(w));
+            }
+            for i in 0..bytes {
+                let j = start + i;
+                let src = if j < bytes { a } else { b };
+                out |= ((src >> (8 * (j % bytes))) & 255) << (8 * i);
             }
         } else if w & 0xffe0fc00 == 0x4e000000 {
             let table = a.to_le_bytes();
