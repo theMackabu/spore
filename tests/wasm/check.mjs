@@ -58,6 +58,17 @@ try {
       exec(spore, [...args, "/data/missing"], 2);
       exec(spore, ["run", ...backend, cpu, "--", "ok"], 42);
     }
+    const threads = path.join(dir, "threads");
+    const probe = path.join(dir, "probe");
+    for (const [src, out] of [["threads.c", threads], ["../appliance/probe.c", probe]]) {
+      exec("aarch64-unknown-linux-musl-gcc", ["-static", "-pthread", "-O2", path.join(sources, src), "-o", out]);
+    }
+    for (const backend of [[], ["--wasm"]]) {
+      exec(spore, ["run", ...backend, threads], 42);
+      exec(spore, ["run", ...backend, probe, "--exec", "/app/server", "--argv0", "custom name",
+        "--cwd", "/work", "--env", "CHECK=a=b", "--file", path.join(tree, "hello.txt") + "=/work/message",
+        "--", "two words", ""], 42);
+    }
     const dynamic = path.join(dir, "read-dynamic");
     exec("aarch64-unknown-linux-musl-gcc", ["-O2", path.join(sources, "read.c"), "-o", dynamic]);
     const assets = ["--cwd", "/work", "--file", path.join(tree, "hello.txt") + "=/work/message"];
@@ -83,7 +94,7 @@ try {
     }
     await assert.rejects(run(kernel, new Uint8Array(64)), /boot error/);
     console.log(
-      "Wasm and QEMU agree on file contents, missing-file handling and exit status. Wasm fault checks passed.",
+      "Wasm and QEMU passed file, thread, timer and app contract checks. Wasm fault checks passed.",
     );
   }
 } finally {

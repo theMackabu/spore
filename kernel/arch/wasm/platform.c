@@ -1,5 +1,5 @@
 #include "arch/platform.h"
-#include "abi/linux/shared/dispatch.h"
+#include "abi/linux/aarch64/syscall.h"
 #include "abi/linux/shared/numbers.h"
 #include "abi/linux/shared/usercopy.h"
 #include "arch/aarch64/mmu.h"
@@ -40,7 +40,8 @@ static struct thread *current;
 static uint64_t payload_size;
 static uint8_t output[4096];
 static unsigned channel = 1, buffered;
-static struct arch_thread_context context;
+static struct arch_thread_context *active_context;
+static bool idle;
 
 static void wasm_flush(void) {
   if (buffered) {
@@ -109,18 +110,15 @@ void smp_clear_current_thread_if(uint32_t cpu, void *t) {
 }
 bool smp_scheduler_waiting(uint32_t cpu) {
   (void)cpu;
-  return false;
+  return idle;
 }
 void smp_set_scheduler_waiting(uint32_t cpu, bool waiting) {
   (void)cpu;
-  (void)waiting;
+  idle = waiting;
 }
 void smp_kernel_lock(void) {}
 void smp_kernel_unlock(void) {}
 void smp_notify(void) {}
-void smp_wait_for_irq(void) {
-  boot_fail(BOOT_INIT_FAILED, "blocking wait on single-thread Wasm backend");
-}
 
 void aarch64_publish_table(uint64_t *slot, uint64_t entry) {
   *slot = entry;
@@ -138,10 +136,10 @@ void vmm_install_user(const struct user_address_space *as) {
 }
 
 void arch_save_context(struct arch_thread_context *out) {
-  *out = context;
+  *out = *active_context;
 }
 void arch_restore_context(const struct arch_thread_context *in) {
-  context = *in;
+  *active_context = *in;
 }
 
 bool virtio_console_ready(void) {
@@ -248,6 +246,10 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   if (first.as.freebsd_abi) { boot_fail(BOOT_INVALID_PAYLOAD, "expected a Linux ELF"); }
   boot_activate_process(&first);
   syscall_set_address_space(cell_current_as());
+  struct vfs_node null;
+  if (!vfs_lookup("/dev/null", &null) || cell_fd_close(0) || cell_fd_open_node(&null, 0, "/dev/null", "/dev/null", NULL) != 0) {
+    boot_fail(BOOT_INIT_FAILED, "cannot initialize stdin");
+  }
   cell_tty_set_oflag(0);
   return &current->tf;
 }
@@ -262,55 +264,24 @@ void *wasm_translate(uint64_t page, enum vmm_access access) {
   return pa ? pmm_phys_to_virt(pa) : NULL;
 }
 
-void wasm_syscall(struct trap_frame *f) {
+bool wasm_syscall(struct trap_frame *f, struct arch_thread_context *context) {
+  active_context = context;
   uint64_t nr = f->x[8];
-  switch (nr) {
-  case SYS_READ:
-  case SYS_WRITE:
-    if (f->x[2] > INT32_MAX) {
-      f->x[0] = -22;
-      return;
-    }
-    if (nr == SYS_READ) {
-      struct open_file *file = cell_file_at(current->domain, f->x[0]);
-      if (file && file->type == OPEN_STDIN) {
-        f->x[0] = 0;
-        return;
-      }
-    }
-    break;
-  case SYS_OPENAT:
-  case SYS_CLOSE:
-  case SYS_EXIT:
-  case SYS_EXIT_GROUP:
-  case SYS_BRK:
-  case SYS_MMAP:
-  case SYS_MUNMAP:
-  case SYS_MPROTECT:
-  case SYS_NEWFSTATAT:
-  case SYS_FSTAT:
-  case SYS_STATX:
-  case SYS_LSEEK:
-  case SYS_GETDENTS64:
-  case SYS_READLINKAT:
-  case SYS_GETCWD:
-  case SYS_WRITEV:
-  case SYS_SET_TID_ADDRESS:
-  case SYS_GETPID:
-  case SYS_GETTID:
-  case SYS_UNAME:
-  case SYS_GETUID:
-  case SYS_GETEUID:
-  case SYS_GETGID:
-  case SYS_GETEGID:
-    break;
-  default:
-    f->x[0] = -38;
-    return;
-  }
   channel = (nr == SYS_WRITE || nr == SYS_WRITEV) && f->x[0] == 2 ? 2 : 1;
-  f->x[0] = linux_dispatch(f, nr, f->x);
+  linux_aarch64_syscall(f);
   wasm_flush();
+  active_context = NULL;
+  return idle;
+}
+
+bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsigned ticks) {
+  active_context = context;
+  while (ticks--) {
+    cell_timer_tick(f, !idle);
+    if (idle) { cell_resume_scheduler(f); }
+  }
+  active_context = NULL;
+  return idle;
 }
 
 size_t proc_cpuinfo_text(char *out, size_t cap) {

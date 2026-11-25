@@ -27,6 +27,7 @@ fn main() {
         );
     cc.files(spore_build::kernel_runtime_sources(kernel));
     for file in [
+        "abi/linux/aarch64/syscall.c",
         "abi/freebsd/dispatch.c",
         "abi/freebsd/aarch64/syscall.c",
         "init/process.c",

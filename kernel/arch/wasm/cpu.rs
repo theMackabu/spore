@@ -28,17 +28,28 @@ pub struct Frame {
 }
 const _: () = assert!(std::mem::size_of::<Frame>() == 288);
 
+#[repr(C, align(16))]
+#[derive(Default)]
+pub struct Context {
+    pub v: [u128; 32],
+    fpcr: u64,
+    fpsr: u64,
+    tls: u64,
+}
+const _: () = assert!(std::mem::size_of::<Context>() == 544);
+
 pub struct Cpu {
     pub f: Frame,
-    pub v: [u128; 32],
+    pub context: Context,
+    pub idle: bool,
     pub memory: Memory,
-    tls: u64,
     decoded: [(u32, super::decode::Op); 256],
     pub reservation: Option<(u64, usize)>,
 }
 
 unsafe extern "C" {
-    fn wasm_syscall(f: &mut Frame);
+    fn wasm_syscall(f: &mut Frame, context: &mut Context) -> bool;
+    fn wasm_timer(f: &mut Frame, context: &mut Context, ticks: u32) -> bool;
 }
 pub fn sx(value: u64, bits: u32) -> u64 {
     (((value << (64 - bits)) as i64) >> (64 - bits)) as u64
@@ -48,9 +59,9 @@ impl Cpu {
     pub fn new(f: Frame) -> Self {
         Self {
             f,
-            v: [0; 32],
+            context: Context::default(),
             memory: Memory::new(),
-            tls: 0,
+            idle: false,
             decoded: [(0, super::decode::Op::Unknown); 256],
             reservation: None,
         }
@@ -93,6 +104,12 @@ impl Cpu {
             _ => return true,
         };
         yes ^ (c & 1 != 0)
+    }
+
+    pub fn tick(&mut self, ticks: u32) {
+        self.memory.invalidate();
+        self.reservation = None;
+        self.idle = unsafe { wasm_timer(&mut self.f, &mut self.context, ticks) };
     }
 
     pub fn step(&mut self) -> Result<(), Fault> {
@@ -154,14 +171,14 @@ impl Cpu {
                 self.memory.invalidate();
                 self.reservation = None;
                 self.f.pc = next;
-                unsafe { wasm_syscall(&mut self.f) };
+                self.idle = unsafe { wasm_syscall(&mut self.f, &mut self.context) };
                 return Ok(());
             }
             ReadTls => {
-                self.set(rd, self.tls);
+                self.set(rd, self.context.tls);
             }
             WriteTls => {
-                self.tls = self.reg(rd);
+                self.context.tls = self.reg(rd);
             }
             ReadDczid => {
                 self.set(rd, 16); // DCZID_EL0.DZP: DC ZVA unavailable.

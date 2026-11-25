@@ -152,6 +152,9 @@ int cell_block_current_on_socket_msg_timeout(int fd, uint64_t msg_addr, uint64_t
 void cell_save_current(const struct trap_frame *frame);
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el);
 void cell_schedule(struct trap_frame *frame);
+#ifdef __wasm__
+void cell_resume_scheduler(struct trap_frame *frame);
+#endif
 int cell_sleep_current(uint64_t timeout_ticks, struct trap_frame *frame);
 struct thread *cell_current_thread_internal(void);
 struct thread *cell_thread_slot(size_t index);

@@ -195,12 +195,11 @@ static void cleanup_reaped_current_domain(struct domain *old_domain, struct thre
   cell_destroy_domain(old_domain);
 }
 
-void cell_schedule(struct trap_frame *frame) {
+static void schedule(struct trap_frame *frame, bool saved) {
   uint32_t cpu = smp_current_cpu();
   struct thread *current_thread = cell_current_thread_internal();
   struct domain *old_domain = current_thread == NULL ? NULL : current_thread->domain;
   size_t start = current_thread == NULL ? 0 : (size_t)(current_thread - threads) + 1;
-  bool saved = false;
   for (;;) {
     bool pending = false;
     size_t slot = start;
@@ -228,14 +227,29 @@ void cell_schedule(struct trap_frame *frame) {
       saved = true;
     }
     smp_set_scheduler_waiting(cpu, true);
+#ifdef __wasm__
+    return;
+#else
     smp_kernel_unlock();
     smp_wait_for_irq();
     smp_kernel_lock();
     smp_set_scheduler_waiting(cpu, false);
+#endif
   }
   kprintf("[kernel] no runnable threads\n");
   arch_poweroff();
 }
+
+void cell_schedule(struct trap_frame *frame) {
+  schedule(frame, false);
+}
+
+#ifdef __wasm__
+void cell_resume_scheduler(struct trap_frame *frame) {
+  smp_set_scheduler_waiting(smp_current_cpu(), false);
+  schedule(frame, true);
+}
+#endif
 
 void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
   uint32_t cpu = smp_current_cpu();

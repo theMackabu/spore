@@ -45,17 +45,15 @@ Stop terminates the worker. Browsers and Node can also import [the launcher](../
 
 ## Current scope
 
-One CPU and one thread run with 64 MiB of guest RAM. The interpreter handles a subset
+One CPU runs guest threads with 64 MiB of guest RAM. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The interpreter handles a subset
 of A64 integer, branch, load/store, exclusive and SIMD instructions. It caches instruction
 classes and address translations. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.
 
-File I/O, directory listing, `uname` and private memory mappings are available.
-The initial stdin is at EOF. Process creation, signal delivery,
-networking, interactive terminals and JIT compilation are outside this first port.
+Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. The initial stdin is at EOF. Networking, interactive terminals and JIT workloads remain unverified.
 Ant currently stops on an unsupported ARM64 instruction during startup. Claude Code is unverified.
 
 `spore test wasm` builds an ordinary musl ELF and compares its output and exit status
-under QEMU and Wasm. It also exercises cross-page accesses, permission changes,
+under QEMU and Wasm. It checks pthreads, futex wakeups, timer preemption, thread-local storage and appliance policy. It also exercises cross-page accesses, permission changes,
 unsupported instructions and the execution budget. `spore bench wasm` times an ARM64
 integer loop using Node with an already compiled module and a fresh instance per run.

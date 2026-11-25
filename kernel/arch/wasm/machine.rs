@@ -52,18 +52,24 @@ pub extern "C" fn start(size: usize, disk: bool, epoch: u64) -> bool {
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn run_slice(budget: u32) -> bool {
+pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
     CPU.with_borrow_mut(|state| {
         let Some(cpu) = state else {
-            return false;
+            return -1;
         };
-        for _ in 0..budget {
+        if ticks != 0 {
+            cpu.tick(ticks);
+        }
+        for retired in 0..budget {
+            if cpu.idle {
+                return retired as i32;
+            }
             if let Err(error) = cpu.step() {
                 let message = error.to_string();
                 unsafe { fault(cpu.f.pc, message.as_ptr(), message.len()) };
-                return false;
+                return -1;
             }
         }
-        true
+        budget as i32
     })
 }

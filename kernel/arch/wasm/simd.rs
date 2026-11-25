@@ -10,8 +10,8 @@ impl Cpu {
         let d = (w & 31) as usize;
         let n = (w >> 5) & 31;
         let m = (w >> 16) & 31;
-        let a = self.v[n as usize];
-        let b = self.v[m as usize];
+        let a = self.context.v[n as usize];
+        let b = self.context.v[m as usize];
         let width = 8 << ((w >> 22) & 3);
         let lanes = 128 / width;
         let mask = (1u128 << width) - 1;
@@ -87,7 +87,7 @@ impl Cpu {
         } else {
             return Err(Fault::Instruction(w));
         }
-        self.v[d] = out;
+        self.context.v[d] = out;
         Ok(())
     }
 }

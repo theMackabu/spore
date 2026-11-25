@@ -61,14 +61,20 @@ export async function run(
       throw new Error("invalid ELF input");
     }
     let remaining = instructionLimit;
+    let nextTick = performance.now() + 10;
     let yieldAt = performance.now() + 8;
     while (remaining > 0) {
       signal?.throwIfAborted();
       const count = Math.min(remaining, 100_000);
-      if (!guest.run_slice(count)) throw new Error("CPU stopped without a guest result");
-      remaining -= count;
-      if (remaining && performance.now() >= yieldAt) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      const now = performance.now();
+      const ticks = Math.min(64, Math.max(0, Math.floor((now - nextTick) / 10) + 1));
+      nextTick += ticks * 10;
+      const retired = guest.run_slice(count, ticks);
+      if (retired < 0) throw new Error("CPU stopped without a guest result");
+      remaining -= retired;
+      if (retired < count || (remaining && performance.now() >= yieldAt)) {
+        const delay = retired < count ? Math.max(0, nextTick - performance.now()) : 0;
+        await new Promise((resolve) => setTimeout(resolve, delay));
         yieldAt = performance.now() + 8;
       }
     }

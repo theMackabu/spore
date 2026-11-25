@@ -13,7 +13,7 @@ impl Cpu {
         if load {
             let v = self.memory.load(addr, size)?;
             if vector {
-                self.v[reg as usize] = v;
+                self.context.v[reg as usize] = v;
             } else {
                 let mut v = v as u64;
                 if sign_bits != 0 {
@@ -26,7 +26,7 @@ impl Cpu {
             }
         } else {
             let v = if vector {
-                self.v[reg as usize]
+                self.context.v[reg as usize]
             } else {
                 self.reg(reg) as u128
             };
