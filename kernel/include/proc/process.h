@@ -9,6 +9,7 @@ struct user_address_space;
 struct vma_list;
 
 void cell_reparent_children(struct domain *parent, int exiting_tid, int survivor_tid);
+void cell_reap_namespace_orphan(struct domain *child);
 void cell_wake_parent_of(struct domain *child);
 void cell_exit_thread_current(int status, struct trap_frame *frame);
 void cell_exit_group_current(int status, struct trap_frame *frame);

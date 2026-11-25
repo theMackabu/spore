@@ -275,6 +275,11 @@ void cell_reparent_children(struct domain *parent, int exiting_tid, int survivor
     if (!child->used || child->parent_id != parent->id || (exiting_tid && child->parent_tid != exiting_tid)) {
       continue;
     }
+    if (!survivor_tid && pidns_has_dead_parent(parent) && pidns_has_dead_parent(child)) {
+      child->parent_id = child->parent_tid = 0;
+      cell_reap_namespace_orphan(child);
+      continue;
+    }
     child->parent_id = adopt_pid;
     child->parent_tid = adopt_tid;
     if (!survivor_tid) { child->exit_signal = SIGCHLD; }

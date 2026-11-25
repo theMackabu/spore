@@ -17,6 +17,11 @@ static bool domain_has_running_thread(const struct domain *domain) {
   return false;
 }
 
+void cell_reap_namespace_orphan(struct domain *child) {
+  if (child->used && child->zombie && !child->parent_id && pidns_active(child) &&
+      child != cell_current_domain_internal() && !domain_has_running_thread(child)) { cell_destroy_domain(child); }
+}
+
 static bool matches(const struct domain *child, const struct domain *parent, int pid) {
   if (!child->used || child->parent_id != parent->id) { return false; }
   if (pid > 0) { return pidns_local(pidns_active(parent), child->id) == pid; }
@@ -51,6 +56,7 @@ static int wait_result(struct domain *parent, int pid, uint64_t status_addr, uin
 
 void cell_wake_parent_of(struct domain *child) {
   cell_wake_vfork_parent_of(child->id);
+  if (!child->parent_id) { cell_reap_namespace_orphan(child); return; }
   int parent_id = child->parent_id;
   int signal = child->exit_signal;
   struct domain *parent = cell_find_domain(parent_id);
