@@ -145,6 +145,39 @@ impl Cpu {
 
     pub fn transfer(&mut self, w: u32) -> Result<(), Fault> {
         let (t, n) = (w & 31, (w >> 5) & 31);
+        if w & 0x3b000000 == 0x18000000 {
+            let op = w >> 30;
+            let vector = w & (1 << 26) != 0;
+            if op == 3 {
+                return if vector {
+                    Err(Fault::Instruction(w))
+                } else {
+                    Ok(())
+                };
+            }
+            let size = if vector {
+                4 << op
+            } else if op == 1 {
+                8
+            } else {
+                4
+            };
+            let addr = self
+                .f
+                .pc
+                .wrapping_add(sx(u64::from((w >> 5) & 0x7ffff), 19) << 2);
+            return self.transfer_one(
+                t,
+                addr,
+                size,
+                true,
+                vector,
+                if !vector && op == 2 { 64 } else { 0 },
+            );
+        }
+        if w & 0xffc00000 == 0xf9800000 || matches!(w & 0xffe00c00, 0xf8800000 | 0xf8a00800) {
+            return Ok(());
+        }
         let base = self.base(n);
         if n == 31 && base & 15 != 0 {
             return Err(Fault::Alignment(base));
@@ -218,10 +251,10 @@ impl Cpu {
             ext << (if w & (1 << 12) != 0 { log_size } else { 0 })
         } else {
             let mode = (w >> 10) & 3;
-            if mode == 2 {
+            if mode == 2 && vector {
                 return Err(Fault::Instruction(w));
             }
-            writeback = mode != 0;
+            writeback = mode & 1 != 0;
             post = mode == 1;
             sx(((w >> 12) & 511) as u64, 9)
         };

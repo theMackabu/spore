@@ -228,6 +228,7 @@ impl Cpu {
             Crc => self.crc(w)?,
             Crypto => self.crypto(w)?,
             Float => self.float(w)?,
+            VectorFloat => self.vector_float(w)?,
             Vector => {
                 self.simd(w)?;
             }

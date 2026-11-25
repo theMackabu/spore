@@ -21,7 +21,7 @@ impl Cpu {
             return self.convert_lanes(w);
         }
         if w & 0xfffffc00 == 0x9eae0000 {
-            self.set(d as u32,(a >> 64) as u64);
+            self.set(d as u32, (a >> 64) as u64);
             return Ok(());
         } else if w & 0xfffffc00 == 0x9eaf0000 {
             out = (self.context.v[d] & u64::MAX as u128) | (u128::from(self.reg(n)) << 64);
@@ -36,7 +36,7 @@ impl Cpu {
             self.set(d as u32, a as u64);
             return Ok(());
         } else if w & 0xffe0fc00 == 0x4e001c00
-            || w & 0xbfe0fc00 == 0x0e003c00
+            || matches!(w & 0xbfe0fc00, 0x0e003c00 | 0x0e002c00)
             || w & 0xffe08400 == 0x6e000400
         {
             let imm = (w >> 16) & 31;
@@ -47,6 +47,15 @@ impl Cpu {
             let width = 8 << size;
             let shift = (imm >> (size + 1)) * width;
             let mask = (1u128 << width) - 1;
+            if w & 0xbfe0fc00 == 0x0e002c00 {
+                let wide = w & (1 << 30) != 0;
+                if width >= (if wide { 64 } else { 32 }) {
+                    return Err(Fault::Instruction(w));
+                }
+                let value = super::cpu::sx((a >> shift) as u64, width);
+                self.set(d as u32, if wide { value } else { value as u32 as u64 });
+                return Ok(());
+            }
             if w & 0xbfe0fc00 == 0x0e003c00 {
                 if (width == 64) != (w & (1 << 30) != 0) {
                     return Err(Fault::Instruction(w));
@@ -84,12 +93,18 @@ impl Cpu {
                     out &= u64::MAX as u128;
                 }
             }
-        } else if w & 0xfff0fc00 == 0x4e000c00 {
+        } else if w & 0xbff0fc00 == 0x0e000c00 {
             let size = (w >> 16) & 15;
             if !size.is_power_of_two() {
                 return Err(Fault::Instruction(w));
             }
             out = splat(self.reg(n), 8 * size);
+            if w & (1 << 30) == 0 {
+                if size == 8 {
+                    return Err(Fault::Instruction(w));
+                }
+                out &= u64::MAX as u128;
+            }
         } else if w & 0x8f800400 == 0x0f000400
             && w & 0x00780000 != 0
             && matches!((w >> 11) & 31, 0 | 2 | 4 | 6 | 8 | 10)
@@ -98,7 +113,11 @@ impl Cpu {
             let bits = 1 << imm.ilog2();
             let u = w & (1 << 29) != 0;
             let scalar = w & (1 << 28) != 0;
-            let count = if scalar { 1 } else { (if w & (1 << 30) != 0 { 128 } else { 64 }) / bits };
+            let count = if scalar {
+                1
+            } else {
+                (if w & (1 << 30) != 0 { 128 } else { 64 }) / bits
+            };
             if scalar && bits != 64 || !scalar && count == 1 {
                 return Err(Fault::Instruction(w));
             }
@@ -149,7 +168,7 @@ impl Cpu {
             if w & (1 << 30) != 0 {
                 out = (out << 64) | (self.context.v[d] & u64::MAX as u128);
             }
-        } else if w & 0x9f80fc00 == 0x0f00a400 {
+        } else if w & 0x9f80fc00 == 0x0f00a400 && w & 0x00780000 != 0 {
             let imm = (w >> 16) & 127;
             if !(8..64).contains(&imm) {
                 return Err(Fault::Instruction(w));
@@ -209,7 +228,13 @@ impl Cpu {
             0x0e208400 | 0x0e208c00 | 0x0e203400 | 0x0e203c00
         ) {
             let scalar = w & (1 << 28) != 0;
-            let count = if scalar { 1 } else if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            let count = if scalar {
+                1
+            } else if w & (1 << 30) != 0 {
+                lanes
+            } else {
+                lanes / 2
+            };
             if scalar != (width == 64 && count == 1) {
                 return Err(Fault::Instruction(w));
             }
@@ -237,6 +262,48 @@ impl Cpu {
                     }
                 };
                 out |= v << (i * width);
+            }
+        } else if matches!(w & 0x8f20fc00, 0x0e204400 | 0x0e205400) {
+            let scalar = w & (1 << 28) != 0;
+            let count = if scalar {
+                1
+            } else if w & (1 << 30) != 0 {
+                lanes
+            } else {
+                lanes / 2
+            };
+            if scalar != (count == 1 && width == 64) {
+                return Err(Fault::Instruction(w));
+            }
+            let signed = w & (1 << 29) == 0;
+            for i in 0..count {
+                let x = lane(a, i);
+                let shift = lane(b, i) as i8 as i16;
+                let y = if shift >= 0 {
+                    if shift as u32 >= width { 0 } else { x << shift }
+                } else {
+                    let amount = (-shift) as u32;
+                    let v = if signed {
+                        ((x << (128 - width)) as i128) >> (128 - width)
+                    } else {
+                        x as i128
+                    };
+                    if amount > width {
+                        if signed && v < 0 && w & 0x1000 == 0 {
+                            mask
+                        } else {
+                            0
+                        }
+                    } else {
+                        let round = if w & 0x1000 == 0 {
+                            0
+                        } else {
+                            1 << (amount - 1)
+                        };
+                        ((v + round) >> amount) as u128
+                    }
+                };
+                out |= (y & mask) << (i * width);
             }
         } else if w & 0x9f20fc00 == 0x0e209400 || w & 0xbf20fc00 == 0x0e209c00 {
             if width == 64 {
@@ -378,13 +445,44 @@ impl Cpu {
                     }
                 }
             }
+        } else if w & 0x9fbffc00 == 0x0ea0f800 {
+            let bits = if w & (1 << 22) == 0 { 32 } else { 64 };
+            if bits == 64 && w & (1 << 30) == 0 {
+                return Err(Fault::Instruction(w));
+            }
+            let signs = splat(1 << (bits - 1), bits);
+            out = if w & (1 << 29) == 0 {
+                a & !signs
+            } else {
+                a ^ signs
+            };
+            if w & (1 << 30) == 0 {
+                out &= u64::MAX as u128;
+            }
         } else if w & 0xfffffc00 == 0x5ef1b800 {
             out = (a as u64).wrapping_add((a >> 64) as u64) as u128;
         } else if matches!(w & 0xbf3ffc00, 0x0e200800 | 0x2e200800 | 0x0e201800) {
-            let block = match w & 0x20001000 { 0 => 64, 0x1000 => 16, _ => 32 };
-            if width >= block { return Err(Fault::Instruction(w)); }
+            let block = match w & 0x20001000 {
+                0 => 64,
+                0x1000 => 16,
+                _ => 32,
+            };
+            if width >= block {
+                return Err(Fault::Instruction(w));
+            }
             let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
-            for i in 0..count { out |= lane(a, i ^ (block/width-1)) << (i*width); }
+            for i in 0..count {
+                out |= lane(a, i ^ (block / width - 1)) << (i * width);
+            }
+        } else if w & 0xbfbffc00 == 0x2e205800 {
+            out = if w & (1 << 22) == 0 {
+                !a
+            } else {
+                u128::from_le_bytes(a.to_le_bytes().map(u8::reverse_bits))
+            };
+            if w & (1 << 30) == 0 {
+                out &= u64::MAX as u128;
+            }
         } else if w & 0xbffffc00 == 0x0e205800 {
             out = u128::from_le_bytes(a.to_le_bytes().map(|b| b.count_ones() as u8));
             if w & (1 << 30) == 0 {

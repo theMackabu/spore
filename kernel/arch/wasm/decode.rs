@@ -32,6 +32,7 @@ pub enum Op {
     CacheMaintenance,
     Float,
     Vector,
+    VectorFloat,
     Crypto,
     Crc,
     ClearExclusive,
@@ -97,6 +98,16 @@ pub fn classify(w: u32) -> Op {
         || matches!(w & 0xfffffc00, 0x5e280800 | 0x5e281800 | 0x5e282800)
     {
         return Op::Crypto;
+    }
+    if matches!(
+        w & 0xbfbffc00,
+        0x0e218800 | 0x0e219800 | 0x0ea18800 | 0x0ea19800 | 0x2e218800 | 0x2e219800 | 0x2ea19800
+    ) || matches!(
+        w & 0xbfa0fc00,
+        0x0e20d400 | 0x0ea0d400 | 0x2e20dc00 | 0x2e20fc00 | 0x0e20cc00 | 0x0ea0cc00
+    ) || matches!(w & 0xaf80f400, 0x0f801000 | 0x0f805000 | 0x0f809000)
+    {
+        return Op::VectorFloat;
     }
     if w & 0x1e000000 == 0x0e000000
         || w & 0xde000000 == 0x5e000000

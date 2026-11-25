@@ -77,7 +77,7 @@ Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 ./target/release/spore run --wasm ant -- -e 'console.log(6 * 7)'
 ```
 
-Claude Code is unverified.
+Bun 1.4.5 executes a JavaScript expression, and Claude Code 2.1.332 starts far enough to print its version with 512 MiB of guest RAM. Interactive Claude sessions have not been verified on Wasm.
 
 `spore test wasm-guest` boots the integration disk with the native suite’s UDP echo and console fixtures. `spore test wasm-shell` exercises the installed utilities, TLS, the compiler, shell and shutdown in a disposable full-userland boot.
 
