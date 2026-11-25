@@ -21,7 +21,7 @@ struct vfs_page_cache_entry {
 
 static struct object_pool entries;
 static struct vfs_page_cache_entry *pages[PAGE_BUCKETS], *files[FILE_BUCKETS];
-static struct vfs_page_cache_entry *oldest, *newest;
+static struct vfs_page_cache_entry *oldest, *newest, *reclaim_next;
 static struct vfs_page_cache_entry *dirty_files[FILE_BUCKETS];
 static struct vfs_page_cache_entry **dirty_tails[FILE_BUCKETS];
 
@@ -99,6 +99,7 @@ static void clear_entry(struct vfs_page_cache_entry *entry) {
   *slot = entry->hash_next;
   *entry->file_link = entry->file_next;
   if (entry->file_next) { entry->file_next->file_link = entry->file_link; }
+  if (reclaim_next == entry) { reclaim_next = entry->newer; }
   if (entry->older) { entry->older->newer = entry->newer; }
   else { oldest = entry->newer; }
   if (entry->newer) { entry->newer->older = entry->older; }
@@ -111,14 +112,13 @@ static void clear_entry(struct vfs_page_cache_entry *entry) {
 
 static size_t evict_pages(size_t count) {
   size_t freed = 0;
-  struct vfs_page_cache_entry *entry = oldest;
-  while (entry && freed < count) {
-    struct vfs_page_cache_entry *next = entry->newer;
+  for (size_t left = entries.count; left && oldest && freed < count; --left) {
+    struct vfs_page_cache_entry *entry = reclaim_next ? reclaim_next : oldest;
+    reclaim_next = entry->newer;
     if (!entry->dirty_link && pmm_is_last_ref(entry->mapped.pa)) {
       clear_entry(entry);
       ++freed;
     }
-    entry = next;
   }
   return freed;
 }
