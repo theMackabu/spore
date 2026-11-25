@@ -5,7 +5,10 @@
 #include "mm/pool.h"
 #include "mm/file_page.h"
 
-enum { CACHE_ENTRIES = 32768, PAGE_BUCKETS = 4096, FILE_BUCKETS = 256, VFS_READAHEAD_PAGES = 2 };
+enum {
+  MIN_CACHE_PAGES = 32768, MAX_CACHE_PAGES = 131072,
+  PAGE_BUCKETS = 4096, FILE_BUCKETS = 256, VFS_READAHEAD_PAGES = 2,
+};
 
 struct vfs_page_cache_entry {
   struct vmm_file_page mapped;
@@ -30,7 +33,10 @@ static size_t evict_pages(size_t count);
 
 void vfs_page_cache_configure(void) {
   if (!entries.limit) {
-    (void)pool_init(&entries, sizeof(struct vfs_page_cache_entry), CACHE_ENTRIES);
+    size_t limit = pmm_total_pages() / 16;
+    if (limit < MIN_CACHE_PAGES) { limit = MIN_CACHE_PAGES; }
+    if (limit > MAX_CACHE_PAGES) { limit = MAX_CACHE_PAGES; }
+    (void)pool_init(&entries, sizeof(struct vfs_page_cache_entry), limit);
     vmm_file_pages_init(mark_dirty);
     pmm_set_reclaimer(evict_pages);
   }
