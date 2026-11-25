@@ -119,6 +119,7 @@ pub struct Config {
     pub mode: String,
     pub image: OsString,
     pub root: Option<OsString>,
+    pub root_qcow: bool,
     pub vars: Option<OsString>,
     pub report: Option<OsString>,
     pub forwards: Vec<(u16, u16)>,
@@ -206,6 +207,7 @@ fn launch(config: Config) -> io::Result<i32> {
         mode,
         image,
         root,
+        root_qcow,
         vars,
         report,
         forwards,
@@ -293,7 +295,9 @@ fn launch(config: Config) -> io::Result<i32> {
         q.extend([
             "-drive".into(),
             drive(
-                if snap {
+                if root_qcow {
+                    "if=none,format=qcow2,id=sporeroot,file="
+                } else if snap {
                     "if=none,format=raw,id=sporeroot,snapshot=on,file="
                 } else {
                     "if=none,format=raw,id=sporeroot,file="

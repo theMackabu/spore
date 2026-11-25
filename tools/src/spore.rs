@@ -2,6 +2,7 @@ mod app_network;
 mod arch;
 mod image;
 mod runner;
+mod storage;
 mod system;
 
 use std::{
@@ -16,6 +17,8 @@ use std::{
 const HELP: &str = "\
 Usage:
   spore boot [--snapshot | --reset] [--root EXT2] [VM options]
+  spore upgrade [--from-base ORIGINAL_EXT2]   Upgrade the installed userland
+  spore rollback                      Select the previous installation
   spore boot SYSTEM_IMAGE --root EXT2 [--snapshot] [VM options]
   spore boot --arch CPU [--root EXT2] [VM options]
   spore build                         Build the kernel and host CLI
@@ -98,6 +101,7 @@ fn vm_config(mode: &str) -> runner::qemu::Config {
         direct: None,
         image: OsString::new(),
         root: None,
+        root_qcow: false,
         vars: None,
         report: None,
         forwards: vec![],
@@ -128,13 +132,46 @@ fn execute() -> io::Result<i32> {
     let check = action == "test" || action == "bench";
     let exe = env::current_exe()?;
     let artifacts = exe.parent().unwrap();
+    if action == "rollback" {
+        if args.next().is_some() {
+            return Err(io::Error::other("usage: spore rollback"));
+        }
+        storage::rollback(artifacts)?;
+        return Ok(0);
+    }
+    if action == "upgrade" {
+        let from = match args.next().as_deref() {
+            None => None,
+            Some(v) if v == "--help" || v == "-h" => {
+                println!("{HELP}");
+                return Ok(0);
+            }
+            Some(v) if v == "--from-base" => {
+                Some(PathBuf::from(args.next().ok_or_else(|| {
+                    io::Error::other("missing original base path")
+                })?))
+            }
+            _ => {
+                return Err(io::Error::other(
+                    "usage: spore upgrade [--from-base ORIGINAL_EXT2]",
+                ));
+            }
+        };
+        if args.next().is_some() {
+            return Err(io::Error::other("unexpected upgrade argument"));
+        }
+        storage::upgrade(artifacts, from.as_deref())?;
+        return Ok(0);
+    }
     if action == "_image" {
         let tests = args.next().as_deref() == Some("tests".as_ref());
         image::system_image(artifacts, tests)?;
         return Ok(0);
     }
     if !build && !boot && !check && action != "run" {
-        return Err(io::Error::other("expected boot, run, build, test or bench"));
+        return Err(io::Error::other(
+            "expected boot, run, build, upgrade, rollback, test or bench",
+        ));
     }
     let mut program = None;
     let mut output = None;

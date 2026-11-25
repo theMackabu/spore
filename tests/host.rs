@@ -37,3 +37,15 @@ native_tests!(
 fn bench_inodes() {
     fixture("bench_ext2_inodes");
 }
+
+#[test]
+fn userland_upgrade() {
+    assert!(
+        Command::new("sh")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/upgrade.sh"))
+            .arg(env!("CARGO_BIN_EXE_spore"))
+            .status()
+            .unwrap()
+            .success()
+    );
+}

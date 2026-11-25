@@ -9,10 +9,31 @@ git submodule update --init --recursive
 ./target/release/spore boot
 ```
 
-The first boot copies the base filesystem from `target/release/root.ext2` to
-`target/release/run-root.ext2`. Later boots reuse that writable copy. For a disposable
-session on the base image, run `./target/release/spore boot --snapshot`. Inside the shell,
-`sudo shutdown` ends the session. To use an existing disk, pass its path with `--root`, for example `./target/release/spore boot --root build/run-root.ext2`.
+The first boot creates a writable data disk backed by the current userland build. Spore
+sees one filesystem. Rebuilding prepares a new base. To switch an existing installation,
+shut down the guest with `sudo shutdown`, then run on the host:
+
+```sh
+./target/release/spore build --userland
+./target/release/spore upgrade
+./target/release/spore boot
+```
+
+An upgrade keeps local files, installed packages and their database. Unmodified defaults
+follow the new base, including symlinks. When both sides changed a file, the local version
+stays in place and the incoming version appears beside it with a `.spore-new` suffix.
+
+The first upgrade from `run-root.ext2` works on a copy. If you still have the exact base
+from which that disk was created, you can supply it with `spore upgrade --from-base PATH`.
+Without that base, Spore keeps differing files and adds missing defaults. It cannot tell
+which missing defaults you previously deleted.
+
+`spore rollback` selects the previous installation, including its data as of the upgrade.
+Each generation under `target/release/system/` holds its boot image, base and writable
+overlay together. Keep those files together when making a backup.
+
+Use `spore boot --snapshot` for a disposable session on the latest build or
+`spore boot --root PATH` to boot a specific raw ext2 disk.
 
 The full image includes offline manuals. Try `man ls`, `man 2 mmap`, or `man myc`. Press `q` to quit the pager.
 

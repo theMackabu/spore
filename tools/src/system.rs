@@ -99,22 +99,34 @@ pub fn program(name: &OsStr) -> io::Result<PathBuf> {
     )))
 }
 
-fn seed_disk(base: &Path, disk: &Path, reset: bool) -> io::Result<()> {
-    if !reset && disk.is_file() {
+pub fn copy_disk(src: &Path, dest: &Path) -> io::Result<()> {
+    let mut cp = Command::new(if cfg!(target_os = "macos") {
+        "/bin/cp"
+    } else {
+        "cp"
+    });
+    if cfg!(target_os = "linux") {
+        cp.args(["--reflink=auto", "--sparse=always"]);
+    } else if cfg!(target_os = "macos") {
+        cp.arg("-c");
+    }
+    if status(cp.arg(src).arg(dest))? != 0 {
+        return Err(io::Error::other(format!(
+            "could not copy {}",
+            src.display()
+        )));
+    }
+    Ok(())
+}
+
+fn seed_disk(base: &Path, disk: &Path) -> io::Result<()> {
+    if disk.try_exists()? {
         return Ok(());
     }
     let tmp = Workspace::at(disk.parent().unwrap_or(Path::new(".")))?;
     let copy = tmp.0.join("root.ext2");
-    let mut cp = Command::new("cp");
-    if cfg!(target_os = "linux") {
-        cp.args(["--reflink=auto", "--sparse=always"]);
-    }
-    if status(cp.arg(base).arg(&copy))? != 0 {
-        return Err(io::Error::other("could not seed persistent root disk"));
-    }
-    if reset {
-        fs::rename(copy, disk)?;
-    } else if let Err(e) = fs::hard_link(copy, disk)
+    copy_disk(base, &copy)?;
+    if let Err(e) = fs::hard_link(copy, disk)
         && e.kind() != io::ErrorKind::AlreadyExists
     {
         return Err(e);
@@ -128,6 +140,7 @@ pub fn boot(
     image: Option<OsString>,
     reset: bool,
 ) -> io::Result<i32> {
+    let mut _session = None;
     let image_supplied = image.is_some();
     if reset && (vm.snap || vm.root.is_some() || image.is_some()) {
         return Err(io::Error::other(
@@ -142,18 +155,31 @@ pub fn boot(
         } else {
             ("image.img", "root.ext2")
         };
-        if !build.join(image).is_file() || (vm.root.is_none() && !build.join(root).is_file()) {
+        let selected = vm.mode == "plain"
+            && vm.root.is_none()
+            && !vm.snap
+            && !reset
+            && build.join("system/current").try_exists()?;
+        if !selected
+            && (!build.join(image).is_file() || (vm.root.is_none() && !build.join(root).is_file()))
+        {
             crate::image::system_image(build, vm.mode == "integration")?;
         }
         vm.image = build.join(image).into();
         let base = build.join(root);
         if vm.snap {
             vm.root.get_or_insert_with(|| base.into());
+        } else if vm.root.is_none() && vm.mode == "plain" {
+            _session = Some(crate::storage::session(build)?);
+            let disks = crate::storage::boot(build, reset)?;
+            vm.image = disks.image.into();
+            vm.root = Some(disks.root.into());
+            vm.root_qcow = disks.qcow;
         } else {
             let disk = vm
                 .root
                 .get_or_insert_with(|| build.join("run-root.ext2").into());
-            seed_disk(&base, Path::new(disk), reset)?;
+            seed_disk(&base, Path::new(disk))?;
         }
     }
     if vm.vars.is_none() && !vm.snap && !image_supplied {

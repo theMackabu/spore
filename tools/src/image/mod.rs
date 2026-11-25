@@ -410,18 +410,25 @@ pub fn system_image(build: &Path, tests: bool) -> io::Result<()> {
         ("userland/image.manifest", "root.ext2", "image.img")
     };
     let stage = crate::Workspace::at(build)?;
-    build_image(&build.join(disk), |tmp| {
-        build_root(
-            source,
-            &stage.0.join("stage"),
-            &source.join(manifest),
-            guest,
-            tmp,
-        )
-    })?;
+    build_root(
+        source,
+        &stage.0.join("stage"),
+        &source.join(manifest),
+        guest,
+        &stage.0.join(disk),
+    )?;
     let config = stage.0.join("limine.conf");
     fs::write(&config, include_bytes!("../../../boot/limine.conf"))?;
-    build_image(&build.join(esp), |tmp| {
-        build_esp(&config, tmp, None, crate::arch::Arch::Aarch64)
-    })
+    build_esp(
+        &config,
+        &stage.0.join(esp),
+        None,
+        crate::arch::Arch::Aarch64,
+    )?;
+    if tests {
+        fs::rename(stage.0.join(disk), build.join(disk))?;
+        fs::rename(stage.0.join(esp), build.join(esp))
+    } else {
+        crate::storage::publish(build, &stage.0)
+    }
 }

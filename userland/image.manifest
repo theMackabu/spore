@@ -164,6 +164,7 @@ userland/programs/memhog /home/spore/demos/memhog
 userland/programs/escalate /home/spore/demos/escalate
 userland/programs/signal-crash /home/spore/demos/signal-crash
 userland/programs/inodes /home/spore/demos/inodes
+userland/demos/install-claude.sh /home/spore/demos/install-claude.sh
 userland/demos/install-codex.sh /home/spore/demos/install-codex.sh
 userland/prebuilt/licenses/codex-installer /usr/share/licenses/codex-installer/LICENSE
 userland/demos/something /home/spore/demos/something
