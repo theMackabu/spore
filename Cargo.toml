@@ -10,7 +10,7 @@ members = ["kernel", "userland", "tests/native", "tools/packages", "tools/build"
 default-members = ["."]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.7.5"
 
 [features]
 userland = ["dep:spore-userland", "spore-kernel/userland"]
