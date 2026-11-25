@@ -46,6 +46,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "confine net:dns nslookup -type=A example.com || echo __SPORE\"\"_SHELL_CHECK_FAIL_DNS__\n",
     "myc list-timers\n",
     "/bin/dash -c 'echo dash-ok; echo $((1 + 2)); cd /tmp && pwd'\n",
+    "printf 'case $- in *i*) exit 1;; esac\\nmkdir /tmp/pipe-script-ran\\n' | sh && test -d /tmp/pipe-script-ran || echo __SPORE\"\"_SHELL_CHECK_FAIL_PIPED_SH__\n",
     "/bin/dash\n",
     "ls\n",
     "exit\n",

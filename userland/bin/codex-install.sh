@@ -36,6 +36,6 @@ fi
 
 link="$bin/codex"
 if [ "$(readlink "$link" 2>/dev/null || true)" != "$release/bin/codex" ]; then
-  ln -s -- "$release/bin/codex" "$link"
+  ln -sT -- "$release/bin/codex" "$link" || [ "$(readlink "$link" 2>/dev/null)" = "$release/bin/codex" ]
 fi
 printf 'Installed %s\n' "$link"

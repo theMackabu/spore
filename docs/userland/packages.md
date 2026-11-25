@@ -25,4 +25,8 @@ codex-install codex-package-aarch64-unknown-linux-musl.tar.gz
 ~/.local/bin/codex app-server daemon version
 ```
 
+The upstream shell installer checks for Linux or Darwin. Spore reports its own name through
+`uname -s`. Codex 0.172.0 and its daemon start from the release archive. Its default command
+runner still stops when Bubblewrap requests mount, PID, IPC and network namespaces.
+
 [How the host assembles packages](prebuilt.md) · [Guest shell](shell.md)
