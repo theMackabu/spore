@@ -113,6 +113,11 @@ static void cap_allow_files(struct capability_set *caps) {
   }
 }
 
+bool cell_fs_restricted(void) {
+  const struct domain *d = cell_current_domain_internal();
+  return d && d->caps && d->caps->restrict_fs;
+}
+
 bool cell_fs_path_allowed(const char *path, uint8_t rights) {
   const struct domain *domain = cell_current_domain_internal();
   return domain == NULL || domain->caps == NULL || !domain->caps->restrict_fs || fs_allowed(domain->caps, path, rights);

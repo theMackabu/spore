@@ -46,7 +46,7 @@ int64_t sys_spore_mountinfo(uint64_t addr, uint64_t bytes) {
   return count;
 }
 
-int64_t sys_mount(uint64_t target, uint64_t type, uint64_t flags, uint64_t data) {
+int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flags, uint64_t data) {
   if (!mountns_may_mount()) { return -EPERM; }
   char path[CELL_PATH_MAX];
   int rc = syscall_copy_resolved_path_at(AT_FDCWD, target, path, sizeof(path));
@@ -54,7 +54,14 @@ int64_t sys_mount(uint64_t target, uint64_t type, uint64_t flags, uint64_t data)
   if (!cell_fs_path_allowed(path, CELL_FS_WRITE)) { return -EPERM; }
   constexpr uint64_t MS_PRIVATE = 1 << 18, MS_SLAVE = 1 << 19, MS_REC = 1 << 14, MS_SILENT = 1 << 15;
   constexpr uint64_t MS_NOSUID = 2, MS_NODEV = 4;
+  if ((flags & 0xffff0000) == 0xc0ed0000) { flags &= 0xffff; }
   flags &= ~MS_SILENT;
+  constexpr uint64_t MS_BIND = 4096;
+  if ((flags & ~MS_REC) == MS_BIND) {
+    char src[CELL_PATH_MAX];
+    rc = syscall_copy_resolved_path_at(AT_FDCWD, source, src, sizeof(src));
+    return rc ? rc : mountns_bind(src, path, flags & MS_REC);
+  }
   if ((flags & ~MS_REC) == MS_PRIVATE || (flags & ~MS_REC) == MS_SLAVE) {
     const struct vfs_mount *m;
     for (size_t i = 0; (m = vfs_mount_at(i)); ++i) {

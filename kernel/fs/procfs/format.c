@@ -10,6 +10,7 @@
 #include "proc/thread.h"
 #include "fs/ramfs.h"
 #include "fs/vfs.h"
+#include "fs/mount_namespace.h"
 #include "drivers/virtio_net.h"
 
 #include <stddef.h>
@@ -132,14 +133,18 @@ static void mount_path(char *dst, size_t cap, size_t *len, const char *path) {
 size_t proc_mount_line(char *dst, size_t cap, const struct vfs_mount *m, bool info) {
   size_t len = 0;
   if (info) {
-    proc_append_u64(dst, cap, &len, m->device);
+    proc_append_u64(dst, cap, &len, m->mount_id ? m->mount_id : m->device);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, m->parent);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, m->device >> 8);
     proc_append_char(dst, cap, &len, ':');
     proc_append_u64(dst, cap, &len, m->device & 0xff);
-    proc_append_str(dst, cap, &len, " / ");
+    char buf[CELL_PATH_MAX];
+    const char *root = mountns_root_path(m, buf, sizeof(buf));
+    proc_append_char(dst, cap, &len, ' ');
+    mount_path(dst, cap, &len, root ? root : "(deleted)");
+    proc_append_char(dst, cap, &len, ' ');
   } else {
     proc_append_str(dst, cap, &len, m->source);
     proc_append_char(dst, cap, &len, ' ');

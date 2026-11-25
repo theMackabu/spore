@@ -23,6 +23,7 @@ struct cpu_budget {
 
 struct vfs_node;
 bool cell_fs_exec_fd_allowed(const char *path, const struct vfs_node *node);
+bool cell_fs_restricted(void);
 bool cell_fs_path_allowed(const char *path, uint8_t rights);
 bool cell_syscall_allowed(uint64_t nr);
 bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port);

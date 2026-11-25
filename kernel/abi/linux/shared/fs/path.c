@@ -35,10 +35,9 @@ int syscall_dirfd_path(int fd, char path[CELL_PATH_MAX]) {
   char visible[CELL_PATH_MAX], resolved[CELL_PATH_MAX];
   int rc = resolve_from("/", 1, path, kstrlen(path), visible, resolved, sizeof(resolved));
   if (rc) { return rc; }
-  const char *local;
-  if (mounted_fd || mountns_lookup(resolved, &local)) {
+  if (mounted_fd || mountns_lookup(resolved).fs) {
     struct vfs_node named;
-    if (!vfs_lookup(resolved, &named) || named.dev_id != file->node.dev_id || named.ino != file->node.ino) {
+    if (!vfs_lookup(resolved, &named) || named.mount_id != file->node.mount_id || named.dev_id != file->node.dev_id || named.ino != file->node.ino) {
       return -116;
     }
   }
@@ -110,8 +109,7 @@ int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t addr, char *out, 
 bool syscall_proc_fd_number(const char *path, int *fd_out) {
   const char *prefix = "/proc/self/fd/";
   if (!starts_with(path, prefix)) { return false; }
-  const char *local;
-  if (mountns_lookup(path, &local)) { return false; }
+  if (mountns_lookup(path).fs) { return false; }
   const char *p = path + kstrlen(prefix);
   if (*p == '\0') { return false; }
   int fd = 0;

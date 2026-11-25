@@ -121,12 +121,12 @@ bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
 uint64_t ramfs_boot_page(const struct ramfs_node *node, uint64_t off);
 bool ramfs_add_boot_file(struct ramfs *fs, const char *path, const void *data, uint64_t size, uint16_t mode);
 void ramfs_set_now(uint64_t epoch_sec);
-bool ramfs_lookup_node(const struct ramfs *fs, const char *path, struct ramfs_node *out);
+bool ramfs_lookup_node(const struct ramfs *fs, int root, const char *path, struct ramfs_node *out);
 bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct vfs_dirent *out);
-bool ramfs_mkdir(struct ramfs *fs, const char *path, uint16_t mode);
-bool ramfs_create(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);
-bool ramfs_mkfifo(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);
-bool ramfs_mksock(struct ramfs *fs, const char *path, uint16_t mode, struct ramfs_node *out);
+bool ramfs_mkdir(struct ramfs *fs, int root, const char *path, uint16_t mode);
+bool ramfs_create(struct ramfs *fs, int root, const char *path, uint16_t mode, struct ramfs_node *out);
+bool ramfs_mkfifo(struct ramfs *fs, int root, const char *path, uint16_t mode, struct ramfs_node *out);
+bool ramfs_mksock(struct ramfs *fs, int root, const char *path, uint16_t mode, struct ramfs_node *out);
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size);
 bool ramfs_set_times(struct ramfs *fs, int index, uint64_t atime, uint64_t mtime);
 bool ramfs_chmod_node(struct ramfs *fs, int index, uint16_t mode);
@@ -139,21 +139,22 @@ int ramfs_get_seals(struct ramfs *fs, int index);
 bool ramfs_write_sealed(struct ramfs *fs, int index);
 bool ramfs_truncate_sealed(struct ramfs *fs, int index, uint64_t size);
 void ramfs_note_shared_writable_mapping(struct ramfs *fs, int index, bool add);
-int ramfs_remove(struct ramfs *fs, const char *path);
+int ramfs_remove(struct ramfs *fs, int root, const char *path);
 static inline bool ramfs_unlink(struct ramfs *fs, const char *path) {
-  return ramfs_remove(fs, path) == 0;
+  return ramfs_remove(fs, 0, path) == 0;
 }
 bool ramfs_tmpfile(const struct ramfs_node *dir, uint16_t mode, uint32_t uid, uint32_t gid, bool linkable,
                    struct ramfs_node *out);
-bool ramfs_link_node(struct ramfs *fs, int index, const char *new_path);
-bool ramfs_link(struct ramfs *fs, const char *old_path, const char *new_path);
-int ramfs_renameat(struct ramfs *fs, const char *old_path, const char *new_path, bool noreplace);
+bool ramfs_link_node(struct ramfs *fs, int root, int index, const char *new_path);
+bool ramfs_link(struct ramfs *fs, int root, const char *old_path, const char *new_path);
+int ramfs_renameat(struct ramfs *fs, int root, const char *old_path, const char *new_path, bool noreplace);
 static inline bool ramfs_rename(struct ramfs *fs, const char *old_path, const char *new_path) {
-  return ramfs_renameat(fs, old_path, new_path, false) == 0;
+  return ramfs_renameat(fs, 0, old_path, new_path, false) == 0;
 }
 int64_t ramfs_seek_extent(struct ramfs *fs, int index, uint64_t off, bool data);
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len);
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
 int64_t ramfs_writeback(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
+const char *ramfs_inode_path(struct ramfs *fs, int index, char *buf, size_t size);
 bool ramfs_refresh_node(struct ramfs *fs, int index, struct ramfs_node *out);
 uint64_t ramfs_backing_used_pages(void);

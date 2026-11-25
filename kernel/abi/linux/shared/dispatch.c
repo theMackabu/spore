@@ -527,7 +527,7 @@ l_setgroups:
 l_uname:
   return sys_uname(a0, SPORE_MACHINE);
 l_mount:
-  return sys_mount(a1, a2, a3, a4);
+  return sys_mount(a0, a1, a2, a3, a4);
 l_umount2:
   return sys_umount2(a0, a1);
 l_unshare:

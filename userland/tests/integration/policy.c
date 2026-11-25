@@ -243,12 +243,32 @@ int integration_user_namespace(void) {
   return ok;
 }
 
+static int tmpfs_bind(void) {
+  const char *src = "/tmp/mount-test/src", *dst = "/tmp/mount-test/bind";
+  if (mkdir(src, 0700) || mkdir(dst, 0700) || mount(src, dst, NULL, MS_BIND | MS_REC, NULL)) { return 0; }
+  if (rename(src, "/tmp/mount-test/moved")) { return 0; }
+  int fd = open("/tmp/mount-test/bind/test", O_CREAT | O_EXCL | O_RDWR, 0600);
+  struct stat original, alias;
+  int ok = fd >= 0 && !fstat(fd, &alias) && !stat("/tmp/mount-test/moved/test", &original) &&
+           original.st_dev == alias.st_dev && original.st_ino == alias.st_ino &&
+           rename("/tmp/mount-test/bind/test", "/tmp/mount-test/moved/x") < 0 && errno == EXDEV;
+  if (fd >= 0) { close(fd); }
+  if (!ok || umount(dst) || !access("/tmp/mount-test/bind/test", F_OK) || errno != ENOENT) { return 0; }
+  const char *sub = "/tmp/mount-test/moved/sub", *alias_sub = "/tmp/mount-test/bind/sub";
+  if (mkdir(sub, 0700) || mount("none", sub, "tmpfs", 0, NULL) ||
+      mount("/tmp/mount-test/moved", dst, NULL, MS_BIND | MS_REC, NULL)) { return 0; }
+  return !stat(sub, &original) && !stat(alias_sub, &alias) && original.st_dev == alias.st_dev &&
+         !umount(alias_sub) && !stat(alias_sub, &alias) && alias.st_dev != original.st_dev &&
+         !umount(dst) && !umount(sub);
+}
+
 static int isolated_tmpfs(int ready, int resume) {
   const char *dir = "/tmp/mount-test";
   const char *file = "/tmp/mount-test/contents";
   struct stat base, mounted;
   if (stat(dir, &base) || mount("none", dir, "tmpfs", MS_NODEV | MS_NOSUID, "mode=0710") ||
       stat(dir, &mounted) || base.st_dev == mounted.st_dev || (mounted.st_mode & 07777) != 0710) { return 1; }
+  if (!tmpfs_bind()) { return 9; }
   int fd = open(file, O_RDWR | O_CREAT | O_EXCL, 0600);
   if (fd < 0 || write(fd, "private", 7) != 7) { return 2; }
   char *mapped = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);

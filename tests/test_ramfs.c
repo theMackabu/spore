@@ -10,18 +10,18 @@ static void many_names_and_mounts(void) {
   struct ramfs first, second;
   struct ramfs_node kept, n;
   assert(ramfs_init(&first, NULL, 0, 0));
-  assert(ramfs_create(&first, "/tmp/kept", 0600, &kept));
+  assert(ramfs_create(&first, 0, "/tmp/kept", 0600, &kept));
   assert(ramfs_write(&first, kept.index, 0, "one", 3) == 3 && ramfs_retain_node(&first, kept.index));
   assert(ramfs_init(&second, NULL, 0, 0));
-  assert(ramfs_create(&second, "/tmp/kept", 0600, &n) && ramfs_write(&second, n.index, 0, "two", 3) == 3);
-  assert(ramfs_init(&second, NULL, 0, 0) && !ramfs_lookup_node(&second, "/tmp/kept", &n));
-  assert(ramfs_unlink(&first, "/tmp/kept") && ramfs_mkdir(&first, "/tmp/names", 0700));
+  assert(ramfs_create(&second, 0, "/tmp/kept", 0600, &n) && ramfs_write(&second, n.index, 0, "two", 3) == 3);
+  assert(ramfs_init(&second, NULL, 0, 0) && !ramfs_lookup_node(&second, 0, "/tmp/kept", &n));
+  assert(ramfs_unlink(&first, "/tmp/kept") && ramfs_mkdir(&first, 0, "/tmp/names", 0700));
   for (int i = 0; i < 8192; ++i) {
     char path[40];
     snprintf(path, sizeof(path), "/tmp/names/n%d", i);
-    assert(ramfs_create(&first, path, 0600, &n));
+    assert(ramfs_create(&first, 0, path, 0600, &n));
   }
-  int dir = ramfs_lookup_node(&first, "/tmp/names", &n) ? n.index : -1;
+  int dir = ramfs_lookup_node(&first, 0, "/tmp/names", &n) ? n.index : -1;
   uint64_t cursor = 0;
   struct vfs_dirent ent;
   int count = 0;
@@ -43,11 +43,11 @@ static void many_names_and_mounts(void) {
 static void directory_cookies(struct ramfs *fs) {
   struct ramfs_node dir, file;
   struct vfs_dirent entry;
-  assert(ramfs_mkdir(fs, "/tmp/cookies", 0700) && ramfs_lookup_node(fs, "/tmp/cookies", &dir));
+  assert(ramfs_mkdir(fs, 0, "/tmp/cookies", 0700) && ramfs_lookup_node(fs, 0, "/tmp/cookies", &dir));
   assert(dir.links_count == 2);
-  assert(ramfs_create(fs, "/tmp/cookies/a", 0600, &file));
-  assert(ramfs_create(fs, "/tmp/cookies/b", 0600, &file));
-  assert(ramfs_create(fs, "/tmp/cookies/c", 0600, &file));
+  assert(ramfs_create(fs, 0, "/tmp/cookies/a", 0600, &file));
+  assert(ramfs_create(fs, 0, "/tmp/cookies/b", 0600, &file));
+  assert(ramfs_create(fs, 0, "/tmp/cookies/c", 0600, &file));
   uint64_t cursor = 0;
   assert(ramfs_next_dirent(fs, dir.index, &cursor, &entry));
   uint64_t saved = cursor;
@@ -57,11 +57,11 @@ static void directory_cookies(struct ramfs *fs) {
   uint64_t last = cursor;
   assert(ramfs_next_dirent(fs, dir.index, &last, &entry));
   uint64_t last_ino = entry.ino;
-  assert(ramfs_unlink(fs, remove) && ramfs_create(fs, "/tmp/reused", 0600, &file));
+  assert(ramfs_unlink(fs, remove) && ramfs_create(fs, 0, "/tmp/reused", 0600, &file));
   assert(ramfs_next_dirent(fs, dir.index, &cursor, &entry) && entry.ino == last_ino);
   assert(!ramfs_next_dirent(fs, dir.index, &cursor, &entry));
   assert(ramfs_next_dirent(fs, dir.index, &saved, &entry) && entry.ino == last_ino);
-  assert(ramfs_mkdir(fs, "/tmp/cookies/sub", 0700));
+  assert(ramfs_mkdir(fs, 0, "/tmp/cookies/sub", 0700));
   assert(ramfs_refresh_node(fs, dir.index, &dir) && dir.links_count == 3);
   assert(ramfs_rename(fs, "/tmp/cookies/sub", "/tmp/sub"));
   assert(ramfs_refresh_node(fs, dir.index, &dir) && dir.links_count == 2);
@@ -84,15 +84,15 @@ int main(void) {
   assert(ramfs_init(&fs, modules, 2, 0));
 
   struct ramfs_node node;
-  assert(!ramfs_lookup_node(&fs, "/missing", &node));
-  assert(ramfs_lookup_node(&fs, "/sbin/init", &node));
+  assert(!ramfs_lookup_node(&fs, 0, "/missing", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/sbin/init", &node));
   assert(!node.is_dir && node.size == sizeof(init_data));
   char boot_data[sizeof(init_data)];
   assert(ramfs_read(&fs, node.index, 0, boot_data, sizeof(boot_data)) == sizeof(boot_data));
   assert(memcmp(boot_data, init_data, sizeof(boot_data)) == 0);
 
   struct ramfs_node root;
-  assert(ramfs_lookup_node(&fs, "/", &root) && root.is_dir);
+  assert(ramfs_lookup_node(&fs, 0, "/", &root) && root.is_dir);
   struct vfs_dirent ent;
   const char *dirs[] = {"dev", "proc", "sys", "tmp", "run", "sbin"};
   for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); ++d) {
@@ -106,41 +106,41 @@ int main(void) {
     }
     assert(found);
   }
-  assert(ramfs_lookup_node(&fs, "/dev/null", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/dev/null", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_NULL);
-  assert(ramfs_lookup_node(&fs, "/dev/zero", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/dev/zero", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_ZERO);
-  assert(ramfs_lookup_node(&fs, "/dev/fs/root", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/dev/fs/root", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_FS_ROOT);
-  assert(ramfs_lookup_node(&fs, "/dev/fs/tmp", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/dev/fs/tmp", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_FS_TMP);
-  assert(ramfs_lookup_node(&fs, "/dev/blk/root", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/dev/blk/root", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_BLK_ROOT);
-  assert(ramfs_lookup_node(&fs, "/proc/procinfo", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/proc/procinfo", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_PROCINFO);
-  assert(ramfs_lookup_node(&fs, "/proc/filesystems", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/proc/filesystems", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_FILESYSTEMS);
-  assert(ramfs_lookup_node(&fs, "/proc/partitions", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/proc/partitions", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_PARTITIONS);
-  assert(ramfs_lookup_node(&fs, "/proc/devices", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/proc/devices", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_DEVICES);
-  assert(ramfs_lookup_node(&fs, "/sys/devices/system/cpu/online", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/sys/devices/system/cpu/online", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_SYS_CPU_ONLINE);
-  assert(ramfs_lookup_node(&fs, "/sys/devices/system/cpu/cpu0/online", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/sys/devices/system/cpu/cpu0/online", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_SYS_CPU_CORE_ONLINE);
-  assert(ramfs_lookup_node(&fs, "/dev/procinfo", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/dev/procinfo", &node));
   assert(!node.is_dir && node.device == RAMFS_DEV_PROCINFO);
 
-  assert(ramfs_mkdir(&fs, "/tmp/d", 0700));
-  assert(ramfs_lookup_node(&fs, "/tmp/d", &node));
+  assert(ramfs_mkdir(&fs, 0, "/tmp/d", 0700));
+  assert(ramfs_lookup_node(&fs, 0, "/tmp/d", &node));
   int dir_index = node.index;
   assert((node.mode & 0170000u) == 0040000u);
   assert((node.mode & 07777u) == 0700);
-  assert(ramfs_mkfifo(&fs, "/run/f", 0666, &node));
+  assert(ramfs_mkfifo(&fs, 0, "/run/f", 0666, &node));
   assert((node.mode & 0170000u) == 0010000u);
-  assert(ramfs_mksock(&fs, "/run/s", 0666, &node));
+  assert(ramfs_mksock(&fs, 0, "/run/s", 0666, &node));
   assert((node.mode & 0170000u) == 0140000u);
-  assert(ramfs_create(&fs, "/tmp/d/a", 0644, &node));
+  assert(ramfs_create(&fs, 0, "/tmp/d/a", 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "hello", 5) == 5);
   assert(ramfs_chmod_node(&fs, node.index, 0600));
   assert(ramfs_refresh_node(&fs, node.index, &node));
@@ -152,21 +152,21 @@ int main(void) {
   const char *pack = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.pack";
   const char *idx = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.idx";
   const char *keep = "/tmp/d/pack-22bc6fc3ed6ccc1670a26b935dbb44c18b63ad64a.keep";
-  assert(ramfs_create(&fs, pack, 0644, &node));
+  assert(ramfs_create(&fs, 0, pack, 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "pack", 4) == 4);
-  assert(ramfs_create(&fs, idx, 0644, &node));
+  assert(ramfs_create(&fs, 0, idx, 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "idx", 3) == 3);
-  assert(ramfs_create(&fs, keep, 0644, &node));
+  assert(ramfs_create(&fs, 0, keep, 0644, &node));
   assert(ramfs_write(&fs, node.index, 0, "keep", 4) == 4);
-  assert(ramfs_lookup_node(&fs, pack, &node));
+  assert(ramfs_lookup_node(&fs, 0, pack, &node));
   memset(buf, 0, sizeof(buf));
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 4);
   assert(strcmp(buf, "pack") == 0);
-  assert(ramfs_lookup_node(&fs, idx, &node));
+  assert(ramfs_lookup_node(&fs, 0, idx, &node));
   memset(buf, 0, sizeof(buf));
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 3);
   assert(strcmp(buf, "idx") == 0);
-  assert(ramfs_lookup_node(&fs, keep, &node));
+  assert(ramfs_lookup_node(&fs, 0, keep, &node));
   memset(buf, 0, sizeof(buf));
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 4);
   assert(strcmp(buf, "keep") == 0);
@@ -181,13 +181,13 @@ int main(void) {
   assert(ramfs_unlink(&fs, idx));
   assert(ramfs_unlink(&fs, keep));
 
-  assert(ramfs_link(&fs, "/tmp/d/a", "/tmp/d/link"));
+  assert(ramfs_link(&fs, 0, "/tmp/d/a", "/tmp/d/link"));
   memset(buf, 0, sizeof(buf));
-  assert(ramfs_lookup_node(&fs, "/tmp/d/link", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/tmp/d/link", &node));
   assert(ramfs_read(&fs, node.index, 0, buf, sizeof(buf)) == 5);
   assert(strcmp(buf, "hello") == 0);
   assert(ramfs_unlink(&fs, "/tmp/d/link"));
-  assert(ramfs_lookup_node(&fs, "/tmp/d/a", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/tmp/d/a", &node));
   uint64_t sparse_tail = 256ull * 1024ull * 1024ull;
   assert(ramfs_write(&fs, node.index, sparse_tail, "tail", 4) == 4);
   memset(buf, 0xff, sizeof(buf));
@@ -200,20 +200,20 @@ int main(void) {
   assert(memcmp(buf, "tail", 4) == 0);
   assert(ramfs_truncate(&fs, node.index, 5));
   assert(ramfs_rename(&fs, "/tmp/d/a", "/tmp/d/b"));
-  assert(!ramfs_lookup_node(&fs, "/tmp/d/a", &node));
-  assert(ramfs_lookup_node(&fs, "/tmp/d/b", &node));
+  assert(!ramfs_lookup_node(&fs, 0, "/tmp/d/a", &node));
+  assert(ramfs_lookup_node(&fs, 0, "/tmp/d/b", &node));
   assert(ramfs_unlink(&fs, "/tmp/d/b"));
 
   uint64_t backing_before = ramfs_backing_used_pages();
-  assert(ramfs_create(&fs, "/tmp/d/indexed", 0644, &node));
-  assert(ramfs_link(&fs, "/tmp/d/indexed", "/tmp/d/indexed-link"));
+  assert(ramfs_create(&fs, 0, "/tmp/d/indexed", 0644, &node));
+  assert(ramfs_link(&fs, 0, "/tmp/d/indexed", "/tmp/d/indexed-link"));
   for (uint32_t i = 0; i < 1024; ++i) {
     char value = (char)i;
     assert(ramfs_write(&fs, node.index, (uint64_t)i * 17 * RAMFS_PAGE_SIZE, &value, 1) == 1);
   }
   assert(ramfs_backing_used_pages() == backing_before + 1024);
   struct ramfs_node linked;
-  assert(ramfs_lookup_node(&fs, "/tmp/d/indexed-link", &linked));
+  assert(ramfs_lookup_node(&fs, 0, "/tmp/d/indexed-link", &linked));
   for (uint32_t i = 0; i < 1024; ++i) {
     char value = 0;
     assert(ramfs_read(&fs, linked.index, (uint64_t)i * 17 * RAMFS_PAGE_SIZE, &value, 1) == 1);
@@ -230,12 +230,12 @@ int main(void) {
   assert(ramfs_unlink(&fs, "/tmp/d/indexed"));
   assert(ramfs_backing_used_pages() == backing_before);
 
-  assert(ramfs_create(&fs, "/tmp/d/no-seal", 0644, &node));
+  assert(ramfs_create(&fs, 0, "/tmp/d/no-seal", 0644, &node));
   assert(ramfs_set_sealable(&fs, node.index, false));
   assert(ramfs_get_seals(&fs, node.index) == RAMFS_F_SEAL_SEAL);
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_GROW) == -EPERM);
 
-  assert(ramfs_create(&fs, "/tmp/d/sealed", 0644, &node));
+  assert(ramfs_create(&fs, 0, "/tmp/d/sealed", 0644, &node));
   assert(ramfs_set_sealable(&fs, node.index, true));
   assert(ramfs_get_seals(&fs, node.index) == 0);
   assert(ramfs_write(&fs, node.index, 0, "seal", 4) == 4);
@@ -250,7 +250,7 @@ int main(void) {
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_SEAL) == 0);
   assert(ramfs_add_seals(&fs, node.index, RAMFS_F_SEAL_WRITE) == -EPERM);
 
-  assert(ramfs_create(&fs, "/tmp/d/busy-seal", 0644, &node));
+  assert(ramfs_create(&fs, 0, "/tmp/d/busy-seal", 0644, &node));
   assert(ramfs_set_sealable(&fs, node.index, true));
   assert(ramfs_truncate(&fs, node.index, 4096));
   ramfs_note_shared_writable_mapping(&fs, node.index, true);

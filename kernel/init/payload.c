@@ -46,10 +46,10 @@ static bool unpack_entry(struct payload_reader *reader, struct ramfs *fs, const 
   if (!path_ok(path) || !size) { return false; }
   uint64_t n;
   kmemcpy(&n, size, sizeof(n));
-  if (n == UINT64_MAX) { return ramfs_mkdir(fs, path, 0555); }
+  if (n == UINT64_MAX) { return ramfs_mkdir(fs, 0, path, 0555); }
   if (n == UINT64_MAX - 1) {
     const char *source = take_string(reader);
-    return path_ok(source) && ramfs_link(fs, source, path);
+    return path_ok(source) && ramfs_link(fs, 0, source, path);
   }
   if (reader->aligned_files && n >= PAGE_SIZE) {
     size_t offset = reader->next - reader->start;

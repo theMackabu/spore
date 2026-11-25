@@ -14,7 +14,15 @@ bool mountns_has_mounts(void);
 bool mountns_may_mount(void);
 int mountns_tmpfs(const char *path, unsigned mode, bool nosuid, bool nodev);
 int mountns_unmount(const char *path, bool detach);
-struct ramfs *mountns_lookup(const char *path, const char **local);
+struct ramfs_route {
+  struct ramfs *fs;
+  const char *path;
+  uint64_t mount_id;
+  int root;
+};
+struct ramfs_route mountns_lookup(const char *path);
+int mountns_bind(const char *source, const char *target, bool recursive);
+const char *mountns_root_path(const struct vfs_mount *mount, char *buf, size_t size);
 void mountns_put_fs(struct ramfs *fs);
 const struct vfs_mount *vfs_domain_mount_at(const struct domain *domain, size_t index);
 const struct vfs_mount *mountns_at(const struct domain *domain, size_t index);

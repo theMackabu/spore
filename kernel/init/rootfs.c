@@ -40,7 +40,7 @@ void boot_mount_root(const struct spore_boot_info *boot, struct ext2_fs *disk, s
       boot_fail(BOOT_INVALID_PAYLOAD, "invalid app payload");
     }
     net_set_config(&network);
-    if (disk && !ramfs_mkdir(&root, "/data", 0555)) { boot_fail(BOOT_DATA_MOUNT_FAILED, "cannot create /data"); }
+    if (disk && !ramfs_mkdir(&root, 0, "/data", 0555)) { boot_fail(BOOT_DATA_MOUNT_FAILED, "cannot create /data"); }
   }
   vfs_init(&root, disk);
 }

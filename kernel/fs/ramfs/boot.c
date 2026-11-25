@@ -191,7 +191,7 @@ bool ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *
   for (uint32_t i = 0; modules && i < count; ++i) {
     const struct spore_boot_module *m = &modules[i];
     struct ramfs_node existing;
-    if (*m->path != '/' || ramfs_lookup_node(fs, m->path, &existing)) { continue; }
+    if (*m->path != '/' || ramfs_lookup_node(fs, 0, m->path, &existing)) { continue; }
     if (!ramfs_add_boot_file(fs, m->path, (const void *)(uintptr_t)(fs->hhdm_offset + m->phys_addr), m->size, 0444)) { return false; }
   }
   return true;

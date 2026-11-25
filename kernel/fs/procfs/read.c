@@ -364,7 +364,7 @@ static int64_t read_mounts(const struct proc_read *out, const struct domain *tar
   uint64_t skip = out->offset;
   const struct vfs_mount *m;
   for (size_t i = 0; copied < out->len && (m = vfs_domain_mount_at(target, i)); ++i) {
-    char line[4 * CELL_PATH_MAX + 160];
+    char line[8 * CELL_PATH_MAX + 160];
     size_t length = proc_mount_line(line, sizeof(line), m, info);
     if (skip >= length) { skip -= length; continue; }
     size_t n = length - skip;

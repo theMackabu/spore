@@ -155,21 +155,24 @@ void vfs_from_ext2(const struct ext2_node *node, struct vfs_node *out) {
   };
 }
 
-static bool lookup_ramfs(struct ramfs *fs, const char *path, struct vfs_node *out) {
+static bool lookup_ramfs(struct ramfs *fs, int root, const char *path, struct vfs_node *out) {
   struct ramfs_node node;
-  if (!fs || !ramfs_lookup_node(fs, path, &node)) { return false; }
+  if (!fs || !ramfs_lookup_node(fs, root, path, &node)) { return false; }
   vfs_from_ramfs(&node, out);
   return true;
 }
 
 static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
-  const char *local;
-  struct ramfs *mounted = mountns_lookup(path, &local);
-  if (mounted) { return lookup_ramfs(mounted, local, out); }
+  struct ramfs_route mounted = mountns_lookup(path);
+  if (mounted.fs) {
+    if (!lookup_ramfs(mounted.fs, mounted.root, mounted.path, out)) { return false; }
+    out->mount_id = mounted.mount_id;
+    return true;
+  }
   if (vfs_lookup_cache_get(path, nofollow, out)) { return true; }
   if (vfs_path_uses_ramfs(path)) {
     if (vfs_proc_lookup(path, !nofollow, out)) { return true; }
-    if (lookup_ramfs(vfs_root_ramfs, path, out)) {
+    if (lookup_ramfs(vfs_root_ramfs, 0, path, out)) {
       vfs_lookup_cache_put(path, nofollow, out);
       return true;
     }
@@ -178,7 +181,7 @@ static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
   struct ext2_node node;
   if (disk_path && (nofollow ? ext2_lstat(vfs_root_ext2, disk_path, &node) : ext2_lookup(vfs_root_ext2, disk_path, &node))) {
     vfs_from_ext2(&node, out);
-  } else if (!lookup_ramfs(vfs_root_ramfs, path, out)) { return false; }
+  } else if (!lookup_ramfs(vfs_root_ramfs, 0, path, out)) { return false; }
   vfs_lookup_cache_put(path, nofollow, out);
   return true;
 }
@@ -261,24 +264,24 @@ bool vfs_fs_info(struct vfs_fs_info *out) {
 }
 
 static const struct vfs_mount desktop_mounts[] = {
-  {VFS_DEV_EXT2_ROOT, VFS_DEV_EXT2_ROOT, 0xef53, "ext2-root", "/", "ext2", "rw"},
-  {VFS_DEV_TMPFS, VFS_DEV_EXT2_ROOT, 0x01021994, "tmpfs", "/tmp", "tmpfs", "rw"},
-  {VFS_DEV_RUNFS, VFS_DEV_EXT2_ROOT, 0x01021994, "runfs", "/run", "tmpfs", "rw"},
-  {VFS_DEV_BOOT, VFS_DEV_DEVFS, 0x4d44, "bootfs", "/dev/fs/boot", "fat16", "ro"},
-  {VFS_DEV_RAM0, VFS_DEV_DEVFS, 0x858458f6, "ramfs", "/dev/fs/ram0", "ramfs", "ro"},
-  {VFS_DEV_PROC, VFS_DEV_EXT2_ROOT, 0x9fa0, "proc", "/proc", "proc", "ro"},
-  {VFS_DEV_SYSFS, VFS_DEV_EXT2_ROOT, 0x62656572, "sysfs", "/sys", "sysfs", "ro"},
-  {VFS_DEV_DEVFS, VFS_DEV_EXT2_ROOT, 0x1373, "devfs", "/dev", "devfs", "rw"},
+  {VFS_DEV_EXT2_ROOT, VFS_DEV_EXT2_ROOT, 0xef53, "ext2-root", "/", "ext2", "rw", 0},
+  {VFS_DEV_TMPFS, VFS_DEV_EXT2_ROOT, 0x01021994, "tmpfs", "/tmp", "tmpfs", "rw", 0},
+  {VFS_DEV_RUNFS, VFS_DEV_EXT2_ROOT, 0x01021994, "runfs", "/run", "tmpfs", "rw", 0},
+  {VFS_DEV_BOOT, VFS_DEV_DEVFS, 0x4d44, "bootfs", "/dev/fs/boot", "fat16", "ro", 0},
+  {VFS_DEV_RAM0, VFS_DEV_DEVFS, 0x858458f6, "ramfs", "/dev/fs/ram0", "ramfs", "ro", 0},
+  {VFS_DEV_PROC, VFS_DEV_EXT2_ROOT, 0x9fa0, "proc", "/proc", "proc", "ro", 0},
+  {VFS_DEV_SYSFS, VFS_DEV_EXT2_ROOT, 0x62656572, "sysfs", "/sys", "sysfs", "ro", 0},
+  {VFS_DEV_DEVFS, VFS_DEV_EXT2_ROOT, 0x1373, "devfs", "/dev", "devfs", "rw", 0},
 };
 
 static const struct vfs_mount app_mounts[] = {
-  {VFS_DEV_RAM0, VFS_DEV_RAM0, 0x858458f6, "app", "/", "ramfs", "ro"},
-  {VFS_DEV_TMPFS, VFS_DEV_RAM0, 0x01021994, "tmpfs", "/tmp", "tmpfs", "rw"},
-  {VFS_DEV_RUNFS, VFS_DEV_RAM0, 0x01021994, "runfs", "/run", "tmpfs", "rw"},
-  {VFS_DEV_PROC, VFS_DEV_RAM0, 0x9fa0, "proc", "/proc", "proc", "ro"},
-  {VFS_DEV_SYSFS, VFS_DEV_RAM0, 0x62656572, "sysfs", "/sys", "sysfs", "ro"},
-  {VFS_DEV_DEVFS, VFS_DEV_RAM0, 0x1373, "devfs", "/dev", "devfs", "rw"},
-  {VFS_DEV_EXT2_ROOT, VFS_DEV_RAM0, 0xef53, "data", "/data", "ext2", "rw"},
+  {VFS_DEV_RAM0, VFS_DEV_RAM0, 0x858458f6, "app", "/", "ramfs", "ro", 0},
+  {VFS_DEV_TMPFS, VFS_DEV_RAM0, 0x01021994, "tmpfs", "/tmp", "tmpfs", "rw", 0},
+  {VFS_DEV_RUNFS, VFS_DEV_RAM0, 0x01021994, "runfs", "/run", "tmpfs", "rw", 0},
+  {VFS_DEV_PROC, VFS_DEV_RAM0, 0x9fa0, "proc", "/proc", "proc", "ro", 0},
+  {VFS_DEV_SYSFS, VFS_DEV_RAM0, 0x62656572, "sysfs", "/sys", "sysfs", "ro", 0},
+  {VFS_DEV_DEVFS, VFS_DEV_RAM0, 0x1373, "devfs", "/dev", "devfs", "rw", 0},
+  {VFS_DEV_EXT2_ROOT, VFS_DEV_RAM0, 0xef53, "data", "/data", "ext2", "rw", 0},
 };
 
 static size_t mount_count(void) {
