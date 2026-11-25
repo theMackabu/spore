@@ -107,7 +107,8 @@ static bool load_regs(struct trap_frame *f, const uint64_t *r) {
 }
 #endif
 
-bool arch_push_signal_frame(struct thread *t, const struct signal_action *action, int sig, uint64_t address, int code) {
+bool arch_push_signal_frame(struct thread *t, const struct signal_action *action, const struct siginfo_fields64 *info) {
+  int sig = info->si_signo;
   struct native_sigframe sf = {0};
   struct trap_frame *f = &t->tf;
   uint64_t sp = trap_user_stack(f);
@@ -115,7 +116,7 @@ bool arch_push_signal_frame(struct thread *t, const struct signal_action *action
   sf.ctx.stack = (struct stack_t64){
     .ss_sp = t->sigaltstack_sp, .ss_flags = on_alt ? 1 : t->sigaltstack_flags, .ss_size = t->sigaltstack_size};
   sf.ctx.mask = t->signal_mask;
-  sf.info.fields = (struct siginfo_fields64){.si_signo = sig, .si_code = code, .si_addr = address};
+  sf.info.fields = *info;
   save_regs(sf.ctx.reg, f);
 #ifdef __x86_64__
   sp -= 128;

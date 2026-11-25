@@ -1,4 +1,6 @@
 #include "init/app.h"
+#include "abi/linux/shared/signal.h"
+#include "mm/pool.h"
 #include "proc/signal.h"
 
 #include "arch/regs.h"
@@ -11,6 +13,7 @@
 #include "proc/memory.h"
 #include "proc/process.h"
 #include "proc/thread.h"
+#include "proc/user_namespace.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -81,6 +84,7 @@ static void terminate_domain_by_signal(struct domain *domain, int signal) {
     }
   }
   if (app_mode) { app_finish(APP_SIGNAL, signal); }
+  cell_reparent_children(domain, 0, 0);
   cell_wake_parent_of(domain);
 }
 
@@ -110,7 +114,8 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   return cell_deliver_signal_to_thread_fault(thread, signal, 0, 0);
 }
 
-bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint64_t fault_addr, int sig_code) {
+static bool deliver_signal(struct thread *thread, struct siginfo_fields64 info) {
+  int signal = info.si_signo;
   if (thread == NULL || thread->domain == NULL || signal <= 0 || signal >= (int)NSIG) { return false; }
   if (signal_is_blocked(thread, signal)) {
     queue_signal_to_thread(thread, signal);
@@ -141,7 +146,7 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
     }
   }
 
-  if (!arch_push_signal_frame(thread, action, signal, fault_addr, sig_code)) {
+  if (!arch_push_signal_frame(thread, action, &info)) {
     terminate_domain_by_signal(domain, SIGSEGV);
     return true;
   }
@@ -150,7 +155,11 @@ bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint
   return true;
 }
 
-void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *frame) {
+bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint64_t fault_addr, int sig_code) {
+  return deliver_signal(thread, (struct siginfo_fields64){.si_signo = signal, .si_code = sig_code, .si_addr = fault_addr});
+}
+
+static struct thread *signal_target(struct domain *domain, int signal) {
   struct thread *target = NULL;
   for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *t = cell_thread_slot(i);
@@ -161,6 +170,11 @@ void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *fr
     if (target == NULL || t->state == THREAD_BLOCKED) { target = t; }
     if (t->state == THREAD_BLOCKED && t->wait.reason == WAIT_STDIN) { break; }
   }
+  return target;
+}
+
+void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *frame) {
+  struct thread *target = signal_target(domain, signal);
   if (target == NULL) {
     domain->pending_signals |= signal_bit(signal);
   } else if (target == cell_current_thread_internal() && frame != NULL) {
@@ -170,6 +184,95 @@ void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *fr
   } else {
     cell_deliver_signal_to_thread(target, signal);
   }
+}
+
+struct parent_notifications {
+  uint64_t queued;
+  struct signal_sender sender[64];
+};
+
+static struct object_pool notification_pool;
+
+int cell_set_parent_death_signal(struct thread *thread, uint64_t signal) {
+  if (signal >= NSIG) { return -22; }
+  if (signal && !thread->domain->parent_notifications) {
+    if (!notification_pool.limit && !pool_init(&notification_pool, sizeof(struct parent_notifications), MAX_DOMAINS)) {
+      return -12;
+    }
+    thread->domain->parent_notifications = pool_alloc(&notification_pool);
+    if (!thread->domain->parent_notifications) { return -12; }
+  }
+  thread->parent_death_signal = signal;
+  return 0;
+}
+
+void cell_free_parent_notifications(struct domain *domain) {
+  if (domain->parent_notifications) {
+    pool_free(&notification_pool, domain->parent_notifications);
+    domain->parent_notifications = NULL;
+  }
+}
+
+static void dispatch_parent_notifications(void) {
+  static bool draining;
+  if (draining) { return; }
+  draining = true;
+  bool dispatched;
+  do {
+    dispatched = false;
+    for (size_t i = 0; i < cell_domain_slot_limit(); ++i) {
+      struct domain *domain = cell_domain_slot(i);
+      while (domain->used && !domain->zombie && domain->parent_notifications && domain->parent_notifications->queued) {
+        int signal = __builtin_ctzll(domain->parent_notifications->queued) + 1;
+        uint64_t bit = signal_bit(signal);
+        domain->parent_notifications->queued &= ~bit;
+        struct thread *target = signal_target(domain, signal);
+        if (!target || target->running_cpu >= 0) {
+          domain->pending_signals |= bit;
+          smp_notify();
+        } else {
+          struct signal_sender sender = domain->parent_notifications->sender[signal - 1];
+          domain->parent_notifications->sender[signal - 1] = (struct signal_sender){0};
+          deliver_signal(target, (struct siginfo_fields64){.si_signo = signal, .sender = sender});
+        }
+        dispatched = true;
+      }
+    }
+  } while (dispatched);
+  draining = false;
+}
+
+void cell_reparent_children(struct domain *parent, int exiting_tid, int survivor_tid) {
+  struct domain *init = survivor_tid ? parent : cell_find_domain(1);
+  int adopt_pid = init && !init->zombie ? init->id : 0;
+  int adopt_tid = survivor_tid ? survivor_tid : adopt_pid;
+  bool queued = false;
+  for (size_t i = 0; i < cell_domain_slot_limit(); ++i) {
+    struct domain *child = cell_domain_slot(i);
+    if (!child->used || child->parent_id != parent->id || (exiting_tid && child->parent_tid != exiting_tid)) {
+      continue;
+    }
+    child->parent_id = adopt_pid;
+    child->parent_tid = adopt_tid;
+    if (!survivor_tid) { child->exit_signal = SIGCHLD; }
+    if (child->zombie) {
+      if (!survivor_tid && adopt_pid) { cell_wake_parent_of(child); }
+      continue;
+    }
+    if (!child->parent_notifications) { continue; }
+    for (size_t j = 0; j < cell_thread_slot_limit(); ++j) {
+      struct thread *t = cell_thread_slot(j);
+      if (!t || t->domain != child || t->state == THREAD_UNUSED || t->state == THREAD_ZOMBIE ||
+          !t->parent_death_signal) { continue; }
+      unsigned signal = t->parent_death_signal;
+      uint64_t bit = signal_bit(signal);
+      if ((child->pending_signals | child->parent_notifications->queued) & bit) { continue; }
+      child->parent_notifications->sender[signal - 1] = (struct signal_sender){parent->id, userns_visible(child->user_ns, false, parent->uid)};
+      child->parent_notifications->queued |= bit;
+      queued = true;
+    }
+  }
+  if (queued) { dispatch_parent_notifications(); }
 }
 
 void cell_expire_real_timers(uint64_t now) {
@@ -191,11 +294,16 @@ bool cell_deliver_pending_signals(struct thread *thread) {
     uint64_t *pending = (thread->pending_signals & bit) ? &thread->pending_signals : &thread->domain->pending_signals;
     if ((*pending & bit) == 0 || signal_is_blocked(thread, signal)) { continue; }
     *pending &= ~bit;
+    struct siginfo_fields64 info = {.si_signo = signal};
+    if (pending == &thread->domain->pending_signals && thread->domain->parent_notifications) {
+      info.sender = thread->domain->parent_notifications->sender[signal - 1];
+      thread->domain->parent_notifications->sender[signal - 1] = (struct signal_sender){0};
+    }
     const struct signal_action *action = &thread->domain->signal_actions[signal];
     if (signal != SIGKILL && (action->handler == 1 || (action->handler == 0 && signal_default_ignored(signal)))) {
       continue;
     }
-    return cell_deliver_signal_to_thread(thread, signal);
+    return deliver_signal(thread, info);
   }
   return false;
 }

@@ -31,6 +31,7 @@ static void finish_exit(struct thread *thread, struct trap_frame *frame) {
   thread->state = THREAD_ZOMBIE;
   thread->running_cpu = -1;
   if (app_mode) { app_finish(APP_EXIT, domain->exit_status); }
+  cell_reparent_children(domain, 0, 0);
   cell_wake_parent_of(domain);
   cell_schedule(frame);
 }
@@ -47,6 +48,14 @@ void cell_exit_thread_current(int status, struct trap_frame *frame) {
     return;
   }
   kprintf("[kernel] exit(%d) tid=%d\n", status, thread->tid);
+  for (size_t i = 0; i < cell_thread_slot_limit(); ++i) {
+    struct thread *sibling = cell_thread_slot(i);
+    if (sibling && sibling != thread && sibling->domain == domain &&
+        (sibling->state == THREAD_RUNNABLE || sibling->state == THREAD_BLOCKED)) {
+      cell_reparent_children(domain, thread->tid, sibling->tid);
+      break;
+    }
+  }
   cell_release_thread(thread);
   cell_schedule(frame);
 }

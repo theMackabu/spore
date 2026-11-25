@@ -35,17 +35,14 @@ static bool thread_on_sigaltstack(const struct thread *thread) {
   return end >= thread->sigaltstack_sp && sp >= thread->sigaltstack_sp && sp < end;
 }
 
-static void fill_signal_context(struct signal_frame64 *frame, const struct thread *thread, int signal,
-                                uint64_t fault_addr, int sig_code) {
-  frame->siginfo.fields.si_signo = signal;
-  frame->siginfo.fields.si_code = sig_code;
-  frame->siginfo.fields.si_addr = fault_addr;
+static void fill_signal_context(struct signal_frame64 *frame, const struct thread *thread, const struct siginfo_fields64 *info) {
+  frame->siginfo.fields = *info;
 
   frame->ucontext.uc_stack.ss_sp = thread->sigaltstack_sp;
   frame->ucontext.uc_stack.ss_flags = thread_on_sigaltstack(thread) ? SS_ONSTACK : thread->sigaltstack_flags;
   frame->ucontext.uc_stack.ss_size = thread->sigaltstack_size;
   frame->ucontext.uc_sigmask = thread->signal_mask;
-  frame->ucontext.uc_mcontext.fault_address = fault_addr;
+  frame->ucontext.uc_mcontext.fault_address = info->si_code > 0 ? info->si_addr : 0;
   for (size_t i = 0; i < 31; ++i) {
     frame->ucontext.uc_mcontext.regs[i] = thread->tf.x[i];
   }
@@ -54,8 +51,8 @@ static void fill_signal_context(struct signal_frame64 *frame, const struct threa
   frame->ucontext.uc_mcontext.pstate = thread->tf.spsr_el1;
 }
 
-bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action, int signal,
-                               uint64_t fault_addr, int sig_code) {
+bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action, const struct siginfo_fields64 *info) {
+  int signal = info->si_signo;
   if (!action->restorer) { return false; }
   struct domain *domain = thread->domain;
   struct signal_frame64 frame;
@@ -64,7 +61,7 @@ bool arch_push_signal_frame(struct thread *thread, const struct signal_action *a
   frame.signal = (uint64_t)signal;
   frame.saved_signal_mask = thread->signal_mask;
   frame.saved = thread->tf;
-  fill_signal_context(&frame, thread, signal, fault_addr, sig_code);
+  fill_signal_context(&frame, thread, info);
 
   uint64_t stack_top = thread->tf.sp_el0;
   if ((action->flags & SA_ONSTACK) != 0 && !thread_on_sigaltstack(thread) &&

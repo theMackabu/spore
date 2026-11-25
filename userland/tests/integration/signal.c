@@ -10,6 +10,7 @@
 #include <sys/auxv.h>
 #include <sys/epoll.h>
 #include <sys/select.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -355,9 +356,94 @@ static int child_signal_notification(void) {
   return !sigaction(SIGCHLD, &old, NULL) && ok;
 }
 
+static volatile sig_atomic_t death_sender;
+
+static void parent_died(int sig, siginfo_t *info, void *context) {
+  (void)context;
+  if (sig == SIGUSR1 && info->si_code == SI_USER) { death_sender = info->si_pid; }
+}
+
+static void *fork_from_thread(void *arg) {
+  pid_t *child = arg;
+  int ready[2];
+  if (prctl(PR_SET_PDEATHSIG, SIGTERM) || pipe(ready)) { return NULL; }
+  *child = fork();
+  if (*child == 0) {
+    close(ready[0]);
+    int value = -1;
+    struct sigaction action = {.sa_sigaction = parent_died, .sa_flags = SA_SIGINFO};
+    pid_t parent = getppid();
+    if (prctl(PR_GET_PDEATHSIG, &value) || value || sigaction(SIGUSR1, &action, NULL) ||
+        prctl(PR_SET_PDEATHSIG, SIGUSR1) || prctl(PR_SET_PDEATHSIG, 65) != -1 || errno != EINVAL ||
+        prctl(PR_GET_PDEATHSIG, &value) || value != SIGUSR1 || write(ready[1], ".", 1) != 1) { _exit(1); }
+    uint64_t end = integration_usec_now() + 1000000;
+    while (!death_sender && integration_usec_now() < end) { usleep(1000); }
+    if (death_sender != parent || getppid() != parent) { _exit(2); }
+    execl("/bin/exec_child", "exec_child", "parent-death-signal", (char *)NULL);
+    _exit(3);
+  }
+  close(ready[1]);
+  char byte;
+  if (*child > 0) { (void)read(ready[0], &byte, 1); }
+  close(ready[0]);
+  return NULL;
+}
+
+static int orphan_notification(void) {
+  int report[2];
+  if (pipe(report)) { return 0; }
+  pid_t parent = fork();
+  if (parent == 0) {
+    close(report[0]);
+    int ready[2];
+    if (pipe(ready)) { _exit(1); }
+    pid_t creator = getpid();
+    pid_t child = fork();
+    if (child == 0) {
+      close(ready[0]);
+      sigset_t blocked;
+      sigemptyset(&blocked);
+      sigaddset(&blocked, SIGUSR1);
+      struct sigaction action = {.sa_sigaction = parent_died, .sa_flags = SA_SIGINFO};
+      if (sigaction(SIGUSR1, &action, NULL) || sigprocmask(SIG_BLOCK, &blocked, NULL) ||
+          prctl(PR_SET_PDEATHSIG, SIGUSR1) || write(ready[1], ".", 1) != 1) { _exit(1); }
+      uint64_t end = integration_usec_now() + 1000000;
+      while (getppid() == creator && integration_usec_now() < end) { usleep(1000); }
+      if (getppid() == 1 && !sigprocmask(SIG_UNBLOCK, &blocked, NULL) && death_sender == creator) {
+        pid_t self = getpid();
+        (void)write(report[1], &self, sizeof(self));
+      }
+      _exit(0);
+    }
+    close(ready[1]);
+    char byte;
+    _exit(child > 0 && read(ready[0], &byte, 1) == 1 ? 0 : 1);
+  }
+  close(report[1]);
+  pid_t adopted;
+  int status;
+  int ok = parent > 0 && read(report[0], &adopted, sizeof(adopted)) == sizeof(adopted) &&
+           waitpid(adopted, &status, 0) == adopted && status == 0;
+  if (parent > 0 && (waitpid(parent, &status, 0) != parent || status != 0)) { ok = 0; }
+  close(report[0]);
+  return ok;
+}
+
+static int parent_death_notification(void) {
+  pid_t child = -1;
+  pthread_t creator;
+  int status;
+  int ok = pthread_create(&creator, NULL, fork_from_thread, &child) == 0 &&
+           pthread_join(creator, NULL) == 0 && child > 0 && waitpid(child, &status, 0) == child &&
+           WIFEXITED(status) && !WEXITSTATUS(status);
+  ok = ok && orphan_notification();
+  printf("[spore] parent death notification: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
-  return child_signal_notification() && vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
+  return parent_death_notification() && child_signal_notification() && vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
          signal_mask_regression() && temporary_mask_regression() && signal_altstack_regression() &&
          signal_interrupted_read_regression() && signal_restart_read_regression() &&
          signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) &&

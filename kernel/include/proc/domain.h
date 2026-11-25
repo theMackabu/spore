@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 struct open_file;
+struct parent_notifications;
 struct process_mm;
 
 constexpr int DOMAIN_GROUP_LIMIT = 32;
@@ -18,6 +19,7 @@ constexpr int DOMAIN_GROUP_LIMIT = 32;
 struct domain {
   int id;
   int parent_id;
+  int parent_tid;
   int pgrp_id;
   int session_id;
   uint16_t refcount;
@@ -64,6 +66,7 @@ struct domain {
   struct cpu_budget budget;
   struct signal_action signal_actions[65];
   uint64_t pending_signals;
+  struct parent_notifications *parent_notifications;
 };
 
 static inline struct open_file *cell_file_at(const struct domain *domain, uint64_t fd) {

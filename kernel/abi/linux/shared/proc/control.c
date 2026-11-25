@@ -7,6 +7,8 @@
 #include "lib/mem.h"
 
 enum {
+  PR_SET_PDEATHSIG = 1,
+  PR_GET_PDEATHSIG = 2,
   PR_GET_DUMPABLE = 3,
   PR_SET_DUMPABLE = 4,
   PR_SET_NAME = 15,
@@ -26,6 +28,13 @@ enum {
 
 int64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
   switch (option) {
+  case PR_SET_PDEATHSIG:
+    return cell_set_parent_death_signal(cell_current_thread_internal(), arg2);
+  case PR_GET_PDEATHSIG: {
+    int32_t signal = cell_current_thread_internal()->parent_death_signal;
+    return syscall_user_writable(arg2, sizeof(signal)) &&
+           vmm_copy_to_user(syscall_active_as(), arg2, &signal, sizeof(signal)) ? 0 : -EFAULT;
+  }
   case PR_CAPBSET_READ:
   case PR_CAPBSET_DROP:
     return arg2 > 40 || arg3 || arg4 || arg5 ? -EINVAL : cell_cap_bound(option == PR_CAPBSET_DROP, arg2);

@@ -15,6 +15,7 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
   for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread != cell_current_thread_internal() && thread->domain == domain) {
+      cell_reparent_children(domain, thread->tid, cell_current_tid());
       cell_clear_wait(thread);
       thread->state = THREAD_UNUSED;
       thread->domain = NULL;
@@ -29,7 +30,13 @@ bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uin
 
   arch_init_user_frame(frame, entry, sp, cell_domain_as(domain)->freebsd_abi);
   struct thread *thread = cell_current_thread_internal();
-  thread->tid = domain->id;
+  if (thread->tid != domain->id) {
+    for (size_t i = 0; i < cell_domain_slot_limit(); ++i) {
+      struct domain *child = cell_domain_slot(i);
+      if (child->used && child->parent_id == domain->id) { child->parent_tid = domain->id; }
+    }
+    thread->tid = domain->id;
+  }
   thread->clear_child_tid = 0;
   thread->robust_list = 0;
   thread->sigaltstack_flags = 2;

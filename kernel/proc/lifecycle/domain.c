@@ -111,6 +111,7 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   kmemcpy(dst->exec_path, src->exec_path, sizeof(dst->exec_path));
   kmemcpy(dst->argv0, src->argv0, sizeof(dst->argv0));
   kmemcpy(dst->cmdline, src->cmdline, sizeof(dst->cmdline));
+  dst->parent_tid = cell_current_tid();
   dst->user_ns = userns_retain(src->user_ns);
   dst->uts = uts_retain(src->uts);
   dst->filter = seccomp_inherit(src->filter);
@@ -136,16 +137,6 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
 }
 
 void cell_destroy_domain(struct domain *domain) {
-  int reparent_to = (domain != NULL && domain->id != 1 && cell_find_domain(1) != NULL) ? 1 : 0;
-  if (domain != NULL) {
-    for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
-      struct domain *child = cell_domain_slot(i);
-      if (child == NULL || !child->used || child->parent_id != domain->id) { continue; }
-      child->parent_id = reparent_to;
-      child->exit_signal = 17;
-      if (child->zombie && reparent_to != 0) { cell_wake_parent_of(child); }
-    }
-  }
   for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *thread = cell_thread_slot(i);
     if (thread != NULL && thread->domain == domain) {
@@ -155,6 +146,7 @@ void cell_destroy_domain(struct domain *domain) {
       thread->domain = NULL;
     }
   }
+  cell_free_parent_notifications(domain);
   cell_close_all_fds(domain);
   cell_mm_release(domain->mm);
   domain->mm = NULL;
@@ -300,6 +292,12 @@ int cell_setres_ids(bool group, uint32_t real, uint32_t effective, uint32_t save
   bool had_root = !domain->uid || !domain->euid || !domain->saved_uid;
   if (!cell_capable(group ? CAP_SETGID : CAP_SETUID) && (!held_id(real, *real_id, *effective_id, *saved_id) || !held_id(effective, *real_id, *effective_id, *saved_id) ||
                         !held_id(saved, *real_id, *effective_id, *saved_id))) { return -EPERM; }
+  if (effective != UINT32_MAX && effective != *effective_id) {
+    for (size_t i = 0; i < cell_thread_slot_limit(); ++i) {
+      struct thread *t = cell_thread_slot(i);
+      if (t && t->domain == domain) { t->parent_death_signal = 0; }
+    }
+  }
   if (real != UINT32_MAX) { *real_id = real; }
   if (effective != UINT32_MAX) { *effective_id = effective; }
   if (saved != UINT32_MAX) { *saved_id = saved; }
@@ -328,6 +326,7 @@ int cell_setgid_current(uint32_t gid) {
 void cell_apply_exec_creds(uint32_t mode, uint32_t uid, uint32_t gid) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return; }
+  if (mode & 06000u) { cell_current_thread_internal()->parent_death_signal = 0; }
   if ((mode & 04000u) != 0) { domain->euid = uid; }
   if ((mode & 02000u) != 0) { domain->egid = gid; }
   domain->saved_uid = domain->euid;

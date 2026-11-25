@@ -254,6 +254,7 @@ void cell_timer_tick(struct trap_frame *frame, bool from_lower_el) {
     } else {
       domain->zombie = true;
       domain->exit_status = 137;
+      cell_reparent_children(domain, 0, 0);
     }
     return;
   }

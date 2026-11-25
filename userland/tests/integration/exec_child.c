@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -28,6 +29,11 @@ int main(int argc, char **argv) {
     return got == sizeof(expected) && memcmp(bytes, expected, sizeof(expected)) == 0 ? 0 : 43;
   }
   const char *arg = argc > 1 ? argv[1] : "missing";
+  if (strcmp(arg, "parent-death-signal") == 0) {
+    int value;
+    return !prctl(PR_GET_PDEATHSIG, &value) && value == SIGUSR1 &&
+           !prctl(PR_SET_PDEATHSIG, 0) && !prctl(PR_GET_PDEATHSIG, &value) && value == 0 ? 0 : 43;
+  }
   if (strcmp(arg, "mapped-user") == 0) {
     return !getuid() && !getgid() && !getauxval(AT_EUID) && !getauxval(AT_EGID) ? 0 : 43;
   }

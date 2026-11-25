@@ -111,6 +111,7 @@ struct thread {
   struct linux_caps capabilities;
   bool no_new_privs;
   uint64_t signal_mask;
+  uint8_t parent_death_signal;
   uint64_t pending_signals;
   uint64_t sigaltstack_sp;
   uint64_t sigaltstack_size;

@@ -14,6 +14,8 @@ struct signal_action {
   uint64_t mask;
 };
 
+int cell_set_parent_death_signal(struct thread *thread, uint64_t signal);
+void cell_free_parent_notifications(struct domain *domain);
 void cell_terminate_current(int signal, struct trap_frame *frame);
 void cell_expire_real_timers(uint64_t now);
 void cell_signal_domain(struct domain *domain, int signal, struct trap_frame *frame);

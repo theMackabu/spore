@@ -3,11 +3,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct signal_sender {
+  int32_t pid;
+  uint32_t uid;
+};
+
 struct siginfo_fields64 {
   int32_t si_signo;
   int32_t si_errno;
   int32_t si_code;
-  uint64_t si_addr;
+  union {
+    uint64_t si_addr;
+    struct signal_sender sender;
+  };
 };
 
 struct siginfo64 {
