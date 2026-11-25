@@ -53,6 +53,10 @@ impl Memory {
         Ok(unsafe { physical.add(addr as usize & 4095) })
     }
 
+    pub fn require_write(&mut self, addr: u64) -> Result<(), super::cpu::Fault> {
+        self.pointer(addr, Access::Write).map(|_| ())
+    }
+
     pub fn fetch(&mut self, pc: u64) -> Result<u32, super::cpu::Fault> {
         if pc & 3 != 0 {
             return Err(super::cpu::Fault::Alignment(pc));

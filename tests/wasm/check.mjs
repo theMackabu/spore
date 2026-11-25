@@ -65,14 +65,17 @@ try {
     exec("clang", ["--target=aarch64-unknown-freebsd", "-nostdlib", "-static", "-fuse-ld=lld", "-Wl,-e,_start",
       "-ffreestanding", "-fno-stack-protector", ...["freebsd-aarch64.S", "freebsd-call.S", "freebsd-services.c"]
         .map(file => path.join(sources, "../ports", file)), "-o", bsd]);
-    const fp = path.join(dir, "float");
-    exec("aarch64-unknown-linux-musl-gcc", ["-static", "-nostdlib", path.join(sources, "float.S"), "-o", fp]);
+    const asm = ["float", "atomic"].map(name => {
+      const out = path.join(dir, name);
+      exec("aarch64-unknown-linux-musl-gcc", ["-static", "-nostdlib", path.join(sources, name + ".S"), "-o", out]);
+      return out;
+    });
     for (const [src, out] of [["threads.c", threads], ["fault.c", recovery], ["../appliance/probe.c", probe]]) {
       exec("aarch64-unknown-linux-musl-gcc", ["-static", "-pthread", "-O2", path.join(sources, src), "-o", out]);
     }
     for (const backend of [[], ["--wasm"]]) {
       assert.equal(exec(spore, ["run", ...backend, bsd, "--", "PASS"], 42).toString().trim(), "FreeBSD OK");
-      exec(spore, ["run", ...backend, fp], 42);
+      for (const exe of asm) exec(spore, ["run", ...backend, exe], 42);
       exec(spore, ["run", ...backend, threads], 42);
       exec(spore, ["run", ...backend, recovery], 42);
       exec(spore, ["run", ...backend, cpu, "--", "protect"], 139);

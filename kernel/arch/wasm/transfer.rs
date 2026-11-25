@@ -157,32 +157,8 @@ impl Cpu {
         }
         let vector = w & (1 << 26) != 0;
         let scale = w >> 30;
-        if w & 0x3ffffc00 == 0x08dffc00 || w & 0x3fff7c00 == 0x085f7c00 {
-            let size = 1usize << scale;
-            if base & (size as u64 - 1) != 0 {
-                return Err(Fault::Alignment(base));
-            }
-            let value = self.memory.load(base, size)?;
-            self.set(t, value as u64);
-            if w & (1 << 23) == 0 {
-                self.reservation = Some((base, size));
-            }
-            return Ok(());
-        }
-        if w & 0x3fe07c00 == 0x08007c00 || w & 0x3ffffc00 == 0x089ffc00 {
-            let size = 1usize << scale;
-            if base & (size as u64 - 1) != 0 {
-                return Err(Fault::Alignment(base));
-            }
-            let exclusive = w & (1 << 23) == 0;
-            let reserved = self.reservation.take() == Some((base, size));
-            if !exclusive || reserved {
-                self.memory.store(base, size, self.reg(t) as u128)?;
-            }
-            if exclusive {
-                self.set((w >> 16) & 31, (!reserved) as u64);
-            }
-            return Ok(());
+        if w & 0x3f000000 == 0x08000000 || w & 0x3f200c00 == 0x38200000 {
+            return self.atomic(w);
         }
         if w & 0x3a000000 == 0x28000000 {
             let mode = (w >> 23) & 3;

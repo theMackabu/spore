@@ -1,6 +1,8 @@
 #[cfg(target_arch = "wasm32")]
 mod alu;
 #[cfg(target_arch = "wasm32")]
+mod atomic;
+#[cfg(target_arch = "wasm32")]
 mod cpu;
 #[cfg(target_arch = "wasm32")]
 mod decode;
