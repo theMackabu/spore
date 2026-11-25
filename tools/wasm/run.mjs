@@ -8,7 +8,7 @@ export class GuestSignal extends Error {
 export async function run(
   kernel,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
 ) {
   if (!Number.isInteger(memoryMiB) || memoryMiB < 16 || memoryMiB >= 2048) {
     throw new RangeError("Wasm guest RAM must be 16 through 2047 MiB");
@@ -32,6 +32,8 @@ export async function run(
     : new TextEncoder().encode([argv0, ...args].map((arg) => arg + "\0").join(""));
   const decoder = new TextDecoder();
   let guest;
+  const blocks = [];
+  if (stats) Object.assign(stats, { compiledBlocks: 0, compiledInstructions: 0 });
   const bytes = (ptr, len) => new Uint8Array(guest.memory.buffer, ptr >>> 0, len >>> 0);
   const stop = {};
   let status;
@@ -39,6 +41,22 @@ export async function run(
   guest = (
     await WebAssembly.instantiate(module, {
       spore: {
+        jit_compile(slot, ptr, len) {
+          try {
+            const code = new WebAssembly.Module(bytes(ptr, len));
+            blocks[slot] = new WebAssembly.Instance(code, { spore: { memory: guest.memory } }).exports.run;
+            if (stats) ++stats.compiledBlocks;
+            return 1;
+          } catch (e) {
+            if (e instanceof WebAssembly.CompileError) return 0;
+            throw e;
+          }
+        },
+        jit_run(slot, frame, budget) {
+          const retired = blocks[slot](frame, budget);
+          if (stats) stats.compiledInstructions += retired;
+          return retired;
+        },
         net_send(ptr, len) {
           return network?.send(bytes(ptr, len).slice()) ? 1 : 0;
         },
@@ -93,7 +111,7 @@ export async function run(
     bytes(ptr, elf.length).set(elf);
     bytes(ptr + elf.length, argv.length).set(argv);
   }
-  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0);
+  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0) | (jit ? 16 : 0);
   try {
     if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)) {
       throw new Error("cannot initialize guest memory or executable");

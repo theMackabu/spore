@@ -28,16 +28,19 @@ try {
   ]);
   if (mode === "--bench") {
     const elf = fs.readFileSync(cpu);
-    const samples = [];
+    const samples = [[], []];
+    let compiled = 0;
     for (let i = 0; i < 6; i++) {
-      const start = performance.now();
-      assert.equal(await run(kernel, elf, { args: ["benchmark"] }), 42);
-      if (i) samples.push(performance.now() - start);
+      for (const jit of [!!(i % 2), !(i % 2)]) {
+        const stats = {};
+        const start = performance.now();
+        assert.equal(await run(kernel, elf, { args: ["benchmark"], jit, stats }), 42);
+        if (i) samples[Number(jit)].push(performance.now() - start);
+        if (jit) compiled = stats.compiledInstructions;
+      }
     }
-    const median = samples.toSorted((a, b) => a - b)[2];
-    console.log(
-      `16,777,216 A64 loop instructions, fresh instances, compiled module: median ${median.toFixed(1)} ms (5 runs)`,
-    );
+    const median = samples.map(row => row.toSorted((a,b) => a-b)[2].toFixed(1));
+    console.log(`16,777,216 ARM64 loop instructions, median of 5 fresh instances per mode: interpreter ${median[0]} ms, JIT ${median[1]} ms (${compiled} instructions compiled).`);
   } else {
     exec("aarch64-unknown-linux-musl-gcc", [
       "-O2",
@@ -70,6 +73,15 @@ try {
     const native = exec(spore, ["run", crypto], 42);
     assert.equal(native.length, 576);
     assert.deepEqual(exec(spore, ["run", "--wasm", crypto], 42), native);
+    const math = path.join(dir, "arithmetic");
+    exec("aarch64-unknown-linux-musl-gcc", ["-static", "-nostdlib", path.join(sources, "arithmetic.S"), "-o", math]);
+    const expected = exec(spore, ["run", math], 42);
+    for (const jit of [false, true]) {
+      const chunks = [], stats = {};
+      assert.equal(await run(kernel, fs.readFileSync(math), { jit, stats, write: (_, bytes) => chunks.push(bytes) }), 42);
+      assert.deepEqual(Buffer.concat(chunks), expected);
+      if (jit) assert.ok(stats.compiledInstructions > 0);
+    }
     const bsd = path.join(dir, "freebsd");
     exec("clang", ["--target=aarch64-unknown-freebsd", "-nostdlib", "-static", "-fuse-ld=lld", "-Wl,-e,_start",
       "-ffreestanding", "-fno-stack-protector", ...["freebsd-aarch64.S", "freebsd-call.S", "freebsd-services.c"]

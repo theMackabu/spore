@@ -17,6 +17,7 @@ unsafe extern "C" {
     ) -> *const Frame;
 }
 struct Machine {
+    jit: Option<super::jit::Cache>,
     cpus: Vec<Cpu>,
     next: usize,
 }
@@ -77,7 +78,11 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32, cou
                     cpu
                 })
                 .collect();
-            *cpu = Some(Machine { cpus, next: 0 });
+            *cpu = Some(Machine {
+                cpus,
+                next: 0,
+                jit: (devices & 16 != 0).then(super::jit::Cache::new),
+            });
             true
         })
     })
@@ -119,10 +124,20 @@ pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
             } else {
                 budget.min(retired + 4096)
             };
+            let mut entry = true;
             while retired < end && !cpu.idle {
+                if entry && let Some(jit) = machine.jit.as_mut() {
+                    let compiled = jit.run(cpu, end - retired);
+                    if compiled != 0 {
+                        retired += compiled;
+                        continue;
+                    }
+                }
+                let before = cpu.f.pc;
                 if let Err(error) = cpu.step() {
                     cpu.exception(error);
                 }
+                entry = before.wrapping_sub(cpu.f.pc) < 48 * 4;
                 retired += 1;
             }
         }

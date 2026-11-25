@@ -57,6 +57,15 @@ impl Memory {
         self.pointer(addr, Access::Write).map(|_| ())
     }
 
+    pub fn code(&mut self, pc: u64) -> Option<&[u32]> {
+        if pc & 3 != 0 {
+            return None;
+        }
+        let p = self.pointer(pc, Access::Execute).ok()?;
+        let n = (4096 - (pc as usize & 4095)) / 4;
+        Some(unsafe { std::slice::from_raw_parts(p.cast::<u32>(), n) })
+    }
+
     pub fn fetch(&mut self, pc: u64) -> Result<u32, super::cpu::Fault> {
         if pc & 3 != 0 {
             return Err(super::cpu::Fault::Alignment(pc));
