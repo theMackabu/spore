@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
 
-export async function userNetwork(qemu, settings, controller) {
+export async function userNetwork(qemu, settings, controller, deliver) {
   const process = spawn(qemu, [
     "-machine", "none", "-nodefaults", "-display", "none", "-serial", "none", "-qmp", "stdio",
     "-netdev", settings, "-netdev", "socket,id=wire,fd=3",
@@ -30,7 +30,11 @@ export async function userNetwork(qemu, settings, controller) {
       const len = data.readUInt32BE(pos);
       if (!len || len > 65536) { fail(new Error("invalid Ethernet frame from network helper")); return; }
       if (pos + 4 + len > data.length) break;
-      if (len <= 1518 && incoming.length < 256) incoming.push(data.subarray(pos + 4, pos + 4 + len));
+      if (len <= 1518) {
+        const frame = data.subarray(pos + 4, pos + 4 + len);
+        if (deliver) deliver(frame);
+        else if (incoming.length < 256) incoming.push(frame);
+      }
       pos += 4 + len;
     }
     tail = data.subarray(pos);

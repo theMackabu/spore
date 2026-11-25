@@ -38,6 +38,7 @@ HOST("clock") uint64_t host_clock(void);
 HOST("random") void host_random(void *, size_t);
 HOST("net_recv") int host_net_recv(void *, size_t);
 HOST("net_send") int host_net_send(const void *, size_t);
+HOST("disk_flush") int host_disk_flush(void);
 HOST("disk_write") int host_disk_write(uint64_t, const void *, size_t);
 HOST("exception") void host_exception(uint64_t, const char *, size_t);
 HOST("winsize") uint32_t host_winsize(void);
@@ -200,8 +201,15 @@ static bool disk_write(void *ctx, uint64_t off, const void *p, uint32_t n) {
   return virtio_blk_write(off, p, n);
 }
 
+static bool disk_flush(void *ctx) {
+  (void)ctx;
+  return host_disk_flush() != 0;
+}
+
+bool wasm_shutdown_storage(void) { return vfs_shutdown(); }
+
 void app_finish(enum app_result kind, unsigned value) {
-  if (!vfs_shutdown()) { kind = APP_BOOT_ERROR; value = BOOT_FLUSH_FAILED; }
+  if (!wasm_shutdown_storage()) { kind = APP_BOOT_ERROR; value = BOOT_FLUSH_FAILED; }
   wasm_flush();
   host_finish(kind, value, fault_pc, fault_text, fault_len);
 }
@@ -251,6 +259,7 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
     if (!ext2_mount_rw(&volume, disk_read, (devices & 2) ? disk_write : NULL, NULL)) {
       boot_fail(BOOT_DATA_MOUNT_FAILED, "cannot mount ext2 disk");
     }
+    volume.flush_device = disk_flush;
     disk = &volume;
   }
   if (!size || (size >= 8 && !kmemcmp(image, "SPOREAP2", 8))) {

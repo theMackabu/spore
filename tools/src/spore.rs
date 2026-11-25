@@ -26,6 +26,7 @@ Usage:
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
   spore build --wasm                  Build the hosted ARM64 kernel and interpreter
   spore build --wasm ELF -o PAYLOAD [image options] [-- ARG...]
+  spore serve --wasm [--net] [--port PORT]  Serve the browser runner on localhost
   spore boot --wasm [--net] [--root EXT2]       Boot a disposable snapshot of a userland disk
   spore run --wasm ELF [--net | -p PORT] [image options] [--data EXT2] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
@@ -136,6 +137,32 @@ fn execute() -> io::Result<i32> {
     let check = action == "test" || action == "bench";
     let exe = env::current_exe()?;
     let artifacts = exe.parent().unwrap();
+    if action == "serve" {
+        let mut wasm = false;
+        let mut network = false;
+        let mut port = 8000;
+        while let Some(arg) = args.next() {
+            match arg.to_str() {
+                Some("--wasm") => wasm = true,
+                Some("--net") => network = true,
+                Some("--port") => {
+                    port = args
+                        .next()
+                        .and_then(|s| s.to_str()?.parse().ok())
+                        .ok_or_else(|| io::Error::other("expected a TCP port"))?
+                }
+                _ => {
+                    return Err(io::Error::other(
+                        "usage: spore serve --wasm [--net] [--port PORT]",
+                    ));
+                }
+            }
+        }
+        if !wasm {
+            return Err(io::Error::other("serve requires --wasm"));
+        }
+        return system::serve_wasm(artifacts, port, network);
+    }
     if action == "rollback" {
         if args.next().is_some() {
             return Err(io::Error::other("usage: spore rollback"));

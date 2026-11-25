@@ -49,10 +49,10 @@ The CLI uses QEMU’s user-mode network backend as an Ethernet bridge. The helpe
 The build also produces a standalone browser runner in `target/release/wasm-web/`. Serve that directory locally.
 
 ```sh
-python3 -m http.server 8000 --bind 127.0.0.1 --directory target/release/wasm-web
+./target/release/spore serve --wasm
 ```
 
-Open `http://localhost:8000/`, select a static ELF and enter one argument per
+Pass `--net` to enable a same-origin WebSocket Ethernet relay backed by the host’s user-mode network. Open the printed loopback URL, select a static ELF and enter one argument per
 line. For a dynamically linked ELF, package its interpreter, libraries, files and
 arguments on the host and select the resulting payload.
 
@@ -61,7 +61,7 @@ arguments on the host and select the resulting payload.
 ```
 
 The CLI performs this packaging automatically on `spore run --wasm`. A worker runs the guest locally and reads ranges from the selected disk on demand.
-To boot a system, select only the root disk, click Run and type into the terminal. Stop terminates the worker and discards its snapshot. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
+To boot a system, select only the root disk, click Run and type into the terminal. Select **Keep disk changes in this browser** to save changed pages in origin-private storage. Reopen the same disk file on the same origin to resume. A fresh snapshot is the default. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
 
 ## Current scope
 
@@ -70,7 +70,7 @@ of A64 integer, branch, load/store, exclusive, scalar floating-point and SIMD in
 classes and address translations. Its Rust JIT compiles frequently executed integer blocks to WebAssembly and checks the instruction bytes before reusing compiled code. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.
 
-Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Piped CLI input uses a guest pipe and delivers EOF when the host writer closes. Full-system boots use Spore’s TTY. The standalone browser terminal runs offline. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
+Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Piped CLI input uses a guest pipe and delivers EOF when the host writer closes. Full-system boots use Spore’s TTY. The standalone browser terminal works offline. Serving with `--net` connects the guest through the local relay. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
 Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 
 ```sh

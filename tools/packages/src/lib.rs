@@ -52,7 +52,7 @@ fn digest(path: &Path) -> io::Result<String> {
 }
 
 impl Archive {
-    fn fetch(&self, cache: &Path) -> io::Result<PathBuf> {
+    pub fn fetch(&self, cache: &Path) -> io::Result<PathBuf> {
         fs::create_dir_all(cache)?;
         let path = cache.join(&self.sha256);
         if path.is_file() && digest(&path)? == self.sha256 {

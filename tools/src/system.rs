@@ -94,8 +94,12 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
         "index.html",
         "run.mjs",
         "disk.mjs",
+        "persistent.mjs",
         "input.mjs",
         "worker.mjs",
+        "cli.mjs",
+        "net.mjs",
+        "serve.mjs",
         "spore_wasm.wasm",
     ];
     for file in &files[..files.len() - 1] {
@@ -106,6 +110,50 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
         fs::rename(stage.0.join(file), web.join(file))?;
     }
     Ok(0)
+}
+
+pub fn serve_wasm(build: &Path, port: u16, network: bool) -> io::Result<i32> {
+    let web = build.join("wasm-web");
+    let server = web.join("serve.mjs");
+    if !server.is_file() {
+        return Err(io::Error::other(
+            "build the browser runner with spore build --wasm",
+        ));
+    }
+    let mut cmd = Command::new("node");
+    cmd.arg(server).arg(port.to_string());
+    if network {
+        let cache = build.parent().unwrap().join("wasm-packages");
+        let archive = spore_packages::Archive {
+            url: "https://registry.npmjs.org/ws/-/ws-8.23.0.tgz".into(),
+            sha256: "b8bd105a274ae9ca114f8c6ce4d9dbb0c764fe5118ba633c557e1703e297c587".into(),
+        };
+        let package = archive.fetch(&cache)?;
+        let dest = cache.join("ws-8.23.0");
+        if !dest.is_dir() {
+            let stage = Workspace::at(&cache)?;
+            let rc = status(
+                Command::new("bsdtar")
+                    .arg("-xf")
+                    .arg(package)
+                    .arg("-C")
+                    .arg(&stage.0)
+                    .arg("package"),
+            )?;
+            if rc != 0 {
+                return Ok(rc);
+            }
+            if let Err(err) = fs::rename(stage.0.join("package"), &dest)
+                && !dest.is_dir()
+            {
+                return Err(err);
+            }
+        }
+        cmd.arg(crate::qemu_default(crate::arch::Arch::Aarch64))
+            .arg(dest.join("wrapper.mjs"));
+    }
+    use std::os::unix::process::CommandExt;
+    Err(cmd.exec())
 }
 
 fn wasm_module(build: &Path) -> PathBuf {
@@ -125,7 +173,8 @@ fn wasm_command(
     memory: Option<&OsStr>,
     cpus: Option<&OsStr>,
 ) -> io::Result<Command> {
-    let module = wasm_module(build);
+    let web = build.join("wasm-web");
+    let module = web.join("spore_wasm.wasm");
     if !module.is_file() {
         return Err(io::Error::other(
             "build the Wasm kernel with spore build --wasm",
@@ -136,7 +185,7 @@ fn wasm_command(
         .or(disk)
         .ok_or_else(|| io::Error::other("missing Wasm boot input"))?;
     let mut cmd = Command::new("node");
-    cmd.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm/cli.mjs"))
+    cmd.arg(web.join("cli.mjs"))
         .arg(module)
         .arg(if payload.is_some() { "run" } else { "boot" })
         .arg(input)

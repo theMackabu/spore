@@ -1,5 +1,4 @@
-export function snapshotDisk(size, read) {
-  const pages = new Map();
+export function snapshotDisk(size, read, pages = new Map()) {
   const pageSize = 4096;
   function transfer(offset, data, writing) {
     if (offset < 0n || offset + BigInt(data.length) > BigInt(size)) return 0;
@@ -13,9 +12,9 @@ export function snapshotDisk(size, read) {
         if (!page) {
           page = new Uint8Array(Math.min(pageSize, size - base));
           if ((start || len !== page.length) && read(BigInt(base), page) !== page.length) return done;
-          pages.set(base, page);
         }
         page.set(data.subarray(done, done + len), start);
+        pages.set(base, page);
       } else if (page) {
         data.set(page.subarray(start, start + len), done);
       } else if (read(BigInt(pos), data.subarray(done, done + len)) !== len) {

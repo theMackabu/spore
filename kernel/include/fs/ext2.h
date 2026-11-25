@@ -32,6 +32,7 @@ struct ext2_fs {
   void (*inode_freed)(uint32_t ino);
   ext2_read_fn read;
   ext2_write_fn write;
+  bool (*flush_device)(void *ctx);
   void *ctx;
   bool dirent_filetype;
   bool ext2plus;

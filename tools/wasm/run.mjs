@@ -8,7 +8,7 @@ export class GuestSignal extends Error {
 export async function run(
   kernel,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, writeDisk, readStdin, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, writeDisk, flushDisk, readStdin, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
 ) {
   if (!Number.isInteger(memoryMiB) || memoryMiB < 16 || memoryMiB >= 2048) {
     throw new RangeError("Wasm guest RAM must be 16 through 2047 MiB");
@@ -79,6 +79,9 @@ export async function run(
         serial_read() {
           return readByte?.() ?? -1;
         },
+        disk_flush() {
+          try { flushDisk?.(); return 1; } catch { return 0; }
+        },
         disk_write(offset, ptr, len) {
           return writeDisk?.(offset, bytes(ptr, len)) === len ? 1 : 0;
         },
@@ -123,7 +126,10 @@ export async function run(
     let nextTick = performance.now() + 10;
     let yieldAt = performance.now() + 8;
     while (remaining > 0) {
-      signal?.throwIfAborted();
+      if (signal?.aborted) {
+        if (!guest.stop()) throw new Error("failed to flush guest storage");
+        signal.throwIfAborted();
+      }
       const count = Math.min(remaining, 100_000);
       const now = performance.now();
       const ticks = Number(now >= nextTick);

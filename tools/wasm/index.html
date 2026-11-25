@@ -61,6 +61,7 @@
       <label
         >ELF arguments (one per line)<textarea id="args" rows="3" spellcheck="false"></textarea>
       </label>
+      <label><input id="persist" type="checkbox" style="display:inline"> Keep disk changes in this browser</label>
       <label>Guest CPUs<input id="cpus" type="number" min="1" max="64" value="1" required /></label>
       <label>Guest RAM (MiB)<input id="memory" type="number" min="16" max="2047" value="64" required /></label>
       <button id="run">Run</button> <button type="button" id="stop" disabled>Stop</button>
@@ -114,10 +115,13 @@
       };
       const args = get("args").value;
       worker.postMessage({
-        elf, disk, initialSize: {rows: terminal.rows, cols: terminal.cols}, cpuCount: get("cpus").valueAsNumber, memoryMiB: get("memory").valueAsNumber,
+        elf, disk, online: new URLSearchParams(location.search).has("net"), persist: get("persist").checked, initialSize: {rows: terminal.rows, cols: terminal.cols}, cpuCount: get("cpus").valueAsNumber, memoryMiB: get("memory").valueAsNumber,
         args: args ? args.split("\n") : [],
       });
     };
-    get("stop").onclick = () => finish("Stopped");
+    get("stop").onclick = () => {
+      get("stop").disabled = true;
+      worker.postMessage({ stop: true });
+    };
   </script>
 </html>

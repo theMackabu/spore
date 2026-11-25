@@ -3,6 +3,7 @@ use std::alloc::{Layout, alloc_zeroed};
 use std::cell::RefCell;
 
 unsafe extern "C" {
+    fn wasm_shutdown_storage() -> bool;
     fn wasm_select_cpu(cpu: u32);
     fn wasm_boot(
         image: *const u8,
@@ -87,6 +88,11 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32, cou
         })
     })
 }
+#[unsafe(no_mangle)]
+pub extern "C" fn stop() -> bool {
+    CPU.with_borrow(|state| state.is_some() && unsafe { wasm_shutdown_storage() })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
     CPU.with_borrow_mut(|state| {

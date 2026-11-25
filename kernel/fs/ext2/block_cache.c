@@ -55,7 +55,7 @@ bool ext2_flush(struct ext2_fs *fs) {
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     if (block_cache[i].fs == fs && !cache_flush_entry(&block_cache[i])) { ok = false; }
   }
-  return ok;
+  return (!fs || !fs->flush_device || fs->flush_device(fs->ctx)) && ok;
 }
 
 bool ext2_drop_cache(struct ext2_fs *fs) {

@@ -33,7 +33,7 @@ try {
   if (diskPath !== undefined) {
     disk = fs.openSync(diskPath, system ? "r" : "r+");
     const readDisk = (offset, dest) => fs.readSync(disk, dest, 0, dest.length, offset);
-    media = system ? snapshotDisk(fs.fstatSync(disk).size, readDisk) : { readDisk, writeDisk: (offset, data) => fs.writeSync(disk, data, 0, data.length, Number(offset)) };
+    media = system ? snapshotDisk(fs.fstatSync(disk).size, readDisk) : { readDisk, writeDisk: (offset, data) => fs.writeSync(disk, data, 0, data.length, Number(offset)), flushDisk: () => fs.fsyncSync(disk) };
   }
   if (piped) process.stdin.on("readable", readable);
   if (terminal || system) {
