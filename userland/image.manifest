@@ -132,10 +132,13 @@ userland/prebuilt/base64 /bin/base64
 userland/prebuilt/cksum /bin/cksum
 userland/prebuilt/sum /bin/sum
 userland/prebuilt/sha1sum /bin/sha1sum
+userland/prebuilt/sha256sum /bin/sha256sum
+userland/bin/codex-install.sh /usr/local/bin/codex-install
 userland/prebuilt/readlink /bin/readlink
 userland/prebuilt/time /bin/time
 symlink make /bin/mk
 userland/prebuilt/mkfifo /bin/mkfifo
+userland/prebuilt/mktemp /bin/mktemp
 userland/prebuilt/mkdir /bin/mkdir
 userland/prebuilt/rm /bin/rm
 userland/prebuilt/touch /bin/touch

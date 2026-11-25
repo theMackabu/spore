@@ -29,6 +29,7 @@
         "./usr/bin/ls",
         "./usr/bin/mkdir",
         "./usr/bin/mkfifo",
+        "./usr/bin/mktemp",
         "./usr/bin/mv",
         "./usr/bin/printenv",
         "./usr/bin/printf",
@@ -36,6 +37,7 @@
         "./usr/bin/readlink",
         "./usr/bin/rm",
         "./usr/bin/sha1sum",
+        "./usr/bin/sha256sum",
         "./usr/bin/sleep",
         "./usr/bin/sort",
         "./usr/bin/stat",
@@ -140,8 +142,8 @@
       ]
     },
     {
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/dash-0.5.13.1-r2.apk",
-      "sha256": "a41f1db86d134455c68c4784c1e84c4bafd50c650e9eace653c88a7fa68418a7",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/aarch64/dash-0.5.12-r3.apk",
+      "sha256": "e7103e4daacccabf2372f67e2a0832de07e47f20aac0dcda88356b9d566ef370",
       "files": [
         "usr/bin/dash"
       ]

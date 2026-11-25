@@ -16,4 +16,13 @@ protects root. [Account defaults](../../userland/etc/login.defs) · [Account rem
 For additional packages inside the guest, `spm` is Spore's build of apk-tools. The static build includes upstream's package-authoring commands.
 It fetches URLs through curl and reads the configured Alpine repositories. [Package manager patches](../../userland/usr/local/bin/apk/build.sh) · [Repositories](../../userland/etc/apk/repositories)
 
+On AArch64, `codex-install` downloads and verifies the pinned Codex release. If you already
+downloaded the complete package, pass it to the installer. Run these commands inside Spore.
+
+```sh
+codex-install codex-package-aarch64-unknown-linux-musl.tar.gz
+~/.local/bin/codex app-server daemon start
+~/.local/bin/codex app-server daemon version
+```
+
 [How the host assembles packages](prebuilt.md) · [Guest shell](shell.md)
