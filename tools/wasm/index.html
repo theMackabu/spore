@@ -56,12 +56,16 @@
   <main>
     <h1>Spore ARM64 runner</h1>
     <form>
-      <label>Static AArch64 ELF or packaged app<input id="elf" type="file" required /></label>
-      <label>Read-only ext2 or ext2+ disk (optional)<input id="disk" type="file" /></label>
+      <label>AArch64 ELF or packaged app (omit to boot the disk)<input id="elf" type="file" /></label>
+      <label>ext2 or ext2+ disk<input id="disk" type="file" /></label>
       <label
         >ELF arguments (one per line)<textarea id="args" rows="3" spellcheck="false"></textarea>
       </label>
       <button id="run">Run</button> <button type="button" id="stop" disabled>Stop</button>
+    </form>
+    <form id="console" hidden>
+      <label>Console input<input id="line" type="text" autocomplete="off" /></label>
+      <button>Send</button>
     </form>
     <p role="status" id="status"></p>
     <pre id="output" aria-label="Program output"></pre>
@@ -72,12 +76,19 @@
     function finish(status) {
       worker.terminate();
       worker = null;
+      get("console").hidden = true;
       get("run").disabled = false;
       get("stop").disabled = true;
       get("status").textContent = status;
     }
     document.querySelector("form").onsubmit = (event) => {
       event.preventDefault();
+      const elf = get("elf").files[0], disk = get("disk").files[0];
+      if (!elf && !disk) {
+        get("status").textContent = "Select an executable or a root disk.";
+        return;
+      }
+      get("console").hidden = !!elf;
       const decoders = { 1: new TextDecoder(), 2: new TextDecoder() };
       const output = get("output");
       output.replaceChildren();
@@ -96,10 +107,14 @@
       };
       const args = get("args").value;
       worker.postMessage({
-        elf: get("elf").files[0],
-        disk: get("disk").files[0],
+        elf, disk,
         args: args ? args.split("\n") : [],
       });
+    };
+    get("console").onsubmit = (event) => {
+      event.preventDefault();
+      worker.postMessage({ input: get("line").value + "\n" });
+      get("line").value = "";
     };
     get("stop").onclick = () => finish("Stopped");
   </script>

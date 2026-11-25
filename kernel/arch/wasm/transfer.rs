@@ -36,11 +36,70 @@ impl Cpu {
         Ok(())
     }
 
+    fn structure(&mut self, w: u32, base: u64) -> Result<(), Fault> {
+        let (registers, interleaved) = match (w >> 12) & 15 {
+            7 => (1, false),
+            10 => (2, false),
+            6 => (3, false),
+            2 => (4, false),
+            8 => (2, true),
+            4 => (3, true),
+            0 => (4, true),
+            _ => return Err(Fault::Instruction(w)),
+        };
+        let bytes = if w & (1 << 30) == 0 { 8 } else { 16 };
+        let width = 1usize << ((w >> 10) & 3);
+        let lanes = bytes / width;
+        let post = w & (1 << 23) != 0;
+        let m = (w >> 16) & 31;
+        if (!post && m != 0) || (interleaved && bytes == 8 && width == 8) {
+            return Err(Fault::Instruction(w));
+        }
+        let load = w & (1 << 22) != 0;
+        let mut next = [0u128; 4];
+        for (r, dst) in next[..registers].iter_mut().enumerate() {
+            let reg = ((w as usize & 31) + r) % 32;
+            for lane in 0..lanes {
+                let offset = if interleaved {
+                    lane * registers + r
+                } else {
+                    r * lanes + lane
+                };
+                let addr = base.wrapping_add((offset * width) as u64);
+                let shift = lane * width * 8;
+                if load {
+                    *dst |= self.memory.load(addr, width)? << shift;
+                } else {
+                    self.reservation = None;
+                    self.memory
+                        .store(addr, width, self.context.v[reg] >> shift)?;
+                }
+            }
+        }
+        if load {
+            for (r, v) in next[..registers].iter().enumerate() {
+                self.context.v[((w as usize & 31) + r) % 32] = *v;
+            }
+        }
+        if post {
+            let delta = if m == 31 {
+                (registers * bytes) as u64
+            } else {
+                self.reg(m)
+            };
+            self.set_base((w >> 5) & 31, base.wrapping_add(delta));
+        }
+        Ok(())
+    }
+
     pub fn transfer(&mut self, w: u32) -> Result<(), Fault> {
         let (t, n) = (w & 31, (w >> 5) & 31);
         let base = self.base(n);
         if n == 31 && base & 15 != 0 {
             return Err(Fault::Alignment(base));
+        }
+        if w & 0xbf200000 == 0x0c000000 {
+            return self.structure(w, base);
         }
         let vector = w & (1 << 26) != 0;
         let scale = w >> 30;

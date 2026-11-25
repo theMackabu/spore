@@ -32,13 +32,15 @@
 #define HOST(name) __attribute__((import_module("spore"), import_name(name)))
 HOST("clock") uint64_t host_clock(void);
 HOST("random") void host_random(void *, size_t);
+HOST("disk_write") int host_disk_write(uint64_t, const void *, size_t);
+HOST("exception") void host_exception(uint64_t, const char *, size_t);
+HOST("serial_read") int host_serial_read(void);
 HOST("disk_read") int host_disk_read(uint64_t, void *, size_t);
 HOST("write") void host_write(unsigned, const void *, size_t);
 HOST("finish") [[noreturn]] void host_finish(int, unsigned, uint64_t, const char *, size_t);
 
 static alignas(4096) uint8_t ram[64 * 1024 * 1024];
 static struct thread *current;
-static uint64_t payload_size;
 static uint8_t output[4096];
 static unsigned channel = 1, buffered;
 static struct arch_thread_context *active_context;
@@ -59,10 +61,14 @@ void serial_putc(char c) {
   if (buffered == sizeof(output)) { wasm_flush(); }
 }
 bool serial_getc(char *out) {
-  (void)out;
-  return false;
+  int byte = host_serial_read();
+  if (byte < 0) { return false; }
+  *out = (char)byte;
+  return true;
 }
-void serial_flush_input(void) {}
+void serial_flush_input(void) {
+  while (host_serial_read() >= 0) {}
+}
 void serial_get_winsize(uint16_t *rows, uint16_t *cols) {
   *rows = 24;
   *cols = 80;
@@ -166,10 +172,7 @@ bool virtio_blk_read(uint64_t off, void *dst, uint32_t n) {
   return host_disk_read(off, dst, n);
 }
 bool virtio_blk_write(uint64_t off, const void *p, uint32_t n) {
-  (void)off;
-  (void)p;
-  (void)n;
-  return false;
+  return host_disk_write(off, p, n);
 }
 bool virtio_blk_read_boot(uint64_t off, void *p, uint32_t n) {
   (void)off;
@@ -182,10 +185,13 @@ static bool disk_read(void *ctx, uint64_t off, void *p, uint32_t n) {
   return virtio_blk_read(off, p, n);
 }
 
-uint64_t app_payload_size(void) {
-  return payload_size;
+static bool disk_write(void *ctx, uint64_t off, const void *p, uint32_t n) {
+  (void)ctx;
+  return virtio_blk_write(off, p, n);
 }
+
 void app_finish(enum app_result kind, unsigned value) {
+  if (!vfs_shutdown()) { kind = APP_BOOT_ERROR; value = BOOT_FLUSH_FAILED; }
   wasm_flush();
   host_finish(kind, value, fault_pc, fault_text, fault_len);
 }
@@ -198,15 +204,24 @@ void arch_halt(void) {
   boot_fail(BOOT_INIT_FAILED, "kernel halted");
 }
 void arch_poweroff(void) {
+  struct domain *init = cell_find_domain(1);
+  if (init && init->zombie) {
+    if (init->term_signal) { app_finish(APP_SIGNAL, init->term_signal); }
+    app_finish(APP_EXIT, init->exit_status);
+  }
   app_finish(APP_EXIT, 0);
 }
 void arch_reboot(void) {
   arch_poweroff();
 }
 
-struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args, size_t bytes, bool has_disk,
+struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args, size_t bytes, unsigned devices,
                              uint64_t epoch) {
   const uint64_t hhdm = (uintptr_t)ram;
+  struct spore_boot_module payload = {.phys_addr = (uint64_t)(uintptr_t)image - hhdm, .size = size, .path = "/spore.app"};
+  struct spore_boot_info boot = {.hhdm_offset = hhdm, .modules = size ? &payload : NULL, .module_count = size ? 1 : 0};
+  struct boot_profile profile = {0};
+  boot_select_profile(&boot, &profile);
   const struct spore_memmap_entry usable = {
     .base = 0x100000, .length = sizeof(ram) - 0x100000, .type = SPORE_MEMMAP_USABLE};
   pmm_init(hhdm, &usable, 1);
@@ -215,16 +230,21 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   cell_set_boot_epoch(epoch);
   random_init(epoch);
   cell_system_init();
-  static struct ramfs root;
-  static struct ext2_fs disk;
-  if (!ramfs_init(&root, NULL, 0, hhdm)) { boot_fail(BOOT_INIT_FAILED, "cannot initialize ramfs"); }
-  struct init_program program = {.path = "/app/server", .cwd = "/"};
-  if (size >= 8 && !kmemcmp(image, "SPOREAP2", 8)) {
-    struct net_config ignored;
-    if (bytes || !app_unpack(image, size, &root, &program, &ignored)) {
-      boot_fail(BOOT_INVALID_PAYLOAD, "invalid app payload");
+  static struct ext2_fs volume;
+  struct ext2_fs *disk = NULL;
+  if (devices & 1) {
+    if (!ext2_mount_rw(&volume, disk_read, (devices & 2) ? disk_write : NULL, NULL)) {
+      boot_fail(BOOT_DATA_MOUNT_FAILED, "cannot mount ext2 disk");
     }
+    disk = &volume;
+  }
+  if (!size || (size >= 8 && !kmemcmp(image, "SPOREAP2", 8))) {
+    if (bytes || (!size && !disk)) { boot_fail(BOOT_INVALID_PAYLOAD, "missing root disk or invalid arguments"); }
+    boot_mount_root(&boot, disk, &profile);
   } else {
+    static struct ramfs root;
+    if (!ramfs_init(&root, NULL, 0, hhdm)) { boot_fail(BOOT_INIT_FAILED, "cannot initialize ramfs"); }
+    struct init_program program = {.path = "/app/server", .cwd = "/"};
     if (!ramfs_add_boot_file(&root, program.path, image, size, 0555)) {
       boot_fail(BOOT_INIT_FAILED, "cannot stage ELF");
     }
@@ -239,22 +259,23 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
       bytes -= len + 1;
     }
     if (!program.argc) { boot_fail(BOOT_INVALID_PAYLOAD, "missing argv[0]"); }
+    if (disk && !ramfs_mkdir(&root, 0, "/data", 0555)) { boot_fail(BOOT_DATA_MOUNT_FAILED, "cannot create /data"); }
+    vfs_init(&root, disk);
+    profile.program = program;
   }
-  if (has_disk && (!ext2_mount(&disk, disk_read, NULL) || !ramfs_mkdir(&root, 0, "/data", 0555))) {
-    boot_fail(BOOT_DATA_MOUNT_FAILED, "cannot mount ext2 disk");
-  }
-  vfs_init(&root, has_disk ? &disk : NULL);
-  payload_size = size;
   struct first_process first;
-  boot_load_process(&first, &program, hhdm);
+  boot_load_process(&first, &profile.program, hhdm);
   if (first.as.freebsd_abi) { boot_fail(BOOT_INVALID_PAYLOAD, "expected a Linux ELF"); }
   boot_activate_process(&first);
   syscall_set_address_space(cell_current_as());
-  struct vfs_node null;
-  if (!vfs_lookup("/dev/null", &null) || cell_fd_close(0) || cell_fd_open_node(&null, 0, "/dev/null", "/dev/null", NULL) != 0) {
-    boot_fail(BOOT_INIT_FAILED, "cannot initialize stdin");
+  if (!(devices & 4)) {
+    struct vfs_node null;
+    if (!vfs_lookup("/dev/null", &null) || cell_fd_close(0) ||
+        cell_fd_open_node(&null, 0, "/dev/null", "/dev/null", NULL) != 0) {
+      boot_fail(BOOT_INIT_FAILED, "cannot initialize stdin");
+    }
+    cell_tty_set_oflag(0);
   }
-  cell_tty_set_oflag(0);
   return &current->tf;
 }
 
@@ -284,6 +305,7 @@ bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, i
   fault_pc = f->elr_el1;
   fault_text = message;
   fault_len = len;
+  host_exception(fault_pc, message, len);
   int code = signal == 11 && vma_lookup(cell_domain_vmas(current->domain), address) ? 2 : 1;
   cell_signal_current_fault(signal, f, address, code);
   fault_len = 0;
@@ -295,9 +317,11 @@ bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, i
 bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsigned ticks) {
   active_context = context;
   while (ticks--) {
+    cell_wake_stdin(idle ? NULL : f);
     cell_timer_tick(f, !idle);
     if (idle) { cell_resume_scheduler(f); }
   }
+  wasm_flush();
   active_context = NULL;
   return idle;
 }

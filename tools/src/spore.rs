@@ -26,6 +26,7 @@ Usage:
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
   spore build --wasm                  Build the hosted ARM64 kernel and interpreter
   spore build --wasm ELF -o PAYLOAD [image options] [-- ARG...]
+  spore boot --wasm [--root EXT2]       Boot a disposable snapshot of a userland disk
   spore run --wasm ELF [image options] [--data EXT2] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
@@ -207,7 +208,7 @@ fn execute() -> io::Result<i32> {
             println!("{HELP}");
             return Ok(0);
         }
-        if (build || action == "run") && key == "--wasm" {
+        if key == "--wasm" {
             wasm = true;
             continue;
         }
@@ -260,6 +261,10 @@ fn execute() -> io::Result<i32> {
                 pack.extend([PathBuf::from(key), PathBuf::from(value)]);
                 continue;
             }
+            Some("--root") if boot => {
+                root = Some(value);
+                continue;
+            }
             Some("--data") if !build => {
                 vm.root = Some(value);
                 continue;
@@ -272,7 +277,6 @@ fn execute() -> io::Result<i32> {
                 pack.extend([PathBuf::from(key), PathBuf::from(value)])
             }
             Some("--memory") if !build => memory = Some(value),
-            Some("--root") if boot => root = Some(value),
             Some("--accel") if !build => vm.accel = Some(value),
             Some("--cpu") if !build => vm.cpu = Some(value),
             Some("--vars") if !build => vm.vars = Some(value),
@@ -303,6 +307,16 @@ fn execute() -> io::Result<i32> {
         }
     }
     if wasm {
+        if boot {
+            if qemu_options || app_options || reset || program.is_some() {
+                return Err(io::Error::other("usage: spore boot --wasm [--root EXT2]"));
+            }
+            let base = root.map(PathBuf::from).unwrap_or_else(|| artifacts.join("root.ext2"));
+            if !base.is_file() {
+                return Err(io::Error::other("supply --root EXT2 or build the userland image with spore build --userland"));
+            }
+            return system::run_wasm(artifacts, None, Some(base.as_os_str()));
+        }
         if qemu_options || tests || userland {
             return Err(io::Error::other(
                 "Wasm supports app files, arguments, environment, cwd and --data",
@@ -337,7 +351,7 @@ fn execute() -> io::Result<i32> {
         if build {
             return Ok(0);
         }
-        return system::run_wasm(artifacts, &payload, vm.root.as_deref());
+        return system::run_wasm(artifacts, Some(&payload), vm.root.as_deref());
     }
     if let Some(arch) = architecture.as_deref() {
         vm.arch = arch::Arch::parse(arch.to_str().unwrap_or(""))?;

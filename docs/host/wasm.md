@@ -1,9 +1,9 @@
 # Run ARM64 programs in WebAssembly
 
-Spore’s experimental Wasm backend runs a single AArch64 Linux executable.
+Spore’s experimental Wasm backend runs ARM64 apps and boots the full Spore userland from an ext2 or ext2+ root disk.
 The kernel and Rust instruction interpreter share one WebAssembly module. Guest instruction
 fetches, loads and stores use Spore’s user page tables. Linux syscalls enter Spore’s shared
-dispatcher. The host provides console output, time, entropy and optional read-only disk I/O.
+dispatcher. The host provides console output, time, entropy and block I/O.
 
 Build and run from the development shell.
 
@@ -24,6 +24,15 @@ Pass an ext2 or ext2+ disk to read its files under `/data`.
 ./target/release/spore run --wasm ./busybox.static --data target/release/root.ext2 -- cat /data/etc/os-release
 ```
 
+## Full userland
+
+```sh
+./target/release/spore build --userland
+./target/release/spore boot --wasm
+```
+
+The kernel launches `/sbin/init` from `target/release/root.ext2`. To select another root, pass `--root path/to/root.ext2`. Each boot keeps disk writes in a private in-memory snapshot and discards them on exit. Type commands at the guest shell or press Ctrl+] to disconnect.
+
 ## Browser
 
 The build also produces a standalone browser runner in `target/release/wasm-web/`. Serve that directory locally.
@@ -41,7 +50,7 @@ arguments on the host and select the resulting payload.
 ```
 
 The CLI performs this packaging automatically on `spore run --wasm`. A worker runs the guest locally and reads ranges from the selected disk on demand.
-Stop terminates the worker. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
+To boot a system, select only the root disk, click Run and send commands through Console input. Stop terminates the worker and discards its snapshot. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
 
 ## Current scope
 
@@ -50,7 +59,7 @@ of A64 integer, branch, load/store, exclusive and SIMD instructions. It caches i
 classes and address translations. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.
 
-Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. The initial stdin is at EOF. Networking, interactive terminals and JIT workloads remain unverified.
+Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Batch apps without console input see EOF. Full-system boots use Spore’s TTY. External networking and JIT workloads are still unsupported.
 Ant currently stops on an unsupported ARM64 instruction during startup. Claude Code is unverified.
 
 `spore test wasm` builds an ordinary musl ELF and compares its output and exit status

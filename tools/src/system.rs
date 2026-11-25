@@ -64,8 +64,15 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
     fs::create_dir_all(&web)?;
     let stage = Workspace::at(&web)?;
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm");
-    let files = ["index.html", "run.mjs", "worker.mjs", "spore_wasm.wasm"];
-    for file in &files[..3] {
+    let files = [
+        "index.html",
+        "run.mjs",
+        "disk.mjs",
+        "input.mjs",
+        "worker.mjs",
+        "spore_wasm.wasm",
+    ];
+    for file in &files[..files.len() - 1] {
         fs::copy(sources.join(file), stage.0.join(file))?;
     }
     fs::copy(wasm_module(build), stage.0.join("spore_wasm.wasm"))?;
@@ -84,7 +91,7 @@ fn wasm_module(build: &Path) -> PathBuf {
         .join("spore_wasm.wasm")
 }
 
-pub fn run_wasm(build: &Path, payload: &Path, disk: Option<&OsStr>) -> io::Result<i32> {
+pub fn run_wasm(build: &Path, payload: Option<&Path>, disk: Option<&OsStr>) -> io::Result<i32> {
     let module = wasm_module(build);
     if !module.is_file() {
         return Err(io::Error::other(
@@ -95,7 +102,8 @@ pub fn run_wasm(build: &Path, payload: &Path, disk: Option<&OsStr>) -> io::Resul
         Command::new("node")
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm/cli.mjs"))
             .arg(module)
-            .arg(payload)
+            .arg(if payload.is_some() { "run" } else { "boot" })
+            .args(payload)
             .args(disk),
     )
 }

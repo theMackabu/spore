@@ -7,7 +7,7 @@ unsafe extern "C" {
         n: usize,
         args: *const u8,
         len: usize,
-        disk: bool,
+        devices: u32,
         epoch: u64,
     ) -> *const Frame;
 }
@@ -26,10 +26,14 @@ pub extern "C" fn stage(size: usize) -> *mut u8 {
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn start(size: usize, disk: bool, epoch: u64) -> bool {
+pub extern "C" fn start(size: usize, devices: u32, epoch: u64) -> bool {
     CPU.with_borrow_mut(|cpu| {
         INPUT.with_borrow(|image| {
-            if size < 64 || size > image.len() || cpu.is_some() {
+            if (size == 0 && (devices & 1 == 0 || !image.is_empty()))
+                || (size != 0 && size < 64)
+                || size > image.len()
+                || cpu.is_some()
+            {
                 return false;
             }
             let first = unsafe {
@@ -38,7 +42,7 @@ pub extern "C" fn start(size: usize, disk: bool, epoch: u64) -> bool {
                     size,
                     image[size..].as_ptr(),
                     image.len() - size,
-                    disk,
+                    devices,
                     epoch,
                 )
             };

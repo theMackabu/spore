@@ -73,6 +73,14 @@ try {
         "--cwd", "/work", "--env", "CHECK=a=b", "--file", path.join(tree, "hello.txt") + "=/work/message",
         "--", "two words", ""], 42);
     }
+    const systemDisk = path.join(dir, "system.ext2");
+    fs.mkdirSync(path.join(tree, "sbin"));
+    exec("aarch64-unknown-linux-musl-gcc", ["-static", "-O2", path.join(sources, "init.c"), "-o", path.join(tree, "sbin/init")]);
+    fs.copyFileSync(reader, path.join(tree, "reader"));
+    exec("mke2fs", ["-q", "-t", "ext2", "-b", "4096", "-O", "none,filetype", "-d", tree, systemDisk, "2048"]);
+    for (let i = 0; i < 2; i++) {
+      assert.equal(exec(spore, ["boot", "--wasm", "--root", systemDisk], 42).toString().trim(), "snapshot");
+    }
     const dynamic = path.join(dir, "read-dynamic");
     exec("aarch64-unknown-linux-musl-gcc", ["-O2", path.join(sources, "read.c"), "-o", dynamic]);
     const assets = ["--cwd", "/work", "--file", path.join(tree, "hello.txt") + "=/work/message"];

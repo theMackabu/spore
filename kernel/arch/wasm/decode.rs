@@ -2,6 +2,7 @@
 pub enum Integer {
     MoveWide,
     AddImmediate,
+    AddCarry,
     AddExtended,
     AddShifted,
     Logical,
@@ -10,6 +11,7 @@ pub enum Integer {
     Select,
     Compare,
     ReverseBits,
+    ReverseBytes,
     LeadingZeros,
     VariableShift,
     Divide,
@@ -69,7 +71,7 @@ pub fn classify(w: u32) -> Op {
     if w & 0xffffffe0 == 0xd53b00e0 {
         return Op::ReadDczid;
     }
-    if w & 0x1e000000 == 0x0e000000 || w & 0xffe0fc00 == 0x9e600000 {
+    if w & 0x1e000000 == 0x0e000000 || matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000) {
         return Op::Vector;
     }
     if w & 0xfffff0ff == 0xd503305f {
@@ -83,6 +85,9 @@ pub fn classify(w: u32) -> Op {
     }
     if w & 0x1f800000 == 0x12800000 {
         return Op::Integer(Integer::MoveWide);
+    }
+    if w & 0x1fe0fc00 == 0x1a000000 {
+        return Op::Integer(Integer::AddCarry);
     }
     if w & 0x1f800000 == 0x11000000 {
         return Op::Integer(Integer::AddImmediate);
@@ -110,6 +115,9 @@ pub fn classify(w: u32) -> Op {
     }
     if w & 0x7ffffc00 == 0x5ac00000 {
         return Op::Integer(Integer::ReverseBits);
+    }
+    if matches!(w & 0x7ffffc00, 0x5ac00400 | 0x5ac00800) || w & 0xfffffc00 == 0xdac00c00 {
+        return Op::Integer(Integer::ReverseBytes);
     }
     if w & 0x7ffffc00 == 0x5ac01000 {
         return Op::Integer(Integer::LeadingZeros);

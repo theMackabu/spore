@@ -1,4 +1,3 @@
-// The host supplies byte streams and a read-only block device. The kernel owns paths and FDs.
 export class GuestSignal extends Error {
   constructor(signal, detail) {
     super(`guest signal ${signal}${detail ? " (" + detail + ")" : ""}`);
@@ -9,9 +8,11 @@ export class GuestSignal extends Error {
 export async function run(
   kernel,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, write, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, write, onException, instructionLimit = 100_000_000, signal } = {},
 ) {
-  if (!(elf instanceof Uint8Array) || !Number.isSafeInteger(instructionLimit) || instructionLimit < 1) {
+  const system = elf === null;
+  if (system && (!readDisk || args.length)) throw new Error("system boot requires a root disk");
+  if ((!system && !(elf instanceof Uint8Array)) || !Number.isSafeInteger(instructionLimit) || instructionLimit < 1) {
     throw new TypeError("expected ELF bytes and a positive instruction limit");
   }
   if (
@@ -20,9 +21,9 @@ export async function run(
   ) {
     throw new Error("expected at most 127 NUL-free guest arguments");
   }
-  const bundled = new TextDecoder().decode(elf.subarray(0, 8)) === "SPOREAP2";
+  const bundled = !system && new TextDecoder().decode(elf.subarray(0, 8)) === "SPOREAP2";
   if (bundled && args.length) throw new Error("packaged applications already contain their arguments");
-  const argv = bundled
+  const argv = bundled || system
     ? new Uint8Array()
     : new TextEncoder().encode([argv0, ...args].map((arg) => arg + "\0").join(""));
   const decoder = new TextDecoder();
@@ -34,6 +35,15 @@ export async function run(
   guest = (
     await WebAssembly.instantiate(module, {
       spore: {
+        exception(pc, ptr, len) {
+          onException?.(pc, decoder.decode(bytes(ptr, len)));
+        },
+        serial_read() {
+          return readByte?.() ?? -1;
+        },
+        disk_write(offset, ptr, len) {
+          return writeDisk?.(offset, bytes(ptr, len)) === len ? 1 : 0;
+        },
         disk_read(offset, ptr, len) {
           return readDisk?.(offset, bytes(ptr, len)) === len ? 1 : 0;
         },
@@ -58,14 +68,17 @@ export async function run(
       },
     })
   ).exports;
-  const size = elf.byteLength + argv.byteLength;
-  if (size > 128 * 1024 * 1024) throw new Error("input exceeds staging memory");
-  const ptr = guest.stage(size);
-  if (!ptr) throw new Error("cannot stage guest input");
-  bytes(ptr, elf.length).set(elf);
-  bytes(ptr + elf.length, argv.length).set(argv);
+  const size = (elf?.byteLength ?? 0) + argv.byteLength;
+  if (!system) {
+    if (size > 128 * 1024 * 1024) throw new Error("input exceeds staging memory");
+    const ptr = guest.stage(size);
+    if (!ptr) throw new Error("cannot stage guest input");
+    bytes(ptr, elf.length).set(elf);
+    bytes(ptr + elf.length, argv.length).set(argv);
+  }
+  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0);
   try {
-    if (!guest.start(elf.length, !!readDisk, BigInt(Math.floor(Date.now() / 1000)))) {
+    if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)))) {
       throw new Error("invalid ELF input");
     }
     let remaining = instructionLimit;

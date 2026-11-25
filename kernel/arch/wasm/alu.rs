@@ -86,6 +86,23 @@ impl Cpu {
                     _ => return Err(Fault::Instruction(w)),
                 }
             }
+            AddCarry => {
+                let a = a & mask(bits);
+                let b = (if op & 2 != 0 { !b } else { b }) & mask(bits);
+                let carry = (self.f.pstate >> 29) & 1;
+                let sum = u128::from(a) + u128::from(b) + u128::from(carry);
+                let value = sum as u64 & mask(bits);
+                if op & 1 != 0 {
+                    let negative = value >> (bits - 1);
+                    let overflow = (!(a ^ b) & (a ^ value)) >> (bits - 1);
+                    self.f.pstate = (self.f.pstate & !0xf0000000)
+                        | (negative << 31)
+                        | (((value == 0) as u64) << 30)
+                        | (((sum >> bits) as u64) << 29)
+                        | (overflow << 28);
+                }
+                value
+            }
             AddImmediate => {
                 let imm = (((w >> 10) & 4095) as u64) << (12 * ((w >> 22) & 1));
                 use_sp = op & 1 == 0;
@@ -201,6 +218,13 @@ impl Cpu {
                 return Ok(());
             }
             ReverseBits => (a & mask(bits)).reverse_bits() >> (64 - bits),
+            ReverseBytes => match (w >> 10) & 3 {
+                1 => (a & 0x00ff00ff00ff00ff) << 8 | (a >> 8) & 0x00ff00ff00ff00ff,
+                2 => {
+                    (a as u32).swap_bytes() as u64 | (((a >> 32) as u32).swap_bytes() as u64) << 32
+                }
+                _ => a.swap_bytes(),
+            },
             LeadingZeros => ((a & mask(bits)).leading_zeros() - (64 - bits)) as u64,
             VariableShift => shift(a, (w >> 10) & 3, (b as u32) & (bits - 1), bits),
             Divide => {

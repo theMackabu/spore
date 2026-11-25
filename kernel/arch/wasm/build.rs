@@ -20,6 +20,7 @@ fn main() {
         ])
         .include(kernel)
         .include(kernel.join("include"))
+        .define("SPORE_USERLAND", None)
         .define("SPORE_MACHINE", "\"aarch64\"")
         .define(
             "SPORE_VERSION",
@@ -31,6 +32,8 @@ fn main() {
         "abi/freebsd/dispatch.c",
         "abi/freebsd/aarch64/syscall.c",
         "init/process.c",
+        "init/profile.c",
+        "init/rootfs.c",
         "init/payload.c",
         "arch/aarch64/signal_frame.c",
         "arch/aarch64/frame.c",
