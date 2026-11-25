@@ -3,6 +3,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -446,6 +447,8 @@ int integration_pty_demo(void) {
 
   int master = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
   int ok = master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0;
+  struct pollfd unwired = {.fd = master, .events = POLLIN};
+  ok = ok && poll(&unwired, 1, 0) == 0 && read(master, received, 1) == -1 && errno == EAGAIN;
   char *path = ok ? ptsname(master) : NULL;
   int slave = path != NULL ? open(path, O_RDWR | O_NOCTTY | O_NONBLOCK) : -1;
   ok = ok && slave >= 0;

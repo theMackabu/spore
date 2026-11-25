@@ -95,6 +95,7 @@ struct vfs_mount {
   const char *fstype;
   const char *options;
   uint64_t mount_id;
+  uint64_t peer_group;
 };
 
 struct vfs_mount_info {

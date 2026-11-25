@@ -60,7 +60,7 @@ static inline struct ramfs_mem_node *ramfs_get_inode(const struct ramfs *fs, int
 int ramfs_alloc_inode(struct ramfs *fs);
 void ramfs_free_inode(struct ramfs *fs, int index);
 extern uint64_t ramfs_now_sec;
-void ramfs_free_node_pages(struct ramfs_mem_node *node);
+void ramfs_free_node_pages(struct ramfs *fs, struct ramfs_mem_node *node);
 int ramfs_add_node(struct ramfs *fs, int parent, const char *name, bool is_dir, bool writable);
 int ramfs_find_child(const struct ramfs *fs, int parent, const char *name);
 bool ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *modules, uint32_t count);

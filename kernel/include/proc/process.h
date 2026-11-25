@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+constexpr uint64_t CLONE_PARENT = 0x00008000;
+
 struct domain;
 struct trap_frame;
 struct user_address_space;

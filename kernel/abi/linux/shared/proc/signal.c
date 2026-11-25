@@ -1,4 +1,5 @@
 #include "abi/linux/shared/signal.h"
+#include "abi/linux/shared/time/ticks.h"
 #include "abi/linux/shared/usercopy.h"
 #include "arch/regs.h"
 #include "handlers.h"
@@ -74,6 +75,32 @@ int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t ol
     thread->sigaltstack_flags = (next.ss_flags & SS_DISABLE) != 0 ? SS_DISABLE : 0;
   }
   return 0;
+}
+
+int64_t sys_rt_sigtimedwait(struct trap_frame *frame, uint64_t set, uint64_t info, uint64_t timeout, uint64_t size) {
+  uint64_t mask;
+  if (size != sizeof(mask)) { return -EINVAL; }
+  if (!syscall_user_readable(set, size) || !vmm_copy_from_user(syscall_active_as(), &mask, set, size)) {
+    return -EFAULT;
+  }
+  mask &= ~((1ull << (SIGKILL - 1)) | (1ull << (19 - 1)));
+  struct thread_wait wait = {.reason = WAIT_SIGWAIT, .sigwait_set = mask, .sigwait_info = info};
+  bool nonblock = false;
+  if (timeout) {
+    struct timespec64 ts;
+    if (!syscall_user_readable(timeout, sizeof(ts)) ||
+        !vmm_copy_from_user(syscall_active_as(), &ts, timeout, sizeof(ts))) {
+      return -EFAULT;
+    }
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) { return -EINVAL; }
+    nonblock = ts.tv_sec == 0 && ts.tv_nsec == 0;
+    uint64_t now = cell_uptime_ticks();
+    wait.has_deadline = true;
+    wait.deadline_tick =
+      (uint64_t)ts.tv_sec >= (UINT64_MAX - now) / 100 ? UINT64_MAX : now + timespec_to_scheduler_ticks(&ts);
+  }
+  int rc = cell_take_waited_signal(cell_current_thread_internal(), mask, info);
+  return rc != -11 || nonblock ? rc : cell_block_current(frame, wait);
 }
 
 int64_t sys_rt_sigsuspend(struct trap_frame *frame, uint64_t set, uint64_t size) {

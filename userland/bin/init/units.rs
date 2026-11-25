@@ -41,6 +41,7 @@ pub struct UnitConfig {
     service_type: ServiceType,
     restart: Restart,
     description: [u8; 96],
+    condition_path_exists: [u8; 192],
     exec_start: [u8; 192],
     exec_start_pre: [u8; 192],
     exec_start_post: [u8; 192],
@@ -152,6 +153,7 @@ pub enum Section {
 fn apply(c: &mut UnitConfig, section: Section, key: &[u8], v: &[u8]) {
     match section {
         Section::Unit => match key {
+            b"ConditionPathExists" => store(&mut c.condition_path_exists, v),
             b"Description" => store(&mut c.description, v),
             b"Requires" => c.requires_units.append(v),
             b"Wants" => c.wants.append(v),

@@ -112,6 +112,33 @@ void arm_timer(struct unit *unit) {
   }
 }
 
+static void prepare_service_child(const struct unit *unit) {
+  struct passwd *user = NULL;
+  const char *name = console_user[0] && streq(unit->name, "console.service") ? console_user : unit->config.user;
+  if (*name) {
+    user = getpwnam(name);
+    if (user == NULL || initgroups(user->pw_name, user->pw_gid) != 0) { _exit(126); }
+  }
+  if (unit->config.capability[0] != '\0') {
+    if (syscall(SYS_SPORE_APPLY_POLICY, unit->config.capability) != 0) { _exit(126); }
+  }
+  if (unit->config.cpu_budget_ticks != 0) { (void)syscall(SYS_SPORE_SET_BUDGET, 0, unit->config.cpu_budget_ticks); }
+  if (unit->config.memory_pages != 0 && unit->config.capability[0] == '\0') {
+    char mem_cap[64];
+    snprintf(mem_cap, sizeof(mem_cap), "mem:%llu", (unsigned long long)unit->config.memory_pages);
+    (void)syscall(SYS_SPORE_APPLY_POLICY, mem_cap);
+  }
+  if (user != NULL) {
+    if (setgid(user->pw_gid) != 0 || setuid(user->pw_uid) != 0) { _exit(126); }
+    (void)chdir(user->pw_dir);
+    setenv("HOME", user->pw_dir, 1);
+    setenv("USER", user->pw_name, 1);
+    setenv("LOGNAME", user->pw_name, 1);
+    setenv("SHELL", user->pw_shell, 1);
+  }
+  close_inherited_manager_fds();
+}
+
 int spawn_service(struct unit *unit) {
   if (unit->config.exec_start[0] == '\0') { return -1; }
   if (!rate_limit_ok(unit)) { return -1; }
@@ -119,30 +146,7 @@ int spawn_service(struct unit *unit) {
   pid_t pid = fork_unit(unit, &unit->journal);
   if (pid < 0) { return -1; }
   if (!pid) {
-    struct passwd *user = NULL;
-    const char *name = console_user[0] && streq(unit->name, "console.service") ? console_user : unit->config.user;
-    if (*name) {
-      user = getpwnam(name);
-      if (user == NULL || initgroups(user->pw_name, user->pw_gid) != 0) { _exit(126); }
-    }
-    if (unit->config.capability[0] != '\0') {
-      if (syscall(SYS_SPORE_APPLY_POLICY, unit->config.capability) != 0) { _exit(126); }
-    }
-    if (unit->config.cpu_budget_ticks != 0) { (void)syscall(SYS_SPORE_SET_BUDGET, 0, unit->config.cpu_budget_ticks); }
-    if (unit->config.memory_pages != 0 && unit->config.capability[0] == '\0') {
-      char mem_cap[64];
-      snprintf(mem_cap, sizeof(mem_cap), "mem:%llu", (unsigned long long)unit->config.memory_pages);
-      (void)syscall(SYS_SPORE_APPLY_POLICY, mem_cap);
-    }
-    if (user != NULL) {
-      if (setgid(user->pw_gid) != 0 || setuid(user->pw_uid) != 0) { _exit(126); }
-      (void)chdir(user->pw_dir);
-      setenv("HOME", user->pw_dir, 1);
-      setenv("USER", user->pw_name, 1);
-      setenv("LOGNAME", user->pw_name, 1);
-      setenv("SHELL", user->pw_shell, 1);
-    }
-    close_inherited_manager_fds();
+    prepare_service_child(unit);
     char copy[256];
     copy_text(copy, sizeof(copy), unit->config.exec_start);
     char *argv[ARG_CAP];
@@ -183,6 +187,10 @@ int start_unit_name(const char *name, char *err, size_t err_cap) {
   if (start_depth < UNIT_CAP) { start_stack[start_depth++] = unit->name; }
   if (!start_deps(unit, err, err_cap)) {
     result = -1;
+    goto out;
+  }
+  if (unit->config.condition_path_exists[0] && access(unit->config.condition_path_exists, F_OK) != 0) {
+    journal_append(unit, "skipped: %s is unavailable", unit->config.condition_path_exists);
     goto out;
   }
   if (unit->config.type == UNIT_TARGET) {
@@ -229,6 +237,13 @@ int start_unit_name(const char *name, char *err, size_t err_cap) {
     goto out;
   }
   result = spawn_service(unit);
+  if (!result && unit->config.exec_start_post[0] && run_oneshot_command(unit, unit->config.exec_start_post)) {
+    stop_unit(unit);
+    unit->state = STATE_FAILED;
+    copy_text(unit->fail_reason, sizeof(unit->fail_reason), "start-post-failed");
+    snprintf(err, err_cap, "%s: post-start command failed\n", unit->name);
+    result = -1;
+  }
   if (result == 0) { announce_unit_started(unit); }
 out:
   if (start_depth > 0) { --start_depth; }
@@ -248,8 +263,7 @@ int run_oneshot_command(struct unit *unit, const char *cmdline) {
     return 1;
   }
   if (pid == 0) {
-    if (unit->config.capability[0] != '\0') { (void)syscall(SYS_SPORE_APPLY_POLICY, unit->config.capability); }
-    close_inherited_manager_fds();
+    prepare_service_child(unit);
     execvp(argv[0], argv);
     perror(argv[0]);
     _exit(127);

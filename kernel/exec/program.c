@@ -1,4 +1,7 @@
+#include "arch/signal_frame.h"
 #include "exec/elf.h"
+#include "exec/stack.h"
+#include "mm/pmm.h"
 
 constexpr uint64_t EXEC_LOAD_BASE = 0x0000004000000000ull;
 constexpr uint64_t INTERP_LOAD_BASE = 0x0000006000000000ull;
@@ -22,10 +25,11 @@ enum elf_load_status elf_load_program(struct user_address_space *as, struct vma_
     out->runtime_entry = interp.entry;
     out->at_base = interp.load_base;
   }
-#ifdef SPORE_NATIVE_PORT
-  extern bool port_install_trampoline(struct user_address_space *, struct vma_list *);
-  if (!port_install_trampoline(as, vmas)) { return ELF_BAD_EXECUTABLE; }
-#endif
+  if (!vma_insert(vmas, USER_STACK_TOP, USER_STACK_TOP + PAGE_SIZE, VMM_USER_READ | VMM_USER_EXEC, 0, VMA_ANON) ||
+      !vmm_alloc_page(as, USER_STACK_TOP, VMM_USER_READ | VMM_USER_EXEC)) {
+    return ELF_BAD_EXECUTABLE;
+  }
+  arch_write_sigreturn_code(pmm_phys_to_virt(vmm_user_to_phys(as, USER_STACK_TOP)));
   as->brk_base = out->brk_base;
   as->brk_current = out->brk_base;
   return ELF_LOADED;

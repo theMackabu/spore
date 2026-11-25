@@ -2,6 +2,7 @@ dir /home
 dir /root
 dir /etc/mycelium
 dir /sbin
+dir /nix/var/nix
 dir /usr/sbin
 dir /usr/local/sbin
 dir /libexec
@@ -37,6 +38,8 @@ symlink libpam.so.0.85.1 /usr/lib/libpam.so.0
 symlink libpam_misc.so.0.82.1 /usr/lib/libpam_misc.so.0
 symlink libbsd.so.0.12.2 /usr/lib/libbsd.so.0
 symlink libmd.so.0.1.0 /usr/lib/libmd.so.0
+userland/libexec/nix-daemon-ready.sh /libexec/nix-daemon-ready
+userland/etc/xdg/nix/nix.conf /etc/xdg/nix/nix.conf
 userland/etc/login.defs /etc/login.defs
 userland/etc/default/useradd /etc/default/useradd
 userland/etc/pam.d/su /etc/pam.d/su
@@ -337,6 +340,7 @@ userland/etc/mycelium/shutdown.target /etc/mycelium/shutdown.target
 userland/etc/mycelium/console.service /etc/mycelium/console.service
 userland/etc/mycelium/hostname.service /etc/mycelium/hostname.service
 userland/etc/mycelium/trustd.service /etc/mycelium/trustd.service
+userland/etc/mycelium/nix-daemon.service /etc/mycelium/nix-daemon.service
 userland/etc/mycelium/network.service /etc/mycelium/network.service
 userland/etc/mycelium/network.target /etc/mycelium/network.target
 

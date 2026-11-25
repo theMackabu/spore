@@ -64,8 +64,14 @@ int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, 
     cell_destroy_domain(child_domain);
     return -12;
   }
-  child_domain->parent_id = parent->id;
-  child_domain->exit_signal = flags & 0xff;
+  if (flags & CLONE_PARENT) {
+    child_domain->parent_id = parent->parent_id;
+    child_domain->parent_tid = parent->parent_tid;
+    child_domain->exit_signal = parent->exit_signal;
+  } else {
+    child_domain->parent_id = parent->id;
+    child_domain->exit_signal = flags & 0xff;
+  }
   inherit_fork_context(child_thread, cell_current_thread_internal());
   if (newsp) { trap_set_stack(&child_thread->tf, newsp); }
   if (flags & CLONE_CHILD_CLEARTID) { child_thread->clear_child_tid = child_tid; }

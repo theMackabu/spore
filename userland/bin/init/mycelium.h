@@ -80,6 +80,7 @@ struct unit_config {
   enum service_type service_type;
   enum restart_policy restart;
   char description[96];
+  char condition_path_exists[192];
   char exec_start[192];
   char exec_start_pre[192];
   char exec_start_post[192];

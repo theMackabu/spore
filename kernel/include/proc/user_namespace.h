@@ -17,6 +17,7 @@ struct user_namespace {
   bool groups_denied;
   struct id_map uid, gid;
 };
+constexpr uint64_t CLONE_FS = 0x00000200;
 constexpr uint64_t CLONE_NEWUSER = 0x10000000;
 constexpr uint32_t USER_OVERFLOW_ID = 65534;
 

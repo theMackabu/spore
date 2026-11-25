@@ -1,6 +1,6 @@
 [Unit]
 Description=normal interactive multi-user boot
-Wants=hostname.service trustd.service network.target console.service
+Wants=hostname.service trustd.service network.target nix-daemon.service console.service
 
 [Install]
 WantedBy=boot.target

@@ -59,6 +59,9 @@ static bool signal_delivers_to_current(int signal) {
 
 int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]) {
   static const void *handlers[] = {
+    [SYS_LISTXATTR] = &&l_listxattr,
+    [SYS_LLISTXATTR] = &&l_llistxattr,
+    [SYS_FLISTXATTR] = &&l_flistxattr,
     [SYS_GETCWD] = &&l_getcwd,
     [SYS_SIGNALFD4] = &&l_signalfd4,
     [SYS_EVENTFD2] = &&l_eventfd2,
@@ -128,6 +131,7 @@ int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]
     [SYS_TKILL] = &&l_tkill,
     [SYS_TGKILL] = &&l_tgkill,
     [SYS_SIGALTSTACK] = &&l_sigaltstack,
+    [SYS_RT_SIGTIMEDWAIT] = &&l_rt_sigtimedwait,
     [SYS_RT_SIGSUSPEND] = &&l_rt_sigsuspend,
     [SYS_RT_SIGACTION] = &&l_rt_sigaction,
     [SYS_RT_SIGPROCMASK] = &&l_rt_sigprocmask,
@@ -355,6 +359,8 @@ l_tgkill:
     return cell_signal_current((int)a2, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tgkill((int)a0, (int)a1, (int)a2);
+l_rt_sigtimedwait:
+  return sys_rt_sigtimedwait(f, a0, a1, a2, a3);
 l_rt_sigsuspend:
   return sys_rt_sigsuspend(f, a0, a1);
 l_rt_sigaction:
@@ -470,6 +476,12 @@ l_pipe2:
   return cell_fd_pipe2(a0, (int)a1);
 l_lseek:
   return cell_fd_lseek((int)a0, (int64_t)a1, (int)a2);
+l_listxattr:
+  return sys_listxattr(a0, false);
+l_llistxattr:
+  return sys_listxattr(a0, true);
+l_flistxattr:
+  return sys_flistxattr(a0);
 l_fstat:
   return sys_fstat(a0, a1);
 l_newfstatat:

@@ -4,6 +4,7 @@
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
+#include "proc/process.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
 
@@ -17,7 +18,7 @@ enum {
   BPF_AND = 0x54,
   BPF_RET_K = 0x06
 };
-constexpr uint32_t RET_ALLOW = 0x7fff0000, RET_ERRNO = 0x00050000, RET_KILL_PROCESS = 0x80000000;
+constexpr uint32_t RET_ALLOW = 0x7fff0000, RET_ERRNO = 0x00050000, RET_KILL_THREAD = 0, RET_KILL_PROCESS = 0x80000000;
 constexpr unsigned FILTER_MAX_INSNS = 4096, FILTER_MAX_PATH = 32768;
 
 struct instruction {
@@ -76,7 +77,9 @@ static bool valid_program(const struct seccomp_filter *filter) {
       break;
     case BPF_RET_K: {
       uint32_t action = ins.k & 0xffff0000u;
-      if (action != RET_ALLOW && action != RET_ERRNO && action != RET_KILL_PROCESS) { return false; }
+      if (action != RET_ALLOW && action != RET_ERRNO && action != RET_KILL_THREAD && action != RET_KILL_PROCESS) {
+        return false;
+      }
       break;
     }
     case BPF_AND:
@@ -191,9 +194,19 @@ bool seccomp_check(struct trap_frame *frame, uint64_t nr, const uint64_t args[6]
       *result = CELL_SWITCHED;
       return false;
     }
+    if (action == RET_KILL_THREAD) { choice = RET_KILL_THREAD; }
     if (action == RET_ERRNO && choice == RET_ALLOW) { choice = value; }
   }
   if (choice == RET_ALLOW) { return true; }
+  if (choice == RET_KILL_THREAD) {
+    if (cell_runnable_or_blocked_threads_in_domain(domain) > 1) {
+      cell_exit_thread_current(128 + 31, frame);
+    } else {
+      cell_terminate_current(31, frame);
+    }
+    *result = CELL_SWITCHED;
+    return false;
+  }
   unsigned error = choice & 0xffff;
   *result = -(int64_t)(error < 4095 ? error : 4095);
   return false;

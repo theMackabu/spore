@@ -165,6 +165,10 @@ size_t proc_mount_line(char *dst, size_t cap, const struct vfs_mount *m, bool in
   proc_append_char(dst, cap, &len, ' ');
   if (info) {
     proc_append_str(dst, cap, &len, m->options);
+    if (m->peer_group) {
+      proc_append_str(dst, cap, &len, " shared:");
+      proc_append_u64(dst, cap, &len, m->peer_group);
+    }
     proc_append_str(dst, cap, &len, " - ");
   }
   proc_append_str(dst, cap, &len, m->fstype);

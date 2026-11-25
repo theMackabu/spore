@@ -9,22 +9,16 @@
 #include "proc/thread.h"
 
 constexpr uint64_t trampoline = USER_STACK_TOP;
-bool port_install_trampoline(struct user_address_space *as, struct vma_list *vmas) {
-  if (!vma_insert(vmas, trampoline, trampoline + PAGE_SIZE, VMM_USER_READ | VMM_USER_EXEC, 0, VMA_ANON) ||
-      !vmm_alloc_page(as, trampoline, VMM_USER_READ | VMM_USER_EXEC)) {
-    return false;
-  }
+void arch_write_sigreturn_code(void *dest) {
 #ifdef __x86_64__
   static const unsigned char code[] = {0xb8, 15, 0, 0, 0, 0x0f, 0x05, 0x0f, 0x0b};
 #else
   static const uint32_t code[] = {0x08b00893, 0x00000073, 0};
 #endif
-  uint8_t *dest = pmm_phys_to_virt(vmm_user_to_phys(as, trampoline));
   __builtin_memcpy(dest, code, sizeof(code));
 #ifdef __riscv
   __asm__ volatile("fence.i" ::: "memory");
 #endif
-  return true;
 }
 
 struct context {

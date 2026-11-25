@@ -2,6 +2,8 @@
 #include "drivers/serial.h"
 #include "fs/notify.h"
 #include "handlers.h"
+#include "net/namespace.h"
+#include "proc/capabilities.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
@@ -27,6 +29,9 @@ enum {
   TCSBRK = 0x5409,
   TCXONC = 0x540A,
   TCFLSH = 0x540B,
+  SIOCGIFFLAGS = 0x8913,
+  SIOCSIFFLAGS = 0x8914,
+  SIOCGIFINDEX = 0x8933,
   TIOCGWINSZ = 0x5413,
   TIOCSWINSZ = 0x5414,
   TIOCGPGRP = 0x540F,
@@ -122,28 +127,50 @@ static void apply_termios(struct open_file *file, const struct termios64 *tio, b
   }
 }
 
-int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
-  uint32_t req = (uint32_t)request;
-  if (req == 0x8933) {
-    struct open_file *file = fd_file(fd);
-    if (!file) { return -9; }
-    if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM) { return -ENOTTY; }
-    char name[16];
-    if (!syscall_user_readable(arg, sizeof(name)) ||
-        !vmm_copy_from_user(syscall_active_as(), name, arg, sizeof(name))) {
-      return -EFAULT;
-    }
-    int32_t index = 1;
-    if (!__builtin_memcmp(name, "eth0", 5) && !file->net_ns) {
-      index = 2;
-    } else if (__builtin_memcmp(name, "lo", 3)) {
-      return -19;
-    }
-    return syscall_user_writable(arg + 16, sizeof(index)) &&
-               vmm_copy_to_user(syscall_active_as(), arg + 16, &index, sizeof(index))
+static int64_t interface_ioctl(uint64_t fd, uint32_t request, uint64_t arg) {
+  struct open_file *file = fd_file(fd);
+  if (!file) { return -9; }
+  if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM) { return -ENOTTY; }
+  char name[16];
+  if (!syscall_user_readable(arg, sizeof(name)) || !vmm_copy_from_user(syscall_active_as(), name, arg, sizeof(name))) {
+    return -EFAULT;
+  }
+  bool lo = !__builtin_memcmp(name, "lo", 3);
+  if (!lo && (file->net_ns || __builtin_memcmp(name, "eth0", 5))) { return -19; }
+  uint64_t value = arg + sizeof(name);
+  if (request == SIOCGIFINDEX) {
+    int32_t index = lo ? 1 : 2;
+    return syscall_user_writable(value, sizeof(index)) &&
+               vmm_copy_to_user(syscall_active_as(), value, &index, sizeof(index))
              ? 0
              : -EFAULT;
   }
+  if (!lo) { return -95; }
+  struct net_namespace *ns = file->net_ns;
+  constexpr uint16_t up = 1, loopback = 8, running = 64;
+  uint16_t flags = loopback | (!ns || ns->lo_up ? up | running : 0);
+  if (request == SIOCGIFFLAGS) {
+    return syscall_user_writable(value, sizeof(flags)) &&
+               vmm_copy_to_user(syscall_active_as(), value, &flags, sizeof(flags))
+             ? 0
+             : -EFAULT;
+  }
+  if (!cell_ns_capable(ns ? ns->owner : NULL, CAP_NET_ADMIN)) { return -1; }
+  if (!syscall_user_readable(value, sizeof(flags)) ||
+      !vmm_copy_from_user(syscall_active_as(), &flags, value, sizeof(flags))) {
+    return -EFAULT;
+  }
+  if ((flags & ~(up | loopback | running)) || (!ns && !(flags & up))) { return -95; }
+  if (ns) {
+    ns->lo_up = (flags & up) != 0;
+    if (ns->lo_up) { ns->lo_address = true; }
+  }
+  return 0;
+}
+
+int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
+  uint32_t req = (uint32_t)request;
+  if (req == SIOCGIFINDEX || req == SIOCGIFFLAGS || req == SIOCSIFFLAGS) { return interface_ioctl(fd, req, arg); }
   if (req == TIOCGPTN) {
     struct open_file *file = fd_file(fd);
     if (file == NULL || !cell_pty_is_master(file)) { return -(int64_t)ENOTTY; }

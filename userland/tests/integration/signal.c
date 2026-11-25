@@ -516,9 +516,31 @@ static int signalfd_child_exit(void) {
   return ok;
 }
 
+static int timed_wait_signal(void) {
+  sigset_t set, old;
+  sigemptyset(&set);
+  sigaddset(&set, SIGUSR1);
+  if (sigprocmask(SIG_BLOCK, &set, &old)) { return 0; }
+  struct timespec timeout = {.tv_nsec = 10000000};
+  siginfo_t info;
+  int ok = sigtimedwait(&set, &info, &timeout) < 0 && errno == EAGAIN;
+  pid_t child = fork();
+  if (!child) {
+    usleep(20000);
+    _exit(kill(getppid(), SIGUSR1) != 0);
+  }
+  timeout.tv_sec = 2;
+  int status;
+  ok = ok && child > 0 && sigtimedwait(&set, &info, &timeout) == SIGUSR1 && info.si_signo == SIGUSR1;
+  if (child > 0) { ok &= waitpid(child, &status, 0) == child && !status; }
+  sigprocmask(SIG_SETMASK, &old, NULL);
+  printf("[spore] signal wait timeout and delivery: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
-  return signalfd_child_exit() && parent_death_notification() && child_signal_notification() &&
+  return timed_wait_signal() && signalfd_child_exit() && parent_death_notification() && child_signal_notification() &&
          vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
          signal_mask_regression() && temporary_mask_regression() && thread_signal_suspend() &&
          signal_altstack_regression() && signal_interrupted_read_regression() && signal_restart_read_regression() &&

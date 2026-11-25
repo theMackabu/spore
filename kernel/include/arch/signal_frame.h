@@ -8,6 +8,7 @@ struct signal_action;
 struct thread;
 struct trap_frame;
 
+void arch_write_sigreturn_code(void *dest);
 bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action,
                             const struct siginfo_fields64 *info);
 int cell_rt_sigreturn(struct trap_frame *frame);

@@ -14,6 +14,7 @@ struct signal_action {
   uint64_t mask;
 };
 
+int cell_take_waited_signal(struct thread *thread, uint64_t mask, uint64_t addr);
 int cell_set_parent_death_signal(struct thread *thread, uint64_t signal);
 void cell_free_parent_notifications(struct domain *domain);
 struct siginfo_fields64 cell_pending_signal_info(struct thread *thread, int signal, bool consume);

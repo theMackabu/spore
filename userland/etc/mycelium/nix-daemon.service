@@ -1,0 +1,9 @@
+[Unit]
+Description=Nix store daemon
+ConditionPathExists=/usr/sbin/nix-daemon
+
+[Service]
+ExecStart=/usr/sbin/nix-daemon --option extra-allowed-users spore --option always-allow-substitutes true
+ExecStartPost=/libexec/nix-daemon-ready
+User=root
+Restart=on-failure

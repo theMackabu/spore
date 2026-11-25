@@ -1,5 +1,6 @@
 #include "arch/signal_frame.h"
 #include "abi/linux/aarch64/signal_context.h"
+#include "exec/stack.h"
 
 #include "lib/kprintf.h"
 #include "lib/mem.h"
@@ -9,6 +10,20 @@
 #include "proc/thread.h"
 
 enum { EFAULT = 14, SIGSEGV = 11, SA_SIGINFO = 4, SA_ONSTACK = 0x08000000, SS_ONSTACK = 1, SS_DISABLE = 2 };
+
+void arch_write_sigreturn_code(void *dest) {
+  constexpr uint32_t mov_x8_rt_sigreturn = 0xd2801168, svc_0 = 0xd4000001;
+  static const uint32_t code[] = {mov_x8_rt_sigreturn, svc_0};
+  kmemcpy(dest, code, sizeof(code));
+#ifdef __aarch64__
+  uint64_t ctr;
+  __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+  if (!(ctr & (1ull << 28))) { __asm__ volatile("dc cvau, %0" :: "r"(dest) : "memory"); }
+  __asm__ volatile("dsb ish" ::: "memory");
+  if (!(ctr & (1ull << 29))) { __asm__ volatile("ic ialluis; dsb ish" ::: "memory"); }
+  __asm__ volatile("isb" ::: "memory");
+#endif
+}
 
 struct signal_frame64 {
   struct siginfo64 siginfo;
@@ -47,7 +62,7 @@ static void fill_signal_context(struct signal_frame64 *frame, const struct threa
 bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action,
                             const struct siginfo_fields64 *info) {
   int signal = info->si_signo;
-  if (!action->restorer) { return false; }
+  constexpr uint64_t SA_RESTORER = 0x04000000;
   struct domain *domain = thread->domain;
   struct signal_frame64 frame;
   kmemset(&frame, 0, sizeof(frame));
@@ -77,7 +92,7 @@ bool arch_push_signal_frame(struct thread *thread, const struct signal_action *a
   thread->tf.x[0] = (uint64_t)signal;
   thread->tf.x[1] = (action->flags & SA_SIGINFO) != 0 ? siginfo_addr : 0;
   thread->tf.x[2] = (action->flags & SA_SIGINFO) != 0 ? ucontext_addr : 0;
-  thread->tf.x[30] = action->restorer;
+  thread->tf.x[30] = action->flags & SA_RESTORER ? action->restorer : USER_STACK_TOP;
   thread->tf.sp_el0 = frame_addr;
   thread->tf.elr_el1 = action->handler;
   return true;

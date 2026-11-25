@@ -433,6 +433,24 @@ static int pivot_namespace(void) {
   return ok;
 }
 
+static int shared_tmpfs(void) {
+  const char *root = "/tmp/mount-test";
+  if (mount("tmpfs", root, "tmpfs", 0, NULL) || mount(NULL, root, NULL, MS_SHARED, NULL) || chdir(root) ||
+      mkdir("nested", 0700)) {
+    return 1;
+  }
+  int pid = syscall(SYS_clone, CLONE_NEWNS | SIGCHLD, 0, 0, 0, 0);
+  if (!pid) {
+    if (mount("tmpfs", "nested", "tmpfs", 0, "size=4k")) { _exit(1); }
+    int fd = open("nested/page", O_CREAT | O_WRONLY, 0600);
+    static const char page[4096];
+    _exit(fd < 0 || write(fd, page, sizeof(page)) != sizeof(page) || write(fd, "x", 1) != -1 || errno != ENOSPC);
+  }
+  int status;
+  struct stat st;
+  return pid < 0 || waitpid(pid, &status, 0) != pid || status || stat("nested/page", &st) || st.st_size != 4096;
+}
+
 int integration_mount_namespace(void) {
   const char *dir = "/tmp/mount-test";
   if (mkdir(dir, 0700)) { return 0; }
@@ -467,6 +485,9 @@ int integration_mount_namespace(void) {
   close(resume[1]);
   close(ready[0]);
   ok &= child > 0 && waitpid(child, &status, 0) == child && !status;
+  pid_t shared = syscall(SYS_clone, CLONE_NEWNS | SIGCHLD, 0, 0, 0, 0);
+  if (!shared) { _exit(shared_tmpfs()); }
+  ok &= shared > 0 && waitpid(shared, &status, 0) == shared && !status;
   ok &= rmdir(dir) == 0;
   printf("[spore] private tmpfs and mount namespace inheritance: %s status=%d\n", ok ? "PASS" : "FAIL", status);
   return ok && pivot_namespace();

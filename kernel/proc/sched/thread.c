@@ -171,6 +171,7 @@ static void wake_timer_waiters(uint64_t scheduler_ticks) {
     case WAIT_FUTEX:
       cell_finish_wait(thread, -ETIMEDOUT);
       break;
+    case WAIT_SIGWAIT:
     case WAIT_PIPE:
       cell_finish_wait(thread, -11);
       break;

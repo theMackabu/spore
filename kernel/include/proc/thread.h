@@ -37,6 +37,7 @@ enum wait_reason {
   WAIT_FLOCK,
   WAIT_EVENTFD,
   WAIT_SIGNALFD,
+  WAIT_SIGWAIT,
   WAIT_URING,
   WAIT_REASON_COUNT,
 };
@@ -77,6 +78,9 @@ struct thread_wait {
       int epoll_maxevents;
       uint8_t poll_kind;
       uint32_t uring_submitted, uring_timeouts;
+    };
+    struct {
+      uint64_t sigwait_set, sigwait_info;
     };
     bool fifo_cloexec;
     struct {

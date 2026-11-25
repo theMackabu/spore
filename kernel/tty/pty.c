@@ -43,6 +43,7 @@ struct pty {
   uint64_t slave_ino;
   char slave_path[16];
   bool unlocked;
+  bool slave_closed;
   uint16_t master_refs;
   uint16_t slave_refs;
   uint16_t rows;
@@ -260,7 +261,10 @@ static int cell_pty_open_slave(int id, uint32_t flags, const char *path) {
   if (!ptys[id].unlocked) { return -EIO; }
   ++ptys[id].slave_refs;
   int fd = install_pty_fd(domain, id, false, flags, path);
-  if (fd < 0) { --ptys[id].slave_refs; }
+  if (fd < 0) { --ptys[id].slave_refs;
+  } else {
+    ptys[id].slave_closed = false;
+  }
   return fd;
 }
 
@@ -296,7 +300,7 @@ void cell_pty_release_file(struct open_file *file) {
       ramfs_remove(pty->instance, 0, pty->slave_path);
     }
   } else if (pty->slave_refs > 0) {
-    --pty->slave_refs;
+    pty->slave_closed = --pty->slave_refs == 0;
   }
   if (pty->master_refs == 0 && pty->slave_refs == 0) {
     if (pty->instance) {
@@ -310,27 +314,28 @@ void cell_pty_release_file(struct open_file *file) {
   pty_notify();
 }
 
+static bool peer_closed(const struct pty *pty, const struct open_file *file) {
+  return file->pty_master ? pty->slave_closed : !pty->master_refs;
+}
+
 bool cell_pty_file_readable(const struct open_file *file) {
   struct pty *pty = pty_for_file(file);
   if (pty == NULL) { return false; }
   const struct pty_ring *ring = file->pty_master ? &pty->to_master : &pty->to_slave;
-  uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
-  return ring->len != 0 || peer_refs == 0;
+  return ring->len != 0 || peer_closed(pty, file);
 }
 
 bool cell_pty_file_writable(const struct open_file *file) {
   struct pty *pty = pty_for_file(file);
   if (pty == NULL) { return false; }
   const struct pty_ring *ring = file->pty_master ? &pty->to_slave : &pty->to_master;
-  uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
-  return peer_refs != 0 && ring_room(ring) != 0;
+  return !peer_closed(pty, file) && ring_room(ring) != 0;
 }
 
 bool cell_pty_file_hup(const struct open_file *file) {
   struct pty *pty = pty_for_file(file);
   if (pty == NULL) { return true; }
-  uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
-  return peer_refs == 0;
+  return peer_closed(pty, file);
 }
 
 uint64_t cell_pty_read_available(const struct open_file *file) {
@@ -448,8 +453,7 @@ int64_t cell_pty_read_to_domain(struct domain *domain, struct open_file *file, u
   struct pty *pty = pty_for_file(file);
   if (pty == NULL) { return -EIO; }
   struct pty_ring *ring = file->pty_master ? &pty->to_master : &pty->to_slave;
-  uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
-  if (ring->len == 0) { return peer_refs == 0 ? 0 : -EAGAIN; }
+  if (ring->len == 0) { return peer_closed(pty, file) ? 0 : -EAGAIN; }
   int64_t got = ring_read_to_user(domain, ring, buf, len);
   if (got > 0) { pty_notify(); }
   return got;
@@ -461,8 +465,7 @@ int64_t cell_pty_write_from_domain(struct domain *domain, struct open_file *file
   struct pty *pty = pty_for_file(file);
   if (pty == NULL) { return -EIO; }
   struct pty_ring *ring = file->pty_master ? &pty->to_slave : &pty->to_master;
-  uint16_t peer_refs = file->pty_master ? pty->slave_refs : pty->master_refs;
-  if (peer_refs == 0) { return -EIO; }
+  if (peer_closed(pty, file)) { return -EIO; }
   if (file->pty_master || (pty->oflag & (TTY_OPOST | TTY_ONLCR)) != (TTY_OPOST | TTY_ONLCR)) {
     int64_t wrote = ring_write_from_user(domain, ring, buf, len);
     if (wrote > 0) { pty_notify(); }

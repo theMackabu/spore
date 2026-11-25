@@ -121,9 +121,35 @@ bool cell_deliver_signal_to_thread(struct thread *thread, int signal) {
   return cell_deliver_signal_to_thread_fault(thread, signal, 0, 0);
 }
 
+static int sigwait_result(struct thread *thread, uint64_t addr, struct siginfo_fields64 fields) {
+  struct siginfo64 info = {.fields = fields};
+  if (addr && (!cell_domain_ensure_user_range(thread->domain, addr, sizeof(info), VMM_ACCESS_WRITE) ||
+               !vmm_copy_to_user(cell_domain_as(thread->domain), addr, &info, sizeof(info)))) {
+    return -14;
+  }
+  return fields.si_signo;
+}
+
+int cell_take_waited_signal(struct thread *thread, uint64_t mask, uint64_t addr) {
+  uint64_t available = thread->pending_signals & mask;
+  if (!available) { available = thread->domain->pending_signals & mask; }
+  if (!available) { return -11; }
+  int signal = __builtin_ctzll(available) + 1;
+  return sigwait_result(thread, addr, cell_pending_signal_info(thread, signal, true));
+}
+
+static bool waiting_for(const struct thread *t, int signal) {
+  return t->state == THREAD_BLOCKED && t->wait.reason == WAIT_SIGWAIT && (t->wait.sigwait_set & signal_bit(signal));
+}
+
 static bool deliver_signal(struct thread *thread, struct siginfo_fields64 info) {
   int signal = info.si_signo;
   if (thread == NULL || thread->domain == NULL || signal <= 0 || signal >= (int)NSIG) { return false; }
+  if (waiting_for(thread, signal)) {
+    cell_finish_wait(thread, sigwait_result(thread, thread->wait.sigwait_info, info));
+    smp_notify();
+    return true;
+  }
   if (signal_is_blocked(thread, signal)) {
     queue_signal_to_thread(thread, signal);
     return false;
@@ -171,10 +197,9 @@ static struct thread *signal_target(struct domain *domain, int signal) {
   struct thread *target = NULL;
   for (size_t i = 0, limit = cell_thread_slot_limit(); i < limit; ++i) {
     struct thread *t = cell_thread_slot(i);
-    if (t == NULL || t->domain != domain || t->state == THREAD_UNUSED || t->state == THREAD_ZOMBIE ||
-        signal_is_blocked(t, signal)) {
-      continue;
-    }
+    if (!t || t->domain != domain || t->state == THREAD_UNUSED || t->state == THREAD_ZOMBIE) { continue; }
+    if (waiting_for(t, signal)) { return t; }
+    if (signal_is_blocked(t, signal)) { continue; }
     if (target == NULL || t->state == THREAD_BLOCKED) { target = t; }
     if (t->state == THREAD_BLOCKED && t->wait.reason == WAIT_STDIN) { break; }
   }
@@ -422,9 +447,10 @@ static bool may_signal(const struct domain *target, int signal) {
 }
 
 static int send_user_signal(struct thread *thread, int signal) {
-  if (!thread || !thread->domain || thread->domain->zombie) { return -ESRCH; }
+  if (!thread || !thread->domain) { return -ESRCH; }
   struct domain *victim = thread->domain;
   if (!may_signal(victim, signal)) { return -1; }
+  if (victim->zombie) { return 0; }
   if (signal && pidns_init_process(victim) && victim->signal_actions[signal].handler <= 1 &&
       !(signal == SIGKILL && pidns_active(victim) != pidns_current())) {
     return 0;
@@ -441,7 +467,7 @@ int cell_kill(int pid, int signal) {
     int result = -ESRCH;
     for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
       struct domain *domain = cell_domain_slot(i);
-      if (!domain || !domain->used || domain->zombie || !pidns_self_view(domain->id)) { continue; }
+      if (!domain || !domain->used || !pidns_self_view(domain->id)) { continue; }
       if (pid == -1 ? (domain == cell_current_domain_internal() || pidns_self_view(domain->id) == 1)
                     : domain->pgrp_id != pgrp) {
         continue;

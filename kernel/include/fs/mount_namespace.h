@@ -16,7 +16,8 @@ struct devpts_options {
   unsigned mode, ptmxmode;
 };
 int mountns_proc(const char *target, unsigned flags);
-int mountns_memory(const char *path, unsigned mode, unsigned flags, const struct devpts_options *pts);
+int mountns_memory(const char *path, unsigned mode, unsigned flags, uint64_t page_limit,
+                   const struct devpts_options *pts);
 int mountns_unmount(const char *path, bool detach);
 struct ramfs_route {
   struct ramfs *fs;
@@ -28,6 +29,7 @@ struct ramfs_route {
 };
 struct ramfs_route mountns_lookup(const char *path);
 void mountns_access_put(struct mount_access *access);
+int mountns_propagation(const char *path, bool shared, bool slave, bool recursive);
 int mountns_remount(const char *path, unsigned flags);
 bool mountns_current_routes(void);
 bool mountns_covered_root(const struct vfs_node *node);

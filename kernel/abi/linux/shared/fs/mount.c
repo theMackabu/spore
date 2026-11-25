@@ -4,6 +4,7 @@
 #include "fs/vfs.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
+#include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/policy.h"
 
@@ -56,6 +57,45 @@ int64_t sys_pivot_root(uint64_t root_addr, uint64_t old_addr) {
   return rc ? rc : mountns_pivot(root, old);
 }
 
+static bool tmpfs_pages(const char *s, uint64_t *pages) {
+  if (*s < '0' || *s > '9') { return false; }
+  uint64_t n = 0;
+  while (*s >= '0' && *s <= '9') {
+    unsigned digit = *s++ - '0';
+    if (n > (UINT64_MAX - digit) / 10) { return false; }
+    n = n * 10 + digit;
+  }
+  if (str_eq(s, "%")) {
+    if (!n || n > 100) { return false; }
+    *pages = (pmm_total_pages() * n + 99) / 100;
+    return true;
+  }
+  unsigned shift = 0;
+  if (*s) {
+    if (s[1]) { return false; }
+    switch (*s) {
+    case 'k':
+    case 'K':
+      shift = 10;
+      break;
+    case 'm':
+    case 'M':
+      shift = 20;
+      break;
+    case 'g':
+    case 'G':
+      shift = 30;
+      break;
+    default:
+      return false;
+    }
+  }
+  if (n > (UINT64_MAX >> shift)) { return false; }
+  uint64_t bytes = n << shift;
+  *pages = bytes / RAMFS_PAGE_SIZE + (bytes % RAMFS_PAGE_SIZE != 0);
+  return true;
+}
+
 int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flags, uint64_t data) {
   if (!mountns_may_mount()) { return -EPERM; }
   char path[CELL_PATH_MAX];
@@ -74,12 +114,10 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
     rc = syscall_copy_resolved_path_at(AT_FDCWD, source, src, sizeof(src));
     return rc ? rc : mountns_bind(src, path, flags & MS_REC);
   }
-  if ((flags & ~MS_REC) == MS_PRIVATE || (flags & ~MS_REC) == MS_SLAVE) {
-    const struct vfs_mount *m;
-    for (size_t i = 0; (m = vfs_mount_at(i)); ++i) {
-      if (str_eq(path, m->target)) { return 0; }
-    }
-    return -EINVAL;
+  constexpr uint64_t MS_SHARED = 1 << 20;
+  uint64_t propagation = flags & ~MS_REC;
+  if (propagation == MS_PRIVATE || propagation == MS_SLAVE || propagation == MS_SHARED) {
+    return mountns_propagation(path, propagation == MS_SHARED, propagation == MS_SLAVE, flags & MS_REC);
   }
   if (flags & ~mount_flags) { return -95; }
   char name[32];
@@ -90,6 +128,7 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
   struct devpts_options settings = {.mode = 0600};
   unsigned mode = pts ? 0755 : 01777;
   bool fresh = false;
+  uint64_t page_limit = 0;
   if (data) {
     char options[128];
     if ((rc = syscall_read_user_string(data, options, sizeof(options))) < 0) { return rc; }
@@ -102,6 +141,10 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
       if (*p) { *p++ = 0; }
       if (pts && str_eq(start, "newinstance")) {
         fresh = true;
+        continue;
+      }
+      if (!pts && starts_with(start, "size=")) {
+        if (!tmpfs_pages(start + 5, &page_limit)) { return -EINVAL; }
         continue;
       }
       unsigned *value;
@@ -124,7 +167,7 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
     }
   }
   if (pts && !fresh) { return -95; }
-  return mountns_memory(path, mode, flags, pts ? &settings : NULL);
+  return mountns_memory(path, mode, flags, page_limit, pts ? &settings : NULL);
 }
 
 int64_t sys_umount2(uint64_t target, uint64_t flags) {

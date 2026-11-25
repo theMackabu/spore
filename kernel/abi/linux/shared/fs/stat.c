@@ -1,5 +1,6 @@
 #include "abi/linux/shared/file_layout.h"
 #include "abi/linux/shared/fs/file_abi.h"
+#include "abi/linux/shared/open.h"
 #include "abi/linux/shared/usercopy.h"
 #include "fs/vfs.h"
 #include "handlers.h"
@@ -99,7 +100,12 @@ static bool fill_statfs(struct linux_statfs64 *st, const struct vfs_node *node) 
   st->f_bsize = info.block_size;
   st->f_blocks = info.block_count;
   st->f_bfree = info.free_blocks;
-  st->f_bavail = info.free_blocks;
+  if (node->backend == VFS_RAMFS && node->ramfs.fs->page_limit) {
+    st->f_blocks = node->ramfs.fs->page_limit;
+    st->f_bfree = st->f_blocks - node->ramfs.fs->pages_used;
+    if (st->f_bfree > info.free_blocks) { st->f_bfree = info.free_blocks; }
+  }
+  st->f_bavail = st->f_bfree;
   st->f_files = info.inode_count;
   st->f_ffree = info.free_inodes;
   st->f_namelen = 255;
@@ -172,6 +178,17 @@ int64_t sys_statx(uint64_t dirfd, uint64_t path_addr, uint64_t flags, uint64_t m
   struct statx64 st;
   fill_statx(&st, &node);
   return copy_result(statx_addr, &st, sizeof(st));
+}
+
+int64_t sys_listxattr(uint64_t path_addr, bool nofollow) {
+  struct vfs_node node;
+  int rc = syscall_lookup_at(AT_FDCWD, path_addr, nofollow ? AT_SYMLINK_NOFOLLOW : 0, 0, &node, NULL);
+  return rc ? rc : -EOPNOTSUPP;
+}
+
+int64_t sys_flistxattr(uint64_t fd) {
+  struct open_file *file = cell_fd_file(fd);
+  return file && !(file->flags & LINUX_O_PATH) ? -EOPNOTSUPP : -EBADF;
 }
 
 int64_t sys_newfstatat(uint64_t dirfd, uint64_t path_addr, uint64_t stat_addr, uint64_t flags) {

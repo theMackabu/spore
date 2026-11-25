@@ -91,6 +91,7 @@ struct ramfs {
   uint64_t hhdm_offset;
   uint64_t next_ino;
   uint32_t device, refs, pins;
+  uint64_t page_limit, pages_used;
   bool nosuid, devpts;
   uint16_t pts_mode;
 };
@@ -158,6 +159,7 @@ static inline bool ramfs_rename(struct ramfs *fs, const char *old_path, const ch
 }
 int64_t ramfs_seek_extent(struct ramfs *fs, int index, uint64_t off, bool data);
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len);
+bool ramfs_reserve_mapped_page(const struct ramfs_node *node, uint64_t off);
 int64_t ramfs_write(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
 int64_t ramfs_writeback(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len);
 const char *ramfs_inode_path(struct ramfs *fs, int index, char *buf, size_t size);

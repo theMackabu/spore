@@ -24,6 +24,7 @@ int64_t sys_futex(struct trap_frame *frame, uint64_t uaddr, uint64_t op, uint64_
 int64_t sys_sched_getaffinity(uint64_t mask, uint64_t len);
 int cell_rt_sigaction(int signal, uint64_t act_addr, uint64_t old_addr, uint64_t sigset_size);
 int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t old_addr);
+int64_t sys_rt_sigtimedwait(struct trap_frame *frame, uint64_t set, uint64_t info, uint64_t timeout, uint64_t size);
 int64_t sys_rt_sigsuspend(struct trap_frame *frame, uint64_t set, uint64_t size);
 int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set, uint64_t oldset, uint64_t sigsetsize);
 int64_t sys_getcpu(uint64_t cpu_addr, uint64_t node_addr);

@@ -121,10 +121,12 @@ int userns_write_map(struct domain *actor, struct user_namespace *ns, bool group
 }
 
 int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
-  if (flags & ~(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID)) {
+  if (flags & ~(CLONE_FS | CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID)) {
     return -22;
   }
   struct domain *d = thread->domain;
+  if ((flags & CLONE_FS) && d->refcount != 1) { return -38; }
+  if (!(flags & ~CLONE_FS)) { return 0; }
   struct linux_caps old_caps = thread->capabilities;
   struct uts_namespace *old_uts = uts_retain(d->uts);
   int rc = 0;
