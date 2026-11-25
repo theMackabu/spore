@@ -1,87 +1,71 @@
-# Run ARM64 programs in WebAssembly
+# Run Spore in WebAssembly
 
-Spore’s experimental Wasm backend runs ARM64 Linux apps and static FreeBSD executables and boots the full Spore userland from an ext2 or ext2+ root disk.
-The kernel and Rust instruction interpreter share one WebAssembly module. Guest instruction
-fetches, loads and stores use Spore’s user page tables. Linux syscalls enter Spore’s shared
-dispatcher. The host provides console output, time, entropy and block I/O.
+Spore compiles its kernel to WebAssembly. A Rust interpreter and JIT execute the guest’s ARM64 instructions. Boot, exec, page faults, filesystems, scheduling and syscalls use Spore’s kernel implementations.
 
-Build and run from the development shell.
+## Run an app
+
+From the development shell, run
 
 ```sh
 cargo build --release
 ./target/release/spore build --wasm
-./target/release/spore run --wasm ./busybox.static -- echo hello
+./target/release/spore run --wasm ant -- -e 'console.log(6 * 7)'
 ```
 
-Use Alpine’s **aarch64 busybox-static** package for the example. Extract
-`bin/busybox.static` and pass that executable to the runner. Spore also runs static PIE
-executables. The CLI installs the executable under its filename in `/app`, which lets BusyBox
-select its applet. [Alpine package](https://pkgs.alpinelinux.org/package/v3.23/main/aarch64/busybox-static)
+Pass a package name, an AArch64 Linux ELF or a static AArch64 FreeBSD ELF. The CLI packages a dynamic Linux executable with its interpreter and libraries. The app profile permits threads and restricts the guest to one process. Piped CLI input arrives through a guest pipe.
 
-Pass a writable ext2 or ext2+ volume to mount it at `/data`. Writes persist in the supplied volume.
+To save an app and run it later, use
 
 ```sh
-./target/release/spore run --wasm ./busybox.static --data ./data.ext2 -- ls /data
+./target/release/spore build --wasm ./my-app -o my-app.spore --lib-dir ./libs -- --version
+./target/release/spore boot --wasm my-app.spore --result result.json
 ```
 
-## Full userland
+The result records the workload exit, signal or failure and the time to its first instruction fetch. Pass `--data ./data.ext2` to mount a writable ext2 or ext2+ volume at `/data`.
+
+## Boot the full system
 
 ```sh
 ./target/release/spore build --userland
 ./target/release/spore boot --wasm
 ```
 
-The kernel launches `/sbin/init` from `target/release/root.ext2`. To select another root, pass `--root path/to/root.ext2`. Each boot uses a disposable snapshot by default. Pass `--persist ./my-root.ext2` to seed and reuse a separate writable copy. Supply an ESP before `--root` to expose its bytes through `/dev/blk/boot`. Type commands at the guest shell or press Ctrl+] to disconnect.
+The default root is a disposable snapshot of `target/release/root.ext2`. Select another base with `--root`. Pass `--persist ./my-root.ext2` to seed and reuse a writable copy. Supply an ESP before `--root` to expose its bytes through `/dev/blk/boot`. Ctrl+] disconnects the host console.
 
-## Networking in Node
+Guests default to one CPU and 64 MiB of RAM. Use `--memory 512M` or `--smp 4` to change the configuration. Virtual CPUs have independent registers and scheduler slots and take turns executing on one host worker.
 
-`--net` gives the guest outbound IPv4 networking. A port forward also enables networking.
+## Networking
+
+`--net` enables outbound IPv4. A port forward also enables networking.
 
 ```sh
 ./target/release/spore run --wasm ant -p 8080 --env REVISION=wasm \
   --file tests/appliance/server.js=/app/server.js -- /app/server.js
 ```
 
-The CLI uses QEMU’s user-mode network backend as an Ethernet bridge. The helper uses `-machine none`. Spore executes guest instructions in the Rust interpreter. The listener binds to loopback. In another terminal, `curl http://127.0.0.1:8080/` returns `wasm`, and `curl http://127.0.0.1:8080/quit` stops the guest.
+In another terminal, `curl http://127.0.0.1:8080/` returns `wasm`. Request `/quit` to stop the server. The host uses QEMU with `-machine none` to provide Ethernet and user-mode networking. Offline boots execute the Wasm module directly.
 
 ## Browser
-
-The build also produces a standalone browser runner in `target/release/wasm-web/`. Serve that directory locally.
 
 ```sh
 ./target/release/spore serve --wasm
 ```
 
-Pass `--net` to enable a same-origin WebSocket Ethernet relay backed by the host’s user-mode network. Open the printed loopback URL, select a static ELF and enter one argument per
-line. For a dynamically linked ELF, package its interpreter, libraries, files and
-arguments on the host and select the resulting payload.
+Open the printed loopback URL. Select a static ELF or a saved app payload, or select just a root disk to boot the full system. Type directly into the terminal. **Keep disk changes in this browser** saves changed pages in origin-private storage. Reopen the same base file on the same origin to resume.
 
-```sh
-./target/release/spore build --wasm ./my-app -o my-app.spore --lib-dir ./libs -- --version
-```
+Pass `--net` when serving to enable the local WebSocket Ethernet relay. The runner in `target/release/wasm-web/` can also be served as static files for offline guest execution. The JavaScript API accepts custom block and Ethernet devices, a cancellation signal and an instruction budget. [Launcher](../../tools/wasm/run.mjs)
 
-Use `spore boot --wasm my-app.spore` to run the saved payload in Node. `--result result.json` records exit, signal or failure and the time to the first instruction fetch. The CLI performs this packaging automatically on `spore run --wasm`. A worker runs the guest locally and reads ranges from the selected disk on demand.
-To boot a system, select only the root disk, click Run and type into the terminal. Select **Keep disk changes in this browser** to save changed pages in origin-private storage. Reopen the same disk file on the same origin to resume. A fresh snapshot is the default. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
+## Verification
 
-## Current scope
+| Command | Coverage |
+|---|---|
+| `spore test wasm` | QEMU differential tests, musl and FreeBSD executables, memory protections, self-modifying code, signals, TLS, SMP, crypto, app policy and persistent boot |
+| `spore test wasm-guest` | The full guest integration disk, UDP echo and blocked console reads |
+| `spore test wasm-shell` | Installed commands, shell, TLS, compiler and shutdown |
+| `spore test wasm-neon` | 285 upstream SIMDe test executables compiled for ARMv8-A |
+| `spore bench wasm` | Spore’s interpreter and JIT on the same ARM64 integer loop |
+| `spore bench kwemu` | Matched Spore and unkernel runs using the same guest disk and binaries |
 
-The default is one guest CPU with 64 MiB of RAM. `--smp 4` runs four virtual CPUs in turn on one host worker. Each has its own register bank and scheduler slot. Set `--memory 256M` (or Guest RAM in the browser) for larger workloads. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The guest receives the same FP, Advanced SIMD, CRC32, AES, PMULL, SHA1, SHA2 and LSE atomic feature bits as native AArch64 Spore. It caches instruction
-classes and address translations. Its Rust JIT compiles frequently executed integer blocks to WebAssembly and checks the instruction bytes before reusing compiled code. Guest instruction and memory faults enter the signal subsystem. Fatal faults include the guest PC. The JavaScript embedding API defaults to a budget of 100 million guest instructions. The CLI permits long-running workloads.
+Ant and Bun 1.4.5 executed JavaScript. Claude Code 2.1.332 printed its version and help, and displayed its welcome screen with 512 MiB of guest RAM. The interactive check ended at the offline connectivity screen.
 
-Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Piped CLI input uses a guest pipe and delivers EOF when the host writer closes. Full-system boots use Spore’s TTY. The standalone browser terminal works offline. Serving with `--net` connects the guest through the local relay. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
-Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
-
-```sh
-./target/release/spore run --wasm ant -- -e 'console.log(6 * 7)'
-```
-
-Bun 1.4.5 executes a JavaScript expression, and Claude Code 2.1.332 starts far enough to print its version with 512 MiB of guest RAM. Interactive Claude sessions have not been verified on Wasm.
-
-`spore test wasm-guest` boots the integration disk with the native suite’s UDP echo and console fixtures. `spore test wasm-shell` exercises the installed utilities, TLS, the compiler, shell and shutdown in a disposable full-userland boot.
-
-`spore test wasm-neon` compiles the pinned upstream SIMDe ARM NEON corpus for ARMv8-A and runs every test executable through Spore.
-
-`spore test wasm` builds an ordinary musl ELF and compares its output and exit status
-under QEMU and Wasm. It checks pthreads, futex wakeups, timer preemption, thread-local storage and appliance policy. It also exercises cross-page accesses, permission changes,
-unsupported instructions and the execution budget. `spore bench wasm` times an ARM64
-integer loop with the interpreter and JIT on Node, with an already compiled kernel module and a fresh instance per run.
+The hosted CPU advertises the same FP, Advanced SIMD, CRC32, AES, PMULL, SHA1, SHA2 and LSE atomic capabilities as native AArch64 Spore. JIT blocks check guest code bytes before reuse and use permission-checked guest translations for memory access. [SIMDe suite revision](https://github.com/simd-everywhere/simde/tree/fdf984310d6d6b2fa5426fcf66bc227e04609c3f) · [kwemu measurements](wasm-benchmarks.md)
