@@ -61,7 +61,12 @@ struct open_file {
       bool pty_master;
     };
     struct {
+      struct net_namespace *net_ns;
       uint8_t socket_proto;
+      uint8_t route_type;
+      uint32_t route_pid;
+      uint64_t unix_dgram_id, unix_dgram_peer;
+      struct open_file *family_next;
       uint16_t socket_waiters;
       bool so_reuseaddr;
       bool so_reuseport;

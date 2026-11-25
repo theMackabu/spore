@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -31,4 +32,5 @@ struct sockaddr_in64 {
   uint8_t sin_zero[8];
 };
 
+int64_t linux_send_datagram(int fd, const void *buf, size_t len, uint64_t addr, uint64_t addrlen);
 bool linux_copy_sockaddr_in(uint64_t addr, uint64_t len, struct sockaddr_in64 *out);

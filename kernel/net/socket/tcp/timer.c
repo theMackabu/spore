@@ -72,7 +72,7 @@ static void keepalive(struct open_file *file, uint64_t now) {
   }
   ++file->tcp_keepalive_probes;
   file->tcp_keepalive_deadline_tick = now + interval;
-  if (!net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
+  if (!net_tcp_send_segment_ttl_tos(file->net_ns, file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                     socket_effective_ttl(file), (uint8_t)file->ip_tos, file->tcp_seq - 1, file->tcp_ack,
                                     tcp_window(file), TCP_ACK, NULL, 0)) { tcp_fail(file, EIO); }
 }

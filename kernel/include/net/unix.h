@@ -4,10 +4,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct vfs_node;
 struct domain;
 struct open_file;
 struct pipe_obj;
 struct unix_rights;
+
+constexpr uint8_t UNIX_DGRAM_PROTOCOL = 255;
+int unix_dgram_init(struct open_file *file);
+void unix_dgram_close(struct open_file *file);
+int unix_dgram_bind(struct open_file *file, const char *path, const char *name);
+const char *unix_dgram_name(const struct open_file *file, bool peer);
+int unix_dgram_connect(struct open_file *file, const struct vfs_node *node);
+int64_t unix_dgram_send(struct open_file *file, const struct vfs_node *node, const void *data, size_t len);
 
 constexpr unsigned UNIX_MAX_RIGHTS = 253;
 

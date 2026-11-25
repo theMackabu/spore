@@ -123,6 +123,18 @@ static void apply_termios(struct open_file *file, const struct termios64 *tio, b
 
 int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
   uint32_t req = (uint32_t)request;
+  if (req == 0x8933) {
+    struct open_file *file = fd_file(fd);
+    if (!file) { return -9; }
+    if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM) { return -ENOTTY; }
+    char name[16];
+    if (!syscall_user_readable(arg, sizeof(name)) || !vmm_copy_from_user(syscall_active_as(), name, arg, sizeof(name))) { return -EFAULT; }
+    int32_t index = 1;
+    if (!__builtin_memcmp(name, "eth0", 5) && !file->net_ns) { index = 2; }
+    else if (__builtin_memcmp(name, "lo", 3)) { return -19; }
+    return syscall_user_writable(arg + 16, sizeof(index)) &&
+           vmm_copy_to_user(syscall_active_as(), arg + 16, &index, sizeof(index)) ? 0 : -EFAULT;
+  }
   if (req == TIOCGPTN) {
     struct open_file *file = fd_file(fd);
     if (file == NULL || !cell_pty_is_master(file)) { return -(int64_t)ENOTTY; }

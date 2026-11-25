@@ -18,7 +18,8 @@ int64_t sys_spore_net_config(uint64_t op, uint64_t cfg_addr) {
   if (cfg_addr == 0) { return -(int64_t)EFAULT; }
   if (op == 0) {
     struct net_config cfg;
-    net_get_config(&cfg);
+    if (cell_current_domain_internal()->net_ns) { cfg = (struct net_config){0}; }
+    else { net_get_config(&cfg); }
     struct net_config64 out = {
       .local_ip = cfg.local_ip,
       .gateway_ip = cfg.gateway_ip,
@@ -32,7 +33,7 @@ int64_t sys_spore_net_config(uint64_t op, uint64_t cfg_addr) {
              : -(int64_t)EFAULT;
   }
   if (op == 1) {
-    if (!cell_capable(CAP_NET_ADMIN)) { return -(int64_t)EPERM; }
+    if (cell_current_domain_internal()->net_ns || !cell_capable(CAP_NET_ADMIN)) { return -(int64_t)EPERM; }
     struct net_config64 in;
     if (!syscall_user_readable(cfg_addr, sizeof(in)) ||
         !vmm_copy_from_user(syscall_active_as(), &in, cfg_addr, sizeof(in))) {

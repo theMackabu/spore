@@ -27,7 +27,7 @@ void tcp_apply_syn_options(struct open_file *file, uint16_t window, const void *
 bool tcp_send_syn(const struct open_file *file, uint32_t seq, bool reply) {
   static const uint8_t options[] = {2, 4, CELL_TCP_TX_CAP >> 8, CELL_TCP_TX_CAP & 255, 1, 3, 3, RECEIVE_WINDOW_SCALE};
   size_t len = !reply || file->tcp_local_window_scale ? sizeof(options) : 4;
-  return net_tcp_send_segment_options_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
+  return net_tcp_send_segment_options_ttl_tos(file->net_ns, file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                               socket_effective_ttl(file), (uint8_t)file->ip_tos, seq,
                                               reply ? file->tcp_ack : 0, advertised_window(file, 0),
                                               reply ? TCP_SYN | TCP_ACK : TCP_SYN, NULL, 0, options, len);

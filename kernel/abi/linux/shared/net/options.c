@@ -6,6 +6,8 @@
 #include "socket_abi.h"
 #include "abi/linux/shared/layout.h"
 #include "net/socket.h"
+#include "net/route.h"
+#include "proc/fd.h"
 
 constexpr int ENOPROTOOPT = 92;
 
@@ -115,7 +117,9 @@ int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
     case SO_DOMAIN: {
       int32_t proto = 0;
       if (!cell_fd_socket_info((int)fd, NULL, &proto)) { return -(int64_t)EBADF; }
-      value = proto == 0 ? AF_UNIX : AF_INET;
+      struct open_file *file = cell_fd_file((int)fd);
+      value = file && file->type == OPEN_SOCKET && file->socket_proto == ROUTE_PROTOCOL ? ROUTE_FAMILY :
+              proto == 0 ? AF_UNIX : AF_INET;
       break;
     }
     default:

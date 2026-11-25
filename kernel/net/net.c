@@ -314,18 +314,26 @@ static void send_icmp_port_unreachable(uint32_t dst_ip, const uint8_t *original_
   (void)send_ipv4_frame(&frame, NET_IP_ICMP, 64, 0, dst_ip, ICMP_HEADER_LEN + quoted_len);
 }
 
-bool net_udp_send(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload, size_t len) {
-  return net_udp_send_tos(src_port, dst_ip, dst_port, 0, payload, len);
+static void account_loopback(struct net_namespace *ns, size_t bytes) {
+  if (ns) { ++ns->lo_packets; ns->lo_bytes += bytes; }
 }
 
-bool net_udp_send_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, const void *payload,
+bool net_udp_send(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload, size_t len) {
+  return net_udp_send_tos(ns, src_port, dst_ip, dst_port, 0, payload, len);
+}
+
+bool net_udp_send_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, const void *payload,
                       size_t len) {
-  return net_udp_send_ttl_tos(src_port, dst_ip, dst_port, 64, tos, payload, len);
+  return net_udp_send_ttl_tos(ns, src_port, dst_ip, dst_port, 64, tos, payload, len);
 }
 
-bool net_udp_send_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
+bool net_udp_send_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
                           const void *payload, size_t len) {
-  if (is_loopback(dst_ip)) { return cell_net_deliver_udp(dst_ip, ttl, src_port, dst_port, payload, len); }
+  if (!netns_can_route(ns, dst_ip)) { return false; }
+  if (is_loopback(dst_ip)) {
+    account_loopback(ns, 20 + UDP_HEADER_LEN + len);
+    return cell_net_deliver_udp(ns, dst_ip, ttl, src_port, dst_port, payload, len);
+  }
   if (!cell_egress_allowed(NET_IP_UDP, dst_ip, dst_port)) {
     kprintf("[spore] net: tx denied proto=udp dst=%x:%u\n", (unsigned)dst_ip, (unsigned)dst_port);
     return false;
@@ -343,37 +351,39 @@ bool net_udp_send_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
   return send_ipv4_frame(&frame, NET_IP_UDP, ttl, tos, dst_ip, UDP_HEADER_LEN + len);
 }
 
-bool net_tcp_send_segment(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
+bool net_tcp_send_segment(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
                           uint16_t window, uint8_t flags, const void *payload, size_t len) {
-  return net_tcp_send_segment_options(src_port, dst_ip, dst_port, seq, ack, window, flags, payload, len, NULL, 0);
+  return net_tcp_send_segment_options(ns, src_port, dst_ip, dst_port, seq, ack, window, flags, payload, len, NULL, 0);
 }
 
-bool net_tcp_send_segment_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
+bool net_tcp_send_segment_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
                                   uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags, const void *payload,
                                   size_t len) {
-  return net_tcp_send_segment_options_ttl_tos(src_port, dst_ip, dst_port, ttl, tos, seq, ack, window, flags, payload,
+  return net_tcp_send_segment_options_ttl_tos(ns, src_port, dst_ip, dst_port, ttl, tos, seq, ack, window, flags, payload,
                                               len, NULL, 0);
 }
 
-bool net_tcp_send_segment_options(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
+bool net_tcp_send_segment_options(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
                                   uint16_t window, uint8_t flags, const void *payload, size_t len, const void *options,
                                   size_t options_len) {
-  return net_tcp_send_segment_options_tos(src_port, dst_ip, dst_port, 0, seq, ack, window, flags, payload, len, options,
+  return net_tcp_send_segment_options_tos(ns, src_port, dst_ip, dst_port, 0, seq, ack, window, flags, payload, len, options,
                                           options_len);
 }
 
-bool net_tcp_send_segment_options_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, uint32_t seq,
+bool net_tcp_send_segment_options_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, uint32_t seq,
                                       uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len,
                                       const void *options, size_t options_len) {
-  return net_tcp_send_segment_options_ttl_tos(src_port, dst_ip, dst_port, 64, tos, seq, ack, window, flags, payload,
+  return net_tcp_send_segment_options_ttl_tos(ns, src_port, dst_ip, dst_port, 64, tos, seq, ack, window, flags, payload,
                                               len, options, options_len);
 }
 
-bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl,
+bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl,
                                           uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
                                           const void *payload, size_t len, const void *options, size_t options_len) {
+  if (!netns_can_route(ns, dst_ip)) { return false; }
   if (is_loopback(dst_ip)) {
-    cell_net_deliver_tcp(dst_ip, src_port, dst_port, seq, ack, window, flags, options, options_len, payload, len);
+    account_loopback(ns, 20 + 20 + options_len + len);
+    cell_net_deliver_tcp(ns, dst_ip, src_port, dst_port, seq, ack, window, flags, options, options_len, payload, len);
     return true;
   }
   if (!cell_egress_allowed(NET_IP_TCP, dst_ip, dst_port)) {
@@ -401,7 +411,8 @@ bool net_tcp_send_segment_options_ttl_tos(uint16_t src_port, uint32_t dst_ip, ui
   return send_ipv4_frame(&frame, NET_IP_TCP, ttl, tos, dst_ip, header_len + len);
 }
 
-bool net_icmp_send_echo(uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, const void *payload, size_t len) {
+bool net_icmp_send_echo(struct net_namespace *ns, uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, const void *payload, size_t len) {
+  if (!netns_can_route(ns, dst_ip)) { return false; }
   const uint8_t *data = payload;
   bool has_header = len >= ICMP_HEADER_LEN && data[0] == ICMP_ECHO_REQUEST && data[1] == 0;
   struct ipv4_frame frame;
@@ -422,7 +433,9 @@ bool net_icmp_send_echo(uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, 
   store_be16(packet + 4, id);
   store_be16(packet + 2, net_checksum(packet, packet_len));
   if (loopback) {
-    cell_net_deliver_icmp(dst_ip, 64, packet, packet_len);
+    account_loopback(ns, 20 + packet_len);
+    account_loopback(ns, 20 + packet_len);
+    cell_net_deliver_icmp(ns, dst_ip, 64, packet, packet_len);
     return true;
   }
   return send_ipv4_frame(&frame, NET_IP_ICMP, ttl, tos, dst_ip, packet_len);
@@ -454,7 +467,7 @@ static void handle_icmp(const struct net_rx_header *h, const uint8_t *icmp) {
     store_be16(reply + 2, net_checksum(reply, len));
     (void)send_ipv4_frame(&frame, NET_IP_ICMP, 64, 0, h->src_ip, len);
   } else if (h->icmp_type == ICMP_ECHO_REPLY) {
-    cell_net_deliver_icmp(h->src_ip, h->ttl, icmp, len);
+    cell_net_deliver_icmp(NULL, h->src_ip, h->ttl, icmp, len);
   } else if (h->quoted_src == local_ip) {
     if (h->quoted_protocol == NET_IP_UDP) {
       (void)cell_net_deliver_udp_error(h->quoted_dst, h->dst_port, h->src_port, NET_ECONNREFUSED);
@@ -476,7 +489,7 @@ void net_receive_ethernet(const uint8_t *frame, size_t len) {
   const uint8_t *segment = ip + h.ip_header_len;
   if (h.ip_protocol == NET_IP_UDP) {
     if (h.dst_ip != local_ip && h.dst_ip != 0xffffffffu && !is_broadcast(h.dst_ip)) { return; }
-    if (!cell_net_deliver_udp(h.src_ip, h.ttl, h.src_port, h.dst_port, segment + UDP_HEADER_LEN,
+    if (!cell_net_deliver_udp(NULL, h.src_ip, h.ttl, h.src_port, h.dst_port, segment + UDP_HEADER_LEN,
                               h.transport_len - UDP_HEADER_LEN) && h.dst_ip == local_ip) {
       send_icmp_port_unreachable(h.src_ip, ip, h.ip_header_len, segment, h.transport_len);
     }
@@ -484,7 +497,7 @@ void net_receive_ethernet(const uint8_t *frame, size_t len) {
     handle_icmp(&h, segment);
   } else if (h.dst_ip == local_ip && h.ip_protocol == NET_IP_TCP) {
     size_t header_len = TCP_HEADER_LEN + h.tcp_options_len;
-    cell_net_deliver_tcp(h.src_ip, h.src_port, h.dst_port, h.sequence, h.acknowledgement, h.window, h.tcp_flags,
+    cell_net_deliver_tcp(NULL, h.src_ip, h.src_port, h.dst_port, h.sequence, h.acknowledgement, h.window, h.tcp_flags,
                          segment + TCP_HEADER_LEN, h.tcp_options_len, segment + header_len, h.transport_len - header_len);
   }
 }

@@ -20,10 +20,11 @@ static struct open_file **listener_bucket(const struct vfs_node *node) {
   return &listeners[node->ino % (sizeof(listeners) / sizeof(*listeners))];
 }
 
-static struct open_file *unix_socket(int pid, uint32_t uid, uint32_t gid) {
+static struct open_file *unix_socket(struct net_namespace *ns, int pid, uint32_t uid, uint32_t gid) {
   struct open_file *file = cell_alloc_open_file();
   if (file) {
     file->type = OPEN_UNIX_STREAM;
+    file->net_ns = netns_retain(ns);
     file->unix_owner_pid = pid;
     file->unix_owner_uid = uid;
     file->unix_owner_gid = gid;
@@ -35,7 +36,7 @@ static struct open_file *unix_socket(int pid, uint32_t uid, uint32_t gid) {
 int cell_fd_socket_unix(void) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
-  struct open_file *file = unix_socket(domain->id, domain->euid, domain->egid);
+  struct open_file *file = unix_socket(domain->net_ns, domain->id, domain->euid, domain->egid);
   if (file == NULL) { return -12; }
   return cell_install_fd(domain, file, false);
 }
@@ -55,8 +56,8 @@ int cell_fd_socketpair_unix(uint64_t sv_addr, int flags, bool packet) {
     return -23;
   }
 
-  struct open_file *a = unix_socket(domain->id, domain->euid, domain->egid);
-  struct open_file *b = unix_socket(domain->id, domain->euid, domain->egid);
+  struct open_file *a = unix_socket(domain->net_ns, domain->id, domain->euid, domain->egid);
+  struct open_file *b = unix_socket(domain->net_ns, domain->id, domain->euid, domain->egid);
   if (a == NULL || b == NULL) {
     cell_release_open_file(a);
     cell_release_open_file(b);
@@ -126,6 +127,7 @@ static struct open_file *take_head(struct open_file *listener) {
 
 void cell_unix_release_file(struct open_file *file) {
   unix_untrack_socket(file);
+  netns_release(file->net_ns);
   if (file->type == OPEN_UNIX_LISTENER) {
     socket_index_remove(listener_bucket(&file->node), file);
     while (file->unix_pending_head) { cell_release_open_file(take_head(file)); }
@@ -200,7 +202,7 @@ int cell_fd_unix_connect(int fd, const char *path) {
     cell_pipe_discard(s2c);
     return -23;
   }
-  struct open_file *server = unix_socket(listener->unix_owner_pid, listener->unix_owner_uid, listener->unix_owner_gid);
+  struct open_file *server = unix_socket(listener->net_ns, listener->unix_owner_pid, listener->unix_owner_uid, listener->unix_owner_gid);
   if (server == NULL) {
     cell_pipe_discard(c2s);
     cell_pipe_discard(s2c);

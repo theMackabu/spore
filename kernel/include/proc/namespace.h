@@ -3,7 +3,7 @@
 #include <stdint.h>
 struct domain;
 
-enum namespace_kind { NS_MOUNT, NS_USER, NS_UTS, NS_IPC, NS_COUNT };
+enum namespace_kind { NS_MOUNT, NS_USER, NS_UTS, NS_IPC, NS_NET, NS_COUNT };
 
 struct namespace_ref {
   enum namespace_kind kind;

@@ -390,7 +390,7 @@ bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
   return true;
 }
 
-bool cell_net_deliver_udp(uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
+bool cell_net_deliver_udp(struct net_namespace *, uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
   (void)ttl;
   (void)src_ip;
   (void)src_port;
@@ -418,7 +418,7 @@ bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16
   return true;
 }
 
-void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
+void cell_net_deliver_tcp(struct net_namespace *, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
                           uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
                           size_t len) {
   (void)src_ip;
@@ -435,7 +435,7 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
   saw_tcp_segment = true;
 }
 
-void cell_net_deliver_icmp(uint32_t src_ip, uint8_t ttl, const void *payload, size_t len) {
+void cell_net_deliver_icmp(struct net_namespace *, uint32_t src_ip, uint8_t ttl, const void *payload, size_t len) {
   (void)ttl;
   (void)src_ip;
   (void)payload;
@@ -751,7 +751,7 @@ static void test_udp_mtu(void) {
   uint8_t payload[1473];
   for (size_t i = 0; i < sizeof(payload); ++i) { payload[i] = (uint8_t)i; }
   net_init();
-  assert(net_udp_send(49152, UINT32_MAX, 5555, payload, sizeof(payload) - 1));
+  assert(net_udp_send(NULL, 49152, UINT32_MAX, 5555, payload, sizeof(payload) - 1));
   assert(sent_frame_len == 1514);
   const uint8_t *ip = sent_frame + ETH_HEADER_LEN;
   assert(ip_checksum(ip, IPV4_HEADER_LEN) == 0);
@@ -760,7 +760,7 @@ static void test_udp_mtu(void) {
   assert(load_be16(udp + 4) == 1480);
   assert(memcmp(udp + UDP_HEADER_LEN, payload, sizeof(payload) - 1) == 0);
   saw_frame = false;
-  assert(!net_udp_send(49152, UINT32_MAX, 5555, payload, sizeof(payload)));
+  assert(!net_udp_send(NULL, 49152, UINT32_MAX, 5555, payload, sizeof(payload)));
   assert(!saw_frame);
 }
 
@@ -772,7 +772,7 @@ static void test_arp_miss_queues_ipv4_until_reply(void) {
 
   net_init();
   saw_frame = false;
-  bool queued = net_udp_send(49152, remote_ip, 5555, payload, sizeof(payload) - 1);
+  bool queued = net_udp_send(NULL, 49152, remote_ip, 5555, payload, sizeof(payload) - 1);
 
   assert(queued);
   assert(saw_frame);
@@ -807,7 +807,7 @@ static void test_local_subnet_routes_directly(void) {
 
   net_init();
   saw_frame = false;
-  bool queued = net_udp_send(49152, peer_ip, 5556, payload, sizeof(payload) - 1);
+  bool queued = net_udp_send(NULL, 49152, peer_ip, 5556, payload, sizeof(payload) - 1);
 
   assert(queued);
   assert(saw_frame);
@@ -836,7 +836,7 @@ static void test_ipv4_ttl_and_tos_are_preserved_on_udp_and_tcp_send(void) {
 
   net_init();
   saw_frame = false;
-  bool queued = net_udp_send_ttl_tos(49152, peer_ip, 5556, 37, 0xb8, payload, sizeof(payload) - 1);
+  bool queued = net_udp_send_ttl_tos(NULL, 49152, peer_ip, 5556, 37, 0xb8, payload, sizeof(payload) - 1);
   assert(queued);
   assert(saw_frame);
   assert(load_be16(sent_frame + 12) == ETH_TYPE_ARP);
@@ -852,7 +852,7 @@ static void test_ipv4_ttl_and_tos_are_preserved_on_udp_and_tcp_send(void) {
   assert(ip[9] == NET_IP_UDP);
 
   saw_frame = false;
-  bool sent = net_tcp_send_segment_ttl_tos(49153, peer_ip, 80, 42, 0x28, 1, 0, 4096, TCP_FLAG_SYN, NULL, 0);
+  bool sent = net_tcp_send_segment_ttl_tos(NULL, 49153, peer_ip, 80, 42, 0x28, 1, 0, 4096, TCP_FLAG_SYN, NULL, 0);
   assert(sent);
   assert(saw_frame);
   assert(load_be16(sent_frame + 12) == ETH_TYPE_IPV4);
@@ -870,7 +870,7 @@ static void test_arp_learns_only_packets_targeted_at_us(void) {
 
   net_init();
   saw_frame = false;
-  bool queued = net_udp_send(49152, remote_ip, 5555, payload, sizeof(payload) - 1);
+  bool queued = net_udp_send(NULL, 49152, remote_ip, 5555, payload, sizeof(payload) - 1);
   assert(queued);
   assert(saw_frame);
   assert(load_be16(sent_frame + 12) == ETH_TYPE_ARP);
@@ -896,7 +896,7 @@ static void test_arp_ignores_invalid_sender_sources(void) {
 
   net_init();
   saw_frame = false;
-  bool queued = net_udp_send(49152, remote_ip, 5555, payload, sizeof(payload) - 1);
+  bool queued = net_udp_send(NULL, 49152, remote_ip, 5555, payload, sizeof(payload) - 1);
   assert(queued);
   assert(saw_frame);
   assert(load_be16(sent_frame + 12) == ETH_TYPE_ARP);

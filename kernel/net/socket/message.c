@@ -74,7 +74,7 @@ int64_t cell_fd_dgram_writev(int fd, uint64_t iov, int32_t count) {
   if (len > sizeof(packet)) { return -90; }
   rc = linux_gather_iov(&cursor, packet, (size_t)len);
   if (rc < 0) { return rc; }
-  return cell_fd_udp_send_kernel(fd, 0, 0, packet, len);
+  return cell_fd_dgram_send_kernel(fd, 0, 0, packet, len);
 }
 
 int64_t cell_fd_dgram_readv(int fd, uint64_t iov, int32_t count, struct trap_frame *frame) {

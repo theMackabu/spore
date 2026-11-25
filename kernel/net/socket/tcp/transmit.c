@@ -78,7 +78,7 @@ bool tcp_send_would_block(const struct open_file *file) {
 }
 
 static bool send_segment(struct open_file *file, const struct tcp_segment *seg) {
-  return net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
+  return net_tcp_send_segment_ttl_tos(file->net_ns, file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                       socket_effective_ttl(file), (uint8_t)file->ip_tos, seg->seq, file->tcp_ack,
                                       tcp_window(file), TCP_PSH | TCP_ACK, seg->data + seg->offset, seg->len);
 }

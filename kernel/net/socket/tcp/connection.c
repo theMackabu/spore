@@ -38,7 +38,7 @@ static int tcp_send_fin_once(struct open_file *file) {
   uint32_t seq = file->tcp_seq++;
   file->tcp_fin_sent = true;
   file->tcp_state = TCP_FIN_WAIT;
-  if (!net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
+  if (!net_tcp_send_segment_ttl_tos(file->net_ns, file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                     socket_effective_ttl(file), (uint8_t)file->ip_tos, seq, file->tcp_ack,
                                     tcp_window(file), TCP_FIN | TCP_ACK, NULL, 0)) {
     file->tcp_seq = seq;
@@ -54,7 +54,7 @@ void tcp_send_abortive_close(struct open_file *file) {
   if (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT && file->tcp_state != TCP_SYN_RECEIVED) {
     return;
   }
-  (void)net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
+  (void)net_tcp_send_segment_ttl_tos(file->net_ns, file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                      socket_effective_ttl(file), (uint8_t)file->ip_tos, file->tcp_seq, file->tcp_ack, 0,
                                      TCP_RST | TCP_ACK, NULL, 0);
   file->tcp_state = TCP_CLOSED;
@@ -70,7 +70,7 @@ static bool tcp_rst_acceptable(const struct open_file *file, uint32_t seq, uint3
 
 void tcp_ack_current_state(struct open_file *file) {
   if (file == NULL || (file->tcp_state != TCP_ESTABLISHED && file->tcp_state != TCP_FIN_WAIT)) { return; }
-  (void)net_tcp_send_segment_ttl_tos(file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
+  (void)net_tcp_send_segment_ttl_tos(file->net_ns, file->tcp_local_port, file->tcp_remote_ip, file->tcp_remote_port,
                                      socket_effective_ttl(file), (uint8_t)file->ip_tos, file->tcp_seq, file->tcp_ack,
                                      tcp_window(file), TCP_ACK, NULL, 0);
 }
@@ -151,7 +151,7 @@ uint32_t tcp_initial_seq(void) {
 
 static bool tcp_local_port_in_use(uint16_t port, const struct open_file *except) {
   for (struct open_file *file = *tcp_port_bucket(port); file != NULL; file = file->socket_index_next) {
-    if (file != except && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
+    if (file != except && file->net_ns == except->net_ns && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
         file->tcp_state != TCP_CLOSED && file->tcp_local_port == port) {
       return true;
     }
@@ -159,13 +159,13 @@ static bool tcp_local_port_in_use(uint16_t port, const struct open_file *except)
   return false;
 }
 
-static uint16_t tcp_ephemeral_port(void) {
+static uint16_t tcp_ephemeral_port(const struct open_file *file) {
   uint16_t seed = 0;
   random_bytes(&seed, sizeof(seed));
   uint16_t first = (uint16_t)(49152u + (seed % (65535u - 49152u)));
   uint16_t port = first;
   do {
-    if (!tcp_local_port_in_use(port, NULL)) { return port; }
+    if (!tcp_local_port_in_use(port, file)) { return port; }
     port = port == 65534u ? 49152u : (uint16_t)(port + 1u);
   } while (port != first);
   return 0;
@@ -177,7 +177,7 @@ int cell_fd_tcp_bind(int fd, uint16_t port) {
   if (file->tcp_state != TCP_CLOSED && file->tcp_state != TCP_LISTEN) { return -EINVAL; }
   if (file->tcp_local_port != 0 && file->tcp_local_port != port) { return -EINVAL; }
   if (port == 0) {
-    port = tcp_ephemeral_port();
+    port = tcp_ephemeral_port(file);
     if (port == 0) { return -EADDRINUSE; }
   } else if (tcp_local_port_in_use(port, file)) {
     return -EADDRINUSE;
@@ -191,7 +191,7 @@ int cell_fd_tcp_listen(int fd, int backlog) {
   if (file == NULL) { return -9; }
   if (file->tcp_state != TCP_CLOSED && file->tcp_state != TCP_LISTEN) { return -EINVAL; }
   if (file->tcp_local_port == 0) {
-    uint16_t port = tcp_ephemeral_port();
+    uint16_t port = tcp_ephemeral_port(file);
     if (port == 0) { return -EADDRINUSE; }
     tcp_set_local_port(file, port);
   }
@@ -229,12 +229,13 @@ int cell_fd_tcp_connect(int fd, uint32_t ip, uint16_t port, struct trap_frame *f
   struct open_file *file = tcp_socket_for_fd(domain, fd);
   if (file == NULL) { return -9; }
   if (file->tcp_state == TCP_ESTABLISHED) { return 0; }
+  if (!netns_can_route(file->net_ns, ip)) { return -101; }
   if (!cell_egress_allowed(IPPROTO_TCP, ip, port)) { return -EPERM; }
   if (file->tcp_state == TCP_CLOSED) {
     file->tcp_remote_ip = ip;
     file->tcp_remote_port = port;
     if (file->tcp_local_port == 0) {
-      uint16_t local_port = tcp_ephemeral_port();
+      uint16_t local_port = tcp_ephemeral_port(file);
       if (local_port == 0) { return -EIO; }
       tcp_set_local_port(file, local_port);
     }
@@ -307,7 +308,7 @@ int cell_fd_socket_shutdown(int fd, int how) {
 bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error) {
   for (struct open_file *file = *tcp_port_bucket(local_port); file != NULL;
        file = file->socket_index_next) {
-    if (file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP || file->tcp_local_port != local_port ||
+    if (file->net_ns || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_TCP || file->tcp_local_port != local_port ||
         file->tcp_remote_ip != remote_ip || file->tcp_remote_port != remote_port) {
       continue;
     }
@@ -322,9 +323,9 @@ static bool socket_matches_tcp(struct open_file *file, uint32_t src_ip, uint16_t
          file->tcp_local_port == dst_port && file->tcp_remote_ip == src_ip && file->tcp_remote_port == src_port;
 }
 
-static struct open_file *tcp_listener_for_port(uint16_t port) {
+static struct open_file *tcp_listener_for_port(struct net_namespace *ns, uint16_t port) {
   for (struct open_file *file = *tcp_port_bucket(port); file != NULL; file = file->socket_index_next) {
-    if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && file->tcp_state == TCP_LISTEN &&
+    if (file->net_ns == ns && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && file->tcp_state == TCP_LISTEN &&
         file->tcp_local_port == port) {
       return file;
     }
@@ -332,11 +333,11 @@ static struct open_file *tcp_listener_for_port(uint16_t port) {
   return NULL;
 }
 
-static void tcp_deliver_syn_to_listener(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq,
+static void tcp_deliver_syn_to_listener(struct net_namespace *ns, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq,
                                         uint16_t window, const void *options, size_t options_len) {
-  struct open_file *listener = tcp_listener_for_port(dst_port);
+  struct open_file *listener = tcp_listener_for_port(ns, dst_port);
   if (listener == NULL) {
-    (void)net_tcp_send_segment(dst_port, src_ip, src_port, 0, seq + 1, 0, TCP_RST | TCP_ACK, NULL, 0);
+    (void)net_tcp_send_segment(ns, dst_port, src_ip, src_port, 0, seq + 1, 0, TCP_RST | TCP_ACK, NULL, 0);
     return;
   }
   tcp_queue_syn(listener, src_ip, src_port, seq, window, options, options_len);
@@ -349,14 +350,14 @@ static uint32_t tcp_segment_ack_delta(uint8_t flags, size_t len) {
   return delta;
 }
 
-static void tcp_send_reset_for_unmatched(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq,
+static void tcp_send_reset_for_unmatched(struct net_namespace *ns, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq,
                                          uint32_t ack, uint8_t flags, size_t len) {
   if ((flags & TCP_RST) != 0) { return; }
   if ((flags & TCP_ACK) != 0) {
-    (void)net_tcp_send_segment(dst_port, src_ip, src_port, ack, 0, 0, TCP_RST, NULL, 0);
+    (void)net_tcp_send_segment(ns, dst_port, src_ip, src_port, ack, 0, 0, TCP_RST, NULL, 0);
     return;
   }
-  (void)net_tcp_send_segment(dst_port, src_ip, src_port, 0, seq + tcp_segment_ack_delta(flags, len), 0,
+  (void)net_tcp_send_segment(ns, dst_port, src_ip, src_port, 0, seq + tcp_segment_ack_delta(flags, len), 0,
                              TCP_RST | TCP_ACK, NULL, 0);
 }
 
@@ -420,12 +421,12 @@ static void tcp_deliver_to_file(struct open_file *file, uint32_t seq, uint32_t a
   cell_socket_wake_file(file);
 }
 
-void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
+void cell_net_deliver_tcp(struct net_namespace *ns, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
                           uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
                           size_t len) {
   for (struct open_file *file = *tcp_port_bucket(dst_port); file != NULL;
        file = file->socket_index_next) {
-    if (!socket_matches_tcp(file, src_ip, src_port, dst_port)) { continue; }
+    if (file->net_ns != ns || !socket_matches_tcp(file, src_ip, src_port, dst_port)) { continue; }
     bool retained = file->refcount != 0;
     if (retained) { cell_retain_open_file(file); }
     tcp_deliver_to_file(file, seq, ack, window, flags, options, options_len, payload, len);
@@ -433,8 +434,8 @@ void cell_net_deliver_tcp(uint32_t src_ip, uint16_t src_port, uint16_t dst_port,
     return;
   }
   if ((flags & TCP_SYN) != 0 && (flags & TCP_ACK) == 0) {
-    tcp_deliver_syn_to_listener(src_ip, src_port, dst_port, seq, window, options, options_len);
+    tcp_deliver_syn_to_listener(ns, src_ip, src_port, dst_port, seq, window, options, options_len);
     return;
   }
-  tcp_send_reset_for_unmatched(src_ip, src_port, dst_port, seq, ack, flags, len);
+  tcp_send_reset_for_unmatched(ns, src_ip, src_port, dst_port, seq, ack, flags, len);
 }

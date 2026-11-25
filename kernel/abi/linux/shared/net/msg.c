@@ -1,8 +1,11 @@
+#include "proc/fd.h"
 #include "handlers.h"
 #include "message_abi.h"
 #include "abi/linux/shared/net/handlers.h"
 #include "abi/linux/shared/usercopy.h"
 #include "net/socket.h"
+#include "net/route.h"
+#include "net/unix.h"
 #include "proc/thread.h"
 #include "proc/signal.h"
 
@@ -57,24 +60,19 @@ int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
     }
     return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
   }
-  if (is_socket && proto == 0 && msg.name == 0) { return linux_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, true); }
+  struct open_file *file = cell_fd_file(fd);
+  if (is_socket && file->type != OPEN_SOCKET && proto == 0 && msg.name == 0) { return linux_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, true); }
   uint8_t tmp[SENDMSG_SCRATCH_CAP];
   uint64_t total_len = 0;
   size_t copied = 0;
   int rc = gather_iovecs(msg.iov, msg.iovlen, tmp, sizeof(tmp), &total_len, &copied);
   if (rc < 0) { return (int64_t)rc; }
 
-  if (msg.name != 0) {
-    if (total_len > sizeof(tmp)) { return -(int64_t)EMSGSIZE; }
-    struct sockaddr_in64 sa;
-    if (!linux_copy_sockaddr_in(msg.name, msg.namelen, &sa)) { return -(int64_t)EINVAL; }
-    return cell_fd_udp_send_kernel((int)fd, sa.sin_addr, __builtin_bswap16(sa.sin_port), tmp, total_len);
+  if (file && file->type == OPEN_SOCKET) {
+    if (msg.controllen && (file->socket_proto == UNIX_DGRAM_PROTOCOL || file->socket_proto == ROUTE_PROTOCOL)) { return -95; }
+    if (total_len > sizeof(tmp)) { return -EMSGSIZE; }
+    return linux_send_datagram(fd, tmp, total_len, msg.name, msg.namelen);
   }
-  if (is_socket && (proto == IPPROTO_UDP || proto == IPPROTO_ICMP)) {
-    if (total_len > sizeof(tmp)) { return -(int64_t)EMSGSIZE; }
-    return cell_fd_udp_send_kernel((int)fd, 0, 0, tmp, total_len);
-  }
-
   if (msg.iovlen == 0) { return 0; }
   struct iovec64 first;
   rc = linux_copy_socket_iov(msg.iov, msg.iovlen, 0, &first);
@@ -88,8 +86,8 @@ int64_t sys_recvmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
     return -(int64_t)EFAULT;
   }
   int32_t proto = 0;
-  if (cell_fd_socket_info((int)fd, NULL, &proto) &&
-      (proto == IPPROTO_TCP || proto == IPPROTO_UDP || proto == IPPROTO_ICMP)) {
+  struct open_file *file = cell_fd_file(fd);
+  if (file && file->type == OPEN_SOCKET) {
     int64_t rc = cell_fd_socket_recvmsg((int)fd, msg_addr, (uint32_t)flags, (flags & MSG_DONTWAIT) != 0, frame);
     return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
   }

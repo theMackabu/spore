@@ -3,6 +3,8 @@
 
 #include "proc/accounting.h"
 #include "net/net.h"
+#include "net/route.h"
+#include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/epoll.h"
 #include "proc/memory.h"
@@ -63,15 +65,32 @@ int cell_socket_poll_events(const struct open_file *file, int events) {
   }
 }
 
-int cell_fd_socket_inet(uint8_t proto) {
-  struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL) { return -12; }
+static struct open_file *alloc_socket(uint8_t proto) {
   struct open_file *file = cell_alloc_open_file();
-  if (file == NULL) { return -12; }
+  if (!file) { return NULL; }
   file->type = OPEN_SOCKET;
+  file->net_ns = netns_retain(cell_current_domain_internal()->net_ns);
   file->socket_proto = proto;
   if (proto == IPPROTO_TCP) { tcp_init_socket(file); }
-  return cell_install_fd(domain, file, false);
+  if (proto == UNIX_DGRAM_PROTOCOL && unix_dgram_init(file)) {
+    cell_release_open_file(file);
+    return NULL;
+  }
+  return file;
+}
+
+int cell_fd_socket_create(uint8_t proto) {
+  struct open_file *file = alloc_socket(proto);
+  return file ? cell_install_fd(cell_current_domain_internal(), file, false) : -12;
+}
+
+int cell_fd_unix_dgram_pair(int flags, uint64_t sv) {
+  struct open_file *a = alloc_socket(UNIX_DGRAM_PROTOCOL), *b = alloc_socket(UNIX_DGRAM_PROTOCOL);
+  if (!a || !b) { cell_release_open_file(a); cell_release_open_file(b); return -12; }
+  a->unix_dgram_peer = b->unix_dgram_id;
+  b->unix_dgram_peer = a->unix_dgram_id;
+  a->flags = b->flags = flags & CELL_O_NONBLOCK;
+  return cell_install_fd_pair(cell_current_domain_internal(), a, b, flags & CELL_O_CLOEXEC, sv);
 }
 
 bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto) {
@@ -84,8 +103,8 @@ bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto) {
     return true;
   }
   if (file->type != OPEN_SOCKET) { return false; }
-  if (type != NULL) { *type = file->socket_proto == IPPROTO_TCP ? SOCK_STREAM : SOCK_DGRAM; }
-  if (proto != NULL) { *proto = file->socket_proto; }
+  if (type != NULL) { *type = file->socket_proto == ROUTE_PROTOCOL ? file->route_type : file->socket_proto == IPPROTO_TCP ? SOCK_STREAM : SOCK_DGRAM; }
+  if (proto != NULL) { *proto = file->socket_proto == UNIX_DGRAM_PROTOCOL ? 0 : file->socket_proto; }
   return true;
 }
 
@@ -350,7 +369,7 @@ bool cell_fd_socket_local_addr(int fd, uint32_t *ip, uint16_t *port) {
   if (file->type != OPEN_SOCKET) { return false; }
   struct net_config cfg;
   net_get_config(&cfg);
-  if (ip != NULL) { *ip = cfg.local_ip; }
+  if (ip != NULL) { *ip = file->net_ns ? (file->net_ns->lo_address ? 0x0100007fu : 0) : cfg.local_ip; }
   if (port != NULL) {
     if (file->socket_proto == IPPROTO_TCP) {
       *port = file->tcp_local_port;
@@ -384,6 +403,9 @@ void cell_socket_release_file(struct open_file *file) {
   if (file == NULL || file->type != OPEN_SOCKET) { return; }
   if (file->socket_proto == IPPROTO_TCP) { tcp_release_file(file); }
   if (file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP) { udp_release_file(file); }
+  if (file->socket_proto == ROUTE_PROTOCOL) { route_close(file); }
+  if (file->socket_proto == UNIX_DGRAM_PROTOCOL) { unix_dgram_close(file); }
+  netns_release(file->net_ns);
 }
 
 int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, bool dontwait, struct trap_frame *frame,

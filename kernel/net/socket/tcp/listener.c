@@ -72,6 +72,7 @@ void tcp_queue_syn(struct open_file *listener, uint32_t src_ip, uint16_t src_por
   struct open_file *server = cell_alloc_open_file();
   if (server == NULL) { return; }
   server->type = OPEN_SOCKET;
+  server->net_ns = netns_retain(listener->net_ns);
   server->socket_proto = IPPROTO_TCP;
   server->so_rcvlowat = listener->so_rcvlowat;
   server->so_reuseaddr = listener->so_reuseaddr;

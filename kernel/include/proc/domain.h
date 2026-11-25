@@ -67,6 +67,7 @@ struct domain {
   struct mount_namespace *mount_ns;
   struct user_namespace *user_ns;
   struct ipc_namespace *ipc_ns;
+  struct net_namespace *net_ns;
   struct cpu_budget budget;
   struct signal_action signal_actions[65];
   uint64_t pending_signals;

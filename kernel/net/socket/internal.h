@@ -66,9 +66,11 @@ struct socket_datagram {
   uint32_t ip;
   uint16_t port, len;
   uint8_t ttl;
+  char unix_name[109];
   uint8_t data[CELL_DGRAM_RX_CAP];
 };
 
+bool dgram_push_from(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const char *name, const void *data, size_t len);
 bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const void *data, size_t len);
 void dgram_clear_rx(struct open_file *file);
 void udp_release_file(struct open_file *file);

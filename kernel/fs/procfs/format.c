@@ -12,6 +12,7 @@
 #include "fs/vfs.h"
 #include "fs/mount_namespace.h"
 #include "drivers/virtio_net.h"
+#include "net/namespace.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -168,6 +169,21 @@ size_t proc_mount_line(char *dst, size_t cap, const struct vfs_mount *m, bool in
 
 size_t proc_net_dev_text(char *dst, size_t cap) {
   size_t len = 0;
+  const struct net_namespace *ns = cell_current_domain_internal()->net_ns;
+  if (ns) {
+    proc_append_str(dst, cap, &len, "Inter-|   Receive                                                |  Transmit\n"
+                    " face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n"
+                    "    lo:");
+    for (unsigned direction = 0; direction < 2; ++direction) {
+      proc_append_char(dst, cap, &len, ' ');
+      proc_append_u64(dst, cap, &len, ns->lo_bytes);
+      proc_append_char(dst, cap, &len, ' ');
+      proc_append_u64(dst, cap, &len, ns->lo_packets);
+      proc_append_str(dst, cap, &len, " 0 0 0 0 0 0");
+    }
+    proc_append_char(dst, cap, &len, '\n');
+    return len;
+  }
   struct virtio_net_stats stats = virtio_net_stats();
   proc_append_str(dst, cap, &len,
                   "Inter-|   Receive                                                |  Transmit\n"

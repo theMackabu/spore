@@ -1,7 +1,10 @@
 #include "internal.h"
+#include "net/route.h"
+#include "net/unix.h"
 #include "proc/epoll.h"
 #include "proc/poll.h"
 #include "lib/mem.h"
+#include "lib/kstr.h"
 #include "mm/pool.h"
 #include "proc/memory.h"
 
@@ -24,7 +27,8 @@ void dgram_clear_rx(struct open_file *file) {
   file->dgram_rx_spare = NULL;
 }
 
-bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const void *data, size_t len) {
+bool dgram_push_from(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const char *name,
+                     const void *data, size_t len) {
   if (file->dgram_rx_count >= CELL_DGRAM_RX_QUEUE_CAP) { return false; }
   if (len > CELL_DGRAM_RX_CAP) { len = CELL_DGRAM_RX_CAP; }
   uint32_t limit = socket_effective_buffer(file, true);
@@ -38,6 +42,7 @@ bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t po
   }
   packet->next = NULL;
   packet->ip = ip;
+  if (name) { copy_cstr(packet->unix_name, sizeof(packet->unix_name), name); }
   packet->ttl = ttl;
   packet->port = port;
   packet->len = len;
@@ -51,16 +56,30 @@ bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t po
   return true;
 }
 
-static bool dgram_copy_source_to_domain(struct domain *domain, uint32_t src_ip, uint16_t src_port, uint64_t addr,
+bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const void *data, size_t len) {
+  return dgram_push_from(file, ip, ttl, port, NULL, data, len);
+}
+
+static bool dgram_copy_source_to_domain(struct domain *domain, const struct open_file *file, uint32_t src_ip, uint16_t src_port, uint64_t addr,
                                         uint64_t addrlen) {
   if (!addr) { return true; }
   struct user_address_space *as = cell_domain_as(domain);
   uint32_t size;
   if (!addrlen || !vmm_copy_from_user(as, &size, addrlen, sizeof(size))) { return false; }
+  if (file->socket_proto == UNIX_DGRAM_PROTOCOL) {
+    struct { uint16_t family; char name[109]; } source = {.family = 1};
+    size_t n = kstrlen(file->dgram_rx_head->unix_name);
+    kmemcpy(source.name, file->dgram_rx_head->unix_name, n);
+    uint32_t actual = n ? 2 + n + 1 : 0;
+    if (size > actual) { size = actual; }
+    return (!size || vmm_copy_to_user(as, addr, &source, size)) && vmm_copy_to_user(as, addrlen, &actual, sizeof(actual));
+  }
   struct sockaddr_in_cell sa = {.sin_family = 2, .sin_port = net_bswap16(src_port), .sin_addr = src_ip};
-  if (size > sizeof(sa)) { size = sizeof(sa); }
-  uint32_t actual = sizeof(sa);
-  return vmm_copy_to_user(as, addr, &sa, size) && vmm_copy_to_user(as, addrlen, &actual, sizeof(actual));
+  struct route_address nl = {.family = ROUTE_FAMILY};
+  bool route = file->socket_proto == ROUTE_PROTOCOL;
+  uint32_t actual = route ? sizeof(nl) : sizeof(sa);
+  if (size > actual) { size = actual; }
+  return vmm_copy_to_user(as, addr, route ? (const void *)&nl : (const void *)&sa, size) && vmm_copy_to_user(as, addrlen, &actual, sizeof(actual));
 }
 
 int64_t dgram_read(struct domain *domain, struct open_file *file, uint64_t len, uint64_t addr, uint64_t addrlen,
@@ -77,7 +96,7 @@ int64_t dgram_read(struct domain *domain, struct open_file *file, uint64_t len, 
   size_t bytes = packet_len < len ? packet_len : len;
   int rc = copy(destination, packet->data, bytes);
   if (rc) { return rc; }
-  if (!dgram_copy_source_to_domain(domain, packet->ip, packet->port, addr, addrlen)) { return -EFAULT; }
+  if (!dgram_copy_source_to_domain(domain, file, packet->ip, packet->port, addr, addrlen)) { return -EFAULT; }
   if (!(flags & MSG_PEEK)) { dgram_drop_head(file); cell_epoll_file_changed(file); }
   return flags & MSG_TRUNC ? packet_len : (int64_t)bytes;
 }
