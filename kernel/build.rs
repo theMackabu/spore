@@ -1,6 +1,6 @@
 use spore_build::{files, output_dir, run, rust_archive};
 use spore_packages::Archive;
-use std::{env, path::Path, process::Command};
+use std::{env, path::Path, process::Command, time::SystemTime};
 
 fn limine(out: &Path) {
     let release = Archive {
@@ -52,10 +52,11 @@ fn runtime_sources() -> impl Iterator<Item = std::path::PathBuf> {
     .flat_map(|dir| files(Path::new(dir), &["c", "S"]))
 }
 
-fn build_port(arch: &str, flags: &[&str], out: &Path) {
+fn build_port(arch: &str, flags: &[&str], out: &Path, epoch: &str) {
     let target = format!("{arch}-unknown-none-elf");
     let mut compiler = cc::Build::new();
     compiler
+        .env("SOURCE_DATE_EPOCH", epoch)
         .compiler("clang")
         .target(&target)
         .cargo_metadata(false)
@@ -130,6 +131,14 @@ fn build_port(arch: &str, flags: &[&str], out: &Path) {
 
 fn main() {
     println!("cargo:rerun-if-changed=.");
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    let epoch = env::var("SOURCE_DATE_EPOCH").unwrap_or_else(|_| {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string()
+    });
     let out = output_dir();
     limine(&out);
     for (arch, flags) in [
@@ -148,10 +157,11 @@ fn main() {
         ),
     ] {
         std::fs::create_dir_all(out.join(arch)).unwrap();
-        build_port(arch, flags, &out);
+        build_port(arch, flags, &out, &epoch);
     }
     let mut clang = cc::Build::new();
     clang
+        .env("SOURCE_DATE_EPOCH", &epoch)
         .compiler("clang")
         .target("aarch64-unknown-none-softfloat")
         .no_default_flags(true)

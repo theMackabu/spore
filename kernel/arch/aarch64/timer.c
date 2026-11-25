@@ -11,6 +11,7 @@
 #include <stddef.h>
 
 enum {
+  SIGWINCH = 28,
   VIRTUAL_TIMER_INTID = 27,
   PL011_INTID = 33,
   SPURIOUS_INTID = 1023,
@@ -177,6 +178,7 @@ void handle_irq(struct trap_frame *frame, uint64_t from_lower_el) {
     arm_virtual_timer();
     if (pl011_poll_rx()) { cell_wake_stdin(from_lower_el != 0 ? frame : NULL); }
     irq_eoi(iar);
+    if (pl011_take_resize()) { cell_tty_signal_foreground(SIGWINCH, from_lower_el ? frame : NULL); }
     cell_timer_tick(frame, from_lower_el != 0);
     return;
   }

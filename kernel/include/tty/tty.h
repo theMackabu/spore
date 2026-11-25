@@ -22,4 +22,5 @@ uint32_t cell_tty_lflag(void);
 void cell_tty_set_lflag(uint32_t lflag, bool flush_input);
 uint8_t cell_tty_erase_char(void);
 void cell_tty_set_erase_char(uint8_t ch);
+void cell_tty_signal_foreground(int signal, struct trap_frame *frame);
 void cell_wake_stdin(struct trap_frame *frame);

@@ -124,6 +124,7 @@ struct vfs_stats {
 };
 
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2);
+bool vfs_path_has_proc(const char *path, size_t length);
 int vfs_walk(const char *root, const char *base, size_t base_len, const char *path, size_t length,
              bool follow_final, char *out, size_t cap);
 bool vfs_lookup(const char *path, struct vfs_node *out);

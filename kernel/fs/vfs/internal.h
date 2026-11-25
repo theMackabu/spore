@@ -7,6 +7,7 @@ extern struct vfs_stats vfs_stat_counters;
 extern struct ramfs *vfs_root_ramfs;
 extern struct ext2_fs *vfs_root_ext2;
 
+int vfs_directory_path(const struct vfs_node *node, const char *root, char *out, size_t cap);
 bool vfs_lookup_component(const char *path, bool nofollow, struct vfs_node *out);
 bool vfs_lookup_cache_get(const char *path, bool lstat, struct vfs_node *out);
 void vfs_lookup_cache_put(const char *path, bool lstat, const struct vfs_node *node);

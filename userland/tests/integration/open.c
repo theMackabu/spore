@@ -88,6 +88,19 @@ static int open_flags(void) {
   return ok;
 }
 
+static int proc_fd_child(const char *dir, const char *moved) {
+  if (mkdir(dir, 0700)) { return 0; }
+  int fd = open(dir, O_PATH | O_DIRECTORY);
+  char via_fd[64], child[96];
+  snprintf(via_fd, sizeof(via_fd), "/proc/self/fd/%d/child", fd);
+  snprintf(child, sizeof(child), "%s/child", moved);
+  struct stat st;
+  int ok = fd >= 0 && !rename(dir, moved) && !mkdir(dir, 0700) && !mkdir(via_fd, 0700) &&
+           !stat(child, &st) && S_ISDIR(st.st_mode) && !rmdir(via_fd) && !rmdir(dir);
+  if (fd >= 0) { close(fd); }
+  return !rmdir(moved) && ok;
+}
+
 static int inode_times(const char *name) {
   int fd = open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
   if (fd < 0) { return 0; }
@@ -137,7 +150,8 @@ static int directory_permissions(void) {
   pid_t child = fork();
   if (!child) {
     if (setgid(1000) || setuid(1000)) { _exit(1); }
-    int ok = mkdir("/tmp/owned-directory/subdir", 0700) == -1 && errno == EACCES &&
+    int ok = mkdir(file, 0700) == -1 && errno == EEXIST &&
+             mkdir("/tmp/owned-directory/subdir", 0700) == -1 && errno == EACCES &&
              open("/tmp/owned-directory/new", O_CREAT | O_WRONLY, 0600) == -1 && errno == EACCES &&
              unlink(file) == -1 && errno == EACCES && fchmod(fd, 0777) == -1 && errno == EPERM &&
              chroot("/") == -1 && errno == EPERM && rmdir(dir) == -1 && errno == EPERM;
@@ -150,7 +164,8 @@ static int directory_permissions(void) {
 }
 
 int integration_open_suite(void) {
-  int ok = creation_mask() && deep_directory() && open_flags() && positioned_io() && directory_permissions() && inode_times("/inode-times") && inode_times("/tmp/inode-times");
+  int ok = proc_fd_child("/tmp/dirfd", "/tmp/dirfd-moved") && proc_fd_child("/dirfd", "/dirfd-moved") &&
+            creation_mask() && deep_directory() && open_flags() && positioned_io() && directory_permissions() && inode_times("/inode-times") && inode_times("/tmp/inode-times");
   printf("[spore] pathname, umask and descriptor opens: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }

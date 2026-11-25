@@ -35,6 +35,7 @@ void kputc(char c) {
   if (!app_mode && virtio_console_ready()) {
     virtio_console_write((const uint8_t *)&c, 1);
   } else if (!kernel_log_handoff) {
+    if (c == '\n') { serial_putc('\r'); }
     serial_putc(c);
   }
 }

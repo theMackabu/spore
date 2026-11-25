@@ -13,7 +13,7 @@ size_t spore_normalize_path(const char *base, size_t base_len, const char *raw, 
 
 static int resolve_from(const char *base, size_t base_len, const char *raw, size_t len, char *visible, char *out,
                         size_t cap) {
-  if (mountns_current_routes() || ramfs_has_symlinks()) {
+  if (mountns_current_routes() || ramfs_has_symlinks() || vfs_path_has_proc(raw, len) || vfs_path_has_proc(base, base_len)) {
     const char *root = cell_current_chroot();
     int rc = vfs_walk(root, base, base_len, raw, len, false, out, cap);
     if (rc) { return rc; }
@@ -172,7 +172,11 @@ int syscall_may_change_entry(char *path, bool replacing) {
   path[split] = saved;
   if (!found) { return -ENOENT; }
   if (!parent.is_dir) { return -ENOTDIR; }
-  if (!syscall_node_access_allowed(&parent, W_OK | X_OK)) { return -EACCES; }
+  if (!syscall_node_access_allowed(&parent, X_OK)) { return -EACCES; }
+  if (!syscall_node_access_allowed(&parent, W_OK)) {
+    struct vfs_node existing;
+    return !replacing && vfs_lstat(path, &existing) ? -EEXIST : -EACCES;
+  }
   uint32_t euid = cell_current_euid();
   if (replacing && (parent.mode & 01000u) && !cell_capable(CAP_FOWNER) && euid != parent.uid) {
     struct vfs_node victim;

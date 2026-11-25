@@ -600,6 +600,36 @@ int mountns_pivot(const char *root_path, const char *old_path) {
   return 0;
 }
 
+int vfs_directory_path(const struct vfs_node *node, const char *root, char *out, size_t cap) {
+  uint64_t id = node->mount_id ? node->mount_id : node->dev_id;
+  const struct vfs_mount *mount;
+  for (size_t index = 0; (mount = vfs_mount_at(index)); ++index) {
+    if ((mount->mount_id ? mount->mount_id : mount->device) != id) { continue; }
+    struct ramfs_route route = mountns_lookup(mount->target);
+    char buf[CELL_PATH_MAX], base[CELL_PATH_MAX];
+    const char *suffix = NULL;
+    if (node->backend == VFS_EXT2) {
+      suffix = ext2_dir_path(vfs_root_ext2, route.root ? (uint32_t)route.root : EXT2_ROOT_INO, node->ino, buf, sizeof(buf));
+    } else if (node->backend == VFS_RAMFS) {
+      struct ramfs *fs = node->ramfs.fs;
+      const char *path = ramfs_inode_path(fs, node->ramfs.index, buf, sizeof(buf));
+      const char *prefix = route.fs ? ramfs_inode_path(fs, route.root, base, sizeof(base)) : mount->target;
+      if (path && prefix && inside(path, prefix)) {
+        suffix = prefix[1] ? path + kstrlen(prefix) : path;
+        if (!*suffix) { suffix = "/"; }
+      }
+    }
+    if (!suffix) { return -116; }
+    if (!join_path(out, cap, mount->target, suffix)) { return -36; }
+    if (!inside(out, root)) { return -2; }
+    struct vfs_node named;
+    if (vfs_lookup_component(out, true, &named) && named.is_dir && named.ino == node->ino &&
+        named.dev_id == node->dev_id && (named.mount_id ? named.mount_id : named.dev_id) == id) { return 0; }
+    return -116;
+  }
+  return -116;
+}
+
 int mountns_relocate_dir(const struct vfs_node *node, const char *opened, char *path, size_t cap) {
   struct mount_namespace *ns = view(cell_current_domain_internal());
   if (!ns->explicit_mounts) { return -116; }

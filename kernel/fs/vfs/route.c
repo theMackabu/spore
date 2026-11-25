@@ -213,9 +213,11 @@ bool vfs_lookup_component(const char *path, bool nofollow, struct vfs_node *out)
 }
 
 static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
-  if (!mountns_current_routes() && !ramfs_has_symlinks()) { return vfs_lookup_component(path, nofollow, out); }
-  char canonical[CELL_PATH_MAX];
   if (!path || *path != '/') { return false; }
+  if (!mountns_current_routes() && !ramfs_has_symlinks() && !vfs_path_has_proc(path, kstrlen(path))) {
+    return vfs_lookup_component(path, nofollow, out);
+  }
+  char canonical[CELL_PATH_MAX];
   const char *root = cell_current_chroot();
   size_t prefix = root[1] ? kstrlen(root) : 0;
   if (prefix && (!starts_with(path, root) || (path[prefix] && path[prefix] != '/'))) { return false; }

@@ -98,6 +98,11 @@ void cell_tty_set_erase_char(uint8_t ch) {
   if (ch != 0) { tty_erase = ch; }
 }
 
+static void tty_putc(char c) {
+  if (c == '\n' && (tty_oflag & (TTY_OPOST | TTY_ONLCR)) == (TTY_OPOST | TTY_ONLCR)) { serial_putc('\r'); }
+  serial_putc(c);
+}
+
 int64_t cell_tty_write_console_from_user(struct domain *domain, uint64_t buf, uint64_t len) {
   const struct user_address_space *as = cell_domain_as_const(domain);
   for (uint64_t done = 0; done < len;) {
@@ -110,7 +115,7 @@ int64_t cell_tty_write_console_from_user(struct domain *domain, uint64_t buf, ui
     if (chunk > len - done) { chunk = len - done; }
     for (size_t i = 0; i < chunk; ++i) {
       char c = data[i];
-      serial_putc(c);
+      tty_putc(c);
       if (c == '\r' || c == '\n') {
         tty_output_line_len = 0;
         tty_output_line[0] = '\0';
@@ -141,32 +146,32 @@ static void tty_begin_canonical_read(void) {
 static void tty_echo_char(char c) {
   if (!tty_echo()) { return; }
   if (c == '\n') {
-    serial_putc('\n');
+    tty_putc('\n');
     tty_output_line_len = 0;
     tty_output_line[0] = '\0';
   } else if (c == '\b' || c == 0x7f) {
-    serial_putc('\b');
-    serial_putc(' ');
-    serial_putc('\b');
+    tty_putc('\b');
+    tty_putc(' ');
+    tty_putc('\b');
   } else if ((uint8_t)c >= 0x20 || c == '\t') {
-    serial_putc(c);
+    tty_putc(c);
   }
 }
 
 static void tty_echo_str(const char *s) {
   if (!tty_echo()) { return; }
   while (*s != '\0') {
-    serial_putc(*s++);
+    tty_putc(*s++);
   }
 }
 
 static void tty_redraw_line(void) {
   tty_echo_str("\r\033[K");
   for (size_t i = 0; i < tty_prompt_len; ++i) {
-    serial_putc(tty_prompt[i]);
+    tty_putc(tty_prompt[i]);
   }
   for (size_t i = 0; i < tty_line_len; ++i) {
-    serial_putc(tty_line[i]);
+    tty_putc(tty_line[i]);
   }
   if (tty_line_cursor < tty_line_len) {
     tty_echo_str("\033[");
@@ -178,10 +183,10 @@ static void tty_redraw_line(void) {
       move /= 10u;
     } while (move != 0 && n < sizeof(rev));
     while (n > 0) {
-      serial_putc(rev[n - 1]);
+      tty_putc(rev[n - 1]);
       --n;
     }
-    serial_putc('D');
+    tty_putc('D');
   }
 }
 
@@ -265,9 +270,9 @@ static void buffer_input(bool read_ahead) {
   while ((read_ahead || tty_ready_len == 0) && tty_ready_len + tty_line_len < sizeof(tty_ready) && serial_getc(&c)) {
     if (tty_isig() && c == 3) {
       if (tty_echo()) {
-        serial_putc('^');
-        serial_putc('C');
-        serial_putc('\n');
+        tty_putc('^');
+        tty_putc('C');
+        tty_putc('\n');
       }
       tty_clear_pending_input();
       tty_pending_signal = SIGINT;
@@ -290,9 +295,9 @@ static void buffer_input(bool read_ahead) {
     }
     if (c == 3) {
       if (tty_echo()) {
-        serial_putc('^');
-        serial_putc('C');
-        serial_putc('\n');
+        tty_putc('^');
+        tty_putc('C');
+        tty_putc('\n');
       }
       tty_clear_pending_input();
       tty_ready_push('\n');
@@ -365,8 +370,7 @@ bool cell_tty_stdin_readable(void) {
   return tty_ready_len != 0 || tty_pending_signal != 0;
 }
 
-static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
-  int signal = cell_tty_take_pending_signal();
+void cell_tty_signal_foreground(int signal, struct trap_frame *frame) {
   if (signal == 0) { return; }
   int pgrp = cell_tty_foreground_pgrp();
   if (pgrp <= 0) { return; }
@@ -381,7 +385,7 @@ void cell_wake_stdin(struct trap_frame *frame) {
   size_t previous = tty_ready_len;
   buffer_input(true);
   if (tty_ready_len > previous) { cell_epoll_console_activity(CELL_POLLIN); }
-  tty_deliver_pending_signal_to_foreground(frame);
+  cell_tty_signal_foreground(cell_tty_take_pending_signal(), frame);
   cell_wake_poll_waiters_internal();
   size_t cursor = 0;
   struct thread *thread;

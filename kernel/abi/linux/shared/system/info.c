@@ -50,7 +50,7 @@ int64_t sys_uname(uint64_t buf, const char *machine) {
   uts_copy(u.sysname, "Spore");
   uts_copy(u.nodename, uts_name(cell_current_domain_internal(), true));
   uts_copy(u.release, SPORE_VERSION);
-  uts_copy(u.version, "Spore Kernel Version " SPORE_VERSION ": " __DATE__ ";");
+  uts_copy(u.version, "Spore Kernel Version " SPORE_VERSION " (" __DATE__ " " __TIME__ " UTC)");
   uts_copy(u.machine, machine);
   uts_copy(u.domainname, uts_name(cell_current_domain_internal(), false));
   return syscall_user_writable(buf, sizeof(u)) && vmm_copy_to_user(syscall_active_as(), buf, &u, sizeof(u)) ? 0 : -(int64_t)EFAULT;

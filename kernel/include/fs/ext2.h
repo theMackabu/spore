@@ -86,6 +86,7 @@ bool ext2_locate_entry_from(struct ext2_fs *fs, uint32_t root, const char *path,
 static inline bool ext2_locate_entry(struct ext2_fs *fs, const char *path, uint32_t ino, struct vfs_entry_name *name) {
   return ext2_locate_entry_from(fs, EXT2_ROOT_INO, path, ino, name);
 }
+const char *ext2_dir_path(struct ext2_fs *fs, uint32_t root, uint32_t ino, char *buf, size_t cap);
 bool ext2_lookup_from(struct ext2_fs *fs, uint32_t root, const char *path, struct ext2_node *out);
 static inline bool ext2_lookup(struct ext2_fs *fs, const char *path, struct ext2_node *out) {
   return ext2_lookup_from(fs, EXT2_ROOT_INO, path, out);

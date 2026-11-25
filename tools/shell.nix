@@ -22,5 +22,8 @@ pkgs.mkShellNoCC {
     export PATH="${guestTools}:$PATH"
     export CC="${pkgs.llvmPackages.clang}/bin/clang"
     export CC_FOR_BUILD="$CC"
+    if [ "$SOURCE_DATE_EPOCH" = 315532800 ]; then
+      unset SOURCE_DATE_EPOCH
+    fi
   '';
 }

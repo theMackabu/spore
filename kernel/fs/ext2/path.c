@@ -99,6 +99,29 @@ bool ext2_locate_entry_from(struct ext2_fs *fs, uint32_t root_ino, const char *p
   return false;
 }
 
+const char *ext2_dir_path(struct ext2_fs *fs, uint32_t root, uint32_t ino, char *buf, size_t cap) {
+  if (ino == root) { return "/"; }
+  if (!cap) { return NULL; }
+  char *p = buf + cap;
+  *--p = 0;
+  while (ino != root) {
+    struct ext2_node dir;
+    uint32_t parent;
+    if (!ext2_inode(fs, ino, &dir) || !dir.links_count || !ext2_parent_inode(fs, &dir, &parent) ||
+        parent == ino || !ext2_inode(fs, parent, &dir)) { return NULL; }
+    uint64_t cursor = 0;
+    struct vfs_dirent entry;
+    int rc;
+    do { rc = ext2_next_dirent(fs, &dir, &cursor, &entry); } while (rc > 0 && entry.ino != ino);
+    if (rc <= 0 || (size_t)(p - buf) <= entry.name_len) { return NULL; }
+    p -= entry.name_len;
+    kmemcpy(p, entry.name, entry.name_len);
+    *--p = '/';
+    ino = parent;
+  }
+  return p;
+}
+
 bool ext2_lookup_from(struct ext2_fs *fs, uint32_t root_ino, const char *path, struct ext2_node *out) {
   ++ext2_stat_counters.lookup_count;
   return lookup_path(fs, root_ino, path, out, true, NULL);

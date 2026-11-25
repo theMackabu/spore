@@ -70,7 +70,7 @@ bool runner_resized(void) {
 
 void runner_terminal_size(unsigned short *rows, unsigned short *cols) {
   struct winsize size;
-  if (ioctl(1, TIOCGWINSZ, &size) == 0 && size.ws_row >= 8 && size.ws_col >= 40) {
+  if (ioctl(1, TIOCGWINSZ, &size) == 0 && size.ws_row && size.ws_col) {
     *rows = size.ws_row;
     *cols = size.ws_col;
   }

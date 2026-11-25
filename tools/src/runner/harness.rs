@@ -1,5 +1,6 @@
 use super::modes;
 use super::serial::SerialWindow;
+use super::terminal_output::TerminalOutput;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
@@ -141,6 +142,8 @@ fn run_inner(
     let mut buf = SerialWindow::new(262143);
     let mut startup = SerialWindow::new(32768);
     let mut passed = [false; 2];
+    let mut screen = (plain && io::stdout().is_terminal()).then(TerminalOutput::default);
+    let mut output = File::from(io::stdout().as_fd().try_clone_to_owned()?);
     let mut handed_off = false;
     let mut sized = false;
     let mut answered = false;
@@ -185,7 +188,20 @@ fn run_inner(
             }
         }
         if events & 1 != 0 {
-            let n = serial.read(&mut chunk)?;
+            let mut n = serial.read(&mut chunk)?;
+            if screen.is_some() && n != 0 {
+                let deadline = Instant::now() + Duration::from_millis(2);
+                while n < chunk.len() && Instant::now() < deadline {
+                    if unsafe { runner_poll(serial.as_raw_fd(), -1, 1) } <= 0 {
+                        break;
+                    }
+                    let got = serial.read(&mut chunk[n..])?;
+                    if got == 0 {
+                        break;
+                    }
+                    n += got;
+                }
+            }
             if n == 0 {
                 serial_open = false;
             } else {
@@ -224,21 +240,25 @@ fn run_inner(
                     }
                 }
                 if plain || shell {
-                    let mut out = io::stdout().lock();
-                    if handed_off {
-                        out.write_all(data)?;
+                    let visible = if handed_off {
+                        data
                     } else {
                         startup.push(data);
                         if let Some(i) = startup
                             .find_new(b"[kernel] Limine handoff")
                             .or_else(|| startup.prompt())
                         {
-                            out.write_all(&startup.bytes()[i..])?;
-                            startup.clear();
                             handed_off = true;
+                            &startup.bytes()[i..]
+                        } else {
+                            &[]
                         }
+                    };
+                    if let Some(screen) = &mut screen {
+                        screen.relay(&mut output, visible)?;
+                    } else {
+                        output.write_all(visible)?;
                     }
-                    out.flush()?;
                 }
                 if !sized && buf.prompt().is_some() {
                     terminal.send_size(&mut input)?;
@@ -269,6 +289,9 @@ fn run_inner(
     };
     if !handed_off && (plain || shell) {
         io::stdout().write_all(startup.bytes())?;
+    }
+    if let Some(screen) = &mut screen {
+        screen.finish(&mut output)?;
     }
     if filtered {
         modes::print_guest_checks(buf.bytes());

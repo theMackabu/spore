@@ -30,6 +30,7 @@ static size_t rx_head;
 static size_t rx_tail;
 static uint16_t tty_rows = 38;
 static uint16_t tty_cols = 96;
+static bool resize_pending;
 static char ctl_buf[32];
 static uint8_t ctl_len;
 static uint8_t ctl_state;
@@ -52,7 +53,6 @@ void pl011_init(uint64_t hhdm_offset) {
 
 void serial_putc(char c) {
   if (uart_base == NULL) { return; }
-  if (c == '\n') { serial_putc('\r'); }
   while ((mmio_read32(PL011_FR) & PL011_FR_TXFF) != 0) {
     aarch64_cpu_relax();
   }
@@ -133,7 +133,8 @@ static void tty_control_char(char c) {
     if (c >= '0' && c <= '9') {
       ctl_cols = (uint16_t)(ctl_cols * 10u + (uint16_t)(c - '0'));
     } else if ((uint8_t)c == 0x07) {
-      if (ctl_rows >= 8 && ctl_cols >= 40) {
+      if (ctl_rows && ctl_cols && (tty_rows != ctl_rows || tty_cols != ctl_cols)) {
+        resize_pending = true;
         tty_rows = ctl_rows;
         tty_cols = ctl_cols;
       }
@@ -167,6 +168,12 @@ void serial_flush_input(void) {
   (void)pl011_poll_rx();
   rx_tail = rx_head;
   ctl_reset();
+}
+
+bool pl011_take_resize(void) {
+  bool changed = resize_pending;
+  resize_pending = false;
+  return changed;
 }
 
 void serial_get_winsize(uint16_t *rows, uint16_t *cols) {

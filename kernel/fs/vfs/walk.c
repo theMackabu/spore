@@ -1,6 +1,15 @@
 #include "internal.h"
 #include "lib/mem.h"
+#include "proc/fd.h"
 #include "proc/limits.h"
+
+bool vfs_path_has_proc(const char *s, size_t len) {
+  for (size_t i = 0; i + 4 <= len; ++i) {
+    if (s[i] == 'p' && (!i || s[i - 1] == '/') && !kmemcmp(s + i, "proc", 4) &&
+        (i + 4 == len || s[i + 4] == '/')) { return true; }
+  }
+  return false;
+}
 
 static void up(char *out, size_t *length, size_t floor) {
   while (*length > floor && out[*length - 1] != '/') { --*length; }
@@ -51,6 +60,13 @@ int vfs_walk(const char *root, const char *base, size_t base_len, const char *pa
       used = *next == '/' ? floor : parent;
       out[used] = 0;
       p = next;
+    } else if (*p && node.backend == VFS_PROC && node.device == RAMFS_DEV_PROC_PID_FD && node.proc.fd >= 0) {
+      struct vfs_node target;
+      if (!cell_fd_stat(node.proc.fd, &target)) { return -2; }
+      if (!target.is_dir) { return -20; }
+      int rc = vfs_directory_path(&target, root, out, cap);
+      if (rc) { return rc; }
+      used = kstrlen(out);
     } else if (*p && !node.is_dir) {
       if (node.backend != VFS_PROC || !vfs_lookup_component(out, false, &node) || !node.is_dir) { return -20; }
     }

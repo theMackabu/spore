@@ -49,3 +49,27 @@ fn userland_upgrade() {
             .success()
     );
 }
+
+#[path = "../tools/src/runner/terminal_output.rs"]
+mod terminal_output;
+
+#[test]
+fn fragmented_terminal_redraw() {
+    let redraw = "\x1b[38;5;174m──❯🙂\x1b[0m\r\x1b[2K";
+    for width in 1..=redraw.len() {
+        let mut screen = terminal_output::TerminalOutput::default();
+        let mut received = Vec::new();
+        for chunk in redraw.as_bytes().chunks(width) {
+            let mut emitted = Vec::new();
+            screen.relay(&mut emitted, chunk).unwrap();
+            assert!(std::str::from_utf8(&emitted).is_ok());
+            if let Some(esc) = emitted.iter().rposition(|&b| b == 0x1b) {
+                assert!(emitted[esc..].starts_with(b"\x1b["));
+                assert!(emitted[esc + 2..].iter().any(|b| (0x40..=0x7e).contains(b)));
+            }
+            received.extend(emitted);
+        }
+        screen.finish(&mut received).unwrap();
+        assert_eq!(received, redraw.as_bytes());
+    }
+}
