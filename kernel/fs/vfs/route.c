@@ -26,12 +26,17 @@ static bool data_path(const char *path) {
 }
 
 const char *vfs_disk_path(const char *path) {
+  struct ramfs_route route = mountns_lookup(path);
+  if (route.boot) { return route.boot->device == VFS_DEV_EXT2_ROOT ? route.path : NULL; }
   if (!app_mode) { return path; }
   if (!data_path(path)) { return NULL; }
   return path[5] ? path + 5 : "/";
 }
 
 bool vfs_readonly_path(const char *path) {
+  struct ramfs_route route = mountns_lookup(path);
+  if (route.boot) { return str_eq(route.boot->options, "ro"); }
+  if (route.fs) { return false; }
   return app_mode && !data_path(path) && !path_is_mount(path, "/tmp") && !path_is_mount(path, "/run") &&
          !path_is_mount(path, "/dev/shm");
 }
@@ -164,8 +169,23 @@ static bool lookup_ramfs(struct ramfs *fs, int root, const char *path, struct vf
 
 static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
   struct ramfs_route mounted = mountns_lookup(path);
+  if (mounted.boot && mounted.boot->device == VFS_DEV_PROC && mounted.path[1]) {
+    char proc[CELL_PATH_MAX + 6] = "/proc";
+    size_t len = kstrlen(mounted.path);
+    if (len >= CELL_PATH_MAX) { return false; }
+    kmemcpy(proc + 5, mounted.path, len + 1);
+    if (vfs_proc_lookup(proc, !nofollow, out)) { out->mount_id = mounted.mount_id; return true; }
+  }
   if (mounted.fs) {
     if (!lookup_ramfs(mounted.fs, mounted.root, mounted.path, out)) { return false; }
+    out->mount_id = mounted.mount_id;
+    return true;
+  }
+  if (mounted.boot) {
+    struct ext2_node node;
+    if (!vfs_root_ext2 || mounted.boot->device != VFS_DEV_EXT2_ROOT ||
+        !(nofollow ? ext2_lstat(vfs_root_ext2, mounted.path, &node) : ext2_lookup(vfs_root_ext2, mounted.path, &node))) { return false; }
+    vfs_from_ext2(&node, out);
     out->mount_id = mounted.mount_id;
     return true;
   }
@@ -289,7 +309,12 @@ static size_t mount_count(void) {
                   : sizeof(desktop_mounts)/sizeof(*desktop_mounts);
 }
 
+const struct vfs_mount *vfs_boot_mount_at(size_t index) {
+  return index < mount_count() ? &(app_mode ? app_mounts : desktop_mounts)[index] : NULL;
+}
+
 const struct vfs_mount *vfs_domain_mount_at(const struct domain *domain, size_t index) {
+  if (mountns_explicit(domain)) { return mountns_at(domain, index); }
   size_t base = mount_count();
   return index < base ? &(app_mode ? app_mounts : desktop_mounts)[index] : mountns_at(domain, index - base);
 }
@@ -298,9 +323,8 @@ const struct vfs_mount *vfs_mount_at(size_t index) {
   return vfs_domain_mount_at(cell_current_domain_internal(), index);
 }
 
-static bool mount_stats(size_t index, struct vfs_fs_info *out) {
+static bool mount_stats(const struct vfs_mount *mount, struct vfs_fs_info *out) {
   *out = (struct vfs_fs_info){.block_size = 1024};
-  const struct vfs_mount *mount = vfs_mount_at(index);
   switch (mount->magic == 0x01021994 ? VFS_DEV_TMPFS : mount->device) {
   case VFS_DEV_RAM0:
     if (app_mode) { out->block_count = (app_payload_size() + 1023) / 1024; }
@@ -329,7 +353,7 @@ bool vfs_device_fs_info(uint64_t dev_id, struct vfs_fs_info *out) {
   }
   if (dev_id >= 0x10000) { dev_id = VFS_DEV_TMPFS; }
   for (size_t i = 0; i < mount_count(); ++i) {
-    if (vfs_mount_at(i)->device == dev_id) { return mount_stats(i, out); }
+    if (vfs_boot_mount_at(i)->device == dev_id) { return mount_stats(vfs_boot_mount_at(i), out); }
   }
   return false;
 }
@@ -338,7 +362,7 @@ bool vfs_mount_detail(size_t index, struct vfs_mount_info *out) {
   const struct vfs_mount *mount = vfs_mount_at(index);
   if (!mount) { return false; }
   struct vfs_fs_info stats;
-  if (!mount_stats(index, &stats)) { return false; }
+  if (!mount_stats(mount, &stats)) { return false; }
   const char *fstype = mount->fstype;
   if (mount->device == VFS_DEV_EXT2_ROOT && vfs_root_ext2 && vfs_root_ext2->ext2plus) { fstype = "ext2+"; }
   *out = (struct vfs_mount_info){.block_size = stats.block_size, .block_count = stats.block_count,

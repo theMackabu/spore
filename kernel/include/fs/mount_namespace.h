@@ -19,8 +19,12 @@ struct ramfs_route {
   const char *path;
   uint64_t mount_id;
   int root;
+  const struct vfs_mount *boot;
 };
 struct ramfs_route mountns_lookup(const char *path);
+int mountns_pivot(const char *root, const char *old);
+bool mountns_explicit(const struct domain *domain);
+int mountns_relocate_dir(const struct vfs_node *node, const char *opened, char *path, size_t cap);
 int mountns_bind(const char *source, const char *target, bool recursive);
 const char *mountns_root_path(const struct vfs_mount *mount, char *buf, size_t size);
 void mountns_put_fs(struct ramfs *fs);

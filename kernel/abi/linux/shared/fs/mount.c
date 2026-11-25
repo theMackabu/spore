@@ -46,6 +46,14 @@ int64_t sys_spore_mountinfo(uint64_t addr, uint64_t bytes) {
   return count;
 }
 
+int64_t sys_pivot_root(uint64_t root_addr, uint64_t old_addr) {
+  char root[CELL_PATH_MAX], old[CELL_PATH_MAX];
+  int rc = syscall_copy_resolved_path_at(AT_FDCWD, root_addr, root, sizeof(root));
+  if (rc) { return rc; }
+  rc = syscall_copy_resolved_path_at(AT_FDCWD, old_addr, old, sizeof(old));
+  return rc ? rc : mountns_pivot(root, old);
+}
+
 int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flags, uint64_t data) {
   if (!mountns_may_mount()) { return -EPERM; }
   char path[CELL_PATH_MAX];

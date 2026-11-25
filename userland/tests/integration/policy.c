@@ -295,6 +295,37 @@ static int isolated_tmpfs(int ready, int resume) {
   return 0;
 }
 
+static int pivot_child(void) {
+  const char *root = "/tmp/pivot-test";
+  int proc = open("/proc", O_DIRECTORY | O_RDONLY);
+  if (proc < 0 || mount("tmpfs", root, "tmpfs", 0, NULL) || chdir(root) ||
+      mkdir("previous", 0700) || mkdir("copy", 0700)) { return 1; }
+  if (syscall(SYS_pivot_root, ".", "previous")) { return 2; }
+  char cwd[32];
+  if (!getcwd(cwd, sizeof(cwd)) || strcmp(cwd, "/") || !access("/etc/motd", F_OK)) { return 3; }
+  int status = openat(proc, "self/status", O_RDONLY);
+  if (status < 0) { return 4; }
+  close(status);
+  close(proc);
+  struct stat old, clone;
+  if (stat("/previous/etc/motd", &old) || mount("/previous", "/copy", NULL, MS_BIND | MS_REC, NULL) ||
+      stat("/copy/etc/motd", &clone) || clone.st_dev != old.st_dev || clone.st_ino != old.st_ino) { return 5; }
+  if (umount2("/previous", MNT_DETACH) || !access("/previous/etc/motd", F_OK) ||
+      access("/copy/etc/motd", F_OK)) { return 6; }
+  return 0;
+}
+
+static int pivot_namespace(void) {
+  if (mkdir("/tmp/pivot-test", 0700)) { return 0; }
+  pid_t child = syscall(SYS_clone, CLONE_NEWNS | SIGCHLD, 0, 0, 0, 0);
+  if (!child) { _exit(pivot_child()); }
+  int status = -1;
+  int ok = child > 0 && waitpid(child, &status, 0) == child && !status && !access("/etc/motd", F_OK);
+  ok &= rmdir("/tmp/pivot-test") == 0;
+  printf("[spore] private root pivot and inherited proc directory: %s status=%d\n", ok ? "PASS" : "FAIL", status);
+  return ok;
+}
+
 int integration_mount_namespace(void) {
   const char *dir = "/tmp/mount-test";
   if (mkdir(dir, 0700)) { return 0; }
@@ -330,5 +361,5 @@ int integration_mount_namespace(void) {
   ok &= child > 0 && waitpid(child, &status, 0) == child && !status;
   ok &= rmdir(dir) == 0;
   printf("[spore] private tmpfs and mount namespace inheritance: %s status=%d\n", ok ? "PASS" : "FAIL", status);
-  return ok;
+  return ok && pivot_namespace();
 }

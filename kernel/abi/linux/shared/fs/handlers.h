@@ -4,6 +4,7 @@
 
 struct trap_frame;
 
+int64_t sys_pivot_root(uint64_t root, uint64_t old);
 int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flags, uint64_t data);
 int64_t sys_umount2(uint64_t target, uint64_t flags);
 int64_t sys_inotify_init1(uint64_t flags);

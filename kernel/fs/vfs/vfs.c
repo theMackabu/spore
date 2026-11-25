@@ -69,7 +69,7 @@ uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst,
 
 static struct ramfs_route ramfs_for_path(const char *path) {
   struct ramfs_route route = mountns_lookup(path);
-  if (!route.fs && (!vfs_root_ext2 || vfs_path_uses_ramfs(path))) { route.fs = vfs_root_ramfs; }
+  if (!route.boot && !route.fs && (!vfs_root_ext2 || vfs_path_uses_ramfs(path))) { route.fs = vfs_root_ramfs; }
   return route;
 }
 
@@ -138,7 +138,7 @@ bool vfs_link_node(const struct vfs_node *node, const char *new_path) {
   bool ok = false;
   struct ramfs_route route = ramfs_for_path(new_path);
   struct ramfs *fs = route.fs;
-  if (node->backend == VFS_EXT2 && !fs) {
+  if (node->backend == VFS_EXT2 && !fs && (node->mount_id ? node->mount_id : node->dev_id) == (route.mount_id ? route.mount_id : VFS_DEV_EXT2_ROOT)) {
     ok = ext2_link_inode(vfs_root_ext2, node->ext2.ino, vfs_disk_path(new_path));
   } else if (node->backend == VFS_RAMFS && fs && fs == node->ramfs.fs && route.mount_id == node->mount_id) {
     ok = ramfs_link_node(fs, route.root, node->ramfs.index, route.path);
@@ -219,7 +219,7 @@ bool vfs_link(const char *old_path, const char *new_path) {
   vfs_update_time_sources();
   bool ok = false;
   struct ramfs_route a = ramfs_for_path(old_path), b = ramfs_for_path(new_path);
-  if (vfs_root_ext2 && !a.fs && !b.fs) {
+  if (vfs_root_ext2 && !a.fs && !b.fs && a.mount_id == b.mount_id) {
     ok = ext2_link(vfs_root_ext2, vfs_disk_path(old_path), vfs_disk_path(new_path));
   } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.fs->device || vfs_paths_share_ramfs(a.path, b.path))) {
     ok = ramfs_link(a.fs, a.root, a.path, b.path);
@@ -302,7 +302,7 @@ int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
   vfs_update_time_sources();
   int rc = -18;
   struct ramfs_route a = ramfs_for_path(old_path), b = ramfs_for_path(new_path);
-  if (vfs_root_ext2 && !a.fs && !b.fs) {
+  if (vfs_root_ext2 && !a.fs && !b.fs && a.mount_id == b.mount_id) {
     rc = ext2_renameat(vfs_root_ext2, vfs_disk_path(old_path), vfs_disk_path(new_path), noreplace);
   } else if (a.fs && a.fs == b.fs && a.mount_id == b.mount_id && (a.fs->device || vfs_paths_share_ramfs(a.path, b.path))) {
     rc = ramfs_renameat(a.fs, a.root, a.path, b.path, noreplace);
@@ -419,7 +419,9 @@ bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out) {
   if (node->backend == VFS_EXT2) {
     struct ext2_node fresh;
     if (!ext2_inode(vfs_root_ext2, node->ext2.ino, &fresh)) { return false; }
+    uint64_t mount_id = node->mount_id;
     vfs_from_ext2(&fresh, out);
+    out->mount_id = mount_id;
     return true;
   }
   if (node->backend == VFS_PROC) {

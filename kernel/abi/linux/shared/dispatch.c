@@ -155,6 +155,7 @@ int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]
     [SYS_GETGROUPS] = &&l_getgroups,
     [SYS_SETGROUPS] = &&l_setgroups,
     [SYS_UNAME] = &&l_uname,
+    [SYS_PIVOT_ROOT] = &&l_pivot_root,
     [SYS_MOUNT] = &&l_mount,
     [SYS_UMOUNT2] = &&l_umount2,
     [SYS_UNSHARE] = &&l_unshare,
@@ -526,6 +527,8 @@ l_setgroups:
   return sys_setgroups(a0, a1);
 l_uname:
   return sys_uname(a0, SPORE_MACHINE);
+l_pivot_root:
+  return sys_pivot_root(a0, a1);
 l_mount:
   return sys_mount(a0, a1, a2, a3, a4);
 l_umount2:

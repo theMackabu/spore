@@ -35,10 +35,13 @@ int syscall_dirfd_path(int fd, char path[CELL_PATH_MAX]) {
   char visible[CELL_PATH_MAX], resolved[CELL_PATH_MAX];
   int rc = resolve_from("/", 1, path, kstrlen(path), visible, resolved, sizeof(resolved));
   if (rc) { return rc; }
-  if (mounted_fd || mountns_lookup(resolved).fs) {
+  if (mounted_fd || mountns_lookup(resolved).mount_id) {
     struct vfs_node named;
-    if (!vfs_lookup(resolved, &named) || named.mount_id != file->node.mount_id || named.dev_id != file->node.dev_id || named.ino != file->node.ino) {
-      return -116;
+    if (!vfs_lookup(resolved, &named) || (named.mount_id ? named.mount_id : named.dev_id) != (file->node.mount_id ? file->node.mount_id : file->node.dev_id) || named.dev_id != file->node.dev_id || named.ino != file->node.ino) {
+      if (cell_current_chroot()[1]) { return -116; }
+      rc = mountns_relocate_dir(&file->node, file->path, path, CELL_PATH_MAX);
+      if (rc || !vfs_lookup(path, &named) || named.ino != file->node.ino || named.dev_id != file->node.dev_id) { return -116; }
+      return 0;
     }
   }
   return 0;
