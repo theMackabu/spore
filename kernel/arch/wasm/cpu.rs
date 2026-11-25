@@ -36,14 +36,16 @@ pub struct Context {
     pub v: [u128; 32],
     pub fpcr: u64,
     pub fpsr: u64,
-    tls: u64,
+    pub(super) tls: u64,
 }
 const _: () = assert!(std::mem::size_of::<Context>() == 544);
 
+#[repr(C)]
 pub struct Cpu {
     pub f: Frame,
     pub context: Context,
     pub idle: bool,
+    pub branches: Box<[u64; 4096]>,
     pub memory: Memory,
     decoded: Box<[(u32, super::decode::Op)]>,
     pub reservation: Option<(u64, usize)>,
@@ -74,6 +76,7 @@ impl Cpu {
             context: Context::default(),
             memory: Memory::new(),
             idle: false,
+            branches: Box::new([0; 4096]),
             decoded: vec![(0, super::decode::Op::Unknown); 8192].into_boxed_slice(),
             reservation: None,
         }
@@ -164,7 +167,8 @@ impl Cpu {
         if slot.0 != w {
             *slot = (w, super::decode::classify(w));
         }
-        match slot.1 {
+        let slot_op = slot.1;
+        match slot_op {
             Branch => {
                 if w >> 31 != 0 {
                     self.set(30, next);
@@ -210,6 +214,12 @@ impl Cpu {
             }
             Breakpoint => return Err(Fault::Breakpoint),
             Syscall => {
+                if matches!(
+                    slot_op,
+                    BranchRegister | Conditional | CompareBranch | TestBranch
+                ) {
+                    self.branches[(pc >> 2) as usize & 4095] = next;
+                }
                 self.f.pc = next;
                 self.syscall();
                 return Ok(true);
@@ -253,6 +263,12 @@ impl Cpu {
             }
             Integer(op) => self.alu(op, w)?,
             Unknown => return Err(Fault::Instruction(w)),
+        }
+        if matches!(
+            slot_op,
+            BranchRegister | Conditional | CompareBranch | TestBranch
+        ) {
+            self.branches[(pc >> 2) as usize & 4095] = next;
         }
         self.f.pc = next;
         Ok(next != pc.wrapping_add(4))

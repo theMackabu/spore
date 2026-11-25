@@ -4,6 +4,7 @@ use std::cell::RefCell;
 
 unsafe extern "C" {
     fn wasm_shutdown_storage() -> bool;
+    fn vfs_sync() -> bool;
     fn wasm_select_cpu(cpu: u32);
     fn wasm_boot(
         image: *const u8,
@@ -18,7 +19,6 @@ unsafe extern "C" {
     ) -> *const Frame;
 }
 struct Machine {
-    retired: u64,
     jit: Option<super::jit::Cache>,
     cpus: Vec<Cpu>,
     next: usize,
@@ -81,7 +81,6 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32, cou
                 })
                 .collect();
             *cpu = Some(Machine {
-                retired: 0,
                 cpus,
                 next: 0,
                 jit: (devices & 16 != 0).then(super::jit::Cache::new),
@@ -89,6 +88,10 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32, cou
             true
         })
     })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn sync_storage() -> bool {
+    CPU.with_borrow(|state| state.is_some() && unsafe { vfs_sync() })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn stop() -> bool {
@@ -150,12 +153,6 @@ pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
                 };
                 retired += 1;
             }
-        }
-        machine.retired += u64::from(retired);
-        if machine.retired >= 4_000_000
-            && let Some(jit) = &mut machine.jit
-        {
-            jit.threshold = 48;
         }
         retired as i32
     })

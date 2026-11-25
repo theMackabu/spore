@@ -1,13 +1,18 @@
 use super::super::{
     cpu::sx,
-    decode::{self, Integer, Op},
+    decode::{self, Op},
 };
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
     ImportSection, Instruction as I, MemArg, MemoryType, Module, TypeSection, ValType,
 };
 
+mod branch;
+mod counted;
+mod flags;
+mod integer;
 mod memory;
+mod vector;
 
 const FLAGS: u32 = 36;
 const LEFT: u32 = 37;
@@ -19,9 +24,9 @@ const RETIRED: u32 = 42;
 struct Block {
     body: Vec<I<'static>>,
     regs: u32,
+    side_exits: Vec<(usize, u32)>,
     dirty: u32,
-    flag_ops: std::ops::Range<usize>,
-    deferred_flags: Vec<I<'static>>,
+    pending: Option<(u32, bool, bool)>,
     guarded: bool,
     flags_read: bool,
     flags_written: bool,
@@ -31,7 +36,7 @@ impl Block {
         if reg == 31 && !sp {
             self.body.push(I::I64Const(0));
         } else {
-            self.regs |= 1 << reg;
+            self.regs |= (1 << reg) & !self.dirty;
             self.body.push(I::LocalGet(reg + 4));
         }
     }
@@ -77,57 +82,22 @@ impl Block {
             ]);
         }
     }
-    fn flags(&mut self, bits: u32, arithmetic: bool, sub: bool) {
-        self.flags_written = true;
-        self.body.extend([
-            I::LocalGet(VALUE),
-            I::I64Const(i64::from(bits - 1)),
-            I::I64ShrU,
-            I::I64Const(3),
-            I::I64Shl,
-            I::LocalGet(VALUE),
-            I::I64Eqz,
-            I::I64ExtendI32U,
-            I::I64Const(2),
-            I::I64Shl,
-            I::I64Or,
-        ]);
-        if arithmetic {
-            if sub {
-                self.body
-                    .extend([I::LocalGet(LEFT), I::LocalGet(RIGHT), I::I64GeU]);
-            } else {
-                self.body
-                    .extend([I::LocalGet(VALUE), I::LocalGet(LEFT), I::I64LtU]);
-            }
-            self.body.extend([
-                I::I64ExtendI32U,
-                I::I64Const(1),
-                I::I64Shl,
-                I::I64Or,
-                I::LocalGet(LEFT),
-                I::LocalGet(RIGHT),
-                I::I64Xor,
-            ]);
-            if !sub {
-                self.body.extend([I::I64Const(-1), I::I64Xor]);
-            }
-            self.body.extend([
-                I::LocalGet(LEFT),
-                I::LocalGet(VALUE),
-                I::I64Xor,
-                I::I64And,
-                I::I64Const(i64::from(bits - 1)),
-                I::I64ShrU,
-                I::I64Const(1),
-                I::I64And,
-                I::I64Or,
-            ]);
-        }
-        self.body.push(I::LocalSet(FLAGS));
-    }
-
     fn address(&mut self, pc: u64, w: u32) -> bool {
+        use crate::cpu::{Context, Cpu};
+        use std::mem::offset_of;
+        let field = match w & !31 {
+            0xd53bd040 => Some(offset_of!(Context, tls)),
+            0xd53b4400 => Some(offset_of!(Context, fpcr)),
+            0xd53b4420 => Some(offset_of!(Context, fpsr)),
+            _ => None,
+        };
+        if let Some(field) = field {
+            let offset = offset_of!(Cpu, context) + field;
+            self.body
+                .extend([I::LocalGet(0), I::I64Load(at(offset as u64))]);
+            self.set(w & 31, false, true);
+            return true;
+        }
         if !matches!(decode::classify(w), Op::Address) {
             return false;
         }
@@ -141,233 +111,6 @@ impl Block {
         self.set(w & 31, false, true);
         true
     }
-
-    fn integer(&mut self, w: u32) -> bool {
-        let Op::Integer(kind) = decode::classify(w) else {
-            return false;
-        };
-        let d = w & 31;
-        let n = (w >> 5) & 31;
-        let m = (w >> 16) & 31;
-        let wide = w >> 31 != 0;
-        let bits = if wide { 64 } else { 32 };
-        let op = (w >> 29) & 3;
-        let sub = op & 2 != 0;
-        let immediate = matches!(kind, Integer::AddImmediate);
-        let arithmetic = immediate || matches!(kind, Integer::AddShifted);
-        let log = matches!(kind, Integer::Logical) && w & 0x1f000000 == 0x0a000000;
-        let logical_imm = matches!(kind, Integer::Logical) && !log;
-        if arithmetic || log || logical_imm {
-            let shift = (w >> 10) & 63;
-            let mode = (w >> 22) & 3;
-            if !immediate && !logical_imm && (shift >= bits || (arithmetic && mode == 3)) {
-                return false;
-            }
-            let flags = if log || logical_imm {
-                op == 3
-            } else {
-                op & 1 != 0
-            };
-            let operand = if logical_imm {
-                let Some(value) =
-                    super::super::alu::logical_mask((w >> 22) & 1, (w >> 16) & 63, shift, bits)
-                else {
-                    return false;
-                };
-                Some(value)
-            } else {
-                None
-            };
-            self.get(n, immediate);
-            if flags {
-                self.narrow(wide);
-                self.body.push(I::LocalTee(LEFT));
-            }
-            if let Some(mask) = operand {
-                self.body.push(I::I64Const(mask as i64));
-            } else if immediate {
-                let imm = ((w >> 10) & 4095) << (12 * ((w >> 22) & 1));
-                self.body.push(I::I64Const(i64::from(imm)));
-            } else {
-                self.get(m, false);
-                self.shift(shift, mode, wide);
-                if log && w & (1 << 21) != 0 {
-                    self.body.extend([I::I64Const(-1), I::I64Xor]);
-                }
-            }
-            if flags {
-                self.narrow(wide);
-                self.body.push(I::LocalTee(RIGHT));
-            }
-            self.body.push(if log || logical_imm {
-                match op {
-                    1 => I::I64Or,
-                    2 => I::I64Xor,
-                    _ => I::I64And,
-                }
-            } else if sub {
-                I::I64Sub
-            } else {
-                I::I64Add
-            });
-            if flags {
-                self.narrow(wide);
-                self.body.push(I::LocalTee(VALUE));
-                let start = self.body.len();
-                self.flags(bits, arithmetic, sub);
-                self.flag_ops = start..self.body.len();
-            }
-            self.set(d, (immediate || logical_imm) && !flags, wide);
-        } else if matches!(kind, Integer::MoveWide) {
-            let shift = ((w >> 21) & 3) * 16;
-            if shift >= bits || op == 1 {
-                return false;
-            }
-            let imm = i64::from((w >> 5) & 65535) << shift;
-            if op == 3 {
-                self.get(d, false);
-                self.body.extend([
-                    I::I64Const(!(65535i64 << shift)),
-                    I::I64And,
-                    I::I64Const(imm),
-                    I::I64Or,
-                ]);
-            } else {
-                self.body
-                    .push(I::I64Const(if op == 0 { !imm } else { imm }));
-            }
-            self.set(d, false, wide);
-        } else if matches!(kind, Integer::MultiplyAdd) {
-            self.get((w >> 10) & 31, false);
-            self.get(n, false);
-            self.get(m, false);
-            self.body.extend([
-                I::I64Mul,
-                if w & 0x8000 != 0 {
-                    I::I64Sub
-                } else {
-                    I::I64Add
-                },
-            ]);
-            self.set(d, false, wide);
-        } else {
-            return false;
-        }
-        true
-    }
-
-    fn flag(&mut self, bit: u32) {
-        self.body.extend([
-            I::LocalGet(FLAGS),
-            I::I32WrapI64,
-            I::I32Const(bit as i32),
-            I::I32ShrU,
-            I::I32Const(1),
-            I::I32And,
-        ]);
-    }
-    fn condition(&mut self, cond: u32) {
-        if cond <= 1 && !self.guarded && !self.flag_ops.is_empty() {
-            self.deferred_flags
-                .extend(self.body.drain(self.flag_ops.clone()));
-            self.body.extend([I::LocalGet(VALUE), I::I64Eqz]);
-            if cond == 1 {
-                self.body.push(I::I32Eqz);
-            }
-            return;
-        }
-        self.flags_read = true;
-        match cond >> 1 {
-            0 => self.flag(2),
-            1 => self.flag(1),
-            2 => self.flag(3),
-            3 => self.flag(0),
-            4 => {
-                self.flag(1);
-                self.flag(2);
-                self.body.extend([I::I32Eqz, I::I32And]);
-            }
-            5 | 6 => {
-                self.flag(3);
-                self.flag(0);
-                self.body.push(I::I32Eq);
-                if cond >> 1 == 6 {
-                    self.flag(2);
-                    self.body.extend([I::I32Eqz, I::I32And]);
-                }
-            }
-            _ => {
-                self.body.push(I::I32Const(1));
-                return;
-            }
-        }
-        if cond & 1 != 0 {
-            self.body.push(I::I32Eqz);
-        }
-    }
-    fn branch(&mut self, pc: u64, w: u32) -> Option<u64> {
-        let next = pc.wrapping_add(4);
-        let op = decode::classify(w);
-        if matches!(op, Op::Syscall) {
-            self.body
-                .extend([I::I64Const(next as i64), I::LocalSet(NEXT)]);
-            return Some(next);
-        }
-        if matches!(op, Op::BranchRegister) {
-            self.get((w >> 5) & 31, false);
-            self.body.push(I::LocalSet(NEXT));
-            if w & 0xfffffc1f == 0xd63f0000 {
-                self.body.push(I::I64Const(next as i64));
-                self.set(30, false, true);
-            }
-            return Some(u64::MAX);
-        }
-        let target = match op {
-            Op::Branch => {
-                if w >> 31 != 0 {
-                    self.body.push(I::I64Const(next as i64));
-                    self.set(30, false, true);
-                }
-                pc.wrapping_add(sx(u64::from(w & 0x03ffffff), 26) << 2)
-            }
-            Op::CompareBranch | Op::Conditional => {
-                pc.wrapping_add(sx(u64::from((w >> 5) & 0x7ffff), 19) << 2)
-            }
-            Op::TestBranch => pc.wrapping_add(sx(u64::from((w >> 5) & 0x3fff), 14) << 2),
-            _ => return None,
-        };
-        self.body.push(I::I64Const(target as i64));
-        if !matches!(op, Op::Branch) {
-            self.body.push(I::I64Const(next as i64));
-            match op {
-                Op::Conditional => self.condition(w & 15),
-                Op::CompareBranch => {
-                    self.get(w & 31, false);
-                    self.narrow(w >> 31 != 0);
-                    self.body.push(I::I64Eqz);
-                    if w & (1 << 24) != 0 {
-                        self.body.push(I::I32Eqz);
-                    }
-                }
-                _ => {
-                    self.get(w & 31, false);
-                    self.body.extend([
-                        I::I64Const(i64::from((w >> 31) * 32 + ((w >> 19) & 31))),
-                        I::I64ShrU,
-                        I::I32WrapI64,
-                        I::I32Const(1),
-                        I::I32And,
-                    ]);
-                    if w & (1 << 24) == 0 {
-                        self.body.push(I::I32Eqz);
-                    }
-                }
-            }
-            self.body.push(I::Select);
-        }
-        self.body.push(I::LocalSet(NEXT));
-        Some(target)
-    }
 }
 
 fn at(offset: u64) -> MemArg {
@@ -379,42 +122,185 @@ fn at(offset: u64) -> MemArg {
     }
 }
 
-pub fn compile(pc: u64, words: &[u32]) -> Option<(Vec<u8>, usize)> {
+pub struct Trace {
+    pub module: Vec<u8>,
+    pub spans: Vec<(u64, Vec<u32>)>,
+    pub count: u32,
+}
+
+pub fn compile(
+    pc: u64,
+    memory: &mut crate::memory::Memory,
+    branches: &[u64; 4096],
+) -> Option<Trace> {
     let mut block = Block {
         body: Vec::new(),
         regs: 0,
+        side_exits: Vec::new(),
         dirty: 0,
-        flag_ops: 0..0,
-        deferred_flags: Vec::new(),
+        pending: None,
         guarded: false,
         flags_read: false,
         flags_written: false,
     };
     let mut count = 0;
     let mut target = None;
-    for &w in words {
-        let here = pc + count as u64 * 4;
-        if !block.integer(w) && !block.memory(here, count, w) && !block.address(here, w) {
-            target = block.branch(here, w);
-            if target.is_some() {
-                count += 1;
-            }
+    let mut branch_at = 0;
+    let mut here = pc;
+    let mut spans: Vec<(u64, Vec<u32>)> = Vec::new();
+    let mut visited = Vec::new();
+    let mut calls = Vec::new();
+    while count < 128 {
+        if visited.contains(&here) {
+            block
+                .body
+                .extend([I::I64Const(here as i64), I::LocalSet(NEXT)]);
+            target = Some(here);
             break;
         }
-        count += 1;
+        let Some(words) = memory.trace_words(here) else {
+            break;
+        };
+        visited.push(here);
+        let w = words[0];
+        let mut executed = block.vector(words);
+        if executed == 0 && matches!(decode::classify(w), Op::Transfer) {
+            executed = block.transfers(here, count, words);
+        }
+        if w & 0x7ffffc00 == 0x5ac00000
+            && words.get(1) == Some(&((w & 0x80000000) | 0x5ac01000 | ((w & 31) << 5) | (w & 31)))
+        {
+            block.get((w >> 5) & 31, false);
+            if w >> 31 != 0 {
+                block.body.push(I::I64Ctz);
+            } else {
+                block
+                    .body
+                    .extend([I::I32WrapI64, I::I32Ctz, I::I64ExtendI32U]);
+            }
+            block.set(w & 31, false, true);
+            executed = 2;
+        }
+        let mut next = here + 4;
+        let mut ends = false;
+        if executed == 0 {
+            executed = 1;
+            if !block.integer(w) && !block.address(here, w) {
+                let op = decode::classify(w);
+                let conditional = matches!(
+                    op,
+                    Op::Conditional | Op::CompareBranch | Op::TestBranch | Op::BranchRegister
+                );
+                let mut predicted = branches[(here >> 2) as usize & 4095];
+                if w == 0xd65f03c0
+                    && let Some(return_pc) = calls.pop()
+                {
+                    predicted = return_pc;
+                }
+                if matches!(op, Op::Branch) && w >> 31 != 0 || w & 0xfffffc1f == 0xd63f0000 {
+                    calls.push(next);
+                }
+                let self_branch = matches!(op, Op::Conditional | Op::CompareBranch)
+                    && here.wrapping_add(sx(u64::from((w >> 5) & 0x7ffff), 19) << 2) == pc;
+                if conditional && !self_branch {
+                    block.guarded = true;
+                }
+                branch_at = block.body.len();
+                let Some(dest) = block.branch(here, w) else {
+                    break;
+                };
+                target = Some(dest);
+                if matches!(op, Op::Syscall) {
+                    target = Some(u64::MAX);
+                    block.body.extend([I::I32Const(i32::MIN), I::LocalSet(3)]);
+                    ends = true;
+                } else {
+                    next = if !conditional || self_branch {
+                        dest
+                    } else if predicted == dest
+                        || matches!(op, Op::BranchRegister)
+                        || predicted == next
+                    {
+                        predicted
+                    } else {
+                        next
+                    };
+                    if next == pc || next == 0 || next & 3 != 0 {
+                        ends = true;
+                        if next == pc {
+                            target = Some(pc);
+                        }
+                    } else {
+                        if conditional {
+                            block.body.extend([
+                                I::LocalGet(NEXT),
+                                I::I64Const(next as i64),
+                                I::I64Ne,
+                                I::If(BlockType::Empty),
+                            ]);
+                            block.side_exit(count + 1);
+                        }
+                        target = None;
+                    }
+                }
+            }
+        } else {
+            next = here + executed as u64 * 4;
+        }
+        if let Some((start, code)) = spans.last_mut()
+            && *start + code.len() as u64 * 4 == here
+            && *start >> 12 == here >> 12
+        {
+            code.extend_from_slice(&words[..executed]);
+        } else {
+            spans.push((here, words[..executed].to_vec()));
+        }
+        count += executed;
+        here = next;
+        if ends {
+            break;
+        }
     }
-    if count < 2 || (count < 4 && target != Some(pc)) {
+    if count == 0 {
         return None;
     }
     if target.is_none() {
-        block.body.extend([
-            I::I64Const((pc + count as u64 * 4) as i64),
-            I::LocalSet(NEXT),
-        ]);
+        block
+            .body
+            .extend([I::I64Const(here as i64), I::LocalSet(NEXT)]);
     }
-    let mut code = Function::new([(38, ValType::I64), (3, ValType::I32)]);
+    let loops = target == Some(pc);
+    let mut writebacks = Vec::new();
+    if !loops {
+        for &(at, mask) in &block.side_exits {
+            if writebacks.last() != Some(&mask) {
+                writebacks.push(mask);
+            }
+            block.body[at] = I::Br((writebacks.len() - 1) as u32);
+        }
+    }
+    if writebacks.last() != Some(&block.dirty) {
+        writebacks.push(block.dirty);
+    }
+    if !loops {
+        for &(at, _) in &block.side_exits {
+            let I::Br(index) = block.body[at] else {
+                unreachable!()
+            };
+            block.body[at] = I::Br(2 + writebacks.len() as u32 - 1 - index);
+        }
+    }
+    let mut code = Function::new([(38, ValType::I64), (11, ValType::I32)]);
     for r in 0..32 {
-        if (block.regs | if block.guarded { block.dirty } else { 0 }) & (1 << r) != 0 {
+        if (block.regs
+            | if loops && block.guarded {
+                block.dirty
+            } else {
+                0
+            })
+            & (1 << r)
+            != 0
+        {
             code.instruction(&I::LocalGet(0))
                 .instruction(&I::I64Load(at(u64::from(r) * 8)))
                 .instruction(&I::LocalSet(4 + r));
@@ -427,33 +313,69 @@ pub fn compile(pc: u64, words: &[u32]) -> Option<(Vec<u8>, usize)> {
             .instruction(&I::I64ShrU)
             .instruction(&I::LocalSet(FLAGS));
     }
-    code.instruction(&I::Block(BlockType::Empty));
-    code.instruction(&I::Loop(BlockType::Empty));
-    for i in &block.body {
-        code.instruction(i);
+    for _ in &writebacks {
+        code.instruction(&I::Block(BlockType::Empty));
     }
-    code.instruction(&I::LocalGet(RETIRED))
-        .instruction(&I::I32Const(count as i32))
-        .instruction(&I::I32Add)
-        .instruction(&I::LocalSet(RETIRED));
-    if target == Some(pc) {
-        code.instruction(&I::LocalGet(NEXT))
-            .instruction(&I::I64Const(pc as i64))
-            .instruction(&I::I64Eq)
-            .instruction(&I::LocalGet(1))
-            .instruction(&I::LocalGet(RETIRED))
-            .instruction(&I::I32Sub)
+    let counter = if loops && !block.guarded && !block.flags_read && spans.len() == 1 {
+        counted::counter(&spans[0].1)
+    } else {
+        None
+    };
+    if let Some(counter) = counter {
+        counted::emit(
+            &mut code,
+            &block.body[..branch_at],
+            pc,
+            count as u32,
+            counter,
+        );
+        block.body.clear();
+        block.pack_flags();
+        for op in &block.body {
+            code.instruction(op);
+        }
+    } else {
+        code.instruction(&I::Loop(BlockType::Empty));
+        for i in &block.body {
+            code.instruction(i);
+        }
+        code.instruction(&I::LocalGet(RETIRED))
             .instruction(&I::I32Const(count as i32))
-            .instruction(&I::I32GeU)
-            .instruction(&I::I32And)
-            .instruction(&I::BrIf(0));
+            .instruction(&I::I32Add)
+            .instruction(&I::LocalSet(RETIRED));
+        block.body.clear();
+        block.pack_flags();
+        let exit_flags = std::mem::take(&mut block.body);
+        if block.flags_read && target == Some(pc) {
+            for op in &exit_flags {
+                code.instruction(op);
+            }
+        }
+        if target == Some(pc) {
+            code.instruction(&I::LocalGet(NEXT))
+                .instruction(&I::I64Const(pc as i64))
+                .instruction(&I::I64Eq)
+                .instruction(&I::LocalGet(1))
+                .instruction(&I::LocalGet(RETIRED))
+                .instruction(&I::I32Sub)
+                .instruction(&I::I32Const(count as i32))
+                .instruction(&I::I32GeU)
+                .instruction(&I::I32And)
+                .instruction(&I::BrIf(0));
+        }
+        if !block.flags_read || target != Some(pc) {
+            for op in &exit_flags {
+                code.instruction(op);
+            }
+        }
+        code.instruction(&I::End);
     }
-    code.instruction(&I::End).instruction(&I::End);
-    for op in &block.deferred_flags {
-        code.instruction(op);
-    }
-    for r in 0..32 {
-        if block.dirty & (1 << r) != 0 {
+    for (index, &mask) in writebacks.iter().enumerate().rev() {
+        code.instruction(&I::End);
+        let mut regs = mask & !index.checked_sub(1).map_or(0, |prev| writebacks[prev]);
+        while regs != 0 {
+            let r = regs.trailing_zeros();
+            regs &= regs - 1;
             code.instruction(&I::LocalGet(0))
                 .instruction(&I::LocalGet(4 + r))
                 .instruction(&I::I64Store(at(u64::from(r) * 8)));
@@ -475,10 +397,13 @@ pub fn compile(pc: u64, words: &[u32]) -> Option<(Vec<u8>, usize)> {
         .instruction(&I::LocalGet(NEXT))
         .instruction(&I::I64Store(at(256)))
         .instruction(&I::LocalGet(RETIRED))
+        .instruction(&I::LocalGet(3))
+        .instruction(&I::I32Or)
         .instruction(&I::End);
     let mut module = Module::new();
     let mut types = TypeSection::new();
     types.ty().function([ValType::I32; 4], [ValType::I32]);
+    types.ty().function([ValType::I64; 2], [ValType::I64]);
     module.section(&types);
     let mut imports = ImportSection::new();
     imports.import(
@@ -492,15 +417,20 @@ pub fn compile(pc: u64, words: &[u32]) -> Option<(Vec<u8>, usize)> {
             page_size_log2: None,
         }),
     );
+    imports.import("spore", "umulh", EntityType::Function(1));
     module.section(&imports);
     let mut functions = FunctionSection::new();
     functions.function(0);
     module.section(&functions);
     let mut exports = ExportSection::new();
-    exports.export("run", ExportKind::Func, 0);
+    exports.export("run", ExportKind::Func, 1);
     module.section(&exports);
     let mut codes = CodeSection::new();
     codes.function(&code);
     module.section(&codes);
-    Some((module.finish(), count))
+    Some(Trace {
+        module: module.finish(),
+        spans,
+        count: count as u32,
+    })
 }

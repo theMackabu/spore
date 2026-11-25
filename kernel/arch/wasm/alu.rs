@@ -245,7 +245,7 @@ impl Cpu {
             }
             MultiplyHigh => {
                 if w & (1 << 23) != 0 {
-                    ((a as u128 * b as u128) >> 64) as u64
+                    umulh(a, b)
                 } else {
                     ((a as i64 as i128 * b as i64 as i128) >> 64) as u64
                 }
@@ -278,4 +278,9 @@ impl Cpu {
         }
         Ok(())
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn umulh(a: u64, b: u64) -> u64 {
+    ((u128::from(a) * u128::from(b)) >> 64) as u64
 }

@@ -3,11 +3,18 @@ import { snapshotDisk } from "./disk.mjs";
 const PAGE = 4096;
 async function openFile(dir, name) {
   const file = await dir.getFileHandle(name, { create: true });
-  return file.createSyncAccessHandle();
+  try {
+    return await file.createSyncAccessHandle();
+  } catch (error) {
+    if (error.name === "NoModificationAllowedError")
+      throw new Error("Disk in use. Close the other Spore tab or open this one with ?snapshot.");
+    throw error;
+  }
 }
 
 export async function persistentDisk(file, read) {
-  const header = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
+  const header = new Uint8Array(Math.min(65536, file.size));
+  if (read(0n, header) !== header.length) throw new Error("Cannot identify the root disk");
   const identity = new TextEncoder().encode(JSON.stringify([file.name, file.size, file.lastModified]));
   const bytes = new Uint8Array(identity.length + header.length);
   bytes.set(identity);
@@ -21,6 +28,7 @@ export async function persistentDisk(file, read) {
   try {
     pages = await openFile(dir, "pages");
     const records = new Map();
+    let dirty = false;
     const entries = Math.floor(index.getSize() / 8);
     if (entries > Math.ceil(file.size / PAGE) || pages.getSize() < entries * PAGE)
       throw new Error("Incomplete persistent disk data");
@@ -49,6 +57,7 @@ export async function persistentDisk(file, read) {
         return buf;
       },
       set(base, buf) {
+        dirty = true;
         const exists = records.has(base);
         const slot = exists ? records.get(base) : records.size;
         if (pages.write(buf, { at: slot * PAGE }) !== buf.length) throw new Error("Cannot save disk page");
@@ -64,8 +73,10 @@ export async function persistentDisk(file, read) {
     return {
       ...overlay,
       flushDisk() {
+        if (!dirty) return;
         pages.flush();
         index.flush();
+        dirty = false;
       },
       close() {
         try {

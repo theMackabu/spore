@@ -1,20 +1,20 @@
 # Spore and kwemu
 
-Spore reached the first userspace write sooner in this run. kwemu finished the BusyBox pipeline sooner. Both produced the same checksums and child statuses.
+The 25,000-line BusyBox pipeline took 299 ms on Spore and 349 ms on kwemu. Both produced the same checksums and child statuses. The integer-loop and fork/wait timings overlapped. kwemu was faster on the musl syscall wrapper, cached reads and memory copies.
 
 | Workload | Spore, ms | unkernel with kwemu, ms |
 |---|---:|---:|
-| Fresh kernel instance to first PID 1 write | 7.37 (6.36–9.51) | 17.13 (15.21–19.05) |
-| 16,777,216 ARM64 integer loop instructions | 1.90 (1.61–2.66) | 1.58 (1.53–1.62) |
-| 100,000 calls through musl’s generic `syscall(SYS_getpid)` wrapper | 28.05 (25.48–30.88) | 9.30 (8.76–11.46) |
-| 100,000 direct `svc` calls to `getpid` | 6.36 (6.07–7.35) | 4.93 (4.64–6.41) |
-| 100,000 cached 64-byte `pread` calls on tmpfs | 43.43 (41.77–45.73) | 15.89 (15.62–17.69) |
-| 128 MiB copied with musl `memcpy` | 23.69 (21.71–24.56) | 10.83 (9.40–12.52) |
-| 200,000 ARM SHA256H/SHA256H2 instruction pairs | 11.35 (10.43–13.77) | 3.20 (3.03–3.31) |
-| 200 fork, child exit and parent wait cycles | 4.96 (3.75–7.21) | 4.71 (4.48–6.57) |
-| BusyBox reverse-sort and SHA-256 pipeline, 25,000 lines | 2,898.01 (2,823.85–3,132.81) | 381.14 (378.13–401.26) |
+| Fresh kernel instance to first PID 1 write | 6.38 (6.24–6.67) | 14.60 (12.97–16.10) |
+| 16,777,216 ARM64 integer loop instructions | 1.47 (1.17–3.14) | 1.50 (1.47–1.56) |
+| 100,000 calls through musl’s generic `syscall(SYS_getpid)` wrapper | 16.90 (13.74–19.96) | 8.81 (8.68–9.92) |
+| 100,000 direct `svc` calls to `getpid` | 5.90 (5.16–6.89) | 4.62 (4.51–4.71) |
+| 100,000 cached 64-byte `pread` calls on tmpfs | 26.09 (25.56–26.43) | 15.93 (15.25–16.66) |
+| 128 MiB copied with musl `memcpy` | 11.03 (10.87–13.63) | 9.47 (9.41–9.51) |
+| 200,000 ARM SHA256H/SHA256H2 instruction pairs | 2.35 (2.11–3.81) | 3.07 (3.02–3.08) |
+| 200 fork, child exit and parent wait cycles | 4.67 (4.54–4.83) | 4.69 (4.26–4.86) |
+| BusyBox reverse-sort and SHA-256 pipeline, 25,000 lines | 299.02 (289.60–321.74) | 348.62 (338.80–350.77) |
 
-Values are medians, with the observed minimum and maximum in parentheses. The runner discarded one warm-up per engine, then alternated engine order over five measured runs each. Fork timings overlapped across runs.
+Values are medians, with the observed minimum and maximum in parentheses. The runner discarded one warm-up per engine, then alternated engine order over five measured runs each.
 
 ## What was measured
 
@@ -22,7 +22,7 @@ The host was an Apple M5 Pro with 64 GB of RAM, macOS 27.0.1 and Node 24.15.0. E
 
 Boot timing starts immediately before kernel instantiation and ends when the host sees PID 1’s first output marker. Node startup, downloads, disk preparation and initial kernel module compilation happened before timing. The other rows use the guest monotonic clock. Syscall, file and process timings include the behavior of the respective Spore and Linux kernels.
 
-Spore was measured at commit `9646419`. The reference was the published `unkernel@0.2.0-261125-cec0a49` package, which includes the Zig kwemu userspace CPU. [Reference source](https://github.com/pithings/unkernel/tree/cec0a49)
+Spore used the ARM64 trace JIT with a 256-visit compilation threshold. Before trace compilation, the same Spore workload took 2,898 ms at commit `9646419`. The reference was the published `unkernel@0.2.0-261125-cec0a49` package, which includes the Zig kwemu userspace CPU. [Reference source](https://github.com/pithings/unkernel/tree/cec0a49)
 
 ## Reproduce
 

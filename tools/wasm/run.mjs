@@ -34,6 +34,7 @@ async function boot(
     readBoot,
     writeDisk,
     flushDisk,
+    checkpointStorage = false,
     readStdin,
     readByte,
     winsize,
@@ -80,6 +81,11 @@ async function boot(
   if (stats) Object.assign(stats, { compiledBlocks: 0, compiledInstructions: 0 });
   const bytes = (ptr, len) => new Uint8Array(guest.memory.buffer, ptr >>> 0, len >>> 0);
   const stop = {};
+  const pendingOutput = [];
+  function publishOutput() {
+    for (const [fd, chunk] of pendingOutput) write?.(fd, chunk);
+    pendingOutput.length = 0;
+  }
   let status;
   guest = (
     await WebAssembly.instantiate(module, {
@@ -87,7 +93,7 @@ async function boot(
         jit_compile(slot, slots, ptr, len) {
           try {
             const code = new WebAssembly.Module(bytes(ptr, len));
-            const fn = new WebAssembly.Instance(code, { spore: { memory: guest.memory } }).exports.run;
+            const fn = new WebAssembly.Instance(code, { spore: { memory: guest.memory, umulh: guest.umulh } }).exports.run;
             const table = guest.__indirect_function_table;
             tableBase ??= table.grow(slots);
             table.set(tableBase + slot, fn);
@@ -144,7 +150,10 @@ async function boot(
           kernelLog?.(bytes(ptr, len).slice());
         },
         write(fd, ptr, len) {
-          write?.(fd, bytes(ptr, len).slice());
+          if (!write) return;
+          const chunk = bytes(ptr, len).slice();
+          if (checkpointStorage) pendingOutput.push([fd, chunk]);
+          else write(fd, chunk);
         },
         clock() {
           return BigInt(Math.floor(performance.now() * 1000));
@@ -202,6 +211,7 @@ async function boot(
     else start();
     let nextTick = performance.now() + 10;
     let yieldAt = performance.now() + 8;
+    let nextSave = performance.now() + 1000;
     while (remaining > 0) {
       if (signal?.aborted) {
         if (!guest.stop()) throw new Error("failed to flush guest storage");
@@ -215,6 +225,14 @@ async function boot(
       if (retired < 0) throw new Error("CPU stopped without a guest result");
       remaining -= retired;
       if (retired < count || (remaining && performance.now() >= yieldAt)) {
+        if (checkpointStorage && (pendingOutput.length || now >= nextSave)) {
+          if (!guest.sync_storage()) {
+            pendingOutput.length = 0;
+            throw new Error("Failed to save guest storage");
+          }
+          publishOutput();
+          nextSave = performance.now() + 1000;
+        }
         const delay = retired < count ? Math.max(0, nextTick - performance.now()) : 0;
         await new Promise((resolve) => setTimeout(resolve, delay));
         yieldAt = performance.now() + 8;
@@ -225,6 +243,7 @@ async function boot(
     if (error !== stop) throw error;
     return status;
   } finally {
+    publishOutput();
     if (stats) stats.compiledInstructions = Number(guest.compiled_instructions());
   }
 }

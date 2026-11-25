@@ -32,7 +32,7 @@ The result records the workload exit, signal or failure and the time to its firs
 
 The default root is a disposable snapshot of `target/release/root.ext2`. Select another base with `--root`. Pass `--persist ./my-root.ext2` to seed and reuse a writable copy. Supply an ESP before `--root` to expose its bytes through `/dev/blk/boot`. Ctrl+] disconnects the host console.
 
-Guests default to one CPU and 64 MiB of RAM. Use `--memory 512M` or `--smp 4` to change the configuration. Virtual CPUs have independent registers and scheduler slots and take turns executing on one host worker.
+CLI guests default to one CPU and 64 MiB of RAM. Use `--memory 512M` or `--smp 4` to change the configuration. Virtual CPUs have independent registers and scheduler slots and take turns executing on one host worker.
 
 ## Networking
 
@@ -51,9 +51,11 @@ In another terminal, `curl http://127.0.0.1:8080/` returns `wasm`. Request `/qui
 ./target/release/spore serve --wasm
 ```
 
-Open the printed loopback URL. Select a static ELF or a saved app payload, or select just a root disk to boot the full system. Type directly into the terminal. **Keep disk changes in this browser** saves changed pages in origin-private storage. Reopen the same base file on the same origin to resume.
+Open the printed URL. The guest boots from `target/release/root.ext2` with 256 MiB of RAM. Use `?memory=512` to change it. The server builds missing boot artifacts on first use. It briefly boots a disposable snapshot to collect startup disk pages and serves them in one compressed response. Later disk reads fetch missing ranges on demand.
 
-Pass `--net` when serving to enable the local WebSocket Ethernet relay. The runner in `target/release/wasm-web/` can also be served as static files for offline guest execution. The JavaScript API accepts custom block and Ethernet devices, a cancellation signal and an instruction budget. [Launcher](../../tools/wasm/run.mjs)
+Reloading reboots the guest with your saved disk changes. Use the same browser profile, address, port and base image to reopen the disk. Files in your home directory persist. The guest recreates `/tmp` at boot. Open `/?snapshot` for a disposable session starting from the base image. Drop a local ELF, packaged app or root disk onto the terminal to start it.
+
+The local server enables outbound IPv4 through its WebSocket Ethernet relay by default. Pass `--offline` to boot without networking. For static hosting, serve `target/release/wasm-web/` with a `root.ext2` beside it on a server supporting HTTP byte ranges. Use `?app=./my-app.spore` to launch a hosted app instead. The JavaScript API accepts custom block and Ethernet devices, a cancellation signal and an instruction budget. [Launcher](../../tools/wasm/run.mjs)
 
 ## Verification
 

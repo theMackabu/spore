@@ -312,9 +312,9 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   return &cpus[0].thread->tf;
 }
 
-void *wasm_lookup_write(uint64_t page) {
+void *wasm_lookup_page(uint64_t page, enum vmm_access access) {
   struct user_address_space *as = cell_current_as();
-  if (!vmm_user_range_accessible(as, page, 1, VMM_ACCESS_WRITE)) { return NULL; }
+  if (page >= USER_VA_LIMIT || !vmm_user_range_accessible(as, page, 1, access)) { return NULL; }
   uint64_t pa = vmm_user_to_phys(as, page);
   return pa ? pmm_phys_to_virt(pa) : NULL;
 }

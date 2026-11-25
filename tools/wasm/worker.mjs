@@ -1,7 +1,6 @@
 import { run } from "./run.mjs";
 import { SerialInput } from "./input.mjs";
-import { persistentDisk } from "./persistent.mjs";
-import { snapshotDisk } from "./disk.mjs";
+import { openDisk } from "./browser-disk.mjs";
 
 async function connectNetwork() {
   const url = new URL("/net", location.href);
@@ -39,7 +38,7 @@ const serial = new SerialInput();
 const controller = new AbortController();
 let dimensions;
 onmessage = async ({
-  data: { elf, disk, args, input, online, persist, stop, initialSize, size, memoryMiB, cpuCount },
+  data: { app, disk, args, input, online, persist, stop, initialSize, size, memoryMiB, cpuCount },
 }) => {
   if (stop) {
     controller.abort(new Error("Stopped"));
@@ -58,28 +57,29 @@ onmessage = async ({
   try {
     const response = await fetch("./spore_wasm.wasm");
     if (!response.ok) throw new Error("Build the module with spore build --wasm first.");
-    const reader = new FileReaderSync();
-    if (disk) {
-      const readDisk = (offset, dest) => {
-        if (offset < 0n || offset + BigInt(dest.length) > BigInt(disk.size)) return 0;
-        const start = Number(offset);
-        const data = reader.readAsArrayBuffer(disk.slice(start, start + dest.length));
-        dest.set(new Uint8Array(data));
-        return data.byteLength;
-      };
-      media = persist ? await persistentDisk(disk, readDisk) : snapshotDisk(disk.size, readDisk);
+    if (disk) media = await openDisk(disk, persist);
+    let elf = null;
+    if (app instanceof File) {
+      elf = new Uint8Array(await app.arrayBuffer());
+    } else if (app) {
+      const response = await fetch(app);
+      if (!response.ok) throw new Error(`Cannot open app (${response.status})`);
+      elf = new Uint8Array(await response.arrayBuffer());
     }
-    if (online) network = await connectNetwork();
+    if ((response.headers.get("Spore-Network") ?? (online ? "on" : "off")) === "on") {
+      network = await connectNetwork();
+    }
     const status = await run(
       await response.arrayBuffer(),
-      elf ? new Uint8Array(await elf.arrayBuffer()) : null,
+      elf,
       {
         ...media,
+        checkpointStorage: Boolean(media && persist),
         network,
         signal: controller.signal,
         memoryMiB,
         cpuCount,
-        argv0: elf?.name,
+        argv0: app instanceof File ? app.name : app ? new URL(app, location.href).pathname.split("/").pop() : undefined,
         args,
         readByte: serial.readByte,
         winsize: () => dimensions,

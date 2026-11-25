@@ -92,6 +92,8 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
     }
     let files = [
         "index.html",
+        "boot-pages.mjs",
+        "browser-disk.mjs",
         "run.mjs",
         "disk.mjs",
         "persistent.mjs",
@@ -116,9 +118,16 @@ pub fn serve_wasm(build: &Path, port: u16, network: bool) -> io::Result<i32> {
     let web = build.join("wasm-web");
     let server = web.join("serve.mjs");
     if !server.is_file() {
-        return Err(io::Error::other(
-            "build the browser runner with spore build --wasm",
-        ));
+        let rc = build_wasm(build)?;
+        if rc != 0 {
+            return Ok(rc);
+        }
+    }
+    if !build.join("root.ext2").is_file() {
+        let rc = build_project(build, true, false)?;
+        if rc != 0 {
+            return Ok(rc);
+        }
     }
     let mut cmd = Command::new("node");
     cmd.arg(server).arg(port.to_string());
