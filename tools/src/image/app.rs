@@ -164,6 +164,24 @@ fn string(out: &mut impl Write, s: &str) -> io::Result<()> {
     out.write_all(&[0])
 }
 
+pub fn payload_network(path: &Path) -> io::Result<[Ipv4Addr; 4]> {
+    use std::io::Read;
+    let mut header = [0; 36];
+    File::open(path)?.read_exact(&mut header)?;
+    if &header[..8] != b"SPOREAP2" {
+        return Err(bad("expected a Spore app payload"));
+    }
+    Ok(std::array::from_fn(|i| {
+        let pos = 20 + 4 * i;
+        Ipv4Addr::new(
+            header[pos],
+            header[pos + 1],
+            header[pos + 2],
+            header[pos + 3],
+        )
+    }))
+}
+
 pub fn payload(
     program: &Path,
     opts: &[PathBuf],

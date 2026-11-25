@@ -31,7 +31,7 @@ Pass a writable ext2 or ext2+ volume to mount it at `/data`. Writes persist in t
 ./target/release/spore boot --wasm
 ```
 
-The kernel launches `/sbin/init` from `target/release/root.ext2`. To select another root, pass `--root path/to/root.ext2`. Each boot keeps disk writes in a private in-memory snapshot and discards them on exit. Type commands at the guest shell or press Ctrl+] to disconnect.
+The kernel launches `/sbin/init` from `target/release/root.ext2`. To select another root, pass `--root path/to/root.ext2`. Each boot uses a disposable snapshot by default. Pass `--persist ./my-root.ext2` to seed and reuse a separate writable copy. Supply an ESP before `--root` to expose its bytes through `/dev/blk/boot`. Type commands at the guest shell or press Ctrl+] to disconnect.
 
 ## Networking in Node
 
@@ -60,13 +60,13 @@ arguments on the host and select the resulting payload.
 ./target/release/spore build --wasm ./my-app -o my-app.spore --lib-dir ./libs -- --version
 ```
 
-The CLI performs this packaging automatically on `spore run --wasm`. A worker runs the guest locally and reads ranges from the selected disk on demand.
+Use `spore boot --wasm my-app.spore` to run the saved payload in Node. `--result result.json` records exit, signal or failure and the time to the first instruction fetch. The CLI performs this packaging automatically on `spore run --wasm`. A worker runs the guest locally and reads ranges from the selected disk on demand.
 To boot a system, select only the root disk, click Run and type into the terminal. Select **Keep disk changes in this browser** to save changed pages in origin-private storage. Reopen the same disk file on the same origin to resume. A fresh snapshot is the default. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
 
 ## Current scope
 
 The default is one guest CPU with 64 MiB of RAM. `--smp 4` runs four virtual CPUs in turn on one host worker. Each has its own register bank and scheduler slot. Set `--memory 256M` (or Guest RAM in the browser) for larger workloads. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The guest receives the same FP, Advanced SIMD, CRC32, AES, PMULL, SHA1, SHA2 and LSE atomic feature bits as native AArch64 Spore. It caches instruction
-classes and address translations. Its Rust JIT compiles frequently executed integer blocks to WebAssembly and checks the instruction bytes before reusing compiled code. Guest instruction and memory faults enter the signal subsystem. Fatal faults include the guest PC. The launcher defaults to a budget of 100 million guest instructions.
+classes and address translations. Its Rust JIT compiles frequently executed integer blocks to WebAssembly and checks the instruction bytes before reusing compiled code. Guest instruction and memory faults enter the signal subsystem. Fatal faults include the guest PC. The JavaScript embedding API defaults to a budget of 100 million guest instructions. The CLI permits long-running workloads.
 
 Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Piped CLI input uses a guest pipe and delivers EOF when the host writer closes. Full-system boots use Spore’s TTY. The standalone browser terminal works offline. Serving with `--net` connects the guest through the local relay. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
 Ant runs JavaScript expressions from its ordinary AArch64 musl binary.

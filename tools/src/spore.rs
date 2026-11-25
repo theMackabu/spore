@@ -225,6 +225,7 @@ fn execute() -> io::Result<i32> {
     let mut cpus = None;
     let mut root = None;
     let mut reset = false;
+    let mut persist = None;
     let mut userland = false;
     let mut tests = false;
     let mut wasm = false;
@@ -320,6 +321,18 @@ fn execute() -> io::Result<i32> {
                 root = Some(value);
                 continue;
             }
+            Some("--persist") if boot => {
+                persist = Some(value);
+                continue;
+            }
+            Some("--result") if !build => {
+                vm.report = Some(value);
+                continue;
+            }
+            Some("--boot-timeout") if !build => {
+                vm.timeout = positive(&value, "boot timeout")?;
+                continue;
+            }
             Some("--data") if !build => {
                 vm.root = Some(value);
                 continue;
@@ -333,8 +346,6 @@ fn execute() -> io::Result<i32> {
             Some("--vars") if !build => vm.vars = Some(value),
             Some("--qemu") if !build => qemu = Some(value),
             Some("--arch") if boot => architecture = Some(value),
-            Some("--boot-timeout") if !build => vm.timeout = positive(&value, "boot timeout")?,
-            Some("--result") if !build => vm.report = Some(value),
             _ => {
                 return Err(io::Error::other(format!(
                     "unexpected option {}",
@@ -344,10 +355,39 @@ fn execute() -> io::Result<i32> {
         }
     }
     if wasm {
+        let mut hosted = system::WasmOptions {
+            disk: vm.root.as_deref(),
+            memory: memory.as_deref(),
+            cpus: cpus.as_deref(),
+            report: vm.report.as_deref(),
+            timeout: vm.timeout,
+            ..Default::default()
+        };
         if boot {
-            if qemu_options || app_options || reset || program.is_some() {
+            if qemu_options || reset || (vm.snap && persist.is_some()) {
+                return Err(io::Error::other("invalid options for Wasm boot"));
+            }
+            if program.is_some() && root.is_none() {
+                if persist.is_some() || vm.snap {
+                    return Err(io::Error::other(
+                        "persistent roots and snapshots require system boot",
+                    ));
+                }
+                let payload = Path::new(program.as_ref().unwrap());
+                let addresses = image::app::payload_network(payload)?;
+                let net_settings = (net || !vm.forwards.is_empty())
+                    .then(|| {
+                        app_network::user_network(addresses).map(|cfg| {
+                            app_network::forwards(cfg, &addresses[0].to_string(), &vm.forwards)
+                        })
+                    })
+                    .transpose()?;
+                hosted.network = net_settings.as_deref();
+                return hosted.run(artifacts, Some(payload));
+            }
+            if app_options {
                 return Err(io::Error::other(
-                    "usage: spore boot --wasm [--net] [--root EXT2]",
+                    "--data, --result and --boot-timeout require an app",
                 ));
             }
             let base = root
@@ -360,14 +400,11 @@ fn execute() -> io::Result<i32> {
             }
             let network = (net || !vm.forwards.is_empty())
                 .then(|| app_network::forwards("user,id=sporenet".into(), "", &vm.forwards));
-            return system::run_wasm(
-                artifacts,
-                None,
-                Some(base.as_os_str()),
-                network.as_deref(),
-                memory.as_deref(),
-                cpus.as_deref(),
-            );
+            hosted.disk = Some(base.as_os_str());
+            hosted.persist = persist.as_deref();
+            hosted.boot_image = program.as_deref();
+            hosted.network = network.as_deref();
+            return hosted.run(artifacts, None);
         }
         if qemu_options || tests || userland {
             return Err(io::Error::other(
@@ -424,14 +461,12 @@ fn execute() -> io::Result<i32> {
         if build {
             return Ok(0);
         }
-        return system::run_wasm(
-            artifacts,
-            Some(&payload),
-            vm.root.as_deref(),
-            network.as_deref(),
-            memory.as_deref(),
-            cpus.as_deref(),
-        );
+        runner::qemu::check_report(vm.report.as_deref(), &[Some(elf.as_os_str())])?;
+        hosted.network = network.as_deref();
+        return hosted.run(artifacts, Some(&payload));
+    }
+    if persist.is_some() {
+        return Err(io::Error::other("--persist applies to Wasm system boot"));
     }
     if net {
         return Err(io::Error::other("--net applies to Wasm guests"));

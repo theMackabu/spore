@@ -165,55 +165,95 @@ fn wasm_module(build: &Path) -> PathBuf {
         .join("spore_wasm.wasm")
 }
 
-fn wasm_command(
-    build: &Path,
-    payload: Option<&Path>,
-    disk: Option<&OsStr>,
-    network: Option<&str>,
-    memory: Option<&OsStr>,
-    cpus: Option<&OsStr>,
-) -> io::Result<Command> {
-    let web = build.join("wasm-web");
-    let module = web.join("spore_wasm.wasm");
-    if !module.is_file() {
-        return Err(io::Error::other(
-            "build the Wasm kernel with spore build --wasm",
-        ));
-    }
-    let input = payload
-        .map(Path::as_os_str)
-        .or(disk)
-        .ok_or_else(|| io::Error::other("missing Wasm boot input"))?;
-    let mut cmd = Command::new("node");
-    cmd.arg(web.join("cli.mjs"))
-        .arg(module)
-        .arg(if payload.is_some() { "run" } else { "boot" })
-        .arg(input)
-        .arg(memory.unwrap_or(OsStr::new("64M")))
-        .arg(cpus.unwrap_or(OsStr::new("1")))
-        .arg(if payload.is_some() {
-            disk.unwrap_or_default()
-        } else {
-            OsStr::new("")
-        });
-    if let Some(settings) = network {
-        cmd.arg(crate::qemu_default(crate::arch::Arch::Aarch64))
-            .arg(settings);
-    }
-    Ok(cmd)
+#[derive(Default)]
+pub struct WasmOptions<'a> {
+    pub disk: Option<&'a OsStr>,
+    pub network: Option<&'a str>,
+    pub memory: Option<&'a OsStr>,
+    pub cpus: Option<&'a OsStr>,
+    pub boot_image: Option<&'a OsStr>,
+    pub persist: Option<&'a OsStr>,
+    pub report: Option<&'a OsStr>,
+    pub timeout: u64,
 }
 
-pub fn run_wasm(
-    build: &Path,
-    payload: Option<&Path>,
-    disk: Option<&OsStr>,
-    network: Option<&str>,
-    memory: Option<&OsStr>,
-    cpus: Option<&OsStr>,
-) -> io::Result<i32> {
-    status(&mut wasm_command(
-        build, payload, disk, network, memory, cpus,
-    )?)
+impl WasmOptions<'_> {
+    fn command(&self, build: &Path, app: Option<&Path>) -> io::Result<Command> {
+        let web = build.join("wasm-web");
+        let module = web.join("spore_wasm.wasm");
+        if !module.is_file() {
+            return Err(io::Error::other(
+                "build the Wasm kernel with spore build --wasm",
+            ));
+        }
+        let input = app
+            .map(Path::as_os_str)
+            .or(self.persist)
+            .or(self.disk)
+            .ok_or_else(|| io::Error::other("missing Wasm boot input"))?;
+        let mut cmd = Command::new("node");
+        cmd.arg(web.join("cli.mjs"))
+            .arg(module)
+            .arg(if app.is_some() { "app" } else { "system" })
+            .arg(input);
+        for (key, value) in [
+            ("--disk", self.disk.filter(|_| app.is_some())),
+            ("--memory", self.memory),
+            ("--cpus", self.cpus),
+            ("--boot-image", self.boot_image),
+            ("--result", self.report),
+        ] {
+            if let Some(value) = value {
+                cmd.arg(key).arg(value);
+            }
+        }
+        if self.timeout != 0 {
+            cmd.arg("--boot-timeout").arg(self.timeout.to_string());
+        }
+        if self.persist.is_some() {
+            cmd.arg("--writable");
+        }
+        if let Some(settings) = self.network {
+            cmd.arg("--qemu")
+                .arg(crate::qemu_default(crate::arch::Arch::Aarch64))
+                .arg("--net")
+                .arg(settings);
+        }
+        Ok(cmd)
+    }
+
+    pub fn run(&self, build: &Path, app: Option<&Path>) -> io::Result<i32> {
+        qemu::check_report(
+            self.report,
+            &[
+                app.map(Path::as_os_str),
+                self.disk,
+                self.persist,
+                self.boot_image,
+                Some(build.join("wasm-web/spore_wasm.wasm").as_os_str()),
+            ],
+        )?;
+        if let Some(persist) = self.persist {
+            let base = self
+                .disk
+                .ok_or_else(|| io::Error::other("missing base disk"))?;
+            qemu::check_report(Some(persist), &[Some(base), self.boot_image])?;
+            seed_disk(Path::new(base), Path::new(persist))?;
+        }
+        let writer = self
+            .persist
+            .or(self.disk.filter(|_| app.is_some()))
+            .map(|path| {
+                let file = fs::OpenOptions::new().read(true).write(true).open(path)?;
+                file.try_lock()
+                    .map_err(|e| io::Error::other(format!("Wasm disk busy: {e}")))?;
+                Ok::<_, io::Error>(file)
+            })
+            .transpose()?;
+        let result = status(&mut self.command(build, app)?);
+        drop(writer);
+        result
+    }
 }
 
 pub fn userland() -> io::Result<&'static Path> {
@@ -404,14 +444,12 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
             } else {
                 "root.ext2"
             });
-            let cmd = wasm_command(
-                build,
-                None,
-                Some(disk.as_os_str()),
-                Some("user,id=sporenet"),
-                None,
-                None,
-            )?;
+            let cmd = WasmOptions {
+                disk: Some(disk.as_os_str()),
+                network: Some("user,id=sporenet"),
+                ..Default::default()
+            }
+            .command(build, None)?;
             crate::runner::fixtures::start(mode)?;
             let argv = std::iter::once(cmd.get_program())
                 .chain(cmd.get_args())

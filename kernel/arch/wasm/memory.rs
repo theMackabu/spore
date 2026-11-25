@@ -1,5 +1,6 @@
-// Translations are valid until a syscall can change the guest's address space.
 unsafe extern "C" {
+    static wasm_tlb_generation: u64;
+    fn wasm_lookup_write(page: u64) -> *mut u8;
     fn wasm_translate(page: u64, access: u32) -> *mut u8;
 }
 
@@ -19,6 +20,7 @@ struct Translation {
 }
 
 pub struct Memory {
+    generation: u64,
     translations: [Option<Translation>; 64],
 }
 
@@ -26,6 +28,7 @@ impl Memory {
     pub fn new() -> Self {
         Self {
             translations: [None; 64],
+            generation: 0,
         }
     }
     pub fn invalidate(&mut self) {
@@ -34,15 +37,20 @@ impl Memory {
 
     fn pointer(&mut self, addr: u64, access: Access) -> Result<*mut u8, super::cpu::Fault> {
         let page = addr >> 12;
-        let slot = &mut self.translations[page as usize % 64];
-        let physical = match *slot {
+        let slot = page as usize % self.translations.len();
+        let physical = match self.translations[slot] {
             Some(t) if t.page == page && t.access == access => t.physical,
             _ => {
                 let physical = unsafe { wasm_translate(page << 12, access as u32) };
+                let generation = unsafe { (&raw const wasm_tlb_generation).read_volatile() };
+                if self.generation != generation {
+                    self.invalidate();
+                    self.generation = generation;
+                }
                 if physical.is_null() {
                     return Err(super::cpu::Fault::Memory(access, addr));
                 }
-                *slot = Some(Translation {
+                self.translations[slot] = Some(Translation {
                     page,
                     access,
                     physical,
@@ -91,9 +99,17 @@ impl Memory {
     pub fn store(&mut self, addr: u64, size: usize, value: u128) -> Result<(), super::cpu::Fault> {
         let bytes = value.to_le_bytes();
         let first = size.min(4096 - (addr as usize & 4095));
-        let p = self.pointer(addr, Access::Write)?;
+        let mut p = self.pointer(addr, Access::Write)?;
         if first < size {
+            let generation = self.generation;
             let next = self.pointer(addr.wrapping_add(first as u64), Access::Write)?;
+            if self.generation != generation {
+                let page = unsafe { wasm_lookup_write(addr & !4095) };
+                if page.is_null() {
+                    return Err(super::cpu::Fault::Memory(Access::Write, addr));
+                }
+                p = unsafe { page.add(addr as usize & 4095) };
+            }
             unsafe { std::ptr::copy_nonoverlapping(bytes[first..].as_ptr(), next, size - first) };
         }
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, first) };

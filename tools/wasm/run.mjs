@@ -1,3 +1,10 @@
+export class GuestBootError extends Error {
+  constructor(code) {
+    super(`guest boot error ${code}`);
+    this.code = code;
+  }
+}
+
 export class GuestSignal extends Error {
   constructor(signal, detail) {
     super(`guest signal ${signal}${detail ? " (" + detail + ")" : ""}`);
@@ -5,10 +12,22 @@ export class GuestSignal extends Error {
   }
 }
 
-export async function run(
-  kernel,
+const reboot = Symbol("reboot");
+
+export async function run(kernel, elf, options = {}) {
+  const module = kernel instanceof WebAssembly.Module ? kernel : await WebAssembly.compile(kernel);
+  for (;;) {
+    options.signal?.throwIfAborted();
+    const result = await boot(module, elf, options);
+    if (result !== reboot) return result;
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+}
+
+async function boot(
+  module,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, writeDisk, flushDisk, readStdin, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, readBoot, writeDisk, flushDisk, readStdin, readByte, winsize, network, write, kernelLog, onException, onEntry, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
 ) {
   if (!Number.isInteger(memoryMiB) || memoryMiB < 16 || memoryMiB >= 2048) {
     throw new RangeError("Wasm guest RAM must be 16 through 2047 MiB");
@@ -37,7 +56,6 @@ export async function run(
   const bytes = (ptr, len) => new Uint8Array(guest.memory.buffer, ptr >>> 0, len >>> 0);
   const stop = {};
   let status;
-  const module = kernel instanceof WebAssembly.Module ? kernel : await WebAssembly.compile(kernel);
   guest = (
     await WebAssembly.instantiate(module, {
       spore: {
@@ -85,9 +103,14 @@ export async function run(
         disk_write(offset, ptr, len) {
           return writeDisk?.(offset, bytes(ptr, len)) === len ? 1 : 0;
         },
+        boot_read(offset, ptr, len) {
+          return readBoot?.(offset, bytes(ptr, len)) === len ? 1 : 0;
+        },
+        entry() { onEntry?.(); },
         disk_read(offset, ptr, len) {
           return readDisk?.(offset, bytes(ptr, len)) === len ? 1 : 0;
         },
+        kernel_log(ptr,len) { kernelLog?.(bytes(ptr,len).slice()); },
         write(fd, ptr, len) {
           write?.(fd, bytes(ptr, len).slice());
         },
@@ -98,11 +121,12 @@ export async function run(
           crypto.getRandomValues(bytes(ptr, len));
         },
         finish(kind, code, pc, ptr, len) {
+          if (kind === 82 && system) { status = reboot; throw stop; }
           if (kind === 83) {
             const detail = len ? `${decoder.decode(bytes(ptr, len))} at PC 0x${pc.toString(16)}` : "";
             throw new GuestSignal(code, detail);
           }
-          if (kind !== 69) throw new Error(`guest boot error ${code}`);
+          if (kind !== 69) throw new GuestBootError(code);
           status = code & 255;
           throw stop;
         },
@@ -117,7 +141,7 @@ export async function run(
     bytes(ptr, elf.length).set(elf);
     bytes(ptr + elf.length, argv.length).set(argv);
   }
-  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0) | (jit ? 16 : 0) | (readStdin ? 32 : 0);
+  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0) | (jit ? 16 : 0) | (readStdin ? 32 : 0) | (kernelLog ? 64 : 0);
   try {
     if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)) {
       throw new Error("cannot initialize guest memory or executable");

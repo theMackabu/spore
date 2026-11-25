@@ -12,6 +12,7 @@
 #include "drivers/virtio_console.h"
 #include "drivers/virtio_net.h"
 #include "fs/ext2.h"
+#include "fs/procfs_format.h"
 #include "fs/ramfs.h"
 #include "init/app.h"
 #include "init/boot.h"
@@ -43,7 +44,10 @@ HOST("disk_write") int host_disk_write(uint64_t, const void *, size_t);
 HOST("exception") void host_exception(uint64_t, const char *, size_t);
 HOST("winsize") uint32_t host_winsize(void);
 HOST("serial_read") int host_serial_read(void);
+HOST("boot_read") int host_boot_read(uint64_t, void *, size_t);
+HOST("entry") void host_entry(void);
 HOST("disk_read") int host_disk_read(uint64_t, void *, size_t);
+HOST("kernel_log") void host_kernel_log(const void *, size_t);
 HOST("write") void host_write(unsigned, const void *, size_t);
 HOST("finish") [[noreturn]] void host_finish(int, unsigned, uint64_t, const char *, size_t);
 
@@ -131,15 +135,19 @@ void smp_notify(void) {}
 void aarch64_publish_table(uint64_t *slot, uint64_t entry) {
   *slot = entry;
 }
+uint64_t wasm_tlb_generation;
 void aarch64_tlb_flush_va(uint64_t va) {
+  ++wasm_tlb_generation;
   (void)va;
 }
 void aarch64_tlb_flush_pages(uint64_t va, uint64_t mask) {
+  ++wasm_tlb_generation;
   (void)va;
   (void)mask;
 }
-void aarch64_tlb_flush_all(void) {}
+void aarch64_tlb_flush_all(void) { ++wasm_tlb_generation; }
 void vmm_install_user(const struct user_address_space *as) {
+  ++wasm_tlb_generation;
   (void)as;
 }
 
@@ -150,12 +158,10 @@ void arch_restore_context(const struct arch_thread_context *in) {
   *active_context = *in;
 }
 
-bool virtio_console_ready(void) {
-  return false;
-}
+static bool log_console;
+bool virtio_console_ready(void) { return log_console; }
 void virtio_console_write(const uint8_t *p, size_t n) {
-  (void)p;
-  (void)n;
+  if (log_console) { host_kernel_log(p, n); }
 }
 static bool has_net;
 static struct virtio_net_stats net_stats;
@@ -186,10 +192,7 @@ bool virtio_blk_write(uint64_t off, const void *p, uint32_t n) {
   return host_disk_write(off, p, n);
 }
 bool virtio_blk_read_boot(uint64_t off, void *p, uint32_t n) {
-  (void)off;
-  (void)p;
-  (void)n;
-  return false;
+  return host_boot_read(off, p, n);
 }
 static bool disk_read(void *ctx, uint64_t off, void *p, uint32_t n) {
   (void)ctx;
@@ -230,11 +233,14 @@ void arch_poweroff(void) {
   app_finish(APP_EXIT, 0);
 }
 void arch_reboot(void) {
-  arch_poweroff();
+  if (!wasm_shutdown_storage()) { boot_fail(BOOT_FLUSH_FAILED, "cannot flush before reboot"); }
+  wasm_flush();
+  host_finish('R', 0, 0, NULL, 0);
 }
 
 struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args, size_t bytes, unsigned devices,
                              uint64_t epoch, void *ram, size_t ram_bytes, unsigned count) {
+  log_console = (devices & 64) != 0;
   dimensions = host_winsize();
   cpu_count = count;
   for (unsigned i = 1; i < count; ++i) { cpus[i].idle = true; }
@@ -306,6 +312,14 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   return &cpus[0].thread->tf;
 }
 
+void *wasm_lookup_write(uint64_t page) {
+  struct user_address_space *as = cell_current_as();
+  if (!vmm_user_range_accessible(as, page, 1, VMM_ACCESS_WRITE)) { return NULL; }
+  uint64_t pa = vmm_user_to_phys(as, page);
+  return pa ? pmm_phys_to_virt(pa) : NULL;
+}
+
+static bool entered;
 void *wasm_translate(uint64_t page, enum vmm_access access) {
   struct user_address_space *as = cell_current_as();
   if (page >= USER_VA_LIMIT || !cell_domain_ensure_user_range(cpus[cpu_id].thread->domain, page, 1, access)) { return NULL; }
@@ -313,6 +327,7 @@ void *wasm_translate(uint64_t page, enum vmm_access access) {
     if (access != VMM_ACCESS_WRITE || !cell_handle_write_fault(page)) { return NULL; }
   }
   uint64_t pa = vmm_user_to_phys(as, page);
+  if (pa && access == VMM_ACCESS_EXEC && !entered) { entered = true; host_entry(); }
   return pa ? pmm_phys_to_virt(pa) : NULL;
 }
 
@@ -369,10 +384,12 @@ bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsig
 }
 
 size_t proc_cpuinfo_text(char *out, size_t cap) {
-  const char description[] = "processor\t: 0\nmodel name\t: Spore ARM64 interpreter\n";
-  if (!cap) { return 0; }
-  size_t count = cap < sizeof(description) ? cap - 1 : sizeof(description) - 1;
-  kmemcpy(out, description, count);
-  out[count] = 0;
-  return count;
+  size_t len = 0;
+  for (uint32_t cpu = 0; cpu < cpu_count; ++cpu) {
+    proc_append_str(out, cap, &len, "processor\t: ");
+    proc_append_u64(out, cap, &len, cpu);
+    proc_append_str(out, cap, &len, "\nmodel name\t: Spore ARM64 virtual CPU\nCPU architecture: 8\n"
+                    "Features\t: fp asimd aes pmull sha1 sha2 crc32 atomics\n\n");
+  }
+  return len;
 }

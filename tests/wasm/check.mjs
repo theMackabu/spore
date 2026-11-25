@@ -120,6 +120,15 @@ try {
     for (let i = 0; i < 2; i++) {
       assert.equal(exec(spore, ["boot", "--wasm", "--root", systemDisk], 42).toString().trim(), "snapshot");
     }
+    const persistent = path.join(dir,"persistent.ext2");
+    exec(spore, ["boot","--wasm","--root",systemDisk,"--persist",persistent],42);
+    exec(spore, ["boot","--wasm","--root",systemDisk,"--persist",persistent],2);
+    exec(spore, ["boot","--wasm","--root",systemDisk],42);
+    const esp = path.join(dir,"boot.img"), rebootDisk = path.join(dir,"reboot.ext2");
+    fs.writeFileSync(esp,Buffer.concat([Buffer.from("ESP!"),Buffer.alloc(508)]));
+    fs.writeFileSync(path.join(tree,"reboot-test"),"");
+    exec("mke2fs", ["-q","-t","ext2","-b","4096","-O","none,filetype","-d",tree,rebootDisk,"2048"]);
+    exec(spore, ["boot","--wasm",esp,"--root",rebootDisk],42);
     const dynamic = path.join(dir, "read-dynamic");
     exec("aarch64-unknown-linux-musl-gcc", ["-O2", path.join(sources, "read.c"), "-o", dynamic]);
     const assets = ["--cwd", "/work", "--file", path.join(tree, "hello.txt") + "=/work/message"];
@@ -128,6 +137,14 @@ try {
     }
     const payload = path.join(dir, "read.spore");
     exec(spore, ["build", "--wasm", dynamic, "-o", payload, ...assets, "--", "message"]);
+    const report = path.join(dir, "result.json");
+    assert.deepEqual(exec(spore, ["boot","--wasm",payload,"--result",report],42), bytes);
+    const result = JSON.parse(fs.readFileSync(report));
+    assert.equal(result.kind,"exit");
+    assert.equal(result.value,42);
+    assert.ok(result.entry_us > 0);
+    exec(spore, ["run","--wasm",cpu,"--result",report,"--","protect"],139);
+    assert.equal(JSON.parse(fs.readFileSync(report)).kind,"signal");
     const chunks = [];
     assert.equal(
       await run(kernel, fs.readFileSync(payload), { write: (_, data) => chunks.push(data) }),
