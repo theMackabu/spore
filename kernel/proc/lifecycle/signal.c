@@ -42,6 +42,7 @@ enum {
   NSIG = 65,
 };
 
+static const uint64_t SA_NODEFER = 0x40000000ull;
 static const uint64_t SA_RESETHAND = 0x80000000ull;
 static const uint64_t SA_RESTART = 0x10000000ull;
 
@@ -154,7 +155,7 @@ static bool deliver_signal(struct thread *thread, struct siginfo_fields64 info) 
     terminate_domain_by_signal(domain, SIGSEGV);
     return true;
   }
-  thread->signal_mask = cell_sanitize_signal_mask(handler_mask | action->mask | signal_bit(signal));
+  thread->signal_mask = cell_sanitize_signal_mask(handler_mask | action->mask | ((action->flags & SA_NODEFER) ? 0 : signal_bit(signal)));
   if ((action->flags & SA_RESETHAND) != 0) { action->handler = 0; }
   return true;
 }
@@ -389,6 +390,12 @@ bool cell_signal_current(int signal, struct trap_frame *frame) {
 bool cell_signal_current_fault(int signal, struct trap_frame *frame, uint64_t fault_addr, int sig_code) {
   struct thread *thread = cell_current_thread_internal();
   if (thread == NULL || frame == NULL) { return false; }
+  if (sig_code > 0 && thread->domain && signal > 0 && signal < (int)NSIG &&
+      (signal_is_blocked(thread, signal) || thread->domain->signal_actions[signal].handler == 1)) {
+    terminate_domain_by_signal(thread->domain, signal);
+    cell_schedule(frame);
+    return true;
+  }
   bool ignored = thread->domain != NULL && signal > 0 && signal < (int)NSIG &&
                  thread->domain->signal_actions[signal].handler == 1 && signal != SIGKILL;
   thread->tf = *frame;
