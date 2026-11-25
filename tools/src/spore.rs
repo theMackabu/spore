@@ -280,6 +280,10 @@ fn execute() -> io::Result<i32> {
                 ));
                 continue;
             }
+            Some("--memory") if !build => {
+                memory = Some(value);
+                continue;
+            }
             Some("--root") if boot => {
                 root = Some(value);
                 continue;
@@ -292,7 +296,6 @@ fn execute() -> io::Result<i32> {
         }
         qemu_options = true;
         match key.to_str() {
-            Some("--memory") if !build => memory = Some(value),
             Some("--accel") if !build => vm.accel = Some(value),
             Some("--cpu") if !build => vm.cpu = Some(value),
             Some("--vars") if !build => vm.vars = Some(value),
@@ -329,7 +332,13 @@ fn execute() -> io::Result<i32> {
             }
             let network = (net || !vm.forwards.is_empty())
                 .then(|| app_network::forwards("user,id=sporenet".into(), "", &vm.forwards));
-            return system::run_wasm(artifacts, None, Some(base.as_os_str()), network.as_deref());
+            return system::run_wasm(
+                artifacts,
+                None,
+                Some(base.as_os_str()),
+                network.as_deref(),
+                memory.as_deref(),
+            );
         }
         if qemu_options || tests || userland {
             return Err(io::Error::other(
@@ -391,6 +400,7 @@ fn execute() -> io::Result<i32> {
             Some(&payload),
             vm.root.as_deref(),
             network.as_deref(),
+            memory.as_deref(),
         );
     }
     if net {

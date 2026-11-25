@@ -65,7 +65,7 @@ To boot a system, select only the root disk, click Run and send commands through
 
 ## Current scope
 
-One CPU runs guest threads with 64 MiB of guest RAM. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The interpreter handles a subset
+One CPU runs guest threads with 64 MiB of guest RAM by default. Set `--memory 256M` (or Guest RAM in the browser) for larger workloads. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The interpreter handles a subset
 of A64 integer, branch, load/store, exclusive, scalar floating-point and SIMD instructions. It caches instruction
 classes and address translations. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.

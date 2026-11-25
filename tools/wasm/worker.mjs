@@ -3,7 +3,7 @@ import { SerialInput } from "./input.mjs";
 import { snapshotDisk } from "./disk.mjs";
 
 const serial = new SerialInput();
-onmessage = async ({ data: { elf, disk, args, input } }) => {
+onmessage = async ({ data: { elf, disk, args, input, memoryMiB } }) => {
   if (input !== undefined) {
     serial.push(new TextEncoder().encode(input));
     return;
@@ -25,6 +25,7 @@ onmessage = async ({ data: { elf, disk, args, input } }) => {
     }
     const status = await run(await response.arrayBuffer(), elf ? new Uint8Array(await elf.arrayBuffer()) : null, {
       ...media,
+      memoryMiB,
       argv0: elf?.name,
       args,
       readByte: elf ? undefined : serial.readByte,

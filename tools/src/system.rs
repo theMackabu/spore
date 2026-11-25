@@ -96,6 +96,7 @@ fn wasm_command(
     payload: Option<&Path>,
     disk: Option<&OsStr>,
     network: Option<&str>,
+    memory: Option<&OsStr>,
 ) -> io::Result<Command> {
     let module = wasm_module(build);
     if !module.is_file() {
@@ -103,16 +104,22 @@ fn wasm_command(
             "build the Wasm kernel with spore build --wasm",
         ));
     }
+    let input = payload
+        .map(Path::as_os_str)
+        .or(disk)
+        .ok_or_else(|| io::Error::other("missing Wasm boot input"))?;
     let mut cmd = Command::new("node");
     cmd.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm/cli.mjs"))
         .arg(module)
         .arg(if payload.is_some() { "run" } else { "boot" })
-        .args(payload)
-        .args(disk);
+        .arg(input)
+        .arg(memory.unwrap_or(OsStr::new("64M")))
+        .arg(if payload.is_some() {
+            disk.unwrap_or_default()
+        } else {
+            OsStr::new("")
+        });
     if let Some(settings) = network {
-        if payload.is_none() || disk.is_none() {
-            cmd.arg("");
-        }
         cmd.arg(crate::qemu_default(crate::arch::Arch::Aarch64))
             .arg(settings);
     }
@@ -124,8 +131,9 @@ pub fn run_wasm(
     payload: Option<&Path>,
     disk: Option<&OsStr>,
     network: Option<&str>,
+    memory: Option<&OsStr>,
 ) -> io::Result<i32> {
-    status(&mut wasm_command(build, payload, disk, network)?)
+    status(&mut wasm_command(build, payload, disk, network, memory)?)
 }
 
 pub fn userland() -> io::Result<&'static Path> {
@@ -315,6 +323,7 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                 None,
                 Some(disk.as_os_str()),
                 Some("user,id=sporenet"),
+                None,
             )?;
             crate::runner::fixtures::start("integration")?;
             let argv = std::iter::once(cmd.get_program())

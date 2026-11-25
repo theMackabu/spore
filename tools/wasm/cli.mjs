@@ -4,7 +4,7 @@ import { userNetwork } from "./net.mjs";
 import { SerialInput } from "./input.mjs";
 import { GuestSignal, run } from "./run.mjs";
 
-const [kernel, mode, path, data, qemu, settings] = process.argv.slice(2);
+const [kernel, mode, path, ram, data, qemu, settings] = process.argv.slice(2);
 const system = mode === "boot";
 const diskPath = system ? path : data || undefined;
 const terminal = process.stdin.isTTY;
@@ -23,6 +23,9 @@ function receive(bytes) {
   else serial.push(bytes);
 }
 try {
+  const match = /^(\d+)([MG]?)$/i.exec(ram);
+  if (!match) throw new Error("expected guest RAM in MiB or GiB (e.g. 128M)");
+  const memoryMiB = Number(match[1]) * (match[2].toUpperCase() === "G" ? 1024 : 1);
   if (settings) network = await userNetwork(qemu, settings, stop);
   let media;
   if (diskPath !== undefined) {
@@ -36,6 +39,7 @@ try {
   }
   process.exitCode = await run(fs.readFileSync(kernel), system ? null : fs.readFileSync(path), {
     ...media,
+    memoryMiB,
     network,
     onException: process.env.SPORE_WASM_TRACE ? (pc, msg) => console.error(`[wasm] ${msg} at PC 0x${pc.toString(16)}`) : undefined,
     readByte: terminal || system ? serial.readByte : undefined,

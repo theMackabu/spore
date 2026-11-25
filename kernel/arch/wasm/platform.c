@@ -42,7 +42,6 @@ HOST("disk_read") int host_disk_read(uint64_t, void *, size_t);
 HOST("write") void host_write(unsigned, const void *, size_t);
 HOST("finish") [[noreturn]] void host_finish(int, unsigned, uint64_t, const char *, size_t);
 
-static alignas(4096) uint8_t ram[64 * 1024 * 1024];
 static struct thread *current;
 static uint8_t output[4096];
 static unsigned channel = 1, buffered;
@@ -232,14 +231,14 @@ void arch_reboot(void) {
 }
 
 struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args, size_t bytes, unsigned devices,
-                             uint64_t epoch) {
+                             uint64_t epoch, void *ram, size_t ram_bytes) {
   const uint64_t hhdm = (uintptr_t)ram;
   struct spore_boot_module payload = {.phys_addr = (uint64_t)(uintptr_t)image - hhdm, .size = size, .path = "/spore.app"};
   struct spore_boot_info boot = {.hhdm_offset = hhdm, .modules = size ? &payload : NULL, .module_count = size ? 1 : 0};
   struct boot_profile profile = {0};
   boot_select_profile(&boot, &profile);
   const struct spore_memmap_entry usable = {
-    .base = 0x100000, .length = sizeof(ram) - 0x100000, .type = SPORE_MEMMAP_USABLE};
+    .base = 0x100000, .length = ram_bytes - 0x100000, .type = SPORE_MEMMAP_USABLE};
   pmm_init(hhdm, &usable, 1);
   klog_handoff();
   syscall_set_boot_time(epoch);

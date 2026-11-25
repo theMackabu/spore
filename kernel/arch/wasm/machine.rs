@@ -1,4 +1,5 @@
 use super::cpu::{Cpu, Frame};
+use std::alloc::{Layout, alloc_zeroed};
 use std::cell::RefCell;
 
 unsafe extern "C" {
@@ -9,6 +10,8 @@ unsafe extern "C" {
         len: usize,
         devices: u32,
         epoch: u64,
+        ram: *mut u8,
+        ram_bytes: usize,
     ) -> *const Frame;
 }
 thread_local! {
@@ -18,7 +21,7 @@ thread_local! {
 #[unsafe(no_mangle)]
 pub extern "C" fn stage(size: usize) -> *mut u8 {
     INPUT.with_borrow_mut(|image| {
-        if size == 0 || size > 128 << 20 || !image.is_empty() {
+        if size == 0 || !image.is_empty() || image.try_reserve_exact(size).is_err() {
             return std::ptr::null_mut();
         }
         image.resize(size, 0);
@@ -26,14 +29,23 @@ pub extern "C" fn stage(size: usize) -> *mut u8 {
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn start(size: usize, devices: u32, epoch: u64) -> bool {
+pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32) -> bool {
     CPU.with_borrow_mut(|cpu| {
         INPUT.with_borrow(|image| {
             if (size == 0 && (devices & 1 == 0 || !image.is_empty()))
                 || (size != 0 && size < 64)
                 || size > image.len()
+                || !(16..2048).contains(&ram_mib)
                 || cpu.is_some()
             {
+                return false;
+            }
+            let ram_bytes = (ram_mib as usize) << 20;
+            let Ok(layout) = Layout::from_size_align(ram_bytes, 4096) else {
+                return false;
+            };
+            let ram = unsafe { alloc_zeroed(layout) };
+            if ram.is_null() {
                 return false;
             }
             let first = unsafe {
@@ -44,6 +56,8 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64) -> bool {
                     image.len() - size,
                     devices,
                     epoch,
+                    ram,
+                    ram_bytes,
                 )
             };
             *cpu = Some(Cpu::new(unsafe { *first }));
