@@ -1,7 +1,7 @@
 import { persistentDisk } from "./persistent.mjs";
 import { snapshotDisk } from "./disk.mjs";
 
-export async function openDisk(source, persist) {
+export async function openDisk(source, persist, options) {
   if (source instanceof File) {
     const reader = new FileReaderSync();
     const read = (offset, dest) => {
@@ -10,7 +10,7 @@ export async function openDisk(source, persist) {
       dest.set(new Uint8Array(bytes));
       return bytes.byteLength;
     };
-    return persist ? persistentDisk(source, read) : snapshotDisk(source.size, read);
+    return persist ? persistentDisk(source, read, options) : snapshotDisk(source.size, read);
   }
   const info = await fetch(source, { method: "HEAD" });
   if (!info.ok) throw new Error(`Cannot open root disk (${info.status}). Build it with spore build --userland.`);
@@ -67,6 +67,6 @@ export async function openDisk(source, persist) {
     return dest.length;
   }
   return persist
-    ? persistentDisk({ name: info.url, size, lastModified: info.headers.get("Last-Modified") }, read)
+    ? persistentDisk({ name: info.url, size, lastModified: info.headers.get("Last-Modified") }, read, options)
     : snapshotDisk(size, read);
 }

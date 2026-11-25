@@ -53,7 +53,7 @@ In another terminal, `curl http://127.0.0.1:8080/` returns `wasm`. Request `/qui
 
 Open the printed URL. The guest boots from `target/release/root.ext2` with 1 GiB of RAM. Use `?memory=512` to boot with 512 MiB. The server builds missing boot artifacts on first use. It briefly boots a disposable snapshot to collect startup disk pages and serves them in one compressed response. Later disk reads fetch missing ranges on demand.
 
-Reloading reboots the guest with your saved disk changes. Use the same browser profile, address, port and base image to reopen the disk. Files in your home directory persist. The guest recreates `/tmp` at boot. Open `/?snapshot` for a disposable session starting from the base image. Drop a local ELF, packaged app or root disk onto the terminal to start it.
+Reloading reboots the guest with your saved disk changes. Use the same browser profile, address, port and base image to reopen the disk. One tab can write to a saved disk at a time. A waiting tab boots automatically when the other tab closes. Files in your home directory persist. The guest recreates `/tmp` at boot. Open `/?snapshot` for a disposable session starting from the base image. Drop a local ELF, packaged app or root disk onto the terminal to start it.
 
 The DevTools console shows guest configuration, kernel messages and CPU exceptions with the guest program counter. Run `console.table(spore.stats())` in the page console for free guest memory in KiB and CPU counters refreshed about once a second. The instruction count and rate cover completed execution slices across all guest CPUs. JIT counters report compiled traces and guest instructions executed by those traces.
 

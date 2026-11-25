@@ -3,16 +3,35 @@ import { snapshotDisk } from "./disk.mjs";
 const PAGE = 4096;
 async function openFile(dir, name) {
   const file = await dir.getFileHandle(name, { create: true });
-  try {
-    return await file.createSyncAccessHandle();
-  } catch (error) {
-    if (error.name === "NoModificationAllowedError")
-      throw new Error("Disk in use. Close the other Spore tab or open this one with ?snapshot.");
-    throw error;
+  return file.createSyncAccessHandle();
+}
+
+async function openDiskFiles(name, { signal, onWaiting } = {}) {
+  let delay = 50;
+  let notified = false;
+  for (;;) {
+    signal?.throwIfAborted();
+    let index;
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle(name, { create: true });
+      index = await openFile(dir, "index");
+      const pages = await openFile(dir, "pages");
+      return { index, pages };
+    } catch (error) {
+      index?.close();
+      if (error.name !== "NoModificationAllowedError" && error.name !== "NotFoundError") throw error;
+      if (!notified && delay >= 400) {
+        onWaiting?.(error);
+        notified = true;
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, 1000);
+    }
   }
 }
 
-export async function persistentDisk(file, read) {
+export async function persistentDisk(file, read, options) {
   const header = new Uint8Array(Math.min(65536, file.size));
   if (read(0n, header) !== header.length) throw new Error("Cannot identify the root disk");
   const identity = new TextEncoder().encode(JSON.stringify([file.name, file.size, file.lastModified]));
@@ -21,12 +40,9 @@ export async function persistentDisk(file, read) {
   bytes.set(header, identity.length);
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   const key = Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("");
-  const root = await navigator.storage.getDirectory();
-  const dir = await root.getDirectoryHandle("spore-" + key, { create: true });
-  const index = await openFile(dir, "index");
-  let pages;
+  const { index, pages } = await openDiskFiles("spore-" + key, options);
   try {
-    pages = await openFile(dir, "pages");
+    options?.signal?.throwIfAborted();
     const records = new Map();
     let dirty = false;
     const entries = Math.floor(index.getSize() / 8);
@@ -87,8 +103,11 @@ export async function persistentDisk(file, read) {
       },
     };
   } catch (e) {
-    pages?.close();
-    index.close();
+    try {
+      pages.close();
+    } finally {
+      index.close();
+    }
     throw e;
   }
 }

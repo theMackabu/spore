@@ -53,8 +53,10 @@
       worker.onmessage = ({ data }) => {
         if (data.bytes) terminal.write(data.bytes);
         else if (data.stats) stats = data.stats;
+        else if (data.notice) terminal.writeln(data.notice);
         else {
-          console.info("[spore]", data.status, stats);
+          if (stats) console.info("[spore]", data.status, stats);
+          else console.info("[spore]", data.status);
           finish(data.status);
         }
       };

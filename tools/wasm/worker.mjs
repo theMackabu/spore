@@ -79,7 +79,13 @@ onmessage = async ({
   try {
     const response = await fetch("./spore_wasm.wasm");
     if (!response.ok) throw new Error("Build the module with spore build --wasm first.");
-    if (disk) media = await openDisk(disk, persist);
+    if (disk) media = await openDisk(disk, persist, {
+      signal: controller.signal,
+      onWaiting(error) {
+        console.warn("[spore] Retrying saved disk access", error.name, error.message);
+        postMessage({ notice: "Waiting for browser storage to open the saved disk. Retrying automatically." });
+      },
+    });
     let elf = null;
     if (app instanceof File) {
       elf = new Uint8Array(await app.arrayBuffer());
