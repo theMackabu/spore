@@ -144,10 +144,17 @@
       ]
     },
     {
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/aarch64/dash-0.5.12-r3.apk",
-      "sha256": "e7103e4daacccabf2372f67e2a0832de07e47f20aac0dcda88356b9d566ef370",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/bash-5.3.3-r1.apk",
+      "sha256": "5557dc5d3dbf3bb3e64f7aad4cfe535a6bffe4c2c13b81d527ef25dd6c438652",
       "files": [
-        "usr/bin/dash"
+        "bin/bash"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/readline-8.3.1-r0.apk",
+      "sha256": "70d288a6c3d8daf19b10fb220120d2ebd6f154011c96ca5bc84923b658cb21f7",
+      "files": [
+        "usr/lib/libreadline.so.8.3"
       ]
     },
     {

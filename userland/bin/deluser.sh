@@ -1,4 +1,4 @@
-#!/bin/dash
+#!/bin/sh
 if [ "$#" -ne 1 ]; then
   echo 'usage: deluser NAME' >&2
   exit 2

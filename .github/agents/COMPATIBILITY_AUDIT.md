@@ -13,7 +13,7 @@ misbehaves.
 | curl / git remote helpers / spm fetchers | DNS, TCP, TLS, file-backed executable faults, socket options | Runtime paths are supported; TCP performance remains a separate tuning goal. |
 | Python package scripts | shebang exec, dynamic loader, `faccessat`, path opens | Supported by current syscall/file surface; package scripts remain useful regressions. |
 | nano / vim / htop | termios, window-size ioctls, `/proc`, raw/canonical TTY | Supported for editor/top usage; unsupported ioctl counters catch optional probes. |
-| dash / make / compiler drivers | fork/exec/wait, process groups, scripts, `posix_spawn`-style children | Supported by current process model; compiler parallelism is memory-pressure sensitive. |
+| Bash / make / compiler drivers | fork/exec/wait, process groups, scripts, `posix_spawn`-style children | Supported by current process model; compiler parallelism is memory-pressure sensitive. |
 | Dropbear / OpenSSH client | DNS, TCP, tty raw mode, window-size ioctl, CSPRNG | Client path supported; server/pty-only ioctls are not promoted without need. |
 | nnn-style file managers | inotify startup probes | Minimal inotify fd/watch ABI exists; event delivery is not implemented yet. |
 

@@ -3,7 +3,7 @@
 The console service starts `/bin/msh` as `spore`. At startup msh reads `/etc/profile`,
 changes to the home directory, loads history, then reads `~/.profile` and `~/.mshrc`
 when present. Use `msh -c 'command'` to evaluate a line or `msh file` to run a script.
-The image also provides dash as `/bin/sh`. [Shell entry](../../userland/bin/msh/main.c) · [Console unit](../../userland/etc/mycelium/console.service)
+The image provides Bash at `/bin/bash` and as `/bin/sh`. [Shell entry](../../userland/bin/msh/main.c) · [Console unit](../../userland/etc/mycelium/console.service)
 
 The lexer and parser turn input into commands for the evaluator. For a foreground job,
 the shell assigns the child a process group and hands it the terminal. When the job ends,

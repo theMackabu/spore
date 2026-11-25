@@ -53,8 +53,8 @@ symlink libproc2.so.1.0.1 /lib/libproc2.so.1
 userland/prebuilt/libmagic.so.1.0.0 /lib/libmagic.so.1.0.0
 symlink libmagic.so.1.0.0 /lib/libmagic.so.1
 userland/bin/msh/msh /bin/msh
-userland/prebuilt/dash /bin/dash
-symlink dash /bin/sh
+userland/prebuilt/bash /bin/bash
+symlink bash /bin/sh
 
 userland/programs/shutdown /bin/shutdown
 userland/programs/reboot /bin/reboot
@@ -261,6 +261,8 @@ userland/prebuilt/libjq.so.1.0.4 /lib/libjq.so.1.0.4
 symlink libjq.so.1.0.4 /lib/libjq.so.1
 userland/prebuilt/libonig.so.5.5.0 /lib/libonig.so.5.5.0
 symlink libonig.so.5.5.0 /lib/libonig.so.5
+userland/prebuilt/libreadline.so.8.3 /lib/libreadline.so.8.3
+symlink libreadline.so.8.3 /lib/libreadline.so.8
 userland/prebuilt/libncursesw.so.6.5 /lib/libncursesw.so.6.5
 symlink libncursesw.so.6.5 /lib/libncursesw.so.6
 
@@ -318,7 +320,7 @@ userland/etc/update-motd.d/90-last-login /etc/update-motd.d/90-last-login
 userland/etc/environment /etc/environment
 userland/etc/ld-musl-aarch64.path /etc/ld-musl-aarch64.path
 userland/etc/profile /etc/profile
-userland/etc/dashrc /etc/dashrc
+userland/etc/shrc /etc/shrc
 userland/etc/os-release /etc/os-release
 
 userland/etc/mycelium/boot.target /etc/mycelium/boot.target

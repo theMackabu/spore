@@ -1,4 +1,4 @@
-#!/bin/dash
+#!/bin/sh
 case "$1" in
   -I|--all-ip-addresses) exec /bin/dhcpc --address ;;
 esac

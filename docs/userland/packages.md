@@ -2,7 +2,7 @@
 
 Void supplies standalone GNU coreutils, grep, findutils, procps-ng, util-linux, file, make
 and ed. Separate executable paths let filesystem policies distinguish individual commands.
-Toybox provides ping and top. Alpine supplies BusyBox nslookup, dash, Git, jq, htop, nano,
+Toybox provides ping and top. Alpine supplies BusyBox nslookup, Bash, Git, jq, htop, nano,
 Vim, TinyCC, wget, which, fastfetch and Dropbear client tools. Ant comes from its upstream
 musl release. `edit`, `pico` and `mk` start ed, nano and make. [Installed paths](../../userland/image.manifest)
 
