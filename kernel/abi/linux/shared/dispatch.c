@@ -46,14 +46,6 @@ enum {
   EFAULT = 14,
   EINVAL = 22,
   ENOSYS = 38,
-  SIGINT = 2,
-  SIGABRT = 6,
-  SIGKILL = 9,
-  SIGSEGV = 11,
-  SIGPIPE = 13,
-  SIGALRM = 14,
-  SIGTERM = 15,
-  SIGURG = 23,
 };
 
 constexpr int64_t SYSCALL_SWITCHED = CELL_SWITCHED;
@@ -63,8 +55,7 @@ constexpr int64_t SYSCALL_SWITCHED = CELL_SWITCHED;
 static bool signal_delivers_to_current(int signal) {
   struct domain *d = cell_current_domain_internal();
   if (pidns_init_process(d) && signal > 0 && signal < 65 && d->signal_actions[signal].handler <= 1) { return false; }
-  return signal == SIGINT || signal == SIGABRT || signal == SIGKILL || signal == SIGSEGV || signal == SIGPIPE ||
-         signal == SIGALRM || signal == SIGTERM || signal == SIGURG;
+  return cell_user_signal_supported(signal);
 }
 
 int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]) {
@@ -138,6 +129,7 @@ int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]
     [SYS_TKILL] = &&l_tkill,
     [SYS_TGKILL] = &&l_tgkill,
     [SYS_SIGALTSTACK] = &&l_sigaltstack,
+    [SYS_RT_SIGSUSPEND] = &&l_rt_sigsuspend,
     [SYS_RT_SIGACTION] = &&l_rt_sigaction,
     [SYS_RT_SIGPROCMASK] = &&l_rt_sigprocmask,
     [SYS_RT_SIGRETURN] = &&l_rt_sigreturn,
@@ -364,6 +356,8 @@ l_tgkill:
     return cell_signal_current((int)a2, f) ? SYSCALL_SWITCHED : 0;
   }
   return cell_tgkill((int)a0, (int)a1, (int)a2);
+l_rt_sigsuspend:
+  return sys_rt_sigsuspend(f, a0, a1);
 l_rt_sigaction:
   return cell_rt_sigaction((int)a0, a1, a2, a3);
 l_rt_sigprocmask:

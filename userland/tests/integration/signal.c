@@ -181,6 +181,43 @@ static int temporary_mask_regression(void) {
   return ok;
 }
 
+static void *send_suspend_signal(void *target) {
+  return (void *)(intptr_t)pthread_kill(*(pthread_t *)target, SIGPWR);
+}
+
+static int thread_signal_suspend(void) {
+  sigset_t blocked, previous, temporary, after;
+  sigemptyset(&blocked);
+  sigaddset(&blocked, SIGPWR);
+  struct sigaction action = {.sa_handler = temporary_mask_handler, .sa_flags = SA_RESTART}, old_power, old_alarm;
+  if (sigaction(SIGPWR, &action, &old_power)) { return 0; }
+  if (sigaction(SIGALRM, &action, &old_alarm)) { sigaction(SIGPWR, &old_power, NULL); return 0; }
+  int masked = pthread_sigmask(SIG_BLOCK, &blocked, &previous) == 0;
+  int ok = 0;
+  if (masked) {
+    temporary = previous;
+    sigaddset(&temporary, SIGUSR2);
+    sigdelset(&temporary, SIGPWR);
+    sigdelset(&temporary, SIGALRM);
+    pthread_t self = pthread_self(), sender;
+    void *result;
+    temporary_mask_signals = usr2_blocked_in_handler = 0;
+    if (!pthread_create(&sender, NULL, send_suspend_signal, &self) && !pthread_join(sender, &result) && !result) {
+      struct itimerval timer = {.it_value.tv_sec = 1}, stop = {0};
+      if (!setitimer(ITIMER_REAL, &timer, NULL)) {
+        ok = sigsuspend(&temporary) == -1 && errno == EINTR && temporary_mask_signals == SIGPWR &&
+             usr2_blocked_in_handler && !pthread_sigmask(SIG_SETMASK, NULL, &after) && sigismember(&after, SIGPWR);
+        setitimer(ITIMER_REAL, &stop, NULL);
+      }
+    }
+    pthread_sigmask(SIG_SETMASK, &previous, NULL);
+  }
+  sigaction(SIGPWR, &old_power, NULL);
+  sigaction(SIGALRM, &old_alarm, NULL);
+  printf("[spore] thread signal suspend: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
 static int signal_altstack_regression(void) {
   stack_t ss = {.ss_sp = altstack_area, .ss_size = sizeof(altstack_area), .ss_flags = 0};
   int ok = sigaltstack(&ss, NULL) == 0;
@@ -467,7 +504,7 @@ static int signalfd_child_exit(void) {
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
   return signalfd_child_exit() && parent_death_notification() && child_signal_notification() && vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
-         signal_mask_regression() && temporary_mask_regression() && signal_altstack_regression() &&
+         signal_mask_regression() && temporary_mask_regression() && thread_signal_suspend() && signal_altstack_regression() &&
          signal_interrupted_read_regression() && signal_restart_read_regression() &&
          signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) &&
          signal_nested_regression();

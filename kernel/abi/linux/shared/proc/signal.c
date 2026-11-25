@@ -4,6 +4,7 @@
 #include "arch/regs.h"
 #include "handlers.h"
 #include "proc/domain.h"
+#include "proc/poll.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
 
@@ -72,6 +73,15 @@ int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t ol
     thread->sigaltstack_flags = (next.ss_flags & SS_DISABLE) != 0 ? SS_DISABLE : 0;
   }
   return 0;
+}
+
+int64_t sys_rt_sigsuspend(struct trap_frame *frame, uint64_t set, uint64_t size) {
+  uint64_t mask;
+  if (size != sizeof(mask)) { return -EINVAL; }
+  if (!syscall_user_readable(set, size) || !vmm_copy_from_user(syscall_active_as(), &mask, set, size)) {
+    return -EFAULT;
+  }
+  return cell_ppoll_current(0, 0, false, 0, &mask, frame);
 }
 
 int64_t sys_rt_sigprocmask(struct trap_frame *frame, uint64_t how, uint64_t set, uint64_t oldset, uint64_t sigsetsize) {

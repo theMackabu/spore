@@ -38,16 +38,17 @@ enum {
   SIGCONT = 18,
   SIGURG = 23,
   SIGWINCH = 28,
+  SIGPWR = 30,
   NSIG = 65,
 };
 
 static const uint64_t SA_RESETHAND = 0x80000000ull;
 static const uint64_t SA_RESTART = 0x10000000ull;
 
-static bool signal_is_supported(int signal) {
+bool cell_user_signal_supported(int signal) {
   return signal == SIGHUP || signal == SIGINT || signal == SIGQUIT || signal == SIGABRT || signal == SIGKILL ||
          signal == SIGUSR1 || signal == SIGSEGV || signal == SIGUSR2 || signal == SIGPIPE || signal == SIGALRM ||
-         signal == SIGTERM || signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH;
+         signal == SIGTERM || signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH || signal == SIGPWR;
 }
 
 static bool signal_default_ignored(int signal) {
@@ -414,7 +415,7 @@ static int send_user_signal(struct thread *thread, int signal) {
   if (!may_signal(victim, signal)) { return -1; }
   if (signal && pidns_init_process(victim) && victim->signal_actions[signal].handler <= 1 &&
       !(signal == SIGKILL && pidns_active(victim) != pidns_current())) { return 0; }
-  if (signal && signal_is_supported(signal)) { (void)cell_deliver_signal_to_thread(thread, signal); }
+  if (cell_user_signal_supported(signal)) { (void)cell_deliver_signal_to_thread(thread, signal); }
   return 0;
 }
 

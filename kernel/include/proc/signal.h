@@ -30,4 +30,5 @@ bool cell_signal_current_fault(int signal, struct trap_frame *frame, uint64_t fa
 uint64_t cell_sanitize_signal_mask(uint64_t mask);
 int cell_kill(int pid, int signal);
 int cell_tkill(int tid, int signal);
+bool cell_user_signal_supported(int signal);
 int cell_tgkill(int pid, int tid, int signal);
