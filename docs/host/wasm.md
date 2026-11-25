@@ -65,10 +65,8 @@ To boot a system, select only the root disk, click Run and type into the termina
 
 ## Current scope
 
-The default is one guest CPU with 64 MiB of RAM. `--smp 4` runs four virtual CPUs in turn on one host worker. Each has its own register bank and scheduler slot. Set `--memory 256M` (or Guest RAM in the browser) for larger workloads. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The interpreter handles a subset
-of A64 integer, branch, load/store, exclusive, scalar floating-point and SIMD instructions. It caches instruction
-classes and address translations. Its Rust JIT compiles frequently executed integer blocks to WebAssembly and checks the instruction bytes before reusing compiled code. It reports the guest PC on an unsupported instruction or
-memory fault. The launcher defaults to a budget of 100 million guest instructions.
+The default is one guest CPU with 64 MiB of RAM. `--smp 4` runs four virtual CPUs in turn on one host worker. Each has its own register bank and scheduler slot. Set `--memory 256M` (or Guest RAM in the browser) for larger workloads. The shared Spore scheduler preempts threads at 100 Hz and the launcher yields while they sleep. The guest receives the same FP, Advanced SIMD, CRC32, AES, PMULL, SHA1, SHA2 and LSE atomic feature bits as native AArch64 Spore. It caches instruction
+classes and address translations. Its Rust JIT compiles frequently executed integer blocks to WebAssembly and checks the instruction bytes before reusing compiled code. Guest instruction and memory faults enter the signal subsystem. Fatal faults include the guest PC. The launcher defaults to a budget of 100 million guest instructions.
 
 Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Piped CLI input uses a guest pipe and delivers EOF when the host writer closes. Full-system boots use Spore’s TTY. The standalone browser terminal works offline. Serving with `--net` connects the guest through the local relay. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
 Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
@@ -80,6 +78,8 @@ Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 Bun 1.4.5 executes a JavaScript expression, and Claude Code 2.1.332 starts far enough to print its version with 512 MiB of guest RAM. Interactive Claude sessions have not been verified on Wasm.
 
 `spore test wasm-guest` boots the integration disk with the native suite’s UDP echo and console fixtures. `spore test wasm-shell` exercises the installed utilities, TLS, the compiler, shell and shutdown in a disposable full-userland boot.
+
+`spore test wasm-neon` compiles the pinned upstream SIMDe ARM NEON corpus for ARMv8-A and runs every test executable through Spore.
 
 `spore test wasm` builds an ordinary musl ELF and compares its output and exit status
 under QEMU and Wasm. It checks pthreads, futex wakeups, timer preemption, thread-local storage and appliance policy. It also exercises cross-page accesses, permission changes,

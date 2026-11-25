@@ -225,6 +225,10 @@ impl Cpu {
                 }
                 _ => a.swap_bytes(),
             },
+            LeadingSigns => {
+                let sign = sx(a, bits) as i64 >> 63;
+                (((a ^ sign as u64) & mask(bits)).leading_zeros() - (64 - bits) - 1) as u64
+            }
             LeadingZeros => ((a & mask(bits)).leading_zeros() - (64 - bits)) as u64,
             VariableShift => shift(a, (w >> 10) & 3, (b as u32) & (bits - 1), bits),
             Divide => {

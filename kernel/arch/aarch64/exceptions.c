@@ -16,6 +16,8 @@ enum {
   EC_SYS64 = 0x18,
   EC_SVE = 0x19,
   EC_SME = 0x1d,
+  EC_BRK_A64 = 0x3c,
+  SIGTRAP = 5,
   SIGILL = 4,
   SIGSEGV = 11,
   ILL_ILLOPC = 1,
@@ -51,6 +53,10 @@ void handle_unhandled_exception(void) {
 
 void handle_lower_sync(struct trap_frame *frame) {
   uint64_t ec = (frame->esr_el1 >> 26) & 0x3f;
+  if (ec == EC_BRK_A64) {
+    cell_signal_current_fault(SIGTRAP, frame, frame->elr_el1, 1);
+    return;
+  }
   if (ec == EC_UNKNOWN || ec == EC_SYS64 || ec == EC_SVE || ec == EC_SME) {
     cell_signal_current_fault(SIGILL, frame, frame->elr_el1, ILL_ILLOPC);
     return;

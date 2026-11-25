@@ -100,6 +100,15 @@ impl Cpu {
         let n = vec[((w >> 5) & 31) as usize];
         let m = vec[((w >> 16) & 31) as usize];
         let old = vec[d];
+        if w & 0xbfe0fc00 == 0x2e209c00 {
+            let mut out = 0;
+            for i in 0..if w & (1 << 30) != 0 { 16 } else { 8 } {
+                out |= (polynomial((n >> (8 * i)) & 255, (m >> (8 * i)) as u8 as u64, 8) & 255)
+                    << (8 * i);
+            }
+            vec[d] = out;
+            return Ok(());
+        }
         if w & 0xffffcc00 == 0x4e284800 {
             let op = (w >> 12) & 3;
             let mut block: Block = (if op < 2 { old ^ n } else { n }).to_le_bytes().into();

@@ -3,12 +3,14 @@ use super::memory::{Access, Memory};
 #[derive(Debug)]
 pub enum Fault {
     Instruction(u32),
+    Breakpoint,
     Alignment(u64),
     Memory(Access, u64),
 }
 impl std::fmt::Display for Fault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Breakpoint => write!(f, "ARM64 breakpoint"),
             Self::Instruction(word) => write!(f, "unsupported A64 instruction {word:#010x}"),
             Self::Alignment(addr) => write!(f, "unaligned address {addr:#x}"),
             Self::Memory(access, addr) => write!(f, "{access:?} fault at {addr:#x}"),
@@ -119,6 +121,7 @@ impl Cpu {
     pub fn exception(&mut self, fault: Fault) {
         let message = fault.to_string();
         let (signal, address) = match fault {
+            Fault::Breakpoint => (5, self.f.pc),
             Fault::Instruction(_) => (4, self.f.pc),
             Fault::Alignment(addr) => (7, addr),
             Fault::Memory(_, addr) => (11, addr),
@@ -198,6 +201,7 @@ impl Cpu {
                 };
                 self.set(rd, addr);
             }
+            Breakpoint => return Err(Fault::Breakpoint),
             Syscall => {
                 self.memory.invalidate();
                 self.reservation = None;
@@ -228,7 +232,8 @@ impl Cpu {
             Crc => self.crc(w)?,
             Crypto => self.crypto(w)?,
             Float => self.float(w)?,
-            VectorFloat => self.vector_float(w)?,
+            NeonInteger(op) => self.neon_integer(op, w)?,
+            VectorFloat(op) => self.neon_float(w, op)?,
             Vector => {
                 self.simd(w)?;
             }

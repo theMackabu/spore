@@ -11,11 +11,17 @@ mod decode;
 #[cfg(target_arch = "wasm32")]
 mod float;
 #[cfg(target_arch = "wasm32")]
+mod estimate;
+#[cfg(target_arch = "wasm32")]
 mod jit;
 #[cfg(target_arch = "wasm32")]
 mod machine;
 #[cfg(target_arch = "wasm32")]
 mod memory;
+#[cfg(target_arch = "wasm32")]
+mod neon_integer;
+#[cfg(target_arch = "wasm32")]
+mod neon_float;
 #[cfg(target_arch = "wasm32")]
 #[path = "../../shared.rs"]
 mod shared;

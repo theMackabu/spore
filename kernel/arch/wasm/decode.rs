@@ -13,6 +13,7 @@ pub enum Integer {
     ReverseBits,
     ReverseBytes,
     LeadingZeros,
+    LeadingSigns,
     VariableShift,
     Divide,
     MultiplyHigh,
@@ -28,11 +29,13 @@ pub enum Op {
     TestBranch,
     Address,
     Syscall,
+    Breakpoint,
     SystemRegister,
     CacheMaintenance,
     Float,
     Vector,
-    VectorFloat,
+    VectorFloat(super::neon_float::Kind),
+    NeonInteger(super::neon_integer::Family),
     Crypto,
     Crc,
     ClearExclusive,
@@ -61,6 +64,9 @@ pub fn classify(w: u32) -> Op {
     }
     if w & 0x1f000000 == 0x10000000 {
         return Op::Address;
+    }
+    if w & 0xffe0001f == 0xd4200000 {
+        return Op::Breakpoint;
     }
     if w & 0xffe0001f == 0xd4000001 {
         return Op::Syscall;
@@ -92,31 +98,30 @@ pub fn classify(w: u32) -> Op {
     if w & 0x7fe0e000 == 0x1ac04000 {
         return Op::Crc;
     }
-    if w & 0xffffcc00 == 0x4e284800
+    if matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000 | 0x9eae0000) {
+        return Op::Vector;
+    }
+    if w & 0x7f000000 == 0x1e000000 || w & 0xff000000 == 0x1f000000 {
+        return Op::Float;
+    }
+    if w & 0xbfe0fc00 == 0x2e209c00
+        || w & 0xffffcc00 == 0x4e284800
         || w & 0xbf20fc00 == 0x0e20e000
         || w & 0xffe08c00 == 0x5e000000
         || matches!(w & 0xfffffc00, 0x5e280800 | 0x5e281800 | 0x5e282800)
     {
         return Op::Crypto;
     }
-    if matches!(
-        w & 0xbfbffc00,
-        0x0e218800 | 0x0e219800 | 0x0ea18800 | 0x0ea19800 | 0x2e218800 | 0x2e219800 | 0x2ea19800
-    ) || matches!(
-        w & 0xbfa0fc00,
-        0x0e20d400 | 0x0ea0d400 | 0x2e20dc00 | 0x2e20fc00 | 0x0e20cc00 | 0x0ea0cc00
-    ) || matches!(w & 0xaf80f400, 0x0f801000 | 0x0f805000 | 0x0f809000)
-    {
-        return Op::VectorFloat;
+    if let Some(op) = super::neon_float::classify(w) {
+        return Op::VectorFloat(op);
     }
-    if w & 0x1e000000 == 0x0e000000
-        || w & 0xde000000 == 0x5e000000
-        || matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000 | 0x9eae0000)
+    if w & 0x0e000000 == 0x0e000000
+        && let Some(op) = super::neon_integer::classify(w)
     {
+        return Op::NeonInteger(op);
+    }
+    if w & 0x1e000000 == 0x0e000000 || w & 0xde000000 == 0x5e000000 {
         return Op::Vector;
-    }
-    if w & 0x7f000000 == 0x1e000000 || w & 0xff000000 == 0x1f000000 {
-        return Op::Float;
     }
     if w & 0xfffff0ff == 0xd503305f {
         return Op::ClearExclusive;
@@ -165,6 +170,9 @@ pub fn classify(w: u32) -> Op {
     }
     if matches!(w & 0x7ffffc00, 0x5ac00400 | 0x5ac00800) || w & 0xfffffc00 == 0xdac00c00 {
         return Op::Integer(Integer::ReverseBytes);
+    }
+    if w & 0x7ffffc00 == 0x5ac01400 {
+        return Op::Integer(Integer::LeadingSigns);
     }
     if w & 0x7ffffc00 == 0x5ac01000 {
         return Op::Integer(Integer::LeadingZeros);

@@ -419,6 +419,17 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                 .collect::<Vec<_>>();
             return crate::runner::harness::run(&argv, mode, false, false);
         }
+        (false, Some("wasm-neon")) => {
+            let code = build_wasm(build)?;
+            if code != 0 {
+                return Ok(code);
+            }
+            return status(
+                Command::new("node")
+                    .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wasm/neon.mjs"))
+                    .arg(wasm_module(build)),
+            );
+        }
         (_, Some("wasm")) => {
             let rc = build_wasm(build)?;
             if rc != 0 {

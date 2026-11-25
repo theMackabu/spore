@@ -22,7 +22,6 @@ struct signal_frame64 {
   struct ucontext64 ucontext;
   uint64_t magic;
   uint64_t signal;
-  uint64_t saved_signal_mask;
   struct trap_frame saved;
 };
 
@@ -59,9 +58,14 @@ bool arch_push_signal_frame(struct thread *thread, const struct signal_action *a
   kmemset(&frame, 0, sizeof(frame));
   frame.magic = 0x5350475349474652ull;
   frame.signal = (uint64_t)signal;
-  frame.saved_signal_mask = thread->signal_mask;
   frame.saved = thread->tf;
   fill_signal_context(&frame, thread, info);
+  if (thread == cell_current_thread_internal()) { arch_save_context(&thread->context); }
+  struct aarch64_fpsimd_ctx fp = {
+    .head = {AARCH64_FPSIMD_MAGIC, sizeof(fp)}, .fpsr = thread->context.fp.fpsr, .fpcr = thread->context.fp.fpcr
+  };
+  kmemcpy(fp.vregs, thread->context.fp.q, sizeof(fp.vregs));
+  kmemcpy(frame.ucontext.uc_mcontext.reserved, &fp, sizeof(fp));
 
   uint64_t stack_top = thread->tf.sp_el0;
   if ((action->flags & SA_ONSTACK) != 0 && !thread_on_sigaltstack(thread) &&
@@ -85,14 +89,42 @@ bool arch_push_signal_frame(struct thread *thread, const struct signal_action *a
   return true;
 }
 
+static bool restore_fpsimd(const struct sigcontext64 *context, struct thread *thread) {
+  const uint8_t *record = NULL;
+  size_t off = 0;
+  while (off <= sizeof(context->reserved) - sizeof(struct aarch64_ctx_header)) {
+    struct aarch64_ctx_header header;
+    kmemcpy(&header, context->reserved + off, sizeof(header));
+    if (!header.magic && !header.size) {
+      if (!record) { return false; }
+      struct aarch64_fpsimd_ctx fp;
+      kmemcpy(&fp, record, sizeof(fp));
+      arch_save_context(&thread->context);
+      thread->context.fp.fpsr = fp.fpsr;
+      thread->context.fp.fpcr = fp.fpcr;
+      kmemcpy(thread->context.fp.q, fp.vregs, sizeof(fp.vregs));
+      arch_restore_context(&thread->context);
+      return true;
+    }
+    if (header.size < 16 || header.size % 16 || header.size > sizeof(context->reserved) - off) { return false; }
+    if (header.magic == AARCH64_FPSIMD_MAGIC) {
+      if (record || header.size != sizeof(struct aarch64_fpsimd_ctx)) { return false; }
+      record = context->reserved + off;
+    }
+    off += header.size;
+  }
+  return false;
+}
+
 int cell_rt_sigreturn(struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -EFAULT; }
   struct signal_frame64 sigframe;
   uint64_t frame_addr = frame->sp_el0;
+  struct thread *thread = cell_current_thread_internal();
   if (!cell_domain_ensure_user_range(domain, frame_addr, sizeof(sigframe), VMM_ACCESS_READ) ||
       !vmm_copy_from_user(cell_domain_as(domain), &sigframe, frame_addr, sizeof(sigframe)) ||
-      sigframe.magic != 0x5350475349474652ull) {
+      sigframe.magic != 0x5350475349474652ull || !thread || !restore_fpsimd(&sigframe.ucontext.uc_mcontext, thread)) {
     cell_signal_current(SIGSEGV, frame);
     return -EFAULT;
   }
@@ -103,12 +135,9 @@ int cell_rt_sigreturn(struct trap_frame *frame) {
   frame->sp_el0 = sigframe.ucontext.uc_mcontext.sp;
   frame->elr_el1 = sigframe.ucontext.uc_mcontext.pc;
   frame->spsr_el1 = 0x340 | (sigframe.ucontext.uc_mcontext.pstate & 0xf0000000ull);
-  struct thread *thread = cell_current_thread_internal();
-  if (thread != NULL) {
-    thread->tf = *frame;
-    thread->signal_mask = cell_sanitize_signal_mask(sigframe.saved_signal_mask);
-    (void)cell_deliver_pending_signals_current(frame);
-  }
+  thread->tf = *frame;
+  thread->signal_mask = cell_sanitize_signal_mask(sigframe.ucontext.uc_sigmask);
+  (void)cell_deliver_pending_signals_current(frame);
   return 0;
 }
 

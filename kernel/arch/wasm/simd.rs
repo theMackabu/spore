@@ -17,9 +17,6 @@ impl Cpu {
         let mask = (1u128 << width) - 1;
         let lane = |v: u128, i: u32| (v >> (width * i)) & mask;
         let mut out = 0;
-        if matches!(w & 0x8fbffc00, 0x0e21d800 | 0x0ea1b800) {
-            return self.convert_lanes(w);
-        }
         if w & 0xfffffc00 == 0x9eae0000 {
             self.set(d as u32, (a >> 64) as u64);
             return Ok(());
@@ -147,6 +144,14 @@ impl Cpu {
                     }
                 };
                 out |= (v & elem_mask) << (i * bits);
+            }
+        } else if w & 0xbf3ffc00 == 0x2e213800 {
+            if width == 64 {
+                return Err(Fault::Instruction(w));
+            }
+            let start = if w & (1 << 30) != 0 { lanes / 2 } else { 0 };
+            for i in 0..lanes / 2 {
+                out |= lane(a, start + i) << ((2 * i + 1) * width);
             }
         } else if w & 0xbf80f400 == 0x0f008400 && w & 0x00780000 != 0 {
             let imm = (w >> 16) & 127;
