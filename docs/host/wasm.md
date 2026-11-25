@@ -51,9 +51,11 @@ In another terminal, `curl http://127.0.0.1:8080/` returns `wasm`. Request `/qui
 ./target/release/spore serve --wasm
 ```
 
-Open the printed URL. The guest boots from `target/release/root.ext2` with 256 MiB of RAM. Use `?memory=512` to change it. The server builds missing boot artifacts on first use. It briefly boots a disposable snapshot to collect startup disk pages and serves them in one compressed response. Later disk reads fetch missing ranges on demand.
+Open the printed URL. The guest boots from `target/release/root.ext2` with 1 GiB of RAM. Use `?memory=512` to boot with 512 MiB. The server builds missing boot artifacts on first use. It briefly boots a disposable snapshot to collect startup disk pages and serves them in one compressed response. Later disk reads fetch missing ranges on demand.
 
 Reloading reboots the guest with your saved disk changes. Use the same browser profile, address, port and base image to reopen the disk. Files in your home directory persist. The guest recreates `/tmp` at boot. Open `/?snapshot` for a disposable session starting from the base image. Drop a local ELF, packaged app or root disk onto the terminal to start it.
+
+The DevTools console shows guest configuration, kernel messages and CPU exceptions with the guest program counter. Run `console.table(spore.stats())` in the page console for free guest memory in KiB and CPU counters refreshed about once a second. The instruction count and rate cover completed execution slices across all guest CPUs. JIT counters report compiled traces and guest instructions executed by those traces.
 
 The local server enables outbound IPv4 through its WebSocket Ethernet relay by default. Pass `--offline` to boot without networking. For static hosting, serve `target/release/wasm-web/` with a `root.ext2` beside it on a server supporting HTTP byte ranges. Use `?app=./my-app.spore` to launch a hosted app instead. The JavaScript API accepts custom block and Ethernet devices, a cancellation signal and an instruction budget. [Launcher](../../tools/wasm/run.mjs)
 

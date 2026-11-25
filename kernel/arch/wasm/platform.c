@@ -27,6 +27,7 @@
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
+#include "proc/poll.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
 #include "tty/tty.h"
@@ -57,13 +58,23 @@ static struct {
 } cpus[SPORE_BOOT_CPU_MAX];
 static uint32_t cpu_id, cpu_count;
 static uint8_t output[4096];
+static uint8_t log_output[512];
+static size_t log_buffered;
 static unsigned channel = 1, buffered;
 static struct arch_thread_context *active_context;
 static uint64_t fault_pc;
 static const char *fault_text;
 static size_t fault_len;
 
+static void flush_kernel_log(void) {
+  if (log_buffered) {
+    host_kernel_log(log_output, log_buffered);
+    log_buffered = 0;
+  }
+}
+
 static void wasm_flush(void) {
+  flush_kernel_log();
   if (buffered) {
     host_write(channel, output, buffered);
     buffered = 0;
@@ -161,7 +172,11 @@ void arch_restore_context(const struct arch_thread_context *in) {
 static bool log_console;
 bool virtio_console_ready(void) { return log_console; }
 void virtio_console_write(const uint8_t *p, size_t n) {
-  if (log_console) { host_kernel_log(p, n); }
+  if (!log_console) { return; }
+  for (size_t i = 0; i < n; ++i) {
+    log_output[log_buffered++] = p[i];
+    if (p[i] == '\n' || log_buffered == sizeof(log_output)) { flush_kernel_log(); }
+  }
 }
 static bool has_net;
 static struct virtio_net_stats net_stats;
@@ -351,7 +366,13 @@ bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, i
   fault_text = message;
   fault_len = len;
   host_exception(fault_pc, message, len);
-  int code = signal == 11 && vma_lookup(cell_domain_vmas(cpus[cpu_id].thread->domain), address) ? 2 : 1;
+  const struct vma *vma = signal == 11 ? vma_lookup(cell_domain_vmas(cpus[cpu_id].thread->domain), address) : NULL;
+  if (vma && log_console) {
+    struct vfs_stats stats = vfs_get_stats();
+    kprintf("[kernel] fault in mapped guest memory, free pages %u, cached pages %u/%u\n",
+            (unsigned)pmm_free_pages(), (unsigned)stats.page_cache_pages, (unsigned)stats.page_cache_capacity);
+  }
+  int code = vma ? 2 : 1;
   cell_signal_current_fault(signal, f, address, code);
   fault_len = 0;
   fault_text = NULL;
@@ -359,10 +380,14 @@ bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, i
   return cpus[cpu_id].idle;
 }
 
-bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsigned ticks) {
+bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsigned ticks, bool network_ready) {
   active_context = context;
   if (!cpus[cpu_id].idle && (!cpus[cpu_id].thread || cpus[cpu_id].thread->state != THREAD_RUNNABLE)) {
     cell_schedule(f);
+  }
+  if (network_ready && !ticks) {
+    net_poll();
+    cell_wake_poll_waiters_internal();
   }
   while (ticks--) {
     if (!cpu_id) {

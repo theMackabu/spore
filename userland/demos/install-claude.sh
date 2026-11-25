@@ -67,15 +67,17 @@ download_file() {
 
     if [ "$DOWNLOADER" = "curl" ]; then
         if [ -n "$output" ]; then
-            curl -fsSL -o "$output" "$url"
+            local flags=(-fSL --connect-timeout 10 --speed-time 60 --speed-limit 1)
+            if [ ! -t 2 ]; then flags+=(-s); fi
+            curl "${flags[@]}" -o "$output" "$url"
         else
-            curl -fsSL "$url"
+            curl -fsSL --connect-timeout 10 --max-time 30 "$url"
         fi
     elif [ "$DOWNLOADER" = "wget" ]; then
         if [ -n "$output" ]; then
-            wget -q -O "$output" "$url"
+            wget -T 60 -O "$output" "$url"
         else
-            wget -q -O - "$url"
+            wget -q -t 1 -T 30 -O - "$url"
         fi
     else
         return 1
@@ -146,13 +148,26 @@ elif [ "$os" = "linux" ]; then
 else
     platform="${os}-${arch}"
 fi
-mkdir -p "$DOWNLOAD_DIR"
+if [ "$kernel" = "Spore" ]; then
+    versions_dir="${XDG_DATA_HOME:-$HOME/.local/share}/claude/versions"
+    mkdir -p "$versions_dir"
+    DOWNLOAD_DIR=$(mktemp -d "$versions_dir/.install.XXXXXXXX")
+    trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
+else
+    mkdir -p "$DOWNLOAD_DIR"
+fi
 
-# Always download latest version (which has the most up-to-date installer)
-version=$(download_file "$DOWNLOAD_BASE_URL/latest")
+echo "Looking up the Claude Code release for $platform..."
+if [ "$kernel" = "Spore" ] && [[ -n "$TARGET" && "$TARGET" != latest && "$TARGET" != stable ]]; then
+    version=$TARGET
+else
+    channel=latest
+    if [ "$kernel" = "Spore" ] && [ "$TARGET" = stable ]; then channel=stable; fi
+    version=$(download_file "$DOWNLOAD_BASE_URL/$channel")
+fi
 
 # Reject non-version content (e.g. an HTML error page) before it reaches the manifest URL
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z._+-]+)?$ ]]; then
     echo "Failed to get a valid version from downloads.claude.ai (got unexpected content)." >&2
     echo "This can happen if the download service is unreachable or not available in your region - see https://www.anthropic.com/supported-countries" >&2
     exit 1
@@ -178,7 +193,10 @@ fi
 
 checksum_matches() {
     local actual
-    if [ "$os" = "darwin" ]; then
+    echo "Verifying SHA-256 of ${1##*/}..." >&2
+    if command -v openssl >/dev/null 2>&1; then
+        actual=$(openssl dgst -sha256 -r "$1" | cut -d' ' -f1)
+    elif [ "$os" = "darwin" ]; then
         actual=$(shasum -a 256 "$1" | cut -d' ' -f1)
     else
         actual=$(sha256sum "$1" | cut -d' ' -f1)
@@ -199,8 +217,10 @@ fi
 binary_path="$DOWNLOAD_DIR/claude-$version-$platform"
 verified=false
 if [[ "$zst_checksum" =~ ^[a-f0-9]{64}$ ]]; then
+    echo "Downloading Claude Code $version (zstd)..."
     if download_file "$DOWNLOAD_BASE_URL/$version/$platform/claude.zst" "$binary_path.zst" \
         && checksum_matches "$binary_path.zst" "$zst_checksum"; then
+        echo "Unpacking Claude Code..."
         zstd -d -q -c "$binary_path.zst" 2>/dev/null | head -c "$size" > "$binary_path" || true
         if checksum_matches "$binary_path" "$checksum"; then
             verified=true
@@ -209,6 +229,7 @@ if [[ "$zst_checksum" =~ ^[a-f0-9]{64}$ ]]; then
     rm -f "$binary_path.zst"
 fi
 if [ "$verified" = false ]; then
+    echo "Downloading Claude Code $version ($size bytes)..."
     if ! download_file "$DOWNLOAD_BASE_URL/$version/$platform/claude" "$binary_path"; then
         echo "Download failed" >&2
         rm -f "$binary_path"
@@ -222,6 +243,14 @@ if [ "$verified" = false ]; then
 fi
 
 chmod +x "$binary_path"
+
+if [ "$kernel" = "Spore" ]; then
+    mkdir -p "$HOME/.local/bin"
+    mv -fT "$binary_path" "$versions_dir/$version"
+    ln -sfnT "$versions_dir/$version" "$HOME/.local/bin/claude"
+    echo "Installed Claude Code $version at $HOME/.local/bin/claude"
+    exit 0
+fi
 
 # Run claude install to set up launcher and shell integration
 echo "Setting up Claude Code..."

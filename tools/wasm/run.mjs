@@ -47,7 +47,8 @@ async function boot(
     memoryMiB = 64,
     cpuCount = 1,
     jit = true,
-    stats,
+    onStats,
+    stats = onStats ? {} : undefined,
     instructionLimit = 100_000_000,
     signal,
   } = {},
@@ -79,6 +80,24 @@ async function boot(
   let guest;
   let tableBase;
   if (stats) Object.assign(stats, { compiledBlocks: 0, compiledInstructions: 0 });
+  const started = performance.now();
+  let sampledAt = started;
+  let retiredTotal = 0;
+  let previousTotal = 0;
+  function sample(now) {
+    if (!onStats) return;
+    const interval = now - sampledAt;
+    onStats({
+      uptimeMs: Math.round(now - started),
+      freeMemoryKiB: guest.free_memory_kib(),
+      instructions: retiredTotal,
+      instructionsPerSecond: interval > 0 ? Math.round((retiredTotal - previousTotal) * 1000 / interval) : 0,
+      compiledBlocks: stats.compiledBlocks,
+      compiledInstructions: Number(guest.compiled_instructions()),
+    });
+    previousTotal = retiredTotal;
+    sampledAt = now;
+  }
   const bytes = (ptr, len) => new Uint8Array(guest.memory.buffer, ptr >>> 0, len >>> 0);
   const stop = {};
   const pendingOutput = [];
@@ -202,13 +221,15 @@ async function boot(
         throw new Error("cannot initialize guest memory or executable");
       }
       if (guardBoot) {
-        const retired = guest.run_slice(1, 0);
+        const retired = guest.run_slice(1, 0, false);
         if (retired < 0) throw new Error("CPU stopped before entry");
         remaining -= retired;
+        retiredTotal += retired;
       }
     };
     if (guardBoot) guardBoot(start);
     else start();
+    sample(performance.now());
     let nextTick = performance.now() + 10;
     let yieldAt = performance.now() + 8;
     let nextSave = performance.now() + 1000;
@@ -221,9 +242,13 @@ async function boot(
       const now = performance.now();
       const ticks = Number(now >= nextTick);
       if (ticks) nextTick = now + 10;
-      const retired = guest.run_slice(count, ticks);
+      const retired = guest.run_slice(count, ticks, network?.pending?.() ?? false);
       if (retired < 0) throw new Error("CPU stopped without a guest result");
       remaining -= retired;
+      if (onStats) {
+        retiredTotal += retired;
+        if (now - sampledAt >= 1000) sample(now);
+      }
       if (retired < count || (remaining && performance.now() >= yieldAt)) {
         if (checkpointStorage && (pendingOutput.length || now >= nextSave)) {
           if (!guest.sync_storage()) {
@@ -234,7 +259,8 @@ async function boot(
           nextSave = performance.now() + 1000;
         }
         const delay = retired < count ? Math.max(0, nextTick - performance.now()) : 0;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        if (delay > 0 && network?.waitForFrame) await network.waitForFrame(delay);
+        else await new Promise((resolve) => setTimeout(resolve, delay));
         yieldAt = performance.now() + 8;
       }
     }
@@ -245,5 +271,6 @@ async function boot(
   } finally {
     publishOutput();
     if (stats) stats.compiledInstructions = Number(guest.compiled_instructions());
+    sample(performance.now());
   }
 }

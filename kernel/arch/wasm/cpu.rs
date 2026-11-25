@@ -63,7 +63,7 @@ unsafe extern "C" {
         message: *const u8,
         len: usize,
     ) -> bool;
-    fn wasm_timer(f: &mut Frame, context: &mut Context, ticks: u32) -> bool;
+    fn wasm_timer(f: &mut Frame, context: &mut Context, ticks: u32, network_ready: bool) -> bool;
 }
 pub fn sx(value: u64, bits: u32) -> u64 {
     (((value << (64 - bits)) as i64) >> (64 - bits)) as u64
@@ -149,9 +149,9 @@ impl Cpu {
         self.memory.sync();
     }
 
-    pub fn tick(&mut self, ticks: u32) {
+    pub fn tick(&mut self, ticks: u32, network_ready: bool) {
         self.reservation = None;
-        self.idle = unsafe { wasm_timer(&mut self.f, &mut self.context, ticks) };
+        self.idle = unsafe { wasm_timer(&mut self.f, &mut self.context, ticks, network_ready) };
         self.memory.sync();
     }
 

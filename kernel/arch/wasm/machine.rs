@@ -3,6 +3,7 @@ use std::alloc::{Layout, alloc_zeroed};
 use std::cell::RefCell;
 
 unsafe extern "C" {
+    fn pmm_free_pages() -> u64;
     fn wasm_shutdown_storage() -> bool;
     fn vfs_sync() -> bool;
     fn wasm_select_cpu(cpu: u32);
@@ -90,6 +91,10 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32, cou
     })
 }
 #[unsafe(no_mangle)]
+pub extern "C" fn free_memory_kib() -> u32 {
+    unsafe { (pmm_free_pages() * 4) as u32 }
+}
+#[unsafe(no_mangle)]
 pub extern "C" fn sync_storage() -> bool {
     CPU.with_borrow(|state| state.is_some() && unsafe { vfs_sync() })
 }
@@ -99,18 +104,18 @@ pub extern "C" fn stop() -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
+pub extern "C" fn run_slice(budget: u32, ticks: u32, network_ready: bool) -> i32 {
     CPU.with_borrow_mut(|state| {
         let Some(machine) = state else {
             return -1;
         };
         let count = machine.cpus.len();
-        if ticks != 0 {
+        if ticks != 0 || network_ready {
             for (id, cpu) in machine.cpus.iter_mut().enumerate() {
                 unsafe {
                     wasm_select_cpu(id as u32);
                 }
-                cpu.tick(ticks);
+                cpu.tick(ticks, network_ready && id == 0);
             }
         }
         let mut retired = 0;
@@ -122,7 +127,7 @@ pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
                 unsafe {
                     wasm_select_cpu(id as u32);
                 }
-                cpu.tick(0);
+                cpu.tick(0, false);
                 machine.next = (id + 1) % count;
             }
             if cpu.idle {

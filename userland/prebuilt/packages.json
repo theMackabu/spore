@@ -194,8 +194,15 @@
       ]
     },
     {
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libcrypto3-3.5.9-r0.apk",
-      "sha256": "3b0bd7aaac36d49216f47d025f303dafb6da8d05bd258f71900d3b6156d36012",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/openssl-3.5.9-r1.apk",
+      "sha256": "4b8c01d32bac2df6c7264a8ddf403eb39094b2fb4deb4487b5233f40e1063cb4",
+      "files": [
+        "usr/bin/openssl"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libcrypto3-3.5.9-r1.apk",
+      "sha256": "719af95f8e01494aa8dd0e06e3af6d0eaf96cb816d13c52c81628e2780c1adae",
       "files": [
         "usr/lib/libcrypto.so.3"
       ]
@@ -208,8 +215,8 @@
       ]
     },
     {
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libssl3-3.5.9-r0.apk",
-      "sha256": "cdb3762116994f767cd1da423fa8004bd36b2e3802e3a1343786a40f00a5030e",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/libssl3-3.5.9-r1.apk",
+      "sha256": "c6e06484ab80e8c575b4c3c0e0cea34b350d8cbd35406e59e186ee1a3e0ebedf",
       "files": [
         "usr/lib/libssl.so.3"
       ]
@@ -413,10 +420,17 @@
       ]
     },
     {
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zstd-libs-1.5.7-r2.apk",
-      "sha256": "50a998e56e4bf31504996e49c1b4a23eed5e0cd4e24b8a1356a54daf1a6eabbe",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zstd-libs-1.6.0-r1.apk",
+      "sha256": "621c9247644e398fd3d32bba10fbf68c18f05b7941f1d055c4d48311fbfa9673",
       "files": [
-        "usr/lib/libzstd.so.1.5.7"
+        "usr/lib/libzstd.so.1.6.0"
+      ]
+    },
+    {
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/aarch64/zstd-1.6.0-r1.apk",
+      "sha256": "c224e350bce36d2d6a31abbee5d368bb0ccdf97138d11701838855d2a1b4524a",
+      "files": [
+        "usr/bin/zstd"
       ]
     },
     {

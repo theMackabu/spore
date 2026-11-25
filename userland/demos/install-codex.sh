@@ -119,26 +119,16 @@ download_file() {
   output="$2"
 
   if command -v curl >/dev/null 2>&1; then
-    case "$url" in
-      "$RELEASES_BASE_URL"/*)
-        curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
-        ;;
-      *)
-        curl -fsSL "$url" -o "$output"
-        ;;
-    esac
+    set -- -fSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --speed-limit 1 --speed-time "$RELEASES_ASSET_TIMEOUT"
+    if [ ! -t 2 ]; then set -- "$@" -s; fi
+    curl "$@" -o "$output" "$url"
     return
   fi
 
   if command -v wget >/dev/null 2>&1; then
-    case "$url" in
-      "$RELEASES_BASE_URL"/*)
-        wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
-        ;;
-      *)
-        wget -q -O "$output" "$url"
-        ;;
-    esac
+    set -- -t 1 -T "$RELEASES_ASSET_TIMEOUT"
+    if [ ! -t 2 ]; then set -- "$@" -q; fi
+    wget "$@" -O "$output" "$url"
     return
   fi
 
@@ -150,26 +140,12 @@ download_text() {
   url="$1"
 
   if command -v curl >/dev/null 2>&1; then
-    case "$url" in
-      "$RELEASES_BASE_URL"/*)
-        curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_METADATA_TIMEOUT" "$url"
-        ;;
-      *)
-        curl -fsSL "$url"
-        ;;
-    esac
+    curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_METADATA_TIMEOUT" "$url"
     return
   fi
 
   if command -v wget >/dev/null 2>&1; then
-    case "$url" in
-      "$RELEASES_BASE_URL"/*)
-        wget -q -t 1 -T "$RELEASES_METADATA_TIMEOUT" -O - "$url"
-        ;;
-      *)
-        wget -q -O - "$url"
-        ;;
-    esac
+    wget -q -t 1 -T "$RELEASES_METADATA_TIMEOUT" -O - "$url"
     return
   fi
 
@@ -211,6 +187,14 @@ download_file_with_fallback() {
 }
 
 parse_release_metadata() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '
+      (to_entries[] | select(.key == "tag_name" or .key == "version" or .key == "target" or .key == "entrypoint")
+        | select(.value | type == "string") | [.key, .value]),
+      (.assets[]? | select((.name | type) == "string" and (.digest | type) == "string")
+        | ["asset", .name, .digest]) | @tsv'
+    return
+  fi
   # Bound awk's record size so compact, single-line JSON stays fast on every
   # supported awk implementation. JSON strings cannot contain literal newlines,
   # so the record boundaries inserted by fold do not change the document.
@@ -536,6 +520,11 @@ package_archive_digest() {
 file_sha256() {
   path="$1"
 
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 -r "$path" | awk '{print $1}'
+    return
+  fi
+
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$path" | awk '{print $1}'
     return
@@ -546,23 +535,17 @@ file_sha256() {
     return
   fi
 
-  if command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 "$path" | sed 's/^.*= //'
-    return
-  fi
-
   echo "sha256sum, shasum, or openssl is required to verify the Codex download." >&2
   exit 1
 }
 
 verify_archive_digest() {
-  archive_path="$1"
-  expected_digest="$2"
-  actual_digest="$(file_sha256 "$archive_path")"
+  step "Verifying SHA-256 of ${1##*/}" >&2
+  actual_digest="$(file_sha256 "$1")"
 
-  if [ "$actual_digest" != "$expected_digest" ]; then
+  if [ "$actual_digest" != "$2" ]; then
     echo "Downloaded Codex archive checksum did not match expected digest." >&2
-    echo "expected: $expected_digest" >&2
+    echo "expected: $2" >&2
     echo "actual:   $actual_digest" >&2
     return 1
   fi
@@ -1306,6 +1289,7 @@ else
   fi
 fi
 
+step "Looking up Codex release $RELEASE"
 resolve_release
 release_name="$resolved_version-$vendor_target"
 release_dir="$RELEASES_DIR/$release_name"
@@ -1325,12 +1309,11 @@ if [ "$DAEMON_ONLY" != "1" ]; then
   detect_conflicting_install
 fi
 
-tmp_dir="$(mktemp -d)"
 cleanup() {
-  release_install_lock
   if [ -n "$tmp_dir" ]; then
     rm -rf "$tmp_dir"
   fi
+  release_install_lock
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -1394,6 +1377,7 @@ if [ "${CODEX_INSTALL_IF_LATEST:-}" = "1" ] || [ "${CODEX_INSTALL_IF_CURRENT:-}"
   fi
 fi
 cleanup_stale_install_artifacts
+tmp_dir="$(mktemp -d "$RELEASES_DIR/.staging.download.XXXXXXXX")"
 
 if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target" "$install_layout"; then
   if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then

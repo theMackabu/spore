@@ -8,11 +8,13 @@ async function connectNetwork() {
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   const frames = [];
+  let wake;
   await new Promise((resolve, reject) => {
     ws.onmessage = (e) => {
       if (e.data === "ready") resolve();
       else if (e.data instanceof ArrayBuffer && e.data.byteLength <= 1518 && frames.length < 256) {
         frames.push(new Uint8Array(e.data));
+        wake?.();
       }
     };
     ws.onclose = () => reject(new Error("network relay disconnected"));
@@ -21,6 +23,19 @@ async function connectNetwork() {
   });
   ws.onclose = () => controller.abort(new Error("network relay disconnected"));
   return {
+    pending: () => frames.length > 0,
+    waitForFrame(delay) {
+      if (frames.length) return;
+      return new Promise(resolve => {
+        const timer = setTimeout(finish, delay);
+        function finish() {
+          clearTimeout(timer);
+          wake = undefined;
+          resolve();
+        }
+        wake = finish;
+      });
+    },
     receive: () => frames.shift(),
     send(frame) {
       if (ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 1 << 20) return false;
@@ -54,6 +69,13 @@ onmessage = async ({
   }
   dimensions = initialSize;
   let media, network, result;
+  const decoder = new TextDecoder();
+  let partialLine = "";
+  function kernelLog(bytes) {
+    const lines = (partialLine + decoder.decode(bytes, { stream: true })).split("\n");
+    partialLine = lines.pop();
+    for (const line of lines) console.info("[spore:kernel]", line.trimEnd());
+  }
   try {
     const response = await fetch("./spore_wasm.wasm");
     if (!response.ok) throw new Error("Build the module with spore build --wasm first.");
@@ -69,6 +91,8 @@ onmessage = async ({
     if ((response.headers.get("Spore-Network") ?? (online ? "on" : "off")) === "on") {
       network = await connectNetwork();
     }
+    const info = { arch: "aarch64", cpuCount, memoryMiB, jit: true, network: Boolean(network) };
+    console.info("[spore] Booting guest", info);
     const status = await run(
       await response.arrayBuffer(),
       elf,
@@ -79,6 +103,10 @@ onmessage = async ({
         signal: controller.signal,
         memoryMiB,
         cpuCount,
+        kernelLog,
+        onEntry: () => console.info("[spore:cpu] First guest instruction fetch"),
+        onException: (pc, reason) => console.warn(`[spore:cpu] Exception at 0x${pc.toString(16)}: ${reason}`),
+        onStats: counters => postMessage({ stats: { ...info, ...counters } }),
         argv0: app instanceof File ? app.name : app ? new URL(app, location.href).pathname.split("/").pop() : undefined,
         args,
         readByte: serial.readByte,
@@ -93,6 +121,8 @@ onmessage = async ({
   } catch (error) {
     result = error.message || error.name || String(error);
   } finally {
+    partialLine += decoder.decode();
+    if (partialLine) console.info("[spore:kernel]", partialLine);
     network?.close();
     media?.close?.();
   }

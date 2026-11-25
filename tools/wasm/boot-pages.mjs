@@ -29,7 +29,7 @@ export async function bootPages(file, size, kernel) {
     await run(readFileSync(kernel), null, {
       ...snapshotDisk(size, read),
       readByte: () => -1,
-      memoryMiB: 256,
+      memoryMiB: 1024,
       signal: stop.signal,
       instructionLimit: Number.MAX_SAFE_INTEGER,
     });
