@@ -54,6 +54,8 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
     let code = status(cargo("build", build).args([
         "-p",
         "spore-wasm",
+        "-p",
+        "spore-browser-upgrade",
         "--target",
         "wasm32-unknown-unknown",
     ]))?;
@@ -92,6 +94,9 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
     }
     let files = [
         "index.html",
+        "terminal.mjs",
+        "release-disk.mjs",
+        "publish.mjs",
         "boot-pages.mjs",
         "browser-disk.mjs",
         "run.mjs",
@@ -108,16 +113,40 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
         fs::copy(sources.join(file), stage.0.join(file))?;
     }
     fs::copy(wasm_module(build), stage.0.join("spore_wasm.wasm"))?;
+    fs::copy(
+        wasm_module(build).with_file_name("spore_browser_upgrade.wasm"),
+        stage.0.join("upgrade.wasm"),
+    )?;
+    fs::rename(stage.0.join("upgrade.wasm"), web.join("upgrade.wasm"))?;
     for file in files {
         fs::rename(stage.0.join(file), web.join(file))?;
     }
     Ok(0)
 }
 
+pub fn publish_wasm(build: &Path, out: &Path, userland: bool) -> io::Result<i32> {
+    let rc = build_wasm(build)?;
+    if rc != 0 {
+        return Ok(rc);
+    }
+    if userland || !build.join("root.ext2").is_file() {
+        let rc = build_project(build, true, false)?;
+        if rc != 0 {
+            return Ok(rc);
+        }
+    }
+    status(
+        Command::new("node")
+            .arg(build.join("wasm-web/publish.mjs"))
+            .arg(build)
+            .arg(out),
+    )
+}
+
 pub fn serve_wasm(build: &Path, port: u16, network: bool) -> io::Result<i32> {
     let web = build.join("wasm-web");
     let server = web.join("serve.mjs");
-    if !server.is_file() {
+    if !web.join("publish.mjs").is_file() || !server.is_file() {
         let rc = build_wasm(build)?;
         if rc != 0 {
             return Ok(rc);

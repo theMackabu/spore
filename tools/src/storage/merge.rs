@@ -5,7 +5,6 @@ use super::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     io,
-    path::Path,
 };
 
 type Entries = BTreeMap<Vec<u8>, Node>;
@@ -37,6 +36,12 @@ fn database(fs: &Volume) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+macro_rules! report {
+    ($($arg:tt)*) => {{
+        #[cfg(target_arch="wasm32")] crate::report(&format!($($arg)*));
+        #[cfg(not(target_arch="wasm32"))] eprintln!($($arg)*);
+    }};
+}
 struct Merge<'a> {
     base: &'a Volume,
     incoming: &'a Volume,
@@ -111,7 +116,7 @@ impl Merge<'_> {
                         if h.metadata() == o.metadata() && h.metadata() != i.metadata() {
                             self.local.metadata(h, i)?;
                         } else if h.metadata() != i.metadata() && o.metadata() != i.metadata() {
-                            eprintln!(
+                            report!(
                                 "kept local permissions on {} (base mode {:o}, uid {}, gid {})",
                                 String::from_utf8_lossy(&key),
                                 i.mode & 0o7777,
@@ -153,7 +158,7 @@ impl Merge<'_> {
                             [&name[..name.len().min(255 - ext.len())], ext.as_bytes()].concat();
                         if used.insert(candidate.clone()) {
                             self.copy_tree(local, &candidate, i)?;
-                            eprintln!(
+                            report!(
                                 "kept local {}; incoming copy at {}",
                                 String::from_utf8_lossy(&key),
                                 String::from_utf8_lossy(&[path, b"/", &candidate].concat())
@@ -162,7 +167,7 @@ impl Merge<'_> {
                         }
                     }
                 } else {
-                    eprintln!(
+                    report!(
                         "kept local {} (removed from base)",
                         String::from_utf8_lossy(&key)
                     );
@@ -176,25 +181,33 @@ impl Merge<'_> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn apply(previous: Option<&Path>, new: &Path, staged: &Path) -> io::Result<()> {
     let incoming = Volume::open(new, false)?;
     let previous = previous.map(|p| Volume::open(p, false)).transpose()?;
     let local = Volume::open(staged, true)?;
-    let base_db = previous
-        .as_ref()
-        .map(database)
-        .transpose()?
-        .unwrap_or_default();
-    let packages = PackageMerge::new(&base_db, &database(&incoming)?, &database(&local)?)?;
+    merge_volumes(previous.as_ref(), &incoming, &local)
+}
+
+pub fn merge_volumes(
+    previous: Option<&Volume>,
+    incoming: &Volume,
+    local: &Volume,
+) -> io::Result<()> {
+    let base_db = previous.map(database).transpose()?.unwrap_or_default();
+    let packages = PackageMerge::new(&base_db, &database(incoming)?, &database(local)?)?;
     let merge = Merge {
-        base: previous.as_ref().unwrap_or(&incoming),
-        incoming: &incoming,
-        local: &local,
+        base: previous.unwrap_or(incoming),
+        incoming,
+        local,
         packages,
     };
     merge.merge_dir(
         b"",
-        previous.as_ref().map(|fs| fs.node(2)).transpose()?,
+        previous.map(|fs| fs.node(2)).transpose()?,
         incoming.node(2)?,
         local.node(2)?,
     )?;

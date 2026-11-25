@@ -1,7 +1,7 @@
 #include "internal.h"
 
-#if __STDC_HOSTED__
-#include <stdlib.h>
+#if __STDC_HOSTED__ || defined(SPORE_DISK_TOOL)
+#include "mm/table.h"
 #else
 #include "mm/pool.h"
 static struct object_pool ref_pool;
@@ -32,8 +32,8 @@ bool ext2_retain_inode(struct ext2_fs *fs, uint32_t ino) {
     ++(*slot)->count;
     return true;
   }
-#if __STDC_HOSTED__
-  struct inode_ref *ref = malloc(sizeof(*ref));
+#if __STDC_HOSTED__ || defined(SPORE_DISK_TOOL)
+  struct inode_ref *ref = table_alloc(1, sizeof(*ref));
 #else
   if (!ref_pool.limit && !pool_init(&ref_pool, sizeof(struct inode_ref), SIZE_MAX)) { return false; }
   struct inode_ref *ref = pool_alloc(&ref_pool);
@@ -54,8 +54,8 @@ static bool reap(struct inode_ref **slot) {
     }
   }
   *slot = ref->next;
-#if __STDC_HOSTED__
-  free(ref);
+#if __STDC_HOSTED__ || defined(SPORE_DISK_TOOL)
+  table_free(ref, 1, sizeof(*ref));
 #else
   pool_free(&ref_pool, ref);
 #endif

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mergeVolumes } from "../../tools/wasm/release-disk.mjs";
 import { run } from "../../tools/wasm/run.mjs";
 
 const [spore, wasm, mode] = process.argv.slice(2);
@@ -231,6 +232,24 @@ try {
       "2048",
     ]);
     exec(spore, ["boot", "--wasm", esp, "--root", rebootDisk], 42);
+    const incomingMarker = path.join(dir, "incoming-marker");
+    fs.writeFileSync(incomingMarker, "shipped marker\n");
+    exec("debugfs", ["-w", "-R", `write ${incomingMarker} /marker`, rebootDisk]);
+    function volume(file) {
+      const bytes = fs.readFileSync(file);
+      return {
+        bytes,
+        read(off, dest) { return bytes.copy(dest, 0, Number(off), Number(off)+dest.length); },
+        writeDisk(off, src) { bytes.set(src, Number(off)); return src.length; },
+      };
+    }
+    const saved = volume(persistent);
+    await mergeVolumes(fs.readFileSync(path.join(path.dirname(spore), "wasm-web/upgrade.wasm")),
+      volume(systemDisk), volume(rebootDisk), { readDisk: saved.read, writeDisk: saved.writeDisk });
+    const upgraded = path.join(dir, "upgraded.ext2");
+    fs.writeFileSync(upgraded, saved.bytes);
+    assert.equal(exec("debugfs", ["-R", "cat /marker", upgraded]).toString(), "snapshot\n");
+    assert.equal(exec("debugfs", ["-R", "cat /marker.spore-new", upgraded]).toString(), "shipped marker\n");
     const dynamic = path.join(dir, "read-dynamic");
     exec("aarch64-unknown-linux-musl-gcc", ["-O2", path.join(sources, "read.c"), "-o", dynamic]);
     const assets = ["--cwd", "/work", "--file", path.join(tree, "hello.txt") + "=/work/message"];

@@ -1,0 +1,11 @@
+[package]
+name = "spore-browser-upgrade"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[build-dependencies]
+cc = "1"

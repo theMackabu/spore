@@ -26,7 +26,7 @@ async function connectNetwork() {
     pending: () => frames.length > 0,
     waitForFrame(delay) {
       if (frames.length) return;
-      return new Promise(resolve => {
+      return new Promise((resolve) => {
         const timer = setTimeout(finish, delay);
         function finish() {
           clearTimeout(timer);
@@ -53,7 +53,22 @@ const serial = new SerialInput();
 const controller = new AbortController();
 let dimensions;
 onmessage = async ({
-  data: { app, disk, args, input, online, persist, stop, initialSize, size, memoryMiB, cpuCount },
+  data: {
+    app,
+    disk,
+    release,
+    site,
+    args,
+    input,
+    online,
+    persist,
+    resetDisk,
+    stop,
+    initialSize,
+    size,
+    memoryMiB,
+    cpuCount,
+  },
 }) => {
   if (stop) {
     controller.abort(new Error("Stopped"));
@@ -68,7 +83,10 @@ onmessage = async ({
     return;
   }
   dimensions = initialSize;
-  let media, network, result;
+  let media,
+    network,
+    result,
+    reload = false;
   const decoder = new TextDecoder();
   let partialLine = "";
   function kernelLog(bytes) {
@@ -79,13 +97,22 @@ onmessage = async ({
   try {
     const response = await fetch("./spore_wasm.wasm");
     if (!response.ok) throw new Error("Build the module with spore build --wasm first.");
-    if (disk) media = await openDisk(disk, persist, {
+    const options = {
+      notice: (notice) => postMessage({ notice }),
+      resetDisk,
       signal: controller.signal,
       onWaiting(error) {
         console.warn("[spore] Retrying saved disk access", error.name, error.message);
-        postMessage({ notice: "Waiting for browser storage to open the saved disk. Retrying automatically." });
+        postMessage({
+          notice: "Waiting for browser storage to open the saved disk. Retrying automatically.",
+        });
       },
-    });
+    };
+    if (release) {
+      const { releaseDisk } = await import("./release-disk.mjs");
+      media = await releaseDisk(site, release, persist, options);
+    } else if (disk) media = await openDisk(disk, persist, options);
+    controller.signal.throwIfAborted();
     let elf = null;
     if (app instanceof File) {
       elf = new Uint8Array(await app.arrayBuffer());
@@ -99,32 +126,34 @@ onmessage = async ({
     }
     const info = { arch: "aarch64", cpuCount, memoryMiB, jit: true, network: Boolean(network) };
     console.info("[spore] Booting guest", info);
-    const status = await run(
-      await response.arrayBuffer(),
-      elf,
-      {
-        ...media,
-        checkpointStorage: Boolean(media && persist),
-        network,
-        signal: controller.signal,
-        memoryMiB,
-        cpuCount,
-        kernelLog,
-        onEntry: () => console.info("[spore:cpu] First guest instruction fetch"),
-        onException: (pc, reason) => console.warn(`[spore:cpu] Exception at 0x${pc.toString(16)}: ${reason}`),
-        onStats: counters => postMessage({ stats: { ...info, ...counters } }),
-        argv0: app instanceof File ? app.name : app ? new URL(app, location.href).pathname.split("/").pop() : undefined,
-        args,
-        readByte: serial.readByte,
-        winsize: () => dimensions,
-        instructionLimit: elf ? undefined : Number.MAX_SAFE_INTEGER,
-        write(fd, bytes) {
-          postMessage({ fd, bytes }, [bytes.buffer]);
-        },
+    const status = await run(await response.arrayBuffer(), elf, {
+      ...media,
+      checkpointStorage: Boolean(media && persist),
+      network,
+      signal: controller.signal,
+      memoryMiB,
+      cpuCount,
+      kernelLog,
+      onEntry: () => console.info("[spore:cpu] First guest instruction fetch"),
+      onException: (pc, reason) => console.warn(`[spore:cpu] Exception at 0x${pc.toString(16)}: ${reason}`),
+      onStats: (counters) => postMessage({ stats: { ...info, ...counters } }),
+      argv0:
+        app instanceof File
+          ? app.name
+          : app
+            ? new URL(app, location.href).pathname.split("/").pop()
+            : undefined,
+      args,
+      readByte: serial.readByte,
+      winsize: () => dimensions,
+      instructionLimit: elf ? undefined : Number.MAX_SAFE_INTEGER,
+      write(fd, bytes) {
+        postMessage({ fd, bytes }, [bytes.buffer]);
       },
-    );
+    });
     result = `Exited with ${status}`;
   } catch (error) {
+    reload = error.name === "ReleaseChanged";
     result = error.message || error.name || String(error);
   } finally {
     partialLine += decoder.decode();
@@ -132,5 +161,5 @@ onmessage = async ({
     network?.close();
     media?.close?.();
   }
-  postMessage({ status: result });
+  postMessage({ status: result, reload });
 };

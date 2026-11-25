@@ -51,13 +51,35 @@ In another terminal, `curl http://127.0.0.1:8080/` returns `wasm`. Request `/qui
 ./target/release/spore serve --wasm
 ```
 
-Open the printed URL. The guest boots from `target/release/root.ext2` with 1 GiB of RAM. Use `?memory=512` to boot with 512 MiB. The server builds missing boot artifacts on first use. It briefly boots a disposable snapshot to collect startup disk pages and serves them in one compressed response. Later disk reads fetch missing ranges on demand.
+Open `http://127.0.0.1:3000/` or the URL printed when using `--port`. The guest boots from `target/release/root.ext2` with 1 GiB of RAM. Use `?memory=512` to boot with 512 MiB. The server builds missing boot artifacts on first use. It briefly boots a disposable snapshot to collect startup disk pages and serves them in one compressed response. Later reads fetch disk chunks on demand.
 
-Reloading reboots the guest with your saved disk changes. Use the same browser profile, address, port and base image to reopen the disk. One tab can write to a saved disk at a time. A waiting tab boots automatically when the other tab closes. Files in your home directory persist. The guest recreates `/tmp` at boot. Open `/?snapshot` for a disposable session starting from the base image. Drop a local ELF, packaged app or root disk onto the terminal to start it.
+Reloading reboots the guest with your saved disk changes. Use the same browser profile and site address (including the port and deployment path) to reopen the installation. One tab can write to a saved disk at a time. A waiting tab boots automatically when the other tab closes. Files in your home directory persist. The guest recreates `/tmp` at boot. Open `/?snapshot` for a disposable session starting from the base image. Drop a local ELF, packaged app or root disk onto the terminal to start it.
 
 The DevTools console shows guest configuration, kernel messages and CPU exceptions with the guest program counter. Run `console.table(spore.stats())` in the page console for free guest memory in KiB and CPU counters refreshed about once a second. The instruction count and rate cover completed execution slices across all guest CPUs. JIT counters report compiled traces and guest instructions executed by those traces.
 
-The local server enables outbound IPv4 through its WebSocket Ethernet relay by default. Pass `--offline` to boot without networking. For static hosting, serve `target/release/wasm-web/` with a `root.ext2` beside it on a server supporting HTTP byte ranges. Use `?app=./my-app.spore` to launch a hosted app instead. The JavaScript API accepts custom block and Ethernet devices, a cancellation signal and an instruction budget. [Launcher](../../tools/wasm/run.mjs)
+To erase the current browser disk’s changes, run `spore.resetDisk()` in that tab’s DevTools console or add `?reset` to its URL, then confirm. The guest boots from the latest published base. The reset is used once.
+
+The local server enables outbound IPv4 through its WebSocket Ethernet relay by default. Pass `--offline` to boot without networking. Public static deployments run offline unless you provide a compatible Ethernet relay. Use `?app=./my-app.spore` to launch a hosted app instead. The JavaScript API accepts custom block and Ethernet devices, a cancellation signal and an instruction budget. [Launcher](../../tools/wasm/run.mjs)
+
+## Publish a browser update
+
+To rebuild the kernel, userland and data files listed in `userland/image.manifest`, publish to the running local server:
+
+```sh
+./target/release/spore publish --wasm --userland
+```
+
+For a kernel or browser runner update, omit `--userland` to reuse the built disk. To publish a public site, supply its output directory:
+
+```sh
+./target/release/spore publish --wasm --userland ./dist/spore
+```
+
+Serve the directory over HTTPS. Upload `objects/`, `disks/`, `releases/` and `index.html` first, then replace `release.json` last. Keep prior objects, disk descriptors and releases across deploys, including when deploying from clean CI checkouts. Returning installations can still reference their original backing disk. Cache the versioned files as immutable and have the CDN revalidate `release.json` and `index.html`. Static hosting needs only ordinary HTTP GETs.
+
+Open tabs check the server every five seconds and when brought to the foreground. A new release checkpoints the disk and restarts the guest. Running processes restart. Returning browsers check on their next visit. A kernel-only update reuses the saved disk. For a changed base, the browser merges the previous defaults, incoming files and a copy of the saved installation locally. Stock files update, local files and installed packages survive, and conflicting incoming files receive a `.spore-new` suffix. The new disk is selected after the merge succeeds. Allow enough browser storage for a temporary copy of the saved changes.
+
+For the first rollout from the older runner, publish the same base at the same URL first so existing browser saves can be adopted. Tabs running the older code need one reload to pick up the update checker.
 
 ## Verification
 

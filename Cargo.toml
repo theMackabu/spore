@@ -6,7 +6,7 @@ rust-version = "1.100"
 autotests = false
 
 [workspace]
-members = ["kernel", "kernel/arch/wasm", "userland", "tests/native", "tools/packages", "tools/build"]
+members = ["kernel", "kernel/arch/wasm", "userland", "tests/native", "tools/packages", "tools/build", "tools/browser-upgrade"]
 default-members = ["."]
 
 [workspace.package]

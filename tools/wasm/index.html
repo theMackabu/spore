@@ -3,83 +3,48 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Spore</title>
-  <link rel="stylesheet" href="./xterm/xterm.css" />
   <style>
-    :root { color-scheme: dark; background: #101311; }
-    body { margin: 0; }
-    #terminal { position: fixed; inset: 8px; }
+    :root {
+      color-scheme: dark;
+      background: #101311;
+    }
+    body {
+      margin: 0;
+    }
+    #terminal {
+      position: fixed;
+      inset: 8px;
+    }
   </style>
   <main id="terminal" aria-label="Spore terminal"></main>
   <script type="module">
-    import { Terminal } from "./xterm/xterm.mjs";
-    import { FitAddon } from "./fit/addon-fit.mjs";
-
-    const screen = document.getElementById("terminal");
-    const terminal = new Terminal({ cursorBlink: true, theme: { background: "#101311" } });
-    const fit = new FitAddon();
-    terminal.loadAddon(fit);
-    terminal.open(screen);
-    fit.fit();
-    terminal.focus();
-
-    let worker, nextBoot, stats;
-    window.spore = { stats: () => stats && { ...stats } };
-    terminal.onData(input => worker?.postMessage({ input }));
-    terminal.onResize(({ rows, cols }) => worker?.postMessage({ size: { rows, cols } }));
-    new ResizeObserver(() => fit.fit()).observe(screen);
-    function finish(message) {
-      worker?.terminate();
-      worker = null;
-      if (nextBoot) {
-        const [app, disk] = nextBoot;
-        nextBoot = null;
-        boot(app, disk);
-        return;
-      }
-      terminal.writeln("\r\n" + message);
-    }
-    const options = new URLSearchParams(location.search);
-    function boot(app, disk) {
-      if (worker) {
-        nextBoot = [app, disk];
-        worker.postMessage({ stop: true });
-        return;
-      }
-      terminal.reset();
-      terminal.focus();
-      stats = undefined;
-      worker = new Worker("./worker.mjs", { type: "module" });
-      worker.onerror = event => finish(event.message || "Browser worker failed to start");
-      worker.onmessage = ({ data }) => {
-        if (data.bytes) terminal.write(data.bytes);
-        else if (data.stats) stats = data.stats;
-        else if (data.notice) terminal.writeln(data.notice);
-        else {
-          if (stats) console.info("[spore]", data.status, stats);
-          else console.info("[spore]", data.status);
-          finish(data.status);
-        }
-      };
-      worker.postMessage({
-        app, disk, args: options.getAll("arg"),
-        persist: !options.has("snapshot"), online: options.has("net"),
-        initialSize: { rows: terminal.rows, cols: terminal.cols },
-        cpuCount: Number(options.get("cpus") ?? 1),
-        memoryMiB: Number(options.get("memory") ?? 1024),
+    const site = new URL("./", location.href);
+    try {
+      const response = await fetch(new URL("release.json", site), { cache: "no-store" });
+      let release = null;
+      if (response.ok) {
+        release = await response.json();
+        if (
+          release.format !== 1 ||
+          !/^[a-f0-9]{64}$/.test(release.id) ||
+          !/^[a-f0-9]{64}$/.test(release.disk)
+        )
+          throw Error("Invalid Spore release manifest");
+      } else if (response.status !== 404)
+        throw Error("Cannot check the Spore release (" + response.status + ")");
+      const assets = release ? new URL("releases/" + release.id + "/", site) : site;
+      const style = document.createElement("link");
+      style.rel = "stylesheet";
+      style.href = new URL("xterm/xterm.css", assets);
+      const loaded = new Promise((resolve, reject) => {
+        style.onload = resolve;
+        style.onerror = () => reject(Error("Cannot load terminal styles"));
       });
+      document.head.append(style);
+      const [runner] = await Promise.all([import(new URL("terminal.mjs", assets)), loaded]);
+      runner.start(site.href, release);
+    } catch (error) {
+      document.querySelector("main").textContent = error.message;
     }
-    const app = options.get("app");
-    boot(app, options.get("disk") ?? (app ? null : "./root.ext2"));
-    screen.addEventListener("dragover", event => event.preventDefault());
-    screen.addEventListener("drop", async event => {
-      event.preventDefault();
-      let app, disk;
-      for (const file of [...event.dataTransfer.files]) {
-        const magic = await file.slice(0, 8).text();
-        if (magic.startsWith("\x7fELF") || magic === "SPOREAP2") app = file;
-        else disk = file;
-      }
-      if (app || disk) boot(app, disk);
-    });
   </script>
 </html>

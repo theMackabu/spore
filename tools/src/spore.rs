@@ -7,7 +7,7 @@ mod system;
 
 use std::{
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs, io,
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
@@ -26,7 +26,8 @@ Usage:
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
   spore build --wasm                  Build the hosted ARM64 kernel and interpreter
   spore build --wasm ELF -o PAYLOAD [image options] [-- ARG...]
-  spore serve --wasm [--offline] [--port PORT]  Serve the browser runner on localhost
+  spore publish --wasm [--userland] [DIRECTORY]    Publish a browser release (defaults to the local server directory)
+  spore serve --wasm [--offline] [--port PORT]  Serve the browser runner on localhost (default port 3000)
   spore boot --wasm [--net] [--root EXT2]       Boot a disposable snapshot of a userland disk
   spore run --wasm ELF [--net | -p PORT] [image options] [--data EXT2] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
@@ -137,10 +138,32 @@ fn execute() -> io::Result<i32> {
     let check = action == "test" || action == "bench";
     let exe = env::current_exe()?;
     let artifacts = exe.parent().unwrap();
+    if action == "publish" {
+        if args.next().as_deref() != Some(OsStr::new("--wasm")) {
+            return Err(io::Error::other(
+                "usage: spore publish --wasm [--userland] [DIRECTORY]",
+            ));
+        }
+        let mut userland = false;
+        let mut out = None;
+        for arg in args {
+            if arg == "--userland" {
+                userland = true;
+            } else if arg.to_string_lossy().starts_with('-')
+                || out.replace(PathBuf::from(arg)).is_some()
+            {
+                return Err(io::Error::other(
+                    "usage: spore publish --wasm [--userland] [DIRECTORY]",
+                ));
+            }
+        }
+        let out = out.unwrap_or_else(|| artifacts.join("wasm-site"));
+        return system::publish_wasm(artifacts, &out, userland);
+    }
     if action == "serve" {
         let mut wasm = false;
         let mut network = true;
-        let mut port = 8000;
+        let mut port = 3000;
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--wasm") => wasm = true,

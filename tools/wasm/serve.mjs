@@ -1,30 +1,19 @@
-import { createHash } from "node:crypto";
+import { assets, publish } from "./publish.mjs";
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
-import { bootPages } from "./boot-pages.mjs";
 import { join, extname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { userNetwork } from "./net.mjs";
 
 const [port, qemu, wsModule] = process.argv.slice(2);
 const root = fileURLToPath(new URL(".", import.meta.url));
-const assets = new Set([
-  "index.html",
-  "run.mjs",
-  "worker.mjs",
-  "disk.mjs",
-  "browser-disk.mjs",
-  "input.mjs",
-  "persistent.mjs",
-  "spore_wasm.wasm",
-  "xterm/xterm.mjs",
-  "xterm/xterm.css",
-  "fit/addon-fit.mjs",
-  "xterm/LICENSE",
-  "fit/LICENSE",
-]);
+const build = join(root, "..");
+const site = join(build, "wasm-site");
+await publish(build, site, true);
+const allowed = new Set([...assets, "boot.pages.gz"]);
 const mime = {
+  ".json": "application/json",
   ".html": "text/html",
   ".mjs": "text/javascript",
   ".css": "text/css",
@@ -32,10 +21,6 @@ const mime = {
 };
 const disk = await open(join(root, "../root.ext2"), "r");
 const diskInfo = await disk.stat();
-const boot = await bootPages(disk.fd, diskInfo.size, join(root, "spore_wasm.wasm")).catch(error => {
-  console.warn("spore: boot prefetch unavailable:", error.message);
-});
-const bootPath = boot && "boot.pages?v=" + createHash("sha256").update(boot).digest("hex");
 async function serveDisk(req, res) {
   const size = diskInfo.size;
   res.setHeader("Content-Type", "application/octet-stream");
@@ -44,7 +29,6 @@ async function serveDisk(req, res) {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   if (req.method === "HEAD") {
-    if (bootPath) res.setHeader("Spore-Boot-Pages", "./" + bootPath);
     res.setHeader("Content-Length", size);
     res.end();
     return;
@@ -66,46 +50,53 @@ async function serveDisk(req, res) {
     if (!bytesRead) throw new Error("Short root disk read");
     offset += bytesRead;
     await new Promise((resolve, reject) =>
-      res.write(data.subarray(0, bytesRead), err => err ? reject(err) : resolve()));
+      res.write(data.subarray(0, bytesRead), (err) => (err ? reject(err) : resolve())),
+    );
   }
   res.end();
 }
 
-let address;
+let address, localhost;
 const server = createServer((req, res) => {
-  if (req.headers.host !== address || !["GET", "HEAD"].includes(req.method)) {
+  const host = req.headers.host?.toLowerCase();
+  if ((host !== address && host !== localhost) || !req.url.startsWith("/") || !["GET", "HEAD"].includes(req.method)) {
     res.writeHead(403).end();
+    return;
+  }
+  if (host === localhost) {
+    res.writeHead(307, { Location: "http://" + address + req.url, "Cache-Control": "no-store" }).end();
     return;
   }
   const path = req.url.split("?")[0].slice(1) || "index.html";
   if (path === "root.ext2") {
-    serveDisk(req, res).catch(err => res.destroy(err));
+    serveDisk(req, res).catch((err) => res.destroy(err));
     return;
   }
-  if (boot && req.url === "/" + bootPath) {
-    res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Encoding": "gzip",
-      "Content-Length": boot.length, "Cache-Control": "private, max-age=31536000, immutable", "Cross-Origin-Resource-Policy": "same-origin" });
-    res.end(req.method === "HEAD" ? undefined : boot);
-    return;
-  }
-  if (!assets.has(path)) {
+  const releaseAsset = /^releases\/[a-f0-9]{64}\/(.+)$/.exec(path);
+  const immutable =
+    (releaseAsset && allowed.has(releaseAsset[1])) ||
+    /^objects\/[a-f0-9]{64}$/.test(path) ||
+    /^disks\/[a-f0-9]{64}\.json$/.test(path);
+  const published = immutable || path === "index.html" || path === "release.json";
+  if (!published && !allowed.has(path)) {
     res.writeHead(404).end();
     return;
   }
-  res.setHeader("Content-Type", mime[extname(path)] || "text/plain");
+  res.setHeader("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-store");
+  res.setHeader("Content-Type", mime[extname(path)] || "application/octet-stream");
   res.setHeader("X-Content-Type-Options", "nosniff");
-  if (path === "spore_wasm.wasm") {
+  if (path === "spore_wasm.wasm" || releaseAsset?.[1] === "spore_wasm.wasm") {
     res.setHeader("Spore-Network", qemu ? "on" : "off");
     res.setHeader("Cache-Control", "no-cache");
   }
-  if (req.method === "HEAD") {
-    res.end();
-    return;
-  }
-  const stream = createReadStream(join(root, path));
-  stream.on("error", () => res.writeHead(404).end());
+  const stream = createReadStream(join(published ? site : root, path));
+  stream.on("error", error => {
+    if (res.headersSent) res.destroy(error);
+    else res.writeHead(error.code === "ENOENT" ? 404 : 500, { "Cache-Control": "no-store" }).end();
+  });
   res.on("close", () => stream.destroy());
-  stream.pipe(res);
+  if (req.method === "HEAD") stream.once("open", () => res.end());
+  else stream.pipe(res);
 });
 
 const connections = new Set();
@@ -157,7 +148,9 @@ server.on("error", (e) => {
   process.exitCode = 1;
 });
 server.listen(Number(port), "127.0.0.1", () => {
-  address = "127.0.0.1:" + server.address().port;
+  const suffix = server.address().port === 80 ? "" : ":" + server.address().port;
+  address = "127.0.0.1" + suffix;
+  localhost = "localhost" + suffix;
   console.log("http://" + address + "/");
 });
 function close() {

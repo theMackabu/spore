@@ -1,11 +1,14 @@
 use std::{
     collections::BTreeMap,
     ffi::{CString, c_char, c_void},
-    fs::{File, OpenOptions},
     io,
+    ptr::NonNull,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    fs::{File, OpenOptions},
     os::fd::AsRawFd,
     path::Path,
-    ptr::NonNull,
 };
 
 #[path = "../../../kernel/fs/ext2/bitmap.rs"]
@@ -81,9 +84,17 @@ fn entry_path(name: &[u8]) -> io::Result<CString> {
 
 pub struct Volume {
     fs: NonNull<c_void>,
+    #[cfg(not(target_arch = "wasm32"))]
     file: File,
 }
 impl Volume {
+    #[cfg(target_arch = "wasm32")]
+    pub fn device(id: i32, writable: bool) -> io::Result<Self> {
+        let fs = NonNull::new(unsafe { volume_open(id, writable) })
+            .ok_or_else(|| io::Error::other("invalid ext2 upgrade image"))?;
+        Ok(Self { fs })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(path: &Path, writable: bool) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(writable).open(path)?;
         let fs = NonNull::new(unsafe { volume_open(file.as_raw_fd(), writable) })
@@ -92,7 +103,9 @@ impl Volume {
     }
     pub fn flush(&self) -> io::Result<()> {
         check(unsafe { ext2_flush(self.fs.as_ptr()) })?;
-        self.file.sync_all()
+        #[cfg(not(target_arch = "wasm32"))]
+        self.file.sync_all()?;
+        Ok(())
     }
     pub fn node(&self, ino: u32) -> io::Result<Node> {
         let mut n = Node::default();

@@ -385,6 +385,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "spore-browser-upgrade"
+version = "0.7.5"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "spore-build"
 version = "0.1.0"
 
