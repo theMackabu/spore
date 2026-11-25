@@ -65,6 +65,64 @@ impl Cpu {
                 return Err(Fault::Instruction(w));
             }
             out = splat(self.reg(n), 8 * size);
+        } else if w & 0x9f800400 == 0x0f000400
+            && w & 0x00780000 != 0
+            && matches!((w >> 11) & 31, 0 | 2 | 4 | 6 | 8 | 10)
+        {
+            let imm = (w >> 16) & 127;
+            let bits = 1 << imm.ilog2();
+            let u = w & (1 << 29) != 0;
+            let count = (if w & (1 << 30) != 0 { 128 } else { 64 }) / bits;
+            if count == 1 {
+                return Err(Fault::Instruction(w));
+            }
+            let elem_mask = (1u128 << bits) - 1;
+            let op = (w >> 11) & 31;
+            for i in 0..count {
+                let old = (self.context.v[d] >> (i * bits)) & elem_mask;
+                let x = (a >> (i * bits)) & elem_mask;
+                let v = if op == 10 {
+                    let shift = imm - bits;
+                    (x << shift) | (if u { old & ((1 << shift) - 1) } else { 0 })
+                } else {
+                    let shift = 2 * bits - imm;
+                    if op == 8 {
+                        if !u {
+                            return Err(Fault::Instruction(w));
+                        }
+                        (old & !(elem_mask >> shift)) | (x >> shift)
+                    } else {
+                        let value = if !u && x & (1 << (bits - 1)) != 0 {
+                            (x | !elem_mask) as i128
+                        } else {
+                            x as i128
+                        };
+                        let rounded = value + (if op & 4 != 0 { 1 << (shift - 1) } else { 0 });
+                        ((rounded >> shift) as u128).wrapping_add(if op & 2 != 0 { old } else { 0 })
+                    }
+                };
+                out |= (v & elem_mask) << (i * bits);
+            }
+        } else if w & 0xbf80f400 == 0x0f008400 && w & 0x00780000 != 0 {
+            let imm = (w >> 16) & 127;
+            if !(8..64).contains(&imm) {
+                return Err(Fault::Instruction(w));
+            }
+            let bits = 1 << imm.ilog2();
+            let shift = 2 * bits - imm;
+            let round = if w & (1 << 11) != 0 {
+                1 << (shift - 1)
+            } else {
+                0
+            };
+            let elem_mask = (1u128 << bits) - 1;
+            for i in 0..64 / bits {
+                let input = (a >> (i * 2 * bits)) & ((1u128 << (2 * bits)) - 1);
+                out |= (((input + round) >> shift) & elem_mask) << (i * bits);
+            }
+            if w & (1 << 30) != 0 {
+                out = (out << 64) | (self.context.v[d] & u64::MAX as u128);
+            }
         } else if w & 0x9f80fc00 == 0x0f00a400 {
             let imm = (w >> 16) & 127;
             if !(8..64).contains(&imm) {
@@ -152,6 +210,67 @@ impl Cpu {
                     }
                 };
                 out |= v << (i * width);
+            }
+        } else if w & 0x9f20fc00 == 0x0e209400 || w & 0xbf20fc00 == 0x0e209c00 {
+            if width == 64 {
+                return Err(Fault::Instruction(w));
+            }
+            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            for i in 0..count {
+                let product = lane(a, i) * lane(b, i);
+                let acc = lane(self.context.v[d], i);
+                let value = if w & 0x800 != 0 {
+                    product
+                } else if w & (1 << 29) != 0 {
+                    acc.wrapping_sub(product)
+                } else {
+                    acc + product
+                };
+                out |= (value & mask) << (i * width);
+            }
+        } else if w & 0x9f3efc00 == 0x0e30a800 {
+            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            if count < 4 || width > 32 {
+                return Err(Fault::Instruction(w));
+            }
+            let sign = if w & (1 << 29) == 0 {
+                1 << (width - 1)
+            } else {
+                0
+            };
+            out = lane(a, 0);
+            for i in 1..count {
+                let x = lane(a, i);
+                if ((x ^ sign) > (out ^ sign)) != (w & (1 << 16) != 0) {
+                    out = x;
+                }
+            }
+        } else if w & 0x9f20cc00 == 0x0e200000 {
+            if width >= 64 {
+                return Err(Fault::Instruction(w));
+            }
+            let start = if w & (1 << 30) == 0 { 0 } else { lanes / 2 };
+            let wide_mask = (1 << (2 * width)) - 1;
+            let extend = |v: u128| {
+                if w & (1 << 29) == 0 && (v >> (width - 1)) != 0 {
+                    v | !mask
+                } else {
+                    v
+                }
+            };
+            for i in 0..lanes / 2 {
+                let x = if w & (1 << 12) != 0 {
+                    (a >> (2 * i * width)) & wide_mask
+                } else {
+                    extend(lane(a, start + i))
+                };
+                let y = extend(lane(b, start + i));
+                let value = if w & (1 << 13) == 0 {
+                    x.wrapping_add(y)
+                } else {
+                    x.wrapping_sub(y)
+                };
+                out |= (value & wide_mask) << (2 * i * width);
             }
         } else if w & 0xbf3ffc00 == 0x0e31b800 {
             let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
@@ -254,11 +373,30 @@ impl Cpu {
                 b.to_le_bytes()
                     .map(|index| table.get(index as usize).copied().unwrap_or(0)),
             );
-        } else if w & 0xff20fc00 == 0x6e20a400 && width < 64 {
-            for i in 0..lanes {
-                let src = if i < lanes / 2 { a } else { b };
-                let j = (i % (lanes / 2)) * 2;
-                out |= lane(src, j).max(lane(src, j + 1)) << (i * width);
+        } else if matches!(w & 0x9f20fc00, 0x0e20a400 | 0x0e20ac00) || w & 0xbf20fc00 == 0x0e20bc00
+        {
+            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            let add = w & 0xf800 == 0xb800;
+            if count < 2 || (width == 64 && !add) {
+                return Err(Fault::Instruction(w));
+            }
+            let sign = if w & (1 << 29) == 0 {
+                1 << (width - 1)
+            } else {
+                0
+            };
+            for i in 0..count {
+                let src = if i < count / 2 { a } else { b };
+                let j = (i % (count / 2)) * 2;
+                let (x, y) = (lane(src, j), lane(src, j + 1));
+                let value = if add {
+                    (x + y) & mask
+                } else if ((x ^ sign) > (y ^ sign)) != (w & 0x800 != 0) {
+                    x
+                } else {
+                    y
+                };
+                out |= value << (i * width);
             }
         } else {
             return Err(Fault::Instruction(w));

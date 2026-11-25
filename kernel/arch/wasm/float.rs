@@ -172,6 +172,21 @@ impl Cpu {
             return Ok(());
         }
         let a = self.fp_input::<F>(n);
+        if w & 0xffbc7c00 == 0x1e244000 {
+            let op = (w >> 15) & 7;
+            let mode = match op {
+                0..=3 => rounding(op),
+                4 => Round::NearestTiesToAway,
+                6 | 7 => round,
+                _ => return Err(Fault::Instruction(w)),
+            };
+            let mut result = a.round_to_integral(mode);
+            if op != 6 {
+                result.status.remove(Status::INEXACT);
+            }
+            self.fp_result(d, result);
+            return Ok(());
+        }
         if matches!(w & 0xfffffc00, 0x1e624000 | 0x1e22c000) {
             let result = a.convert_r(round, &mut false);
             self.fp_result::<Other>(d, result);
