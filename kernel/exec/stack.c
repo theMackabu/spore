@@ -128,7 +128,8 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   kmemset(random, 0, sizeof(random));
 
 #if defined(__wasm__)
-  const uint64_t hwcap = AARCH64_HWCAP_ATOMICS;
+  const uint64_t hwcap = AARCH64_HWCAP_AES | AARCH64_HWCAP_PMULL | AARCH64_HWCAP_SHA1 | AARCH64_HWCAP_SHA2 |
+                         AARCH64_HWCAP_CRC32 | AARCH64_HWCAP_ATOMICS;
 #elif defined(SPORE_NATIVE_PORT)
 #if defined(__riscv)
   const uint64_t hwcap = 1 | (1 << 2) | (1 << 8) | (1 << 12);

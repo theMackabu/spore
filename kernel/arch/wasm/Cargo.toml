@@ -13,4 +13,5 @@ cc = { version = "1", features = ["parallel"] }
 spore-build = { path = "../../../tools/build" }
 
 [target.wasm32-unknown-unknown.dependencies]
+aes = { version = "0.9", features = ["hazmat"] }
 rustc_apfloat = "0.2.3"

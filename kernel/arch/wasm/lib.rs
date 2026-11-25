@@ -5,6 +5,8 @@ mod atomic;
 #[cfg(target_arch = "wasm32")]
 mod cpu;
 #[cfg(target_arch = "wasm32")]
+mod crypto;
+#[cfg(target_arch = "wasm32")]
 mod decode;
 #[cfg(target_arch = "wasm32")]
 mod float;

@@ -65,6 +65,11 @@ try {
     const smp = path.join(dir, "smp");
     exec("aarch64-unknown-linux-musl-gcc", ["-static", "-O2", "-pthread", path.join(sources, "../ports/smp.c"), "-o", smp]);
     exec(spore, ["run", "--wasm", smp, "--smp", "4"]);
+    const crypto = path.join(dir, "crypto");
+    exec("aarch64-unknown-linux-musl-gcc", ["-static", "-O2", "-march=armv8-a+crypto+crc", path.join(sources, "crypto.c"), "-o", crypto]);
+    const native = exec(spore, ["run", crypto], 42);
+    assert.equal(native.length, 576);
+    assert.deepEqual(exec(spore, ["run", "--wasm", crypto], 42), native);
     const bsd = path.join(dir, "freebsd");
     exec("clang", ["--target=aarch64-unknown-freebsd", "-nostdlib", "-static", "-fuse-ld=lld", "-Wl,-e,_start",
       "-ffreestanding", "-fno-stack-protector", ...["freebsd-aarch64.S", "freebsd-call.S", "freebsd-services.c"]

@@ -32,6 +32,8 @@ pub enum Op {
     CacheMaintenance,
     Float,
     Vector,
+    Crypto,
+    Crc,
     ClearExclusive,
     Hint,
     Transfer,
@@ -62,17 +64,43 @@ pub fn classify(w: u32) -> Op {
     if w & 0xffe0001f == 0xd4000001 {
         return Op::Syscall;
     }
-    if matches!(w & 0xffffffe0, 0xd53bd040 | 0xd51bd040 | 0xd53b00e0 | 0xd53b0020 |
-        0xd53be000 | 0xd53be020 | 0xd53be040 | 0xd53b4200 | 0xd51b4200 |
-        0xd53b4400 | 0xd51b4400 | 0xd53b4420 | 0xd51b4420) {
+    if matches!(
+        w & 0xffffffe0,
+        0xd53bd040
+            | 0xd51bd040
+            | 0xd53b00e0
+            | 0xd53b0020
+            | 0xd53be000
+            | 0xd53be020
+            | 0xd53be040
+            | 0xd53b4200
+            | 0xd51b4200
+            | 0xd53b4400
+            | 0xd51b4400
+            | 0xd53b4420
+            | 0xd51b4420
+    ) {
         return Op::SystemRegister;
     }
-    if matches!(w & 0xffffffe0, 0xd50b7b20 | 0xd50b7e20 | 0xd50b7a20 | 0xd50b7520) {
+    if matches!(
+        w & 0xffffffe0,
+        0xd50b7b20 | 0xd50b7e20 | 0xd50b7a20 | 0xd50b7520
+    ) {
         return Op::CacheMaintenance;
     }
+    if w & 0x7fe0e000 == 0x1ac04000 {
+        return Op::Crc;
+    }
+    if w & 0xffffcc00 == 0x4e284800
+        || w & 0xbf20fc00 == 0x0e20e000
+        || w & 0xffe08c00 == 0x5e000000
+        || matches!(w & 0xfffffc00, 0x5e280800 | 0x5e281800 | 0x5e282800)
+    {
+        return Op::Crypto;
+    }
     if w & 0x1e000000 == 0x0e000000
-        || w & 0xdf000000 == 0x5e000000
-        || matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000)
+        || w & 0xde000000 == 0x5e000000
+        || matches!(w & 0xfffefc00, 0x9e660000 | 0x1e260000 | 0x9eae0000)
     {
         return Op::Vector;
     }
@@ -82,7 +110,10 @@ pub fn classify(w: u32) -> Op {
     if w & 0xfffff0ff == 0xd503305f {
         return Op::ClearExclusive;
     }
-    if w & 0xfffff01f == 0xd503201f || matches!(w & 0xfffff0ff, 0xd503309f | 0xd50330bf) || w == 0xd5033fdf {
+    if w & 0xfffff01f == 0xd503201f
+        || matches!(w & 0xfffff0ff, 0xd503309f | 0xd50330bf)
+        || w == 0xd5033fdf
+    {
         return Op::Hint;
     }
     if (w >> 25) & 5 == 4 {

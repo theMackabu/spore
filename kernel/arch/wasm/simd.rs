@@ -17,10 +17,15 @@ impl Cpu {
         let mask = (1u128 << width) - 1;
         let lane = |v: u128, i: u32| (v >> (width * i)) & mask;
         let mut out = 0;
-        if w & 0x8fbffc00 == 0x0e21d800 {
+        if matches!(w & 0x8fbffc00, 0x0e21d800 | 0x0ea1b800) {
             return self.convert_lanes(w);
         }
-        if w & 0xfffffc00 == 0x1e260000 {
+        if w & 0xfffffc00 == 0x9eae0000 {
+            self.set(d as u32,(a >> 64) as u64);
+            return Ok(());
+        } else if w & 0xfffffc00 == 0x9eaf0000 {
+            out = (self.context.v[d] & u64::MAX as u128) | (u128::from(self.reg(n)) << 64);
+        } else if w & 0xfffffc00 == 0x1e260000 {
             self.set(d as u32, a as u32 as u64);
             return Ok(());
         } else if w & 0xfffffc00 == 0x1e270000 {
@@ -59,21 +64,42 @@ impl Cpu {
                 a >> ((lane >> size) * width)
             };
             out = (self.context.v[d] & !(mask << shift)) | ((value & mask) << shift);
+        } else if w & 0xbfe0fc00 == 0x0e000400 || w & 0xffe0fc00 == 0x5e000400 {
+            let imm = (w >> 16) & 31;
+            let size = imm.trailing_zeros();
+            if size > 3 {
+                return Err(Fault::Instruction(w));
+            }
+            let bits = 8 << size;
+            let idx = imm >> (size + 1);
+            let value = (a >> (idx * bits)) & ((1 << bits) - 1);
+            if w & (1 << 28) != 0 {
+                out = value;
+            } else {
+                out = splat(value as u64, bits);
+                if w & (1 << 30) == 0 {
+                    if bits == 64 {
+                        return Err(Fault::Instruction(w));
+                    }
+                    out &= u64::MAX as u128;
+                }
+            }
         } else if w & 0xfff0fc00 == 0x4e000c00 {
             let size = (w >> 16) & 15;
             if !size.is_power_of_two() {
                 return Err(Fault::Instruction(w));
             }
             out = splat(self.reg(n), 8 * size);
-        } else if w & 0x9f800400 == 0x0f000400
+        } else if w & 0x8f800400 == 0x0f000400
             && w & 0x00780000 != 0
             && matches!((w >> 11) & 31, 0 | 2 | 4 | 6 | 8 | 10)
         {
             let imm = (w >> 16) & 127;
             let bits = 1 << imm.ilog2();
             let u = w & (1 << 29) != 0;
-            let count = (if w & (1 << 30) != 0 { 128 } else { 64 }) / bits;
-            if count == 1 {
+            let scalar = w & (1 << 28) != 0;
+            let count = if scalar { 1 } else { (if w & (1 << 30) != 0 { 128 } else { 64 }) / bits };
+            if scalar && bits != 64 || !scalar && count == 1 {
                 return Err(Fault::Instruction(w));
             }
             let elem_mask = (1u128 << bits) - 1;
@@ -179,11 +205,12 @@ impl Cpu {
                 out &= u64::MAX as u128;
             }
         } else if matches!(
-            w & 0x9f20fc00,
+            w & 0x8f20fc00,
             0x0e208400 | 0x0e208c00 | 0x0e203400 | 0x0e203c00
         ) {
-            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
-            if width == 64 && count == 1 {
+            let scalar = w & (1 << 28) != 0;
+            let count = if scalar { 1 } else if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            if scalar != (width == 64 && count == 1) {
                 return Err(Fault::Instruction(w));
             }
             let u = w & (1 << 29) != 0;
@@ -351,6 +378,13 @@ impl Cpu {
                     }
                 }
             }
+        } else if w & 0xfffffc00 == 0x5ef1b800 {
+            out = (a as u64).wrapping_add((a >> 64) as u64) as u128;
+        } else if matches!(w & 0xbf3ffc00, 0x0e200800 | 0x2e200800 | 0x0e201800) {
+            let block = match w & 0x20001000 { 0 => 64, 0x1000 => 16, _ => 32 };
+            if width >= block { return Err(Fault::Instruction(w)); }
+            let count = if w & (1 << 30) != 0 { lanes } else { lanes / 2 };
+            for i in 0..count { out |= lane(a, i ^ (block/width-1)) << (i*width); }
         } else if w & 0xbffffc00 == 0x0e205800 {
             out = u128::from_le_bytes(a.to_le_bytes().map(|b| b.count_ones() as u8));
             if w & (1 << 30) == 0 {

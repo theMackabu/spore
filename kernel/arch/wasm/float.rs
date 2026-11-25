@@ -33,7 +33,10 @@ fn from_integer<F: Float>(value: u64, bits: usize, signed: bool, round: Round) -
 
 impl Cpu {
     fn fp_input<F: Float>(&mut self, reg: usize) -> F {
-        let f = F::from_bits(self.context.v[reg] & ((1u128 << F::BITS) - 1));
+        self.flush_input(F::from_bits(self.context.v[reg] & ((1u128 << F::BITS) - 1)))
+    }
+
+    fn flush_input<F: Float>(&mut self, f: F) -> F {
         if self.context.fpcr & (1 << 24) != 0 && f.is_denormal() {
             self.context.fpsr |= 1 << 7;
             return F::ZERO.copy_sign(f);
@@ -59,33 +62,31 @@ impl Cpu {
         let wide = w & (1 << 22) != 0;
         let scalar = w & (1 << 28) != 0;
         let q = w & (1 << 30) != 0;
-        if !q && (scalar || wide) {
-            return Err(Fault::Instruction(w));
-        }
+        if !q && (scalar || wide) { return Err(Fault::Instruction(w)); }
         let bits = if wide { 64 } else { 32 };
-        let count = if scalar {
-            1
-        } else if q {
-            128 / bits
-        } else {
-            64 / bits
-        };
+        let count = if scalar { 1 } else if q { 128 / bits } else { 64 / bits };
         let src = self.context.v[((w >> 5) & 31) as usize];
         let round = rounding((self.context.fpcr >> 22) as u32);
         let signed = w & (1 << 29) == 0;
         let mut value = 0;
         for i in 0..count {
-            let input = (src >> (i * bits)) as u64;
-            let result = if wide {
-                from_integer::<Double>(input, bits, signed, round).map(Float::to_bits)
-            } else {
-                from_integer::<Single>(input, bits, signed, round).map(Float::to_bits)
-            };
+            let input = (src >> (i * bits)) & ((1u128 << bits)-1);
+            let result = if w & (1 << 23) != 0 {
+                if wide { self.lane_to_integer::<Double>(input, signed) }
+                else { self.lane_to_integer::<Single>(input, signed) }
+            } else if wide { from_integer::<Double>(input as u64, bits, signed, round).map(Float::to_bits) }
+            else { from_integer::<Single>(input as u64, bits, signed, round).map(Float::to_bits) };
             self.context.fpsr |= u64::from(result.status.bits());
-            value |= result.value << (i * bits);
+            value |= (result.value & ((1u128 << bits)-1)) << (i * bits);
         }
         self.context.v[(w & 31) as usize] = value;
         Ok(())
+    }
+
+    fn lane_to_integer<F: Float>(&mut self, input: u128, signed: bool) -> StatusAnd<u128> {
+        let f = self.flush_input(F::from_bits(input));
+        if signed { f.to_i128_r(F::BITS, Round::TowardZero, &mut false).map(|v|v as u128) }
+        else { f.to_u128_r(F::BITS, Round::TowardZero, &mut false) }
     }
 
     pub fn float(&mut self, w: u32) -> Result<(), Fault> {
@@ -115,6 +116,22 @@ impl Cpu {
             let a = if sub ^ neg { -a } else { a };
             let c = if neg { -c } else { c };
             self.fp_result(d, a.mul_add_r(b, c, round));
+            return Ok(());
+        }
+        if matches!(w & 0x7fbe0000, 0x1e020000 | 0x1e180000) {
+            let fraction = 64 - ((w >> 10) & 63);
+            if fraction as usize > bits { return Err(Fault::Instruction(w)); }
+            let signed = w & (1 << 16) == 0;
+            if w & (1 << 19) == 0 {
+                let f = from_integer::<F>(value, bits, signed, round).map(|v| v.scalbn(-(fraction as i32)));
+                self.fp_result(d, f);
+            } else {
+                let f = self.fp_input::<F>(n).scalbn(fraction as i32);
+                let result = if signed { f.to_i128_r(bits, Round::TowardZero, &mut false).map(|v| v as u64) }
+                             else { f.to_u128_r(bits, Round::TowardZero, &mut false).map(|v| v as u64) };
+                self.context.fpsr |= u64::from(result.status.bits());
+                self.set(d as u32, if bits == 32 { result.value as u32 as u64 } else { result.value });
+            }
             return Ok(());
         }
         if w & 0x7fbffc00 == 0x1e220000 || w & 0x7fbffc00 == 0x1e230000 {
