@@ -109,14 +109,14 @@ static void fill_termios(struct open_file *file, struct termios64 *tio) {
   tio->c_cc[6] = 1;
 }
 
-static void apply_termios(struct open_file *file, const struct termios64 *tio) {
+static void apply_termios(struct open_file *file, const struct termios64 *tio, bool flush_input) {
   if (file != NULL && file->type == OPEN_PTY) {
     cell_pty_set_oflag(file, tio->c_oflag);
     cell_pty_set_lflag(file, tio->c_lflag);
     cell_pty_set_erase_char(file, tio->c_cc[2]);
   } else {
     cell_tty_set_oflag(tio->c_oflag);
-    cell_tty_set_lflag(tio->c_lflag);
+    cell_tty_set_lflag(tio->c_lflag, flush_input);
     cell_tty_set_erase_char(tio->c_cc[2]);
   }
 }
@@ -292,7 +292,7 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     struct termios2_64 tio;
     size_t size = extended ? sizeof(tio) : sizeof(tio.base);
     if (!syscall_user_readable(arg, size) || !vmm_copy_from_user(syscall_active_as(), &tio, arg, size)) { return -EFAULT; }
-    apply_termios(fd_file(fd), &tio.base);
+    apply_termios(fd_file(fd), &tio.base, req == TCSETSF || req == TCSETSF2);
     return 0;
   }
   cell_note_unsupported_ioctl(req);

@@ -89,17 +89,6 @@ uint32_t cell_tty_lflag(void) {
   return tty_lflag;
 }
 
-void cell_tty_set_lflag(uint32_t lflag) {
-  tty_lflag = lflag;
-  if (!tty_canonical()) {
-    tty_line_len = 0;
-    tty_line_cursor = 0;
-    tty_ready_head = 0;
-    tty_ready_len = 0;
-    tty_prompt_active = false;
-  }
-}
-
 uint8_t cell_tty_erase_char(void) {
   return tty_erase;
 }
@@ -216,6 +205,20 @@ static void tty_clear_pending_input(void) {
   tty_ready_head = 0;
   tty_ready_len = 0;
   tty_prompt_active = false;
+}
+
+void cell_tty_set_lflag(uint32_t lflag, bool flush_input) {
+  if (flush_input) {
+    tty_clear_pending_input();
+    char discarded;
+    while (serial_getc(&discarded)) {}
+  } else if (tty_canonical() && !(lflag & TTY_ICANON)) {
+    for (size_t i = 0; i < tty_line_len; ++i) { tty_ready_push(tty_line[i]); }
+    tty_line_len = 0;
+    tty_line_cursor = 0;
+    tty_prompt_active = false;
+  }
+  tty_lflag = lflag;
 }
 
 static void tty_line_commit(void) {

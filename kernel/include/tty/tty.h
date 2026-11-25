@@ -18,7 +18,7 @@ int cell_tty_set_foreground_pgrp(int pgid);
 uint32_t cell_tty_oflag(void);
 void cell_tty_set_oflag(uint32_t oflag);
 uint32_t cell_tty_lflag(void);
-void cell_tty_set_lflag(uint32_t lflag);
+void cell_tty_set_lflag(uint32_t lflag, bool flush_input);
 uint8_t cell_tty_erase_char(void);
 void cell_tty_set_erase_char(uint8_t ch);
 void cell_wake_stdin(struct trap_frame *frame);
