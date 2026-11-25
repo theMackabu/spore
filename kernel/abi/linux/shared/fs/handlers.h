@@ -4,6 +4,8 @@
 
 struct trap_frame;
 
+int64_t sys_mount(uint64_t target, uint64_t type, uint64_t flags, uint64_t data);
+int64_t sys_umount2(uint64_t target, uint64_t flags);
 int64_t sys_inotify_init1(uint64_t flags);
 int64_t sys_inotify_add_watch(uint64_t fd, uint64_t path_addr, uint64_t mask);
 int64_t sys_inotify_rm_watch(uint64_t fd, uint64_t wd);

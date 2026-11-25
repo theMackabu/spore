@@ -117,26 +117,21 @@ size_t proc_loadavg_text(char *dst, size_t cap) {
   return len;
 }
 
-size_t proc_mounts_text(char *dst, size_t cap) {
-  size_t len = 0;
-  const struct vfs_mount *m;
-  for (size_t i = 0; (m = vfs_mount_at(i)) != NULL; ++i) {
-    proc_append_str(dst, cap, &len, m->source);
-    proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, m->target);
-    proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, m->fstype);
-    proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, m->options);
-    proc_append_str(dst, cap, &len, " 0 0\n");
+static void mount_path(char *dst, size_t cap, size_t *len, const char *path) {
+  for (; *path; ++path) {
+    switch (*path) {
+    case ' ': proc_append_str(dst, cap, len, "\\040"); break;
+    case '\t': proc_append_str(dst, cap, len, "\\011"); break;
+    case '\n': proc_append_str(dst, cap, len, "\\012"); break;
+    case '\\': proc_append_str(dst, cap, len, "\\134"); break;
+    default: proc_append_char(dst, cap, len, *path); break;
+    }
   }
-  return len;
 }
 
-size_t proc_mountinfo_text(char *dst, size_t cap) {
+size_t proc_mount_line(char *dst, size_t cap, const struct vfs_mount *m, bool info) {
   size_t len = 0;
-  const struct vfs_mount *m;
-  for (size_t i = 0; (m = vfs_mount_at(i)) != NULL; ++i) {
+  if (info) {
     proc_append_u64(dst, cap, &len, m->device);
     proc_append_char(dst, cap, &len, ' ');
     proc_append_u64(dst, cap, &len, m->parent);
@@ -145,17 +140,24 @@ size_t proc_mountinfo_text(char *dst, size_t cap) {
     proc_append_char(dst, cap, &len, ':');
     proc_append_u64(dst, cap, &len, m->device & 0xff);
     proc_append_str(dst, cap, &len, " / ");
-    proc_append_str(dst, cap, &len, m->target);
-    proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, m->options);
-    proc_append_str(dst, cap, &len, " - ");
-    proc_append_str(dst, cap, &len, m->fstype);
-    proc_append_char(dst, cap, &len, ' ');
+  } else {
     proc_append_str(dst, cap, &len, m->source);
     proc_append_char(dst, cap, &len, ' ');
-    proc_append_str(dst, cap, &len, m->options);
-    proc_append_char(dst, cap, &len, '\n');
   }
+  mount_path(dst, cap, &len, m->target);
+  proc_append_char(dst, cap, &len, ' ');
+  if (info) {
+    proc_append_str(dst, cap, &len, m->options);
+    proc_append_str(dst, cap, &len, " - ");
+  }
+  proc_append_str(dst, cap, &len, m->fstype);
+  proc_append_char(dst, cap, &len, ' ');
+  if (info) {
+    proc_append_str(dst, cap, &len, m->source);
+    proc_append_char(dst, cap, &len, ' ');
+  }
+  proc_append_str(dst, cap, &len, m->options);
+  proc_append_str(dst, cap, &len, info ? "\n" : " 0 0\n");
   return len;
 }
 

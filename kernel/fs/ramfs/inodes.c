@@ -66,7 +66,7 @@ void ramfs_set_reclaim_callback(struct ramfs *fs, ramfs_reclaim_fn callback) {
 
 static void destroy_inode(const struct ramfs_table *t, struct ramfs_mem_node *node) {
   if (t->reclaim && node->link_target < 0) {
-    t->reclaim(node->mount, node->ino);
+    t->reclaim(t->owner, node->mount, node->ino);
   }
   ramfs_free_node_pages(node);
 #if __STDC_HOSTED__

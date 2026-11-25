@@ -20,8 +20,8 @@ static void ext2_inode_freed(uint32_t ino) {
   fsnotify_reclaim(node.dev_id, ino);
 }
 
-static void ramfs_inode_freed(enum ramfs_mount mount, uint64_t ino) {
-  struct ramfs_node ram = {.mount = mount, .ino = ino};
+void vfs_ramfs_inode_freed(struct ramfs *fs, enum ramfs_mount mount, uint64_t ino) {
+  struct ramfs_node ram = {.fs = fs, .mount = mount, .ino = ino};
   struct vfs_node node;
   vfs_from_ramfs(&ram, &node);
   vfs_page_cache_forget(&node);
@@ -31,7 +31,7 @@ static void ramfs_inode_freed(enum ramfs_mount mount, uint64_t ino) {
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2) {
   vfs_root_ramfs = ramfs;
   vfs_root_ext2 = ext2;
-  if (ramfs) { ramfs_set_reclaim_callback(ramfs, ramfs_inode_freed); }
+  if (ramfs) { ramfs_set_reclaim_callback(ramfs, vfs_ramfs_inode_freed); }
   if (ext2) { ext2->inode_freed = ext2_inode_freed; }
   vfs_page_cache_configure();
   vfs_update_time_sources();
@@ -67,15 +67,23 @@ uint64_t vfs_read_uncached(const struct vfs_node *node, uint64_t off, void *dst,
   return 0;
 }
 
+static struct ramfs *ramfs_for_path(const char **path) {
+  struct ramfs *fs = mountns_lookup(*path, path);
+  if (fs) { return fs; }
+  return !vfs_root_ext2 || vfs_path_uses_ramfs(*path) ? vfs_root_ramfs : NULL;
+}
+
 bool vfs_mkdir(const char *path, uint32_t mode) {
   if (vfs_readonly_path(path)) { return false; }
   vfs_update_time_sources();
   bool ok = false;
-  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
+  const char *local = path;
+  struct ramfs *fs = ramfs_for_path(&local);
+  if (!fs && vfs_root_ext2) {
     struct ext2_node node;
     ok = ext2_mknod(vfs_root_ext2, vfs_disk_path(path), 0040000u | (mode & 07777u), &node) == 0;
   } else {
-    ok = vfs_root_ramfs != NULL && ramfs_mkdir(vfs_root_ramfs, path, (uint16_t)mode);
+    ok = fs != NULL && ramfs_mkdir(fs, local, (uint16_t)mode);
   }
   if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE); }
   return ok;
@@ -84,7 +92,9 @@ bool vfs_mkdir(const char *path, uint32_t mode) {
 bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
   if (vfs_readonly_path(path)) { return false; }
   vfs_update_time_sources();
-  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
+  const char *local = path;
+  struct ramfs *fs = ramfs_for_path(&local);
+  if (!fs && vfs_root_ext2) {
     struct ext2_node node;
     if (!ext2_create(vfs_root_ext2, vfs_disk_path(path), false, mode, &node)) { return false; }
     vfs_from_ext2(&node, out);
@@ -92,7 +102,7 @@ bool vfs_create(const char *path, uint16_t mode, struct vfs_node *out) {
     return true;
   }
   struct ramfs_node node;
-  if (vfs_root_ramfs == NULL || !ramfs_create(vfs_root_ramfs, path, mode, &node)) { return false; }
+  if (fs == NULL || !ramfs_create(fs, local, mode, &node)) { return false; }
   vfs_from_ramfs(&node, out);
   vfs_lookup_cache_clear(); fsnotify_path_event(path, FS_CREATE);
   return true;
@@ -113,6 +123,7 @@ int vfs_tmpfile(const struct vfs_node *dir, uint16_t mode, uint32_t uid, uint32_
                                     dir->ramfs.mount == RAMFS_MOUNT_RAM0 || dir->ramfs.mount == RAMFS_MOUNT_DEV)) {
     struct ramfs_node node;
     if (!ramfs_tmpfile(&dir->ramfs, mode, uid, gid, linkable, &node)) { return -28; }
+    if (node.fs->device) { ++node.fs->refs; ++node.fs->pins; }
     vfs_from_ramfs(&node, out);
     return 0;
   }
@@ -123,10 +134,12 @@ bool vfs_link_node(const struct vfs_node *node, const char *new_path) {
   if (vfs_readonly_path(new_path) || vfs_readonly_node(node)) { return false; }
   vfs_update_time_sources();
   bool ok = false;
-  if (node->backend == VFS_EXT2 && !vfs_path_uses_ramfs(new_path)) {
+  const char *local = new_path;
+  struct ramfs *fs = ramfs_for_path(&local);
+  if (node->backend == VFS_EXT2 && !fs) {
     ok = ext2_link_inode(vfs_root_ext2, node->ext2.ino, vfs_disk_path(new_path));
-  } else if (node->backend == VFS_RAMFS && node->ramfs.fs != NULL) {
-    ok = ramfs_link_node(node->ramfs.fs, node->ramfs.index, new_path);
+  } else if (node->backend == VFS_RAMFS && fs && fs == node->ramfs.fs) {
+    ok = ramfs_link_node(fs, node->ramfs.index, local);
   }
   if (ok) { vfs_lookup_cache_clear(); fsnotify_linked(new_path); }
   return ok;
@@ -137,17 +150,19 @@ int vfs_mkspecial(const char *path, uint16_t mode, struct vfs_node *out) {
   unsigned type = mode & 0170000u;
   if (type != 0010000 && type != 0140000) { return -22; }
   vfs_update_time_sources();
-  if (vfs_root_ext2 && !vfs_path_uses_ramfs(path)) {
+  const char *local = path;
+  struct ramfs *fs = ramfs_for_path(&local);
+  if (!fs && vfs_root_ext2) {
     struct ext2_node node;
     int rc = ext2_mknod(vfs_root_ext2, vfs_disk_path(path), mode, &node);
     if (rc) { return rc; }
     vfs_from_ext2(&node, out);
   } else {
     struct ramfs_node node;
-    if (!vfs_root_ramfs) { return -2; }
-    if (ramfs_lookup_node(vfs_root_ramfs, path, &node)) { return -17; }
-    bool ok = type == 0010000 ? ramfs_mkfifo(vfs_root_ramfs, path, mode, &node) :
-                               ramfs_mksock(vfs_root_ramfs, path, mode, &node);
+    if (!fs) { return -2; }
+    if (ramfs_lookup_node(fs, local, &node)) { return -17; }
+    bool ok = type == 0010000 ? ramfs_mkfifo(fs, local, mode, &node) :
+                               ramfs_mksock(fs, local, mode, &node);
     if (!ok) { return -2; }
     vfs_from_ramfs(&node, out);
   }
@@ -176,6 +191,7 @@ bool vfs_truncate(const struct vfs_node *node, uint64_t size) {
 
 int vfs_remove(const char *path) {
   if (vfs_readonly_path(path)) { return -30; }
+  if (mountns_pinned_path(path)) { return -16; }
   struct fsnotify_entry old = {0};
   fsnotify_capture(path, &old);
   fsnotify_prepare_change(&old);
@@ -183,10 +199,12 @@ int vfs_remove(const char *path) {
   bool retained = fsnotify_hold_watched(path, &held);
   vfs_update_time_sources();
   int rc;
-  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(path)) {
+  const char *local = path;
+  struct ramfs *fs = ramfs_for_path(&local);
+  if (!fs && vfs_root_ext2) {
     rc = ext2_remove(vfs_root_ext2, vfs_disk_path(path));
   } else {
-    rc = vfs_root_ramfs != NULL ? ramfs_remove(vfs_root_ramfs, path) : -2;
+    rc = fs != NULL ? ramfs_remove(fs, local) : -2;
   }
   if (rc == 0) { vfs_lookup_cache_clear(); fsnotify_removed(&old); }
   if (retained) { vfs_release_node(&held); }
@@ -197,10 +215,12 @@ bool vfs_link(const char *old_path, const char *new_path) {
   if (vfs_readonly_path(new_path) || vfs_readonly_path(old_path)) { return false; }
   vfs_update_time_sources();
   bool ok = false;
-  if (vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(old_path) && !vfs_path_uses_ramfs(new_path)) {
+  const char *a = old_path, *b = new_path;
+  struct ramfs *src = ramfs_for_path(&a), *dst = ramfs_for_path(&b);
+  if (vfs_root_ext2 && !src && !dst) {
     ok = ext2_link(vfs_root_ext2, vfs_disk_path(old_path), vfs_disk_path(new_path));
-  } else if (vfs_root_ramfs != NULL && vfs_paths_share_ramfs(old_path, new_path)) {
-    ok = ramfs_link(vfs_root_ramfs, old_path, new_path);
+  } else if (src && src == dst && (src->device || vfs_paths_share_ramfs(a, b))) {
+    ok = ramfs_link(src, a, b);
   }
   if (ok) { vfs_lookup_cache_clear(); fsnotify_linked(new_path); }
   return ok;
@@ -209,7 +229,8 @@ bool vfs_link(const char *old_path, const char *new_path) {
 bool vfs_symlink(const char *target, const char *link_path) {
   if (vfs_readonly_path(link_path)) { return false; }
   vfs_update_time_sources();
-  bool ok = vfs_root_ext2 != NULL && !vfs_path_uses_ramfs(link_path) && ext2_symlink(vfs_root_ext2, target, vfs_disk_path(link_path));
+  const char *local = link_path;
+  bool ok = vfs_root_ext2 != NULL && !ramfs_for_path(&local) && ext2_symlink(vfs_root_ext2, target, vfs_disk_path(link_path));
   if (ok) { vfs_lookup_cache_clear(); fsnotify_path_event(link_path, FS_CREATE); }
   return ok;
 }
@@ -269,6 +290,7 @@ bool vfs_chown_node(const struct vfs_node *node, uint32_t uid, uint32_t gid) {
 
 int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
   if (vfs_readonly_path(old_path) || vfs_readonly_path(new_path)) { return -30; }
+  if (mountns_pinned_path(old_path) || mountns_pinned_path(new_path)) { return -16; }
   struct fsnotify_entry old = {0}, to = {0};
   fsnotify_capture(old_path, &old);
   fsnotify_capture(new_path, &to);
@@ -278,10 +300,12 @@ int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
   bool retained = fsnotify_hold_watched(new_path, &held);
   vfs_update_time_sources();
   int rc = -18;
-  if (vfs_root_ext2 && !vfs_path_uses_ramfs(old_path) && !vfs_path_uses_ramfs(new_path)) {
+  const char *a = old_path, *b = new_path;
+  struct ramfs *src = ramfs_for_path(&a), *dst = ramfs_for_path(&b);
+  if (vfs_root_ext2 && !src && !dst) {
     rc = ext2_renameat(vfs_root_ext2, vfs_disk_path(old_path), vfs_disk_path(new_path), noreplace);
-  } else if (vfs_root_ramfs && vfs_paths_share_ramfs(old_path, new_path)) {
-    rc = ramfs_renameat(vfs_root_ramfs, old_path, new_path, noreplace);
+  } else if (src && src == dst && (src->device || vfs_paths_share_ramfs(a, b))) {
+    rc = ramfs_renameat(src, a, b, noreplace);
   }
   if (!rc) { vfs_lookup_cache_clear(); fsnotify_renamed(&old, &to); }
   if (retained) { vfs_release_node(&held); }
@@ -290,13 +314,21 @@ int vfs_rename(const char *old_path, const char *new_path, bool noreplace) {
 
 bool vfs_retain_node(const struct vfs_node *node) {
   if (node->backend == VFS_EXT2) { return ext2_retain_inode(vfs_root_ext2, node->ext2.ino); }
-  if (node->backend == VFS_RAMFS) { return ramfs_retain_node(node->ramfs.fs, node->ramfs.index); }
+  if (node->backend == VFS_RAMFS) {
+    struct ramfs *fs = node->ramfs.fs;
+    if (!ramfs_retain_node(fs, node->ramfs.index)) { return false; }
+    if (fs->device) { ++fs->refs; ++fs->pins; }
+  }
   return true;
 }
 
 void vfs_release_node(const struct vfs_node *node) {
   if (node->backend == VFS_EXT2) { ext2_release_inode(vfs_root_ext2, node->ext2.ino); }
-  if (node->backend == VFS_RAMFS) { ramfs_release_node(node->ramfs.fs, node->ramfs.index); }
+  if (node->backend == VFS_RAMFS) {
+    struct ramfs *fs = node->ramfs.fs;
+    ramfs_release_node(fs, node->ramfs.index);
+    if (fs->device) { --fs->pins; mountns_put_fs(fs); }
+  }
   inotify_flush();
 }
 

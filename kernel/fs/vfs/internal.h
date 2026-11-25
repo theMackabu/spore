@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fs/vfs.h"
+#include "fs/mount_namespace.h"
 
 extern struct vfs_stats vfs_stat_counters;
 extern struct ramfs *vfs_root_ramfs;
@@ -11,6 +12,7 @@ void vfs_lookup_cache_put(const char *path, bool lstat, const struct vfs_node *n
 void vfs_lookup_cache_clear(void);
 void vfs_lookup_cache_changed(const struct vfs_node *node);
 
+void vfs_ramfs_inode_freed(struct ramfs *fs, enum ramfs_mount mount, uint64_t ino);
 void vfs_page_cache_configure(void);
 bool vfs_sync_mapped_pages(void);
 bool vfs_node_cacheable(const struct vfs_node *node);

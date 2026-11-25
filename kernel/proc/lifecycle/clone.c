@@ -3,6 +3,7 @@
 #include "proc/thread.h"
 #include "proc/uts.h"
 #include "proc/user_namespace.h"
+#include "fs/mount_namespace.h"
 #include "proc/memory.h"
 #include "proc/fd.h"
 #include "arch/smp.h"
@@ -44,7 +45,7 @@ int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, 
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child_domain, parent);
-  int ns_rc = cell_unshare_namespaces(child_thread, flags & (CLONE_NEWUSER | CLONE_NEWUTS));
+  int ns_rc = cell_unshare_namespaces(child_thread, flags & (CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS));
   if (ns_rc) { cell_destroy_domain(child_domain); return ns_rc; }
   if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
   child_domain->parent_id = parent->id;

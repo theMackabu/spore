@@ -1,12 +1,13 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 
 size_t proc_meminfo_text(char *dst, size_t cap);
 size_t proc_uptime_text(char *dst, size_t cap);
 size_t proc_loadavg_text(char *dst, size_t cap);
-size_t proc_mountinfo_text(char *dst, size_t cap);
-size_t proc_mounts_text(char *dst, size_t cap);
+struct vfs_mount;
+size_t proc_mount_line(char *dst, size_t cap, const struct vfs_mount *mount, bool info);
 size_t proc_stat_text(char *dst, size_t cap);
 size_t proc_net_dev_text(char *dst, size_t cap);
 size_t proc_kmsg_text(char *dst, size_t cap);

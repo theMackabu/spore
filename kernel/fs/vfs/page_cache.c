@@ -15,6 +15,7 @@ struct vfs_page_cache_entry {
   struct vmm_file_page mapped;
   struct vfs_page_cache_entry *dirty_next, **dirty_link;
   int ramfs_index;
+  struct ramfs *ramfs;
   struct vfs_page_cache_entry *hash_next;
   struct vfs_page_cache_entry *file_next;
   struct vfs_page_cache_entry **file_link;
@@ -148,7 +149,7 @@ static void publish_entry(struct vfs_page_cache_entry *entry, const struct vfs_n
   entry->ino = node->ino;
   entry->dev_id = node->dev_id;
   entry->backend = node->backend;
-  if (node->backend == VFS_RAMFS) { entry->ramfs_index = node->ramfs.index; }
+  if (node->backend == VFS_RAMFS) { entry->ramfs_index = node->ramfs.index; entry->ramfs = node->ramfs.fs; }
   entry->off = off;
   link_entry(entry);
 }
@@ -308,7 +309,7 @@ bool vfs_sync_mapped_pages(void) {
       struct vfs_node key = {.backend = entry->backend}, node;
       if (entry->backend == VFS_EXT2) { key.ext2.ino = entry->ino; }
       else {
-        key.ramfs.fs = vfs_root_ramfs;
+        key.ramfs.fs = entry->ramfs;
         key.ramfs.index = entry->ramfs_index;
       }
       if (!vfs_refresh(&key, &node) || !same_file(entry, &node)) {

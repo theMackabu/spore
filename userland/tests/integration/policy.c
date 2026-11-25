@@ -10,6 +10,8 @@
 #include <sched.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/mount.h>
+#include <sys/mman.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -219,7 +221,9 @@ int integration_user_namespace(void) {
         write_map("/proc/self/setgroups", "deny\n") || write_map("/proc/self/gid_map", "0 1000 1\n") ||
         getuid() != 0 || getgid() != 0) { _exit(2); }
     if (sethostname("global", 6) != -1 || errno != EPERM || setuid(1000) != -1 || errno != EINVAL) { _exit(3); }
-    if (unshare(CLONE_NEWUTS) || sethostname("child", 5)) { _exit(4); }
+    if (mount("none", "/tmp", "tmpfs", 0, NULL) != -1 || errno != EPERM ||
+        unshare(CLONE_NEWUTS | CLONE_NEWNS) || sethostname("child", 5) ||
+        mount("none", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV, NULL) || umount("/tmp")) { _exit(4); }
     struct stat st;
     if (stat("/", &st) || st.st_uid != 65534) { _exit(5); }
     execl("/bin/exec_child", "exec_child", "mapped-user", (char *)NULL);
@@ -228,5 +232,75 @@ int integration_user_namespace(void) {
   int status;
   int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;
   printf("[spore] private user and group mappings: %s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+
+static int isolated_tmpfs(int ready, int resume) {
+  const char *dir = "/tmp/mount-test";
+  const char *file = "/tmp/mount-test/contents";
+  struct stat base, mounted;
+  if (stat(dir, &base) || mount("none", dir, "tmpfs", MS_NODEV | MS_NOSUID, "mode=0710") ||
+      stat(dir, &mounted) || base.st_dev == mounted.st_dev || (mounted.st_mode & 07777) != 0710) { return 1; }
+  int fd = open(file, O_RDWR | O_CREAT | O_EXCL, 0600);
+  if (fd < 0 || write(fd, "private", 7) != 7) { return 2; }
+  char *mapped = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (mapped == MAP_FAILED) { return 8; }
+  mapped[0] = 'P';
+  sync();
+  if (munmap(mapped, 4096)) { return 8; }
+  char byte;
+  if (write(ready, ".", 1) != 1 || read(resume, &byte, 1) != 1) { return 8; }
+  pid_t nested = fork();
+  if (nested == 0) {
+    if (unshare(CLONE_NEWNS) || umount2(dir, MNT_DETACH) || stat(dir, &mounted) ||
+        mounted.st_dev != base.st_dev || !access(file, F_OK)) { _exit(3); }
+    char buf[7];
+    _exit(pread(fd, buf, 7, 0) != 7 || memcmp(buf, "Private", 7) ? 4 : 0);
+  }
+  int status;
+  if (nested < 0 || waitpid(nested, &status, 0) != nested || status || access(file, F_OK) ||
+      umount(dir) != -1 || errno != EBUSY) { return 5; }
+  close(fd);
+  pid_t shared = fork();
+  if (!shared) { _exit(umount(dir) ? 6 : 0); }
+  if (shared < 0 || waitpid(shared, &status, 0) != shared || status || !access(file, F_OK)) { return 7; }
+  return 0;
+}
+
+int integration_mount_namespace(void) {
+  const char *dir = "/tmp/mount-test";
+  if (mkdir(dir, 0700)) { return 0; }
+  int ready[2], resume[2];
+  if (pipe(ready) || pipe(resume)) { return 0; }
+  pid_t child = syscall(SYS_clone, CLONE_NEWNS | SIGCHLD, 0, 0, 0, 0);
+  if (!child) {
+    close(ready[0]);
+    close(resume[1]);
+    _exit(isolated_tmpfs(ready[1], resume[0]));
+  }
+  close(ready[1]);
+  close(resume[0]);
+  char byte;
+  int status = -1;
+  int ok = child > 0 && read(ready[0], &byte, 1) == 1;
+  if (ok) {
+    ok = access("/tmp/mount-test/contents", F_OK) == -1 && errno == ENOENT;
+    char path[64], mounts[2048];
+    snprintf(path, sizeof(path), "/proc/%d/mountinfo", child);
+    int fd = open(path, O_RDONLY);
+    ssize_t n = fd < 0 ? -1 : read(fd, mounts, sizeof(mounts) - 1);
+    if (fd >= 0) { close(fd); }
+    if (n <= 0) { ok = 0; }
+    else {
+      mounts[n] = 0;
+      ok &= strstr(mounts, " /tmp/mount-test rw,nosuid,nodev ") != NULL;
+    }
+    ok &= write(resume[1], ".", 1) == 1;
+  }
+  close(resume[1]);
+  close(ready[0]);
+  ok &= child > 0 && waitpid(child, &status, 0) == child && !status;
+  ok &= rmdir(dir) == 0;
+  printf("[spore] private tmpfs and mount namespace inheritance: %s status=%d\n", ok ? "PASS" : "FAIL", status);
   return ok;
 }

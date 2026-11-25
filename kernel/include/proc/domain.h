@@ -62,6 +62,7 @@ struct domain {
   struct capability_set *caps;
   struct seccomp_filter *filter;
   struct uts_namespace *uts;
+  struct mount_namespace *mount_ns;
   struct user_namespace *user_ns;
   struct cpu_budget budget;
   struct signal_action signal_actions[65];

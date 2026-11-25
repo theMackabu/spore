@@ -25,6 +25,7 @@ int integration_socket_suite(void);
 int integration_egress_demo(void);
 int integration_seccomp(void);
 int integration_uts_namespace(void);
+int integration_mount_namespace(void);
 int integration_user_namespace(void);
 int integration_capabilities(void);
 int integration_signal_suite(void);

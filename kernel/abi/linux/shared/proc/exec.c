@@ -374,7 +374,8 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     .gid = cell_current_gid(),
     .egid = cell_current_egid(),
   };
-  uint32_t mode = cell_current_thread_internal()->no_new_privs ? exec_node.mode & ~06000u : exec_node.mode;
+  bool nosuid = exec_node.backend == VFS_RAMFS && exec_node.ramfs.fs->nosuid;
+  uint32_t mode = (nosuid || cell_current_thread_internal()->no_new_privs) ? exec_node.mode & ~06000u : exec_node.mode;
   if ((mode & 04000u) != 0) { creds.euid = exec_node.uid; }
   if ((mode & 02000u) != 0) { creds.egid = exec_node.gid; }
 

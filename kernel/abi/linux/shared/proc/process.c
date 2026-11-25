@@ -11,6 +11,7 @@
 #include "proc/process.h"
 #include "proc/uts.h"
 #include "proc/user_namespace.h"
+#include "fs/mount_namespace.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -79,7 +80,7 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
     return cell_vfork_current(f, newsp, flags, parent_tid, tls, child_tid);
   }
   if ((flags & CLONE_VM) == 0) {
-    if (flags & ~(signal_mask | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) { return -ENOSYS; }
+    if (flags & ~(signal_mask | CLONE_NEWNS | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) { return -ENOSYS; }
     return cell_fork_current(f, flags, newsp, child_tid);
   }
 

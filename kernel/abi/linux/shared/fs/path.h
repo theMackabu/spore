@@ -16,6 +16,7 @@ int64_t syscall_read_path_at(uint64_t dirfd, uint64_t path_addr, struct syscall_
 int64_t syscall_resolve_path_at(uint64_t dirfd, const char *raw, char *out, size_t cap);
 int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t path_addr, char *out, size_t cap);
 
+int syscall_dirfd_path(int fd, char path[CELL_PATH_MAX]);
 int syscall_may_change_entry(char *path, bool replacing);
 
 struct vfs_node;

@@ -1,6 +1,7 @@
 #include "../usercopy.h"
 #include "file_abi.h"
 #include "fs/vfs.h"
+#include "fs/mount_namespace.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
@@ -24,6 +25,26 @@ static int resolve_from(const char *base, size_t base_len, const char *raw, size
   return cell_fs_path_allowed(out, 0) ? 0 : -EPERM;
 }
 
+int syscall_dirfd_path(int fd, char path[CELL_PATH_MAX]) {
+  if (!cell_fd_path(fd, path, CELL_PATH_MAX)) { return -EBADF; }
+  if (!cell_fd_is_dir(fd)) { return -ENOTDIR; }
+  struct open_file *file = cell_file_at(cell_current_domain_internal(), fd);
+  if (!file || file->type != OPEN_VFS) { return 0; }
+  bool mounted_fd = file->node.backend == VFS_RAMFS && file->node.ramfs.fs->device;
+  if (!mounted_fd && !mountns_has_mounts()) { return 0; }
+  char visible[CELL_PATH_MAX], resolved[CELL_PATH_MAX];
+  int rc = resolve_from("/", 1, path, kstrlen(path), visible, resolved, sizeof(resolved));
+  if (rc) { return rc; }
+  const char *local;
+  if (mounted_fd || mountns_lookup(resolved, &local)) {
+    struct vfs_node named;
+    if (!vfs_lookup(resolved, &named) || named.dev_id != file->node.dev_id || named.ino != file->node.ino) {
+      return -116;
+    }
+  }
+  return 0;
+}
+
 static int resolve_at(uint64_t dirfd, const char *raw, size_t len, char *visible, char *out, size_t cap) {
   if (!len) { return -ENOENT; }
   char dir[CELL_PATH_MAX];
@@ -33,8 +54,8 @@ static int resolve_at(uint64_t dirfd, const char *raw, size_t len, char *visible
     if ((int)dirfd == AT_FDCWD) {
       base = cell_current_cwd();
     } else {
-      if (!cell_fd_path((int)dirfd, dir, sizeof(dir))) { return -EBADF; }
-      if (!cell_fd_is_dir((int)dirfd)) { return -ENOTDIR; }
+      int rc = syscall_dirfd_path((int)dirfd, dir);
+      if (rc) { return rc; }
       base = dir;
     }
     base_len = kstrlen(base);
@@ -89,6 +110,8 @@ int64_t syscall_copy_resolved_path_at(uint64_t dirfd, uint64_t addr, char *out, 
 bool syscall_proc_fd_number(const char *path, int *fd_out) {
   const char *prefix = "/proc/self/fd/";
   if (!starts_with(path, prefix)) { return false; }
+  const char *local;
+  if (mountns_lookup(path, &local)) { return false; }
   const char *p = path + kstrlen(prefix);
   if (*p == '\0') { return false; }
   int fd = 0;

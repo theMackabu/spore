@@ -1,4 +1,5 @@
 #include "proc/user_namespace.h"
+#include "fs/mount_namespace.h"
 #include "proc/domain.h"
 #include "proc/thread.h"
 #include "proc/uts.h"
@@ -85,16 +86,25 @@ int userns_write_map(struct domain *actor, struct user_namespace *ns, bool group
 }
 
 int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
-  if (flags & ~(CLONE_NEWUSER | (uint64_t)CLONE_NEWUTS)) { return -22; }
-  if (!(flags & CLONE_NEWUSER)) { return flags ? uts_unshare(thread) : 0; }
+  if (flags & ~(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWUTS)) { return -22; }
+  struct domain *d = thread->domain;
   struct linux_caps old_caps = thread->capabilities;
-  int rc = create_user_namespace(thread);
-  if (rc || !(flags & CLONE_NEWUTS)) { return rc; }
-  rc = uts_unshare(thread);
-  if (rc) {
-    userns_release(thread->domain->user_ns);
-    thread->domain->user_ns = NULL;
-    thread->capabilities = old_caps;
+  struct uts_namespace *old_uts = uts_retain(d->uts);
+  int rc = 0;
+  if (flags & CLONE_NEWUSER) {
+    rc = create_user_namespace(thread);
+    if (rc) { uts_release(old_uts); return rc; }
   }
+  if (flags & CLONE_NEWUTS) { rc = uts_unshare(thread); }
+  if (!rc && (flags & CLONE_NEWNS)) { rc = mountns_unshare(thread); }
+  if (rc) {
+    uts_release(d->uts);
+    d->uts = old_uts;
+    if (flags & CLONE_NEWUSER) {
+      userns_release(d->user_ns);
+      d->user_ns = NULL;
+      thread->capabilities = old_caps;
+    }
+  } else { uts_release(old_uts); }
   return rc;
 }

@@ -147,8 +147,7 @@ int ramfs_add_node(struct ramfs *fs, int parent, const char *name, bool is_dir, 
   return index;
 }
 
-bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
-                uint64_t hhdm_offset) {
+static bool ramfs_init_root(struct ramfs *fs, uint64_t hhdm_offset) {
   ramfs_destroy(fs);
   fs->hhdm_offset = hhdm_offset;
   fs->next_ino = 1;
@@ -161,7 +160,24 @@ bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint3
   ramfs_inode_at(fs, root)->parent = root;
   ramfs_inode_at(fs, root)->mount = RAMFS_MOUNT_RAM0;
 
-  if (!ramfs_populate(fs, root, modules, module_count)) { ramfs_destroy(fs); return false; }
+  return true;
+}
+
+bool ramfs_init_tmpfs(struct ramfs *fs, uint64_t hhdm, unsigned mode, uint32_t uid, uint32_t gid) {
+  if (!ramfs_init_root(fs, hhdm)) { return false; }
+  struct ramfs_mem_node *root = ramfs_inode_at(fs, 0);
+  root->mount = RAMFS_MOUNT_TMP;
+  root->uid = uid;
+  root->gid = gid;
+  root->writable = true;
+  root->mode = 0040000 | mode;
+  return true;
+}
+
+bool ramfs_init(struct ramfs *fs, const struct spore_boot_module *modules, uint32_t module_count,
+                uint64_t hhdm_offset) {
+  if (!ramfs_init_root(fs, hhdm_offset)) { return false; }
+  if (!ramfs_populate(fs, 0, modules, module_count)) { ramfs_destroy(fs); return false; }
   return true;
 }
 

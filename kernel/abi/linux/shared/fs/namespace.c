@@ -231,6 +231,7 @@ int64_t sys_fchdir(uint64_t fd) {
   if (!node.is_dir) { return -(int64_t)ENOTDIR; }
   if (!syscall_node_access_allowed(&node, 1)) { return -EACCES; }
   char path[CELL_PATH_MAX];
-  if (!cell_fd_path((int)fd, path, sizeof(path))) { return -(int64_t)EBADF; }
+  int rc = syscall_dirfd_path((int)fd, path);
+  if (rc) { return rc; }
   return cell_set_cwd(path) ? 0 : -(int64_t)ENAMETOOLONG;
 }

@@ -1,3 +1,4 @@
+#include "fs/mount_namespace.h"
 #include "fs/procfs.h"
 
 #include "arch/smp.h"
@@ -149,6 +150,7 @@ static size_t procinfo_text(char *dst, size_t cap) {
   }
   return len;
 }
+
 
 struct proc_task {
   const struct domain *domain;
@@ -355,6 +357,26 @@ static int64_t read_text_device(const struct proc_read *out, const char *text, s
   return vmm_copy_to_user(cell_domain_as(out->domain), out->buf, text + out->offset, chunk) ? (int64_t)chunk : -14;
 }
 
+static int64_t read_mounts(const struct proc_read *out, const struct domain *target, bool info) {
+  if (!target) { return 0; }
+  size_t copied = 0;
+  uint64_t skip = out->offset;
+  const struct vfs_mount *m;
+  for (size_t i = 0; copied < out->len && (m = vfs_domain_mount_at(target, i)); ++i) {
+    char line[4 * CELL_PATH_MAX + 160];
+    size_t length = proc_mount_line(line, sizeof(line), m, info);
+    if (skip >= length) { skip -= length; continue; }
+    size_t n = length - skip;
+    if (n > out->len - copied) { n = out->len - copied; }
+    if (!vmm_copy_to_user(cell_domain_as(out->domain), out->buf + copied, line + skip, n)) {
+      return copied ? (int64_t)copied : -14;
+    }
+    copied += n;
+    skip = 0;
+  }
+  return copied;
+}
+
 static int64_t read_generated_device(const struct proc_read *out, size_t (*fill)(char *, size_t)) {
   char text[4096];
   size_t text_len = fill(text, sizeof(text));
@@ -464,7 +486,7 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
   case RAMFS_DEV_LOADAVG:
     return read_generated_device(&out, proc_loadavg_text);
   case RAMFS_DEV_MOUNTS:
-    return read_generated_device(&out, proc_mounts_text);
+    return read_mounts(&out, domain, false);
   case RAMFS_DEV_STAT:
     return read_generated_device(&out, proc_stat_text);
   case RAMFS_DEV_NET_DEV:
@@ -516,9 +538,9 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
   case RAMFS_DEV_PROC_PID_COMM:
     return read_generated_pid_device(file, &out, proc_pid_comm_text);
   case RAMFS_DEV_PROC_PID_MOUNTINFO:
-    return read_generated_device(&out, proc_mountinfo_text);
+    return read_mounts(&out, cell_find_domain(file->node.proc.pid), true);
   case RAMFS_DEV_PROC_PID_MOUNTS:
-    return read_generated_device(&out, proc_mounts_text);
+    return read_mounts(&out, cell_find_domain(file->node.proc.pid), false);
   case RAMFS_DEV_PROC_PID_CWD:
     return read_generated_pid_device(file, &out, proc_pid_cwd_text);
   case RAMFS_DEV_PROC_PID_EXE:
