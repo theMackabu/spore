@@ -341,7 +341,7 @@ fn launch(config: Config) -> io::Result<i32> {
         );
     }
     super::fixtures::start(mode)?;
-    super::harness::run(&q, mode, timings)
+    super::harness::run(&q, mode, timings, true)
 }
 
 fn append_firmware(

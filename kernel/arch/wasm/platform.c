@@ -37,6 +37,7 @@ HOST("net_recv") int host_net_recv(void *, size_t);
 HOST("net_send") int host_net_send(const void *, size_t);
 HOST("disk_write") int host_disk_write(uint64_t, const void *, size_t);
 HOST("exception") void host_exception(uint64_t, const char *, size_t);
+HOST("winsize") uint32_t host_winsize(void);
 HOST("serial_read") int host_serial_read(void);
 HOST("disk_read") int host_disk_read(uint64_t, void *, size_t);
 HOST("write") void host_write(unsigned, const void *, size_t);
@@ -74,9 +75,10 @@ bool serial_getc(char *out) {
 void serial_flush_input(void) {
   while (host_serial_read() >= 0) {}
 }
+static uint32_t dimensions;
 void serial_get_winsize(uint16_t *rows, uint16_t *cols) {
-  *rows = 24;
-  *cols = 80;
+  *rows = dimensions >> 16;
+  *cols = (uint16_t)dimensions;
 }
 
 uint64_t arch_counter_value(void) {
@@ -222,6 +224,7 @@ void arch_reboot(void) {
 
 struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args, size_t bytes, unsigned devices,
                              uint64_t epoch, void *ram, size_t ram_bytes, unsigned count) {
+  dimensions = host_winsize();
   cpu_count = count;
   for (unsigned i = 1; i < count; ++i) { cpus[i].idle = true; }
   const uint64_t hhdm = (uintptr_t)ram;
@@ -331,7 +334,15 @@ bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsig
     cell_schedule(f);
   }
   while (ticks--) {
-    if (!cpu_id) { cell_wake_stdin(cpus[0].idle ? NULL : f); }
+    if (!cpu_id) {
+      struct trap_frame *active = cpus[0].idle ? NULL : f;
+      uint32_t size = host_winsize();
+      if (size != dimensions) {
+        dimensions = size;
+        cell_tty_signal_foreground(28, active);
+      }
+      cell_wake_stdin(active);
+    }
     cell_timer_tick(f, !cpus[cpu_id].idle);
   }
   if (cpus[cpu_id].idle) { cell_resume_scheduler(f); }

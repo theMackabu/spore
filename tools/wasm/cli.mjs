@@ -43,6 +43,7 @@ try {
     cpuCount: Number(cpus),
     network,
     onException: process.env.SPORE_WASM_TRACE ? (pc, msg) => console.error(`[wasm] ${msg} at PC 0x${pc.toString(16)}`) : undefined,
+    winsize: () => ({ rows: process.stdout.rows, cols: process.stdout.columns }),
     readByte: terminal || system ? serial.readByte : undefined,
     instructionLimit: system || network ? Number.MAX_SAFE_INTEGER : undefined,
     signal: stop.signal,

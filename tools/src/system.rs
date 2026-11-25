@@ -64,6 +64,32 @@ pub fn build_wasm(build: &Path) -> io::Result<i32> {
     fs::create_dir_all(&web)?;
     let stage = Workspace::at(&web)?;
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm");
+    let cache = build.parent().unwrap().join("wasm-packages");
+    for (name, url, digest, members) in [
+        (
+            "xterm",
+            "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz",
+            "908e66e04af6c8dc6b00dd3b54de088e2e81e5ed866284fd6c2fb3c2d1c7a3f6",
+            &[
+                "package/lib/xterm.mjs",
+                "package/css/xterm.css",
+                "package/LICENSE",
+            ][..],
+        ),
+        (
+            "fit",
+            "https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz",
+            "26003b4517a132b64e4ff228fd88a5fda3fff5e606c76093f6dcff772e9ecec0",
+            &["package/lib/addon-fit.mjs", "package/LICENSE"][..],
+        ),
+    ] {
+        let archive = spore_packages::Archive {
+            url: url.into(),
+            sha256: digest.into(),
+        };
+        let paths = members.iter().map(PathBuf::from).collect::<Vec<_>>();
+        archive.extract(&cache, &web.join(name), &paths)?;
+    }
     let files = [
         "index.html",
         "run.mjs",
@@ -313,16 +339,22 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
             }
             return status(Command::new(build.join("spore")).arg("run").arg(exe));
         }
-        (false, Some("wasm-guest")) => {
+        (false, Some(suite @ ("wasm-guest" | "wasm-shell"))) => {
+            let integration = suite == "wasm-guest";
+            let mode = if integration { "integration" } else { "shell" };
             let code = build_wasm(build)?;
             if code != 0 {
                 return Ok(code);
             }
-            let code = build_project(build, true, true)?;
+            let code = build_project(build, true, integration)?;
             if code != 0 {
                 return Ok(code);
             }
-            let disk = build.join("test_root.ext2");
+            let disk = build.join(if integration {
+                "test_root.ext2"
+            } else {
+                "root.ext2"
+            });
             let cmd = wasm_command(
                 build,
                 None,
@@ -331,12 +363,12 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                 None,
                 None,
             )?;
-            crate::runner::fixtures::start("integration")?;
+            crate::runner::fixtures::start(mode)?;
             let argv = std::iter::once(cmd.get_program())
                 .chain(cmd.get_args())
                 .map(OsStr::to_owned)
                 .collect::<Vec<_>>();
-            return crate::runner::harness::run(&argv, "integration", false);
+            return crate::runner::harness::run(&argv, mode, false, false);
         }
         (_, Some("wasm")) => {
             let rc = build_wasm(build)?;

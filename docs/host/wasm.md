@@ -61,7 +61,7 @@ arguments on the host and select the resulting payload.
 ```
 
 The CLI performs this packaging automatically on `spore run --wasm`. A worker runs the guest locally and reads ranges from the selected disk on demand.
-To boot a system, select only the root disk, click Run and send commands through Console input. Stop terminates the worker and discards its snapshot. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
+To boot a system, select only the root disk, click Run and type into the terminal. Stop terminates the worker and discards its snapshot. Browsers and Node can also import [the launcher](../../tools/wasm/run.mjs).
 
 ## Current scope
 
@@ -70,7 +70,7 @@ of A64 integer, branch, load/store, exclusive, scalar floating-point and SIMD in
 classes and address translations. It reports the guest PC on an unsupported instruction or
 memory fault. The launcher defaults to a budget of 100 million guest instructions.
 
-Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Batch apps without console input see EOF. Full-system boots use Spore’s TTY. The standalone browser page runs offline. JIT workloads remain unverified.
+Linux syscalls use the native AArch64 dispatcher, including its seccomp checks. The appliance profile allows threads and denies additional processes. Batch apps without console input see EOF. Full-system boots use Spore’s TTY. The standalone browser terminal runs offline. Guest code generation is tested by rewriting and executing an ARM64 function after changing page permissions.
 Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 
 ```sh
@@ -79,7 +79,7 @@ Ant runs JavaScript expressions from its ordinary AArch64 musl binary.
 
 Claude Code is unverified.
 
-`spore test wasm-guest` boots the integration disk with the native suite’s UDP echo and console fixtures.
+`spore test wasm-guest` boots the integration disk with the native suite’s UDP echo and console fixtures. `spore test wasm-shell` exercises the installed utilities, TLS, the compiler, shell and shutdown in a disposable full-userland boot.
 
 `spore test wasm` builds an ordinary musl ELF and compares its output and exit status
 under QEMU and Wasm. It checks pthreads, futex wakeups, timer preemption, thread-local storage and appliance policy. It also exercises cross-page accesses, permission changes,

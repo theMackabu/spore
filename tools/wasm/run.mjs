@@ -8,7 +8,7 @@ export class GuestSignal extends Error {
 export async function run(
   kernel,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, network, write, onException, memoryMiB = 64, cpuCount = 1, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, winsize, network, write, onException, memoryMiB = 64, cpuCount = 1, instructionLimit = 100_000_000, signal } = {},
 ) {
   if (!Number.isInteger(memoryMiB) || memoryMiB < 16 || memoryMiB >= 2048) {
     throw new RangeError("Wasm guest RAM must be 16 through 2047 MiB");
@@ -50,6 +50,10 @@ export async function run(
         },
         exception(pc, ptr, len) {
           onException?.(pc, decoder.decode(bytes(ptr, len)));
+        },
+        winsize() {
+          const {rows = 24, cols = 80} = winsize?.() ?? {};
+          return ((rows & 0xffff) << 16) | (cols & 0xffff);
         },
         serial_read() {
           return readByte?.() ?? -1;

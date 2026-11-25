@@ -91,14 +91,14 @@ const INTEGRATION_CHECKS: &[(&[u8], &str)] = &[
     ),
 ];
 
-pub fn run(argv: &[OsString], mode: &str, timings: bool) -> io::Result<i32> {
+pub fn run(argv: &[OsString], mode: &str, timings: bool, serial_resize: bool) -> io::Result<i32> {
     let mut first = String::new();
-    let status = run_inner(argv, mode, timings, &mut first)?;
+    let status = run_inner(argv, mode, timings, serial_resize, &mut first)?;
     if mode != "rng" || status != 0 {
         return Ok(status);
     }
     let mut second = String::new();
-    let status = run_inner(argv, mode, timings, &mut second)?;
+    let status = run_inner(argv, mode, timings, serial_resize, &mut second)?;
     if status == 0 {
         if first == second {
             return Err(io::Error::other(
@@ -114,6 +114,7 @@ fn run_inner(
     argv: &[OsString],
     mode: &str,
     mut timings: bool,
+    serial_resize: bool,
     sample: &mut String,
 ) -> io::Result<i32> {
     let (mut serial, writer) = io::pipe()?;
@@ -169,7 +170,7 @@ fn run_inner(
         if !plain && start.elapsed() > timeout {
             break 124;
         }
-        if sized && unsafe { runner_resized() } {
+        if serial_resize && sized && unsafe { runner_resized() } {
             terminal.send_size(&mut input)?;
         }
         let events = unsafe {
@@ -266,7 +267,9 @@ fn run_inner(
                     }
                 }
                 if !sized && buf.prompt().is_some() {
-                    terminal.send_size(&mut input)?;
+                    if serial_resize {
+                        terminal.send_size(&mut input)?;
+                    }
                     sized = true;
                 }
                 if !answered && matches!(mode, "integration" | "stdin") {

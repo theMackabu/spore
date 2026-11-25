@@ -3,11 +3,14 @@ import { SerialInput } from "./input.mjs";
 import { snapshotDisk } from "./disk.mjs";
 
 const serial = new SerialInput();
-onmessage = async ({ data: { elf, disk, args, input, memoryMiB, cpuCount } }) => {
+let dimensions;
+onmessage = async ({ data: { elf, disk, args, input, initialSize, size, memoryMiB, cpuCount } }) => {
+  if (size) { dimensions = size; return; }
   if (input !== undefined) {
     serial.push(new TextEncoder().encode(input));
     return;
   }
+  dimensions = initialSize;
   try {
     const response = await fetch("./spore_wasm.wasm");
     if (!response.ok) throw new Error("Build the module with spore build --wasm first.");
@@ -28,7 +31,8 @@ onmessage = async ({ data: { elf, disk, args, input, memoryMiB, cpuCount } }) =>
       memoryMiB, cpuCount,
       argv0: elf?.name,
       args,
-      readByte: elf ? undefined : serial.readByte,
+      readByte: serial.readByte,
+      winsize: () => dimensions,
       instructionLimit: elf ? undefined : Number.MAX_SAFE_INTEGER,
       write(fd, bytes) {
         postMessage({ fd, bytes }, [bytes.buffer]);

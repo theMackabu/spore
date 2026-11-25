@@ -30,7 +30,7 @@ Usage:
   spore run --wasm ELF [--net | -p PORT] [image options] [--data EXT2] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
-  spore test [host|guest|shell|appliance|ports|wasm|wasm-guest|rng|stress]
+  spore test [host|guest|shell|appliance|ports|wasm|wasm-guest|wasm-shell|rng|stress]
   spore bench [guest|inodes|appliance|startup|uring|wasm]
 
 Image options:
