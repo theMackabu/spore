@@ -42,6 +42,7 @@ async function boot(
     kernelLog,
     onException,
     onEntry,
+    guardBoot,
     memoryMiB = 64,
     cpuCount = 1,
     jit = true,
@@ -168,13 +169,6 @@ async function boot(
     })
   ).exports;
   const size = (elf?.byteLength ?? 0) + argv.byteLength;
-  if (!system) {
-    if (size > 0x7fffffff) throw new Error("input exceeds wasm32 allocation size");
-    const ptr = guest.stage(size);
-    if (!ptr) throw new Error("cannot stage guest input");
-    bytes(ptr, elf.length).set(elf);
-    bytes(ptr + elf.length, argv.length).set(argv);
-  }
   const devices =
     (readDisk ? 1 : 0) |
     (writeDisk ? 2 : 0) |
@@ -184,12 +178,28 @@ async function boot(
     (readStdin ? 32 : 0) |
     (kernelLog ? 64 : 0);
   try {
-    if (
-      !guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)
-    ) {
-      throw new Error("cannot initialize guest memory or executable");
-    }
     let remaining = instructionLimit;
+    const start = () => {
+      if (!system) {
+        if (size > 0x7fffffff) throw new Error("input exceeds wasm32 allocation size");
+        const ptr = guest.stage(size);
+        if (!ptr) throw new Error("cannot stage guest input");
+        bytes(ptr, elf.length).set(elf);
+        bytes(ptr + elf.length, argv.length).set(argv);
+      }
+      if (
+        !guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)
+      ) {
+        throw new Error("cannot initialize guest memory or executable");
+      }
+      if (guardBoot) {
+        const retired = guest.run_slice(1, 0);
+        if (retired < 0) throw new Error("CPU stopped before entry");
+        remaining -= retired;
+      }
+    };
+    if (guardBoot) guardBoot(start);
+    else start();
     let nextTick = performance.now() + 10;
     let yieldAt = performance.now() + 8;
     while (remaining > 0) {

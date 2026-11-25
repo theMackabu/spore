@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { Script } from "node:vm";
 import { parseArgs } from "node:util";
 import { snapshotDisk } from "./disk.mjs";
 import { userNetwork } from "./net.mjs";
@@ -31,6 +32,32 @@ let resultKind = "host-error",
 const terminal = process.stdin.isTTY;
 const serial = new SerialInput();
 const stop = new AbortController();
+const deadline = !system && opt["boot-timeout"] ? started + Number(opt["boot-timeout"]) * 1000 : Infinity;
+const timeoutError = new Error("guest boot timed out");
+const expireBoot = () => {
+  resultKind = "boot-timeout";
+  stop.abort(timeoutError);
+};
+const timer =
+  Number.isFinite(deadline) && deadline - started <= 0x7fffffff
+    ? setTimeout(expireBoot, deadline - started)
+    : undefined;
+function guardBoot(startGuest) {
+  const ms = Math.ceil(deadline - performance.now());
+  if (ms <= 0) {
+    expireBoot();
+    throw timeoutError;
+  }
+  try {
+    new Script("startGuest()").runInNewContext({ startGuest }, { timeout: Math.min(ms, 0x7fffffff) });
+  } catch (e) {
+    if (entry === null && e.code === "ERR_SCRIPT_EXECUTION_TIMEOUT") {
+      expireBoot();
+      throw timeoutError;
+    }
+    throw e;
+  }
+}
 const raw = process.stdin.isRaw;
 let disk, bootImage, network, interrupted;
 function interrupt(signal) {
@@ -76,7 +103,9 @@ try {
       bootImage === undefined
         ? undefined
         : (offset, dest) => fs.readSync(bootImage, dest, 0, dest.length, offset),
+    guardBoot: Number.isFinite(deadline) ? guardBoot : undefined,
     onEntry() {
+      clearTimeout(timer);
       entry = Math.round((performance.now() - started) * 1000);
       if (!system && opt["boot-timeout"] && entry > Number(opt["boot-timeout"]) * 1e6) {
         resultKind = "boot-timeout";
@@ -111,6 +140,7 @@ try {
   resultKind = "exit";
   resultValue = process.exitCode;
 } catch (e) {
+  if (e === timeoutError) resultKind = "boot-timeout";
   if (e instanceof GuestBootError) {
     resultKind = "boot-error";
     resultValue = e.code;
@@ -126,6 +156,7 @@ try {
   console.error("spore:", e.message);
   process.exitCode = interrupted ?? (e instanceof GuestSignal ? 128 + e.signal : 125);
 } finally {
+  clearTimeout(timer);
   network?.close();
   process.off("SIGINT", interrupt);
   process.off("SIGTERM", interrupt);
