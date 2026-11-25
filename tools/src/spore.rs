@@ -24,10 +24,13 @@ Usage:
   spore build                         Build the kernel and host CLI
   spore build --userland [--tests]    Enable and build the full system or integration image
   spore build ELF_OR_PACKAGE -o IMAGE [image options] [-- ARG...]
+  spore build --wasm                  Build the hosted ARM64 kernel and interpreter
+  spore build --wasm ELF -o PAYLOAD [image options] [-- ARG...]
+  spore run --wasm ELF [image options] [--data EXT2] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
-  spore test [host|guest|shell|appliance|ports|rng|stress]
-  spore bench [guest|inodes|appliance|startup|uring]
+  spore test [host|guest|shell|appliance|ports|wasm|rng|stress]
+  spore bench [guest|inodes|appliance|startup|uring|wasm]
 
 Image options:
   --exec PATH        Guest executable path (default /app/server)
@@ -196,11 +199,17 @@ fn execute() -> io::Result<i32> {
     let mut reset = false;
     let mut userland = false;
     let mut tests = false;
+    let mut wasm = false;
+    let mut qemu_options = false;
     let mut app_options = false;
     while let Some(key) = args.next() {
         if key == "-h" || key == "--help" {
             println!("{HELP}");
             return Ok(0);
+        }
+        if (build || action == "run") && key == "--wasm" {
+            wasm = true;
+            continue;
         }
         if build && key == "--userland" {
             userland = true;
@@ -219,6 +228,7 @@ fn execute() -> io::Result<i32> {
             continue;
         }
         if !build && key == "--timings" {
+            qemu_options = true;
             vm.timings = true;
             continue;
         }
@@ -242,11 +252,25 @@ fn execute() -> io::Result<i32> {
             app_options = true;
         }
         match key.to_str() {
-            Some("-o" | "--output") if build => output = Some(PathBuf::from(value)),
-            Some(
-                "--exec" | "--argv0" | "--cwd" | "--env" | "--file" | "--lib-dir" | "--ip"
-                | "--gateway" | "--dns" | "--netmask",
-            ) if !boot => pack.extend([PathBuf::from(key), PathBuf::from(value)]),
+            Some("-o" | "--output") if build => {
+                output = Some(PathBuf::from(value));
+                continue;
+            }
+            Some("--exec" | "--argv0" | "--cwd" | "--env" | "--file" | "--lib-dir") if !boot => {
+                pack.extend([PathBuf::from(key), PathBuf::from(value)]);
+                continue;
+            }
+            Some("--data") if !build => {
+                vm.root = Some(value);
+                continue;
+            }
+            _ => (),
+        }
+        qemu_options = true;
+        match key.to_str() {
+            Some("--ip" | "--gateway" | "--dns" | "--netmask") if !boot => {
+                pack.extend([PathBuf::from(key), PathBuf::from(value)])
+            }
             Some("--memory") if !build => memory = Some(value),
             Some("--root") if boot => root = Some(value),
             Some("--accel") if !build => vm.accel = Some(value),
@@ -260,7 +284,6 @@ fn execute() -> io::Result<i32> {
             }
             Some("--boot-timeout") if !build => vm.timeout = positive(&value, "boot timeout")?,
             Some("--result") if !build => vm.report = Some(value),
-            Some("--data") if !build => vm.root = Some(value),
             Some("-p" | "--forward") if !build => {
                 let ports = value
                     .to_str()
@@ -278,6 +301,43 @@ fn execute() -> io::Result<i32> {
                 )));
             }
         }
+    }
+    if wasm {
+        if qemu_options || tests || userland {
+            return Err(io::Error::other(
+                "Wasm supports app files, arguments, environment, cwd and --data",
+            ));
+        }
+        if build && program.is_none() && output.is_none() && pack.is_empty() {
+            return system::build_wasm(artifacts);
+        }
+        let input = program.ok_or_else(|| io::Error::other("missing AArch64 ELF"))?;
+        let elf = system::program(&input)?;
+        if arch::Arch::executable(&elf)? != arch::Arch::Aarch64 {
+            return Err(io::Error::other("Wasm requires an AArch64 Linux ELF"));
+        }
+        let tmp = Workspace::new()?;
+        let payload = if build {
+            output.ok_or_else(|| io::Error::other("build requires -o PAYLOAD"))?
+        } else {
+            tmp.0.join("app.bin")
+        };
+        let basename = elf
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| io::Error::other("invalid ELF filename"))?;
+        let mut options = vec![
+            PathBuf::from("--exec"),
+            PathBuf::from("/app").join(basename),
+        ];
+        options.extend(pack);
+        image::build_image(&payload, |out| {
+            image::app::payload(&elf, &options, None, &tmp.0, out, arch::Arch::Aarch64).map(|_| ())
+        })?;
+        if build {
+            return Ok(0);
+        }
+        return system::run_wasm(artifacts, &payload, vm.root.as_deref());
     }
     if let Some(arch) = architecture.as_deref() {
         vm.arch = arch::Arch::parse(arch.to_str().unwrap_or(""))?;

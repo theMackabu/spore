@@ -50,6 +50,56 @@ pub fn build_project(build: &Path, full: bool, tests: bool) -> io::Result<i32> {
     status(&mut cmd)
 }
 
+pub fn build_wasm(build: &Path) -> io::Result<i32> {
+    let code = status(cargo("build", build).args([
+        "-p",
+        "spore-wasm",
+        "--target",
+        "wasm32-unknown-unknown",
+    ]))?;
+    if code != 0 {
+        return Ok(code);
+    }
+    let web = build.join("wasm-web");
+    fs::create_dir_all(&web)?;
+    let stage = Workspace::at(&web)?;
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm");
+    let files = ["index.html", "run.mjs", "worker.mjs", "spore_wasm.wasm"];
+    for file in &files[..3] {
+        fs::copy(sources.join(file), stage.0.join(file))?;
+    }
+    fs::copy(wasm_module(build), stage.0.join("spore_wasm.wasm"))?;
+    for file in files {
+        fs::rename(stage.0.join(file), web.join(file))?;
+    }
+    Ok(0)
+}
+
+fn wasm_module(build: &Path) -> PathBuf {
+    build
+        .parent()
+        .unwrap()
+        .join("wasm32-unknown-unknown")
+        .join(build.file_name().unwrap())
+        .join("spore_wasm.wasm")
+}
+
+pub fn run_wasm(build: &Path, payload: &Path, disk: Option<&OsStr>) -> io::Result<i32> {
+    let module = wasm_module(build);
+    if !module.is_file() {
+        return Err(io::Error::other(
+            "build the Wasm kernel with spore build --wasm",
+        ));
+    }
+    status(
+        Command::new("node")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/wasm/cli.mjs"))
+            .arg(module)
+            .arg(payload)
+            .args(disk),
+    )
+}
+
 pub fn userland() -> io::Result<&'static Path> {
     #[cfg(feature = "userland")]
     {
@@ -221,6 +271,20 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                 return Ok(rc);
             }
             return status(Command::new(build.join("spore")).arg("run").arg(exe));
+        }
+        (_, Some("wasm")) => {
+            let rc = build_wasm(build)?;
+            if rc != 0 {
+                return Ok(rc);
+            }
+            let mut cmd = Command::new("node");
+            cmd.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wasm/check.mjs"))
+                .arg(build.join("spore"))
+                .arg(wasm_module(build));
+            if bench {
+                cmd.arg("--bench");
+            }
+            return status(&mut cmd);
         }
         (false, Some("ports")) => {
             let mut cmd = Command::new("python3");

@@ -1,0 +1,13 @@
+[package]
+name = "spore-wasm"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[lib]
+path = "lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+cc = { version = "1", features = ["parallel"] }
+spore-build = { path = "../../../tools/build" }

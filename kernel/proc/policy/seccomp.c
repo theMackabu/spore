@@ -121,7 +121,7 @@ bool seccomp_check(struct trap_frame *frame, uint64_t nr, const uint64_t args[6]
   struct domain *domain = cell_current_domain_internal();
   if (!domain || !domain->filter) { return true; }
   struct seccomp_data data = {.nr = (int32_t)nr};
-#if defined(__aarch64__)
+#if defined(__aarch64__) || defined(__wasm32__)
   data.arch = 0xc00000b7;
   data.ip = frame->elr_el1;
 #elif defined(__x86_64__)

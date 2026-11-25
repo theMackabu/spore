@@ -289,7 +289,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "spore"
-version = "0.7.0"
+version = "0.7.5"
 dependencies = [
  "cc",
  "goblin",
@@ -305,7 +305,7 @@ version = "0.1.0"
 
 [[package]]
 name = "spore-kernel"
-version = "0.7.0"
+version = "0.7.5"
 dependencies = [
  "cc",
  "spore-build",
@@ -332,10 +332,18 @@ dependencies = [
 
 [[package]]
 name = "spore-userland"
-version = "0.7.0"
+version = "0.7.5"
 dependencies = [
  "spore-build",
  "spore-packages",
+]
+
+[[package]]
+name = "spore-wasm"
+version = "0.7.5"
+dependencies = [
+ "cc",
+ "spore-build",
 ]
 
 [[package]]

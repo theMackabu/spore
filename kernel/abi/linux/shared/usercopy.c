@@ -17,7 +17,10 @@ struct user_address_space *syscall_active_as(void) {
   return as == NULL ? current_as : as;
 }
 
-static bool user_accessible(uint64_t addr, size_t len, enum vmm_access access) {
+static bool user_accessible(uint64_t addr, uint64_t len, enum vmm_access access) {
+#if SIZE_MAX < UINT64_MAX
+  if (len > SIZE_MAX) { return false; }
+#endif
   if (len == 0) { return true; }
   struct domain *domain = cell_current_domain_internal();
   if (domain != NULL) { return cell_domain_ensure_user_range(domain, addr, len, access); }

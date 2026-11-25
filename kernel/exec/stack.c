@@ -127,7 +127,9 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
   if (!stack_copy_to_user(as, random_va, random, sizeof(random))) { goto out; }
   kmemset(random, 0, sizeof(random));
 
-#ifdef SPORE_NATIVE_PORT
+#if defined(__wasm__)
+  const uint64_t hwcap = 0;
+#elif defined(SPORE_NATIVE_PORT)
 #if defined(__riscv)
   const uint64_t hwcap = 1 | (1 << 2) | (1 << 8) | (1 << 12);
 #else

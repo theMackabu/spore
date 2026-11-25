@@ -28,6 +28,26 @@ pub fn files(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
     paths
 }
 
+pub fn kernel_runtime_sources(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    [
+        "io_uring",
+        "mm",
+        "fs",
+        "proc",
+        "net",
+        "tty",
+        "lib",
+        "exec",
+        "abi/linux/shared",
+    ]
+    .into_iter()
+    .flat_map(move |dir| {
+        let path = root.join(dir);
+        watch(&path);
+        files(&path, &["c", "S"])
+    })
+}
+
 pub fn rust_archive(src: &Path, dest: &Path, target: Option<&str>) {
     let mut cmd = Command::new(env::var_os("RUSTC").unwrap());
     cmd.args([
@@ -60,4 +80,15 @@ pub fn output_dir() -> PathBuf {
 
 pub fn watch(path: &Path) {
     println!("cargo:rerun-if-changed={}", path.display());
+}
+
+pub fn build_epoch() -> String {
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    env::var("SOURCE_DATE_EPOCH").unwrap_or_else(|_| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string()
+    })
 }

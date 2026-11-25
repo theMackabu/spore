@@ -22,7 +22,10 @@ fn run(cmd: &mut Command) -> io::Result<()> {
     }
 }
 
-fn build_image(output: &Path, build: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<()> {
+pub(crate) fn build_image(
+    output: &Path,
+    build: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     let parent = output.parent().unwrap_or(Path::new("."));
     let mut suffix = 0u32;
     let temp = loop {

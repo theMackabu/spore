@@ -1,6 +1,6 @@
 use spore_build::{files, output_dir, run, rust_archive};
 use spore_packages::Archive;
-use std::{env, path::Path, process::Command, time::SystemTime};
+use std::{env, path::Path, process::Command};
 
 fn limine(out: &Path) {
     let release = Archive {
@@ -34,22 +34,6 @@ fn abi_sources(arch: &str) -> impl Iterator<Item = std::path::PathBuf> {
     ["linux", "freebsd"]
         .into_iter()
         .flat_map(move |os| files(&Path::new("abi").join(os).join(arch), &["c", "S"]))
-}
-
-fn runtime_sources() -> impl Iterator<Item = std::path::PathBuf> {
-    [
-        "io_uring",
-        "mm",
-        "fs",
-        "proc",
-        "net",
-        "tty",
-        "lib",
-        "exec",
-        "abi/linux/shared",
-    ]
-    .into_iter()
-    .flat_map(|dir| files(Path::new(dir), &["c", "S"]))
 }
 
 fn build_port(arch: &str, flags: &[&str], out: &Path, epoch: &str) {
@@ -96,7 +80,7 @@ fn build_port(arch: &str, flags: &[&str], out: &Path, epoch: &str) {
             "drivers/virtio_blk.c",
         ])
         .file("arch/smp.c")
-        .files(runtime_sources())
+        .files(spore_build::kernel_runtime_sources(Path::new(".")))
         .files(files(Path::new("arch/bringup"), &["c", "S"]))
         .files(abi_sources(arch))
         .include(".")
@@ -131,14 +115,7 @@ fn build_port(arch: &str, flags: &[&str], out: &Path, epoch: &str) {
 
 fn main() {
     println!("cargo:rerun-if-changed=.");
-    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
-    let epoch = env::var("SOURCE_DATE_EPOCH").unwrap_or_else(|_| {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .to_string()
-    });
+    let epoch = spore_build::build_epoch();
     let out = output_dir();
     limine(&out);
     for (arch, flags) in [
@@ -183,7 +160,7 @@ fn main() {
         .file("abi/freebsd/dispatch.c")
         .files(abi_sources("aarch64"))
         .file("arch/smp.c")
-        .files(runtime_sources())
+        .files(spore_build::kernel_runtime_sources(Path::new(".")))
         .files(
             ["arch/aarch64", "drivers", "init"]
                 .into_iter()

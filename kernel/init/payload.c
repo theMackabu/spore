@@ -55,6 +55,7 @@ static bool unpack_entry(struct payload_reader *reader, struct ramfs *fs, const 
     size_t offset = reader->next - reader->start;
     if (!take(reader, -offset % PAGE_SIZE)) { return false; }
   }
+  if (n > reader->remaining) { return false; }
   const void *data = take(reader, n);
   return data && ramfs_add_boot_file(fs, path, data, n, str_eq(path, executable) ? 0555 : 0444);
 }

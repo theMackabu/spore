@@ -1,5 +1,6 @@
 #include "boot.h"
 #include "init/app.h"
+#include "init/process.h"
 #include "abi/linux/shared/usercopy.h"
 #ifdef SPORE_NATIVE_PORT
 #include "arch/bringup/user.h"
@@ -17,18 +18,15 @@
 #include "proc/limits.h"
 #include "proc/memory.h"
 
-struct first_process {
-  const struct init_program *program;
-  struct user_address_space as;
-  struct vma_list vmas;
-  uint64_t entry, sp;
-};
-
-static void enter_first_process(void *context) {
-  struct first_process *first = context;
+void boot_activate_process(struct first_process *first) {
   if (!cell_create_init(first->program, &first->as, &first->vmas, first->entry, first->sp)) {
     boot_fail(BOOT_INIT_FAILED, "failed to create init cell");
   }
+}
+
+static void enter_first_process(void *context) {
+  struct first_process *first = context;
+  boot_activate_process(first);
   arch_reset_context(&cell_current_thread_internal()->context);
   smp_start_scheduler_cpus();
   syscall_set_address_space(cell_current_as());
@@ -46,7 +44,7 @@ static void enter_first_process(void *context) {
 #endif
 }
 
-void boot_start_process(const struct init_program *program, uint64_t hhdm_offset) {
+void boot_load_process(struct first_process *first, const struct init_program *program, uint64_t hhdm_offset) {
 
   struct vfs_node executable, cwd;
   struct elf_reader reader;
@@ -56,22 +54,26 @@ void boot_start_process(const struct init_program *program, uint64_t hhdm_offset
   }
   if (!vfs_lookup(program->cwd, &cwd) || !cwd.is_dir) { boot_fail(BOOT_INIT_FAILED, "working directory missing"); }
 
-  struct first_process first;
-  first.program = program;
-  vma_list_init(&first.vmas);
-  if (!vmm_user_init(&first.as, hhdm_offset)) { boot_fail(BOOT_INIT_FAILED, "cannot prepare initial process"); }
+  first->program = program;
+  vma_list_init(&first->vmas);
+  if (!vmm_user_init(&first->as, hhdm_offset)) { boot_fail(BOOT_INIT_FAILED, "cannot prepare initial process"); }
   struct loaded_elf elf;
   char interp_path[CELL_PATH_MAX];
-  enum elf_load_status status = elf_load_program(&first.as, &first.vmas, &reader, &elf, interp_path, sizeof(interp_path));
+  enum elf_load_status status = elf_load_program(&first->as, &first->vmas, &reader, &elf, interp_path, sizeof(interp_path));
   if (status != ELF_LOADED) {
     boot_fail(BOOT_INIT_FAILED, status == ELF_BAD_INTERPRETER ? "invalid ELF interpreter" : "invalid ELF executable");
   }
   const struct exec_stack_credentials creds = {0};
-  if (!build_initial_stack_args(&first.as, &elf, program->path, program->argv, program->argc, program->env,
-                                program->envc, &creds, &first.sp)) {
+  if (!build_initial_stack_args(&first->as, &elf, program->path, program->argv, program->argc, program->env,
+                                program->envc, &creds, &first->sp)) {
     boot_fail(BOOT_INIT_FAILED, "cannot prepare initial process");
   }
-  first.entry = elf.runtime_entry;
+  first->entry = elf.runtime_entry;
+}
+
+void boot_start_process(const struct init_program *program, uint64_t hhdm_offset) {
+  struct first_process first;
+  boot_load_process(&first, program, hhdm_offset);
 #ifdef SPORE_NATIVE_PORT
   enter_first_process(&first);
   __builtin_unreachable();
