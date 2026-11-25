@@ -183,6 +183,6 @@ pub(super) const COMMANDS: &[&str] = &[
     "confine fs:/tmp /home/spore/demos/writer /tmp/d/out\n",
     "confine mem:1 /home/spore/demos/memhog --expect-deny || echo __SPORE\"\"_SHELL_CHECK_FAIL_MEMCAP__\n",
     "runc bad-manifest /home/spore/demos/escalate\n",
-    "/bin/sh -c 'set -e; sudo -n mkuser sporecheck; test -d /home/sporecheck; test \"$(sudo -n -u sporecheck id -un)\" = sporecheck; if sudo -n -u sporecheck sudo -n id; then exit 1; fi; sudo -n passwd -S sporecheck; sudo -n deluser sporecheck; ! id sporecheck' || echo __SPORE\"\"_SHELL_CHECK_FAIL_ACCOUNTS__\n",
+    "/bin/sh -c 'set -e; sudo -n mkuser --no-password sporecheck; test -d /home/sporecheck; test \"$(sudo -n su - sporecheck -c \"id -un\")\" = sporecheck; if sudo -n -u sporecheck sudo -n id; then exit 1; fi; sudo -n passwd -S sporecheck; sudo -n deluser sporecheck; ! id sporecheck' || echo __SPORE\"\"_SHELL_CHECK_FAIL_ACCOUNTS__\n",
     "sudo shutdown\n",
 ];

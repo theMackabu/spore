@@ -1,4 +1,5 @@
 #include "mycelium.h"
+#include <pwd.h>
 
 struct unit units[UNIT_CAP];
 int control_fd = -1;
@@ -65,7 +66,24 @@ static void supervisor_poll_once(void) {
   dispatch_poll_events(fds, journal_units, nfds);
 }
 
+char console_user[33];
+
+static bool load_console_user(void) {
+  FILE *file = fopen("/run/console-user", "r");
+  if (!file) { return errno == ENOENT; }
+  size_t len = fread(console_user, 1, sizeof(console_user), file);
+  bool valid = !ferror(file) && len > 0 && len < sizeof(console_user) && !memchr(console_user, 0, len);
+  fclose(file);
+  if (!valid) { return false; }
+  return getpwnam(console_user) != NULL;
+}
+
 int main(void) {
+  if (!load_console_user()) {
+    fprintf(stderr, "mycelium: invalid or unknown console user: %.*s\n", 32, console_user);
+    syscall(SYS_SPORE_SHUTDOWN, 0);
+    return 1;
+  }
   load_environment_file("/etc/environment");
   ensure_dir("/run/mycelium");
   ensure_dir("/var/log");

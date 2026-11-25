@@ -16,7 +16,7 @@ use std::{
 
 const HELP: &str = "\
 Usage:
-  spore boot [--snapshot | --reset] [--root EXT2] [VM options]
+  spore boot [--user NAME] [--snapshot | --reset] [--root EXT2] [VM options]
   spore upgrade [--from-base ORIGINAL_EXT2]   Upgrade the installed userland
   spore rollback                      Select the previous installation
   spore boot SYSTEM_IMAGE --root EXT2 [--snapshot] [VM options]
@@ -28,7 +28,7 @@ Usage:
   spore build --wasm ELF -o PAYLOAD [image options] [-- ARG...]
   spore publish --wasm [--userland] [DIRECTORY]    Publish a browser release (defaults to the local server directory)
   spore serve --wasm [--offline] [--port PORT]  Serve the browser runner on localhost (default port 3000)
-  spore boot --wasm [--net] [--root EXT2]       Boot a disposable snapshot of a userland disk
+  spore boot --wasm [--user NAME] [--net] [--root EXT2]       Boot a disposable snapshot of a userland disk
   spore run --wasm ELF [--net | -p PORT] [image options] [--data EXT2] [-- ARG...]
   spore run ELF_OR_PACKAGE [image options] [VM options] [-- ARG...]
   spore boot APP_IMAGE [VM options]
@@ -248,6 +248,7 @@ fn execute() -> io::Result<i32> {
     let mut memory = None;
     let mut cpus = None;
     let mut root = None;
+    let mut console_user = None;
     let mut reset = false;
     let mut persist = None;
     let mut userland = false;
@@ -341,6 +342,22 @@ fn execute() -> io::Result<i32> {
                 memory = Some(value);
                 continue;
             }
+            Some("--user") if boot => {
+                let name = value.to_str().unwrap_or("");
+                if name.is_empty()
+                    || name.len() > 32
+                    || name.starts_with('-')
+                    || !name
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-.$".contains(&b))
+                {
+                    return Err(io::Error::other(
+                        "expected a guest account name (1–32 characters)",
+                    ));
+                }
+                console_user = Some(value);
+                continue;
+            }
             Some("--root") if boot => {
                 root = Some(value);
                 continue;
@@ -378,8 +395,15 @@ fn execute() -> io::Result<i32> {
             }
         }
     }
+    if console_user.is_some()
+        && (program.is_some() && root.is_none()
+            || architecture.as_deref().is_some_and(|a| a != "aarch64"))
+    {
+        return Err(io::Error::other("--user requires a full userland boot"));
+    }
     if wasm {
         let mut hosted = system::WasmOptions {
+            user: console_user.as_deref(),
             disk: vm.root.as_deref(),
             memory: memory.as_deref(),
             cpus: cpus.as_deref(),
@@ -540,9 +564,15 @@ fn execute() -> io::Result<i32> {
             let config = tmp.0.join("limine.conf");
             fs::write(&config, include_bytes!("../../boot/limine.conf"))?;
             image::build_esp(&config, &image, None, vm.arch)?;
-            return system::boot(artifacts, vm, Some(image.into()), false);
+            return system::boot(
+                artifacts,
+                vm,
+                Some(image.into()),
+                false,
+                console_user.as_deref(),
+            );
         }
-        return system::boot(artifacts, vm, program, reset);
+        return system::boot(artifacts, vm, program, reset, console_user.as_deref());
     }
     if reset || vm.snap || vm.timings {
         return Err(io::Error::other(

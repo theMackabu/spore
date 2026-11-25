@@ -288,6 +288,12 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   struct spore_boot_module payload = {
     .phys_addr = (uint64_t)(uintptr_t)image - hhdm, .size = size, .path = "/spore.app"};
   struct spore_boot_info boot = {.hhdm_offset = hhdm, .modules = size ? &payload : NULL, .module_count = size ? 1 : 0};
+  if (!size && bytes) {
+    payload = (struct spore_boot_module){.phys_addr = (uintptr_t)args - hhdm, .size = bytes, .path = "/run/console-user"};
+    boot.modules = &payload;
+    boot.module_count = 1;
+    bytes = 0;
+  }
   struct boot_profile profile = {0};
   boot_select_profile(&boot, &profile);
   const struct spore_memmap_entry usable = {

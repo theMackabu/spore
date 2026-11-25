@@ -30,6 +30,7 @@ async function boot(
   {
     args = [],
     argv0 = "/app/server",
+    consoleUser,
     readDisk,
     readBoot,
     writeDisk,
@@ -72,10 +73,15 @@ async function boot(
   }
   const bundled = !system && new TextDecoder().decode(elf.subarray(0, 8)) === "SPOREAP2";
   if (bundled && args.length) throw new Error("packaged applications already contain their arguments");
-  const argv =
-    bundled || system
-      ? new Uint8Array()
-      : new TextEncoder().encode([argv0, ...args].map((arg) => arg + "\0").join(""));
+  let argv = new Uint8Array();
+  if (consoleUser !== undefined) {
+    if (!system || typeof consoleUser !== "string" || !/^(?!-)[A-Za-z0-9_.$-]{1,32}$/.test(consoleUser)) {
+      throw new Error("invalid console user");
+    }
+    argv = new TextEncoder().encode(consoleUser);
+  } else if (!bundled && !system) {
+    argv = new TextEncoder().encode([argv0, ...args].map((arg) => arg + "\0").join(""));
+  }
   const decoder = new TextDecoder();
   let guest;
   let tableBase;
@@ -208,12 +214,12 @@ async function boot(
   try {
     let remaining = instructionLimit;
     const start = () => {
-      if (!system) {
+      if (size) {
         if (size > 0x7fffffff) throw new Error("input exceeds wasm32 allocation size");
         const ptr = guest.stage(size);
         if (!ptr) throw new Error("cannot stage guest input");
-        bytes(ptr, elf.length).set(elf);
-        bytes(ptr + elf.length, argv.length).set(argv);
+        if (elf) bytes(ptr, elf.length).set(elf);
+        bytes(ptr + (elf?.length ?? 0), argv.length).set(argv);
       }
       if (
         !guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)

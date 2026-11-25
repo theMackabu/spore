@@ -43,7 +43,7 @@ pub extern "C" fn stage(size: usize) -> *mut u8 {
 pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32, count: u32) -> bool {
     CPU.with_borrow_mut(|cpu| {
         INPUT.with_borrow(|image| {
-            if (size == 0 && (devices & 1 == 0 || !image.is_empty()))
+            if (size == 0 && (devices & 1 == 0 || image.len() > 32))
                 || (size != 0 && size < 64)
                 || size > image.len()
                 || !(16..2048).contains(&ram_mib)

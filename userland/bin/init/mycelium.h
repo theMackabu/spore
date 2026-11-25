@@ -176,6 +176,7 @@ void announce_unit_started(struct unit *unit);
 struct unit *unit_by_name(const char *name);
 struct unit *unit_for_pid(pid_t pid);
 struct unit *alloc_unit(const char *name);
+extern char console_user[33];
 void load_units(void);
 void journal_append(struct unit *unit, const char *fmt, ...);
 

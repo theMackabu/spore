@@ -120,8 +120,9 @@ int spawn_service(struct unit *unit) {
   if (pid < 0) { return -1; }
   if (!pid) {
     struct passwd *user = NULL;
-    if (unit->config.user[0]) {
-      user = getpwnam(unit->config.user);
+    const char *name = console_user[0] && streq(unit->name, "console.service") ? console_user : unit->config.user;
+    if (*name) {
+      user = getpwnam(name);
       if (user == NULL || initgroups(user->pw_name, user->pw_gid) != 0) { _exit(126); }
     }
     if (unit->config.capability[0] != '\0') {

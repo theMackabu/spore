@@ -13,6 +13,7 @@ const { values: opt } = parseArgs({
     memory: { type: "string", default: "64M" },
     cpus: { type: "string", default: "1" },
     disk: { type: "string" },
+    user: { type: "string" },
     net: { type: "string" },
     qemu: { type: "string" },
     result: { type: "string" },
@@ -99,6 +100,7 @@ try {
   resultKind = "vm-error";
   process.exitCode = await run(fs.readFileSync(kernel), system ? null : fs.readFileSync(path), {
     ...media,
+    consoleUser: opt.user,
     readBoot:
       bootImage === undefined
         ? undefined

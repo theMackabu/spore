@@ -205,6 +205,7 @@ fn wasm_module(build: &Path) -> PathBuf {
 
 #[derive(Default)]
 pub struct WasmOptions<'a> {
+    pub user: Option<&'a OsStr>,
     pub disk: Option<&'a OsStr>,
     pub network: Option<&'a str>,
     pub memory: Option<&'a OsStr>,
@@ -239,6 +240,7 @@ impl WasmOptions<'_> {
             ("--memory", self.memory),
             ("--cpus", self.cpus),
             ("--boot-image", self.boot_image),
+            ("--user", self.user),
             ("--result", self.report),
         ] {
             if let Some(value) = value {
@@ -388,6 +390,7 @@ pub fn boot(
     mut vm: qemu::Config,
     image: Option<OsString>,
     reset: bool,
+    console_user: Option<&OsStr>,
 ) -> io::Result<i32> {
     let mut _session = None;
     let image_supplied = image.is_some();
@@ -433,6 +436,11 @@ pub fn boot(
     }
     if vm.vars.is_none() && !vm.snap && !image_supplied {
         vm.vars = Some(build.join("edk2-vars.fd").into());
+    }
+    let temp;
+    if let Some(user) = console_user {
+        temp = Workspace::new()?;
+        vm.image = crate::image::console_image(Path::new(&vm.image), &temp.0, user)?.into();
     }
     qemu::run(vm)
 }
@@ -583,5 +591,5 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
     }
     let mut vm = crate::vm_config(mode);
     vm.snap = true;
-    boot(build, vm, None, false)
+    boot(build, vm, None, false, None)
 }

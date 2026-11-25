@@ -120,8 +120,9 @@ userland/prebuilt/chmod /bin/chmod
 userland/prebuilt/chgrp /bin/chgrp
 userland/prebuilt/chown /bin/chown
 userland/prebuilt/chroot /bin/chroot
-symlink /usr/sbin/useradd /bin/mkuser
+userland/bin/mkuser.sh /bin/mkuser
 userland/bin/deluser.sh /bin/deluser
+symlink /bin/deluser /usr/local/sbin/deluser
 userland/prebuilt/passwd /bin/passwd
 userland/prebuilt/su /bin/su
 userland/prebuilt/sudo /bin/sudo

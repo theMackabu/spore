@@ -9,6 +9,9 @@ git submodule update --init --recursive
 ./target/release/spore boot
 ```
 
+Use `spore boot --user root` for a root console or `spore boot --user NAME` for another existing
+account. The choice applies to that boot only and also works with `--wasm`.
+
 The first boot creates a writable data disk backed by the current userland build. Spore
 sees one filesystem. Rebuilding prepares a new base. To switch an existing installation,
 shut down the guest with `sudo shutdown`, then run on the host:

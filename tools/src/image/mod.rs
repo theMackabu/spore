@@ -340,6 +340,38 @@ fn build_root(
     disk.seek(incompat)?;
     disk.write_all(&(u32::from_le_bytes(flags) | 0x8000_0000).to_le_bytes())
 }
+pub(crate) fn console_image(source: &Path, stage: &Path, user: &OsStr) -> io::Result<PathBuf> {
+    let esp = stage.join("boot.img");
+    fs::copy(source, &esp)?;
+    chmod(&esp, 0o600)?;
+    let mcopy = || {
+        let mut cmd = Command::new("mcopy");
+        cmd.arg("-o").arg("-i").arg(&esp);
+        cmd
+    };
+    let config = stage.join("limine.conf");
+    run(mcopy().arg("::/limine.conf").arg(&config))?;
+    let original = fs::read_to_string(&config)?;
+    let marker = "# spore-console-user";
+    if !original.lines().any(|line| line == marker) {
+        return Err(io::Error::other(
+            "this boot image needs spore build --userland and spore upgrade to support --user",
+        ));
+    }
+    let account = stage.join("user.txt");
+    fs::write(&account, user.as_bytes())?;
+    fs::write(
+        &config,
+        original.replace(
+            marker,
+            "    module_path: boot():/boot/user.txt\n    module_string: /run/console-user",
+        ),
+    )?;
+    run(mcopy().arg(account).arg("::/boot/user.txt"))?;
+    run(mcopy().arg(config).arg("::/limine.conf"))?;
+    Ok(esp)
+}
+
 pub(crate) fn build_esp(
     config: &Path,
     image: &Path,
