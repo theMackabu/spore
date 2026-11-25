@@ -33,7 +33,9 @@ static void cache_insert(struct block_cache_entry *entry, struct ext2_fs *fs, ui
 static void cache_remove(struct block_cache_entry *entry) {
   uint8_t *link = &buckets[bucket_for(entry->block)];
   uint8_t slot = (uint8_t)(entry - block_cache + 1);
-  while (*link && *link != slot) { link = &block_cache[*link - 1].next; }
+  while (*link && *link != slot) {
+    link = &block_cache[*link - 1].next;
+  }
   if (*link) { *link = entry->next; }
   entry->fs = NULL;
 }
@@ -98,8 +100,11 @@ static bool cache_victim(struct block_cache_entry **out) {
   struct block_cache_entry *victim = NULL, *empty = NULL;
   for (size_t i = 0; i < BLOCK_CACHE_ENTRIES; ++i) {
     struct block_cache_entry *entry = &block_cache[i];
-    if (!entry->fs) { empty = entry; }
-    else if (!entry->pins && (!victim || entry->age < victim->age)) { victim = entry; }
+    if (!entry->fs) {
+      empty = entry;
+    } else if (!entry->pins && (!victim || entry->age < victim->age)) {
+      victim = entry;
+    }
   }
   if (empty && (empty->data = table_alloc(1, CACHE_BLOCK_BYTES))) {
     *out = empty;
@@ -180,7 +185,9 @@ bool ext2_write_block(struct ext2_fs *fs, uint32_t block, const void *src) {
 bool ext2_write_blocks_direct(struct ext2_fs *fs, uint32_t first_block, const void *src, uint32_t block_count) {
   if (block_count == 0) { return true; }
   if (fs->write == NULL || first_block >= fs->block_count || block_count > fs->block_count - first_block ||
-      block_count > UINT32_MAX / fs->block_size) { return false; }
+      block_count > UINT32_MAX / fs->block_size) {
+    return false;
+  }
   uint32_t bytes = block_count * fs->block_size;
   if (!fs->write(fs->ctx, (uint64_t)first_block * fs->block_size, src, bytes)) { return false; }
   const uint8_t *in = src;
@@ -209,7 +216,10 @@ bool ext2_begin_edit(struct ext2_fs *fs, uint64_t offset, uint32_t len, struct e
 
 void ext2_end_edit(struct ext2_block_edit *edit, bool changed) {
   if (!edit->entry) { return; }
-  if (changed) { edit->entry->dirty = true; ++ext2_stat_counters.block_cache_writes; }
+  if (changed) {
+    edit->entry->dirty = true;
+    ++ext2_stat_counters.block_cache_writes;
+  }
   --edit->entry->pins;
   edit->entry = NULL;
 }

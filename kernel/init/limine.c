@@ -1,6 +1,6 @@
+#include "limine.h"
 #include "init/boot_info.h"
 #include "lib/kstr.h"
-#include "limine.h"
 #include "lib/mem.h"
 
 #if defined(__riscv)
@@ -12,8 +12,8 @@ constexpr uint64_t PAGING_MODE = LIMINE_PAGING_MODE_AARCH64_4LVL;
 #endif
 
 #define REQUEST __attribute__((used, section(".limine_requests")))
-__attribute__((used, section(".limine_requests_start")))
-static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
+__attribute__((used, section(".limine_requests_start"))) static volatile uint64_t requests_start[] =
+  LIMINE_REQUESTS_START_MARKER;
 REQUEST static volatile uint64_t base_revision[] = LIMINE_BASE_REVISION(6);
 REQUEST static volatile struct limine_hhdm_request hhdm = {.id = LIMINE_HHDM_REQUEST_ID};
 REQUEST static volatile struct limine_memmap_request memory = {.id = LIMINE_MEMMAP_REQUEST_ID};
@@ -26,16 +26,17 @@ REQUEST static volatile struct limine_paging_mode_request paging = {
   .max_mode = PAGING_MODE,
   .min_mode = PAGING_MODE,
 };
-__attribute__((used, section(".limine_requests_end")))
-static volatile uint64_t requests_end[] = LIMINE_REQUESTS_END_MARKER;
+__attribute__((used, section(".limine_requests_end"))) static volatile uint64_t requests_end[] =
+  LIMINE_REQUESTS_END_MARKER;
 
 const struct spore_boot_info *limine_boot_info(void) {
   static struct spore_boot_info boot;
   static struct spore_memmap_entry usable[256];
   static struct spore_boot_module files[64];
-  if (!LIMINE_BASE_REVISION_SUPPORTED(base_revision) || !hhdm.response || !memory.response ||
-      !mp.response || mp.response->cpu_count == 0 || !paging.response ||
-      paging.response->mode != PAGING_MODE) { return NULL; }
+  if (!LIMINE_BASE_REVISION_SUPPORTED(base_revision) || !hhdm.response || !memory.response || !mp.response ||
+      mp.response->cpu_count == 0 || !paging.response || paging.response->mode != PAGING_MODE) {
+    return NULL;
+  }
 
   boot.hhdm_offset = hhdm.response->offset;
   boot.mp = mp.response;
@@ -45,7 +46,9 @@ const struct spore_boot_info *limine_boot_info(void) {
     if (e->type != LIMINE_MEMMAP_USABLE) { continue; }
     if (boot.memmap_count == sizeof(usable) / sizeof(usable[0])) { return NULL; }
     usable[boot.memmap_count++] = (struct spore_memmap_entry){
-      .base = e->base, .length = e->length, .type = SPORE_MEMMAP_USABLE,
+      .base = e->base,
+      .length = e->length,
+      .type = SPORE_MEMMAP_USABLE,
     };
   }
   if (boot.memmap_count == 0) { return NULL; }

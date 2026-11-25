@@ -14,13 +14,20 @@ static size_t wire_len;
 static bool link_up = true;
 static bool auto_ack;
 
-uint64_t cell_uptime_ticks(void) { return ticks; }
-uint32_t socket_effective_buffer(const struct open_file *, bool receive) { return receive ? 90000 : UINT16_MAX; }
-uint8_t socket_effective_ttl(const struct open_file *) { return 64; }
+uint64_t cell_uptime_ticks(void) {
+  return ticks;
+}
+uint32_t socket_effective_buffer(const struct open_file *, bool receive) {
+  return receive ? 90000 : UINT16_MAX;
+}
+uint8_t socket_effective_ttl(const struct open_file *) {
+  return 64;
+}
 static size_t syn_options_size;
 static uint16_t syn_window;
-bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *, uint16_t, uint32_t, uint16_t, uint8_t, uint8_t, uint32_t, uint32_t,
-                                          uint16_t window, uint8_t, const void *, size_t, const void *, size_t len) {
+bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *, uint16_t, uint32_t, uint16_t, uint8_t, uint8_t,
+                                          uint32_t, uint32_t, uint16_t window, uint8_t, const void *, size_t,
+                                          const void *, size_t len) {
   syn_window = window;
   syn_options_size = len;
   return true;
@@ -40,9 +47,8 @@ static void test_window_negotiation(void) {
   assert(peer.tcp_remote_window == 8192 && peer.tcp_remote_window_scale == 3);
 }
 
-bool net_tcp_send_segment_ttl_tos(struct net_namespace *, uint16_t, uint32_t, uint16_t, uint8_t, uint8_t,
-                                  uint32_t seq, uint32_t, uint16_t, uint8_t, const void *payload,
-                                  size_t len) {
+bool net_tcp_send_segment_ttl_tos(struct net_namespace *, uint16_t, uint32_t, uint16_t, uint8_t, uint8_t, uint32_t seq,
+                                  uint32_t, uint16_t, uint8_t, const void *payload, size_t len) {
   if (!link_up) { return false; }
   assert(len <= sizeof(wire));
   wire_seq = seq;
@@ -59,7 +65,9 @@ static int fill(void *source, uint8_t *dst, size_t len) {
   return 0;
 }
 
-static int64_t send_text(const char *s) { return tcp_write_stream(&sender, strlen(s), fill, &s); }
+static int64_t send_text(const char *s) {
+  return tcp_write_stream(&sender, strlen(s), fill, &s);
+}
 
 void tcp_ack_current_state(struct open_file *) {}
 void cell_epoll_file_changed(struct open_file *) {}
@@ -95,8 +103,11 @@ int main(void) {
   uint64_t free_pages = pmm_free_pages();
   test_reordered_stream();
   assert(pmm_free_pages() == free_pages);
-  sender = (struct open_file){.type = OPEN_SOCKET, .socket_proto = IPPROTO_TCP, .tcp_state = TCP_ESTABLISHED,
-                              .tcp_seq = UINT32_MAX - 2, .tcp_remote_window = 6};
+  sender = (struct open_file){.type = OPEN_SOCKET,
+                              .socket_proto = IPPROTO_TCP,
+                              .tcp_state = TCP_ESTABLISHED,
+                              .tcp_seq = UINT32_MAX - 2,
+                              .tcp_remote_window = 6};
   tcp_init_rto(&sender);
   assert(send_text("abcdefg") == 6);
   assert(wire_seq == UINT32_MAX - 2 && wire_len == 6 && memcmp(wire, "abcdef", 6) == 0);

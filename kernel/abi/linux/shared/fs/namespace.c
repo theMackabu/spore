@@ -1,12 +1,12 @@
 #include "../usercopy.h"
-#include "file_abi.h"
 #include "abi/linux/shared/open.h"
-#include "fs/vfs.h"
+#include "file_abi.h"
 #include "fs/mount_namespace.h"
+#include "fs/vfs.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
-#include "proc/domain.h"
 #include "proc/capabilities.h"
+#include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/policy.h"
 
@@ -46,7 +46,9 @@ int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
   int64_t size = syscall_read_user_string(path_addr, raw, sizeof(raw));
   if (size < 0) { return size == -E2BIG ? -ENAMETOOLONG : size; }
   size_t end = (size_t)size - 1;
-  while (end > 1 && raw[end - 1] == '/') { --end; }
+  while (end > 1 && raw[end - 1] == '/') {
+    --end;
+  }
   raw[end] = 0;
   int64_t path_rc = syscall_resolve_path_at(dirfd, raw, path, sizeof(path));
   if (path_rc != 0) { return path_rc; }
@@ -85,11 +87,15 @@ int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_addr, uint64_t flags) {
   if (size == 1) { return -ENOENT; }
   size_t end = (size_t)size - 1;
   bool trailing_slash = raw[end - 1] == '/';
-  while (end && raw[end - 1] == '/') { --end; }
+  while (end && raw[end - 1] == '/') {
+    --end;
+  }
   if (!end) { return directory ? -EBUSY : -EISDIR; }
   raw[end] = '\0';
   size_t start = end;
-  while (start && raw[start - 1] != '/') { --start; }
+  while (start && raw[start - 1] != '/') {
+    --start;
+  }
   bool dot = str_eq(raw + start, ".");
   bool dotdot = str_eq(raw + start, "..");
   if (dot || dotdot) { raw[start] = '\0'; }
@@ -122,7 +128,9 @@ static int64_t rename_path(uint64_t dirfd, uint64_t addr, char path[CELL_PATH_MA
   if (len == 1) { return -ENOENT; }
   size_t end = len - 1;
   *trailing_slash = raw[end - 1] == '/';
-  while (end && raw[end - 1] == '/') { --end; }
+  while (end && raw[end - 1] == '/') {
+    --end;
+  }
   if (!end) { return -EBUSY; }
   raw[end] = 0;
   const char *last = base_name(raw);
@@ -208,9 +216,7 @@ int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirf
 int64_t sys_symlinkat(uint64_t target_addr, uint64_t new_dirfd, uint64_t link_path_addr) {
   char target[CELL_PATH_MAX];
   char link_path[CELL_PATH_MAX];
-  if (!syscall_copy_string_from_user(target_addr, target, sizeof(target))) {
-    return -EFAULT;
-  }
+  if (!syscall_copy_string_from_user(target_addr, target, sizeof(target))) { return -EFAULT; }
   int64_t path_rc = syscall_copy_resolved_path_at(new_dirfd, link_path_addr, link_path, sizeof(link_path));
   if (path_rc != 0) { return path_rc; }
   path_rc = syscall_may_change_entry(link_path, false);

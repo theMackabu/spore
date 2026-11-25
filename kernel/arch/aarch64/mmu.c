@@ -75,7 +75,7 @@ void aarch64_tlb_flush_pages(uint64_t first_va, uint64_t mask) {
   uint64_t first_page = first_va >> 12;
   do {
     uint64_t page = first_page + (unsigned)__builtin_ctzll(mask);
-    __asm__ volatile("tlbi vaae1is, %0" :: "r"(page) : "memory");
+    __asm__ volatile("tlbi vaae1is, %0" ::"r"(page) : "memory");
     mask &= mask - 1;
   } while (mask);
   __asm__ volatile("dsb ish\nisb" ::: "memory");

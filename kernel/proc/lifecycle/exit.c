@@ -1,21 +1,19 @@
-#include "proc/pid_namespace.h"
-#include "proc/process.h"
-#include "proc/domain.h"
-#include "proc/thread.h"
-#include "proc/memory.h"
-#include "proc/fd.h"
-#include "proc/futex.h"
 #include "init/app.h"
 #include "lib/kprintf.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/futex.h"
+#include "proc/memory.h"
+#include "proc/pid_namespace.h"
+#include "proc/process.h"
+#include "proc/thread.h"
 
 static void clear_child_tid(struct thread *thread) {
   struct domain *domain = thread->domain;
   if (thread->clear_child_tid != 0) {
     uint32_t zero = 0;
     struct user_address_space *as = cell_domain_as(domain);
-    if (as != NULL) {
-      (void)vmm_copy_to_user(as, thread->clear_child_tid, &zero, sizeof(zero));
-    }
+    if (as != NULL) { (void)vmm_copy_to_user(as, thread->clear_child_tid, &zero, sizeof(zero)); }
     (void)cell_futex_wake_domain(domain, thread->clear_child_tid, 1, UINT32_MAX);
   }
 }

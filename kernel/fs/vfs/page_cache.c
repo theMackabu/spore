@@ -1,14 +1,17 @@
 #include "internal.h"
 
 #include "lib/mem.h"
+#include "mm/file_page.h"
 #include "mm/pmm.h"
 #include "mm/pool.h"
-#include "mm/file_page.h"
 
 enum {
-  MIN_CACHE_PAGES = 32768, MAX_CACHE_PAGES = 131072,
-  PAGE_BUCKETS = 4096, FILE_BUCKETS = 256,
-  VFS_READAHEAD_PAGES = 2, EXEC_READ_PAGES = 16,
+  MIN_CACHE_PAGES = 32768,
+  MAX_CACHE_PAGES = 131072,
+  PAGE_BUCKETS = 4096,
+  FILE_BUCKETS = 256,
+  VFS_READAHEAD_PAGES = 2,
+  EXEC_READ_PAGES = 16,
 };
 
 struct vfs_page_cache_entry {
@@ -64,8 +67,11 @@ static void mark_dirty(struct vmm_file_page *page) {
 
 static void mark_clean(struct vfs_page_cache_entry *entry) {
   *entry->dirty_link = entry->dirty_next;
-  if (entry->dirty_next) { entry->dirty_next->dirty_link = entry->dirty_link; }
-  else { dirty_tails[file_bucket(entry->ino, entry->dev_id)] = entry->dirty_link; }
+  if (entry->dirty_next) {
+    entry->dirty_next->dirty_link = entry->dirty_link;
+  } else {
+    dirty_tails[file_bucket(entry->ino, entry->dev_id)] = entry->dirty_link;
+  }
   entry->dirty_link = NULL;
   entry->dirty_next = NULL;
 }
@@ -95,23 +101,34 @@ static void link_entry(struct vfs_page_cache_entry *entry) {
   if (entry->file_next) { entry->file_next->file_link = &entry->file_next; }
   *entry->file_link = entry;
   entry->older = newest;
-  if (newest) { newest->newer = entry; }
-  else { oldest = entry; }
+  if (newest) {
+    newest->newer = entry;
+  } else {
+    oldest = entry;
+  }
   newest = entry;
   vmm_file_page_register(&entry->mapped);
 }
 
 static void clear_entry(struct vfs_page_cache_entry *entry) {
   struct vfs_page_cache_entry **slot = &pages[page_bucket(entry->ino, entry->dev_id, entry->off)];
-  while (*slot != entry) { slot = &(*slot)->hash_next; }
+  while (*slot != entry) {
+    slot = &(*slot)->hash_next;
+  }
   *slot = entry->hash_next;
   *entry->file_link = entry->file_next;
   if (entry->file_next) { entry->file_next->file_link = entry->file_link; }
   if (reclaim_next == entry) { reclaim_next = entry->newer; }
-  if (entry->older) { entry->older->newer = entry->newer; }
-  else { oldest = entry->newer; }
-  if (entry->newer) { entry->newer->older = entry->older; }
-  else { newest = entry->older; }
+  if (entry->older) {
+    entry->older->newer = entry->newer;
+  } else {
+    oldest = entry->newer;
+  }
+  if (entry->newer) {
+    entry->newer->older = entry->older;
+  } else {
+    newest = entry->older;
+  }
   if (entry->dirty_link) { mark_clean(entry); }
   vmm_file_page_unregister(&entry->mapped);
   pmm_free_page(entry->mapped.pa);
@@ -149,7 +166,10 @@ static void publish_entry(struct vfs_page_cache_entry *entry, const struct vfs_n
   entry->ino = node->ino;
   entry->dev_id = node->dev_id;
   entry->backend = node->backend;
-  if (node->backend == VFS_RAMFS) { entry->ramfs_index = node->ramfs.index; entry->ramfs = node->ramfs.fs; }
+  if (node->backend == VFS_RAMFS) {
+    entry->ramfs_index = node->ramfs.index;
+    entry->ramfs = node->ramfs.fs;
+  }
   entry->off = off;
   link_entry(entry);
 }
@@ -192,7 +212,9 @@ static void page_cache_readahead(const struct vfs_node *node, uint64_t off) {
 static size_t read_full_pages(const struct vfs_node *node, uint64_t off, uint8_t *dst, uint64_t len) {
   constexpr size_t MAX_PAGES = 32;
   size_t pages = 1;
-  while (pages < MAX_PAGES && pages < len / PAGE_SIZE && !page_cache_find(node, off + pages * PAGE_SIZE)) { ++pages; }
+  while (pages < MAX_PAGES && pages < len / PAGE_SIZE && !page_cache_find(node, off + pages * PAGE_SIZE)) {
+    ++pages;
+  }
   if (pages < 2) { return 0; }
   struct vfs_page_cache_entry *batch[MAX_PAGES];
   size_t count = 0;
@@ -204,7 +226,9 @@ static size_t read_full_pages(const struct vfs_node *node, uint64_t off, uint8_t
   size_t done = 0;
   while (done < count) {
     size_t end = done + 1;
-    while (end < count && batch[end]->mapped.pa == batch[end - 1]->mapped.pa + PAGE_SIZE) { ++end; }
+    while (end < count && batch[end]->mapped.pa == batch[end - 1]->mapped.pa + PAGE_SIZE) {
+      ++end;
+    }
     size_t pos = done * PAGE_SIZE, bytes = (end - done) * PAGE_SIZE;
     uint8_t *data = pmm_phys_to_virt(batch[done]->mapped.pa);
     if (vfs_read_uncached(node, off + pos, data, bytes) != bytes) { break; }
@@ -253,7 +277,10 @@ uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, u
     if (!entry) {
       if (node->backend == VFS_EXT2 && !in_page && len - done >= 2 * PAGE_SIZE) {
         size_t bytes = read_full_pages(node, page_off, out + done, len - done);
-        if (bytes) { done += bytes; continue; }
+        if (bytes) {
+          done += bytes;
+          continue;
+        }
       }
       entry = load_page(node, page_off);
     }
@@ -307,8 +334,9 @@ bool vfs_sync_mapped_pages(void) {
     while (dirty_files[i]) {
       struct vfs_page_cache_entry *entry = dirty_files[i];
       struct vfs_node key = {.backend = entry->backend}, node;
-      if (entry->backend == VFS_EXT2) { key.ext2.ino = entry->ino; }
-      else {
+      if (entry->backend == VFS_EXT2) {
+        key.ext2.ino = entry->ino;
+      } else {
         key.ramfs.fs = entry->ramfs;
         key.ramfs.index = entry->ramfs_index;
       }

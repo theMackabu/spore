@@ -2,8 +2,8 @@
 
 #include "init/boot_info.h"
 #include "init/program.h"
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 struct ext2_fs;
 struct ramfs;
@@ -24,6 +24,7 @@ enum boot_error {
 void boot_select_profile(const struct spore_boot_info *boot, struct boot_profile *profile);
 struct ext2_fs *boot_mount_disk(uint64_t hhdm_offset);
 void boot_mount_root(const struct spore_boot_info *boot, struct ext2_fs *disk, struct boot_profile *profile);
-bool app_unpack(const void *data, size_t size, struct ramfs *fs, struct init_program *program, struct net_config *network);
+bool app_unpack(const void *data, size_t size, struct ramfs *fs, struct init_program *program,
+                struct net_config *network);
 [[noreturn]] void boot_start_process(const struct init_program *program, uint64_t hhdm_offset);
 [[noreturn]] void boot_fail(enum boot_error error, const char *reason);

@@ -1,21 +1,21 @@
-#include "proc/pid_namespace.h"
-#include "mm/table.h"
 #include "proc/domain.h"
-#include "proc/accounting.h"
+#include "fs/mount_namespace.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "mm/table.h"
+#include "net/namespace.h"
+#include "proc/accounting.h"
 #include "proc/fd.h"
+#include "proc/ipc_namespace.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
+#include "proc/pid_namespace.h"
 #include "proc/process.h"
 #include "proc/seccomp.h"
-#include "proc/uts.h"
-#include "proc/user_namespace.h"
-#include "proc/ipc_namespace.h"
-#include "net/namespace.h"
-#include "fs/mount_namespace.h"
 #include "proc/thread.h"
+#include "proc/user_namespace.h"
+#include "proc/uts.h"
 #include "tty/tty.h"
 
 enum {
@@ -91,7 +91,7 @@ struct thread *cell_alloc_process(void) {
       domains[i].used = true;
       domains[i].exit_signal = 17;
       domains[i].umask = 0022;
-      domains[i].fsize_soft=domains[i].fsize_hard=UINT64_MAX;
+      domains[i].fsize_soft = domains[i].fsize_hard = UINT64_MAX;
       domains[i].nofile_soft = domains[i].nofile_hard = MAX_FDS;
       domains[i].id = cell_new_task_id();
       domains[i].pgrp_id = domains[i].id;
@@ -128,7 +128,8 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   dst->filter = seccomp_inherit(src->filter);
   dst->caps = cell_policy_retain(src->caps);
   dst->budget = src->budget;
-  dst->fsize_soft=src->fsize_soft;dst->fsize_hard=src->fsize_hard;
+  dst->fsize_soft = src->fsize_soft;
+  dst->fsize_hard = src->fsize_hard;
   dst->nofile_soft = src->nofile_soft;
   dst->nofile_hard = src->nofile_hard;
   dst->umask = src->umask;
@@ -232,7 +233,8 @@ void cell_set_current_name(const char *name) {
 }
 
 int cell_getpgid(int pid) {
-  struct domain *domain = pid == 0 ? cell_current_domain_internal() : cell_find_domain(pidns_global(pidns_current(), pid));
+  struct domain *domain =
+    pid == 0 ? cell_current_domain_internal() : cell_find_domain(pidns_global(pidns_current(), pid));
   return domain == NULL ? -ESRCH : pidns_self_view(domain->pgrp_id);
 }
 
@@ -251,7 +253,10 @@ int cell_setpgid(int pid, int pgid) {
       bool found = false;
       for (size_t i = 0; i < cell_domain_slot_limit(); ++i) {
         const struct domain *member = cell_domain_slot(i);
-        if (member->used && member->session_id == current->session_id && member->pgrp_id == pgid) { found = true; break; }
+        if (member->used && member->session_id == current->session_id && member->pgrp_id == pgid) {
+          found = true;
+          break;
+        }
       }
       if (!found) { return -EPERM; }
     }
@@ -264,7 +269,8 @@ int cell_setpgid(int pid, int pgid) {
 }
 
 int cell_getsid(int pid) {
-  struct domain *domain = pid == 0 ? cell_current_domain_internal() : cell_find_domain(pidns_global(pidns_current(), pid));
+  struct domain *domain =
+    pid == 0 ? cell_current_domain_internal() : cell_find_domain(pidns_global(pidns_current(), pid));
   return domain == NULL ? -ESRCH : pidns_self_view(domain->session_id);
 }
 
@@ -334,8 +340,11 @@ int cell_setres_ids(bool group, uint32_t real, uint32_t effective, uint32_t save
   uint32_t *saved_id = group ? &domain->saved_gid : &domain->saved_uid;
   uint32_t old_euid = domain->euid;
   bool had_root = !domain->uid || !domain->euid || !domain->saved_uid;
-  if (!cell_capable(group ? CAP_SETGID : CAP_SETUID) && (!held_id(real, *real_id, *effective_id, *saved_id) || !held_id(effective, *real_id, *effective_id, *saved_id) ||
-                        !held_id(saved, *real_id, *effective_id, *saved_id))) { return -EPERM; }
+  if (!cell_capable(group ? CAP_SETGID : CAP_SETUID) &&
+      (!held_id(real, *real_id, *effective_id, *saved_id) || !held_id(effective, *real_id, *effective_id, *saved_id) ||
+       !held_id(saved, *real_id, *effective_id, *saved_id))) {
+    return -EPERM;
+  }
   if (effective != UINT32_MAX && effective != *effective_id) {
     for (size_t i = 0; i < cell_thread_slot_limit(); ++i) {
       struct thread *t = cell_thread_slot(i);

@@ -36,7 +36,10 @@ int64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t len) {
       }
       if (used && used + reclen > capacity) { break; }
       struct linux_dirent64_header header = {
-        .d_ino = ent.ino, .d_off = (int64_t)next, .d_reclen = reclen, .d_type = ent.type,
+        .d_ino = ent.ino,
+        .d_off = (int64_t)next,
+        .d_reclen = reclen,
+        .d_type = ent.type,
       };
       kmemcpy(batch + used, &header, sizeof(header));
       kmemcpy(batch + used + sizeof(header), ent.name, (size_t)ent.name_len + 1);

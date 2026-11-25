@@ -1,5 +1,5 @@
-#include "drivers/serial.h"
 #include "drivers/pl011.h"
+#include "drivers/serial.h"
 
 #include "arch/aarch64/platform.h"
 #include <stdbool.h>

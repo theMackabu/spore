@@ -59,7 +59,8 @@ static bool grow_backing_pages(void) {
     new_capacity = RAMFS_MAX_BACKING_PAGES;
   }
   if (new_capacity <= old_capacity) { return false; }
-  struct ramfs_backing_page *new_pages = table_alloc(new_capacity, sizeof(*backing_pages) + sizeof(*backing_page_buckets));
+  struct ramfs_backing_page *new_pages =
+    table_alloc(new_capacity, sizeof(*backing_pages) + sizeof(*backing_page_buckets));
   if (new_pages == NULL) { return false; }
   if (backing_pages != NULL) { kmemcpy(new_pages, backing_pages, old_capacity * sizeof(*backing_pages)); }
   struct ramfs_backing_page *old_pages = backing_pages;
@@ -143,8 +144,7 @@ void ramfs_free_node_pages(struct ramfs_mem_node *node) {
 
 bool ramfs_truncate(struct ramfs *fs, int index, uint64_t size) {
   struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
-  if (!node || node->is_dir ||
-      node->device != RAMFS_DEV_NONE || !node->writable || size > RAMFS_MAX_FILE_SIZE) {
+  if (!node || node->is_dir || node->device != RAMFS_DEV_NONE || !node->writable || size > RAMFS_MAX_FILE_SIZE) {
     return false;
   }
   if (ramfs_truncate_sealed(fs, index, size)) { return false; }
@@ -187,17 +187,16 @@ int64_t ramfs_seek_extent(struct ramfs *fs, int index, uint64_t off, bool data) 
     }
     return next == UINT32_MAX ? -6 : (int64_t)next * RAMFS_PAGE_SIZE;
   }
-  do { ++page; } while (find_backing_page(fs, index, page) >= 0);
+  do {
+    ++page;
+  } while (find_backing_page(fs, index, page) >= 0);
   uint64_t hole = (uint64_t)page * RAMFS_PAGE_SIZE;
   return (int64_t)(hole < node->size ? hole : node->size);
 }
 
 uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64_t len) {
   struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
-  if (!node || node->is_dir ||
-      node->device != RAMFS_DEV_NONE || off >= node->size) {
-    return 0;
-  }
+  if (!node || node->is_dir || node->device != RAMFS_DEV_NONE || off >= node->size) { return 0; }
   uint64_t n = node->size - off;
   if (n > len) { n = len; }
   if (!node->writable) {
@@ -226,14 +225,15 @@ uint64_t ramfs_read(struct ramfs *fs, int index, uint64_t off, void *dst, uint64
 
 static int64_t write_file(struct ramfs *fs, int index, uint64_t off, const void *src, uint64_t len, bool writeback) {
   struct ramfs_mem_node *node = ramfs_get_inode(fs, index);
-  if (!node || node->is_dir ||
-      node->device != RAMFS_DEV_NONE || !node->writable || off > RAMFS_MAX_FILE_SIZE ||
+  if (!node || node->is_dir || node->device != RAMFS_DEV_NONE || !node->writable || off > RAMFS_MAX_FILE_SIZE ||
       len > RAMFS_MAX_FILE_SIZE - off) {
     return -1;
   }
   if (writeback && off + len > node->size) { return -1; }
   if ((node->seals & RAMFS_F_SEAL_WRITE) || (!writeback && (node->seals & RAMFS_F_SEAL_FUTURE_WRITE)) ||
-      ((node->seals & RAMFS_F_SEAL_GROW) && len && off + len > node->size)) { return -1; }
+      ((node->seals & RAMFS_F_SEAL_GROW) && len && off + len > node->size)) {
+    return -1;
+  }
   if (!len) { return 0; }
   const uint8_t *in = src;
   uint64_t done = 0;

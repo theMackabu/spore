@@ -1,7 +1,7 @@
 #pragma once
 
-#include "proc/fd.h"
 #include "net/socket.h"
+#include "proc/fd.h"
 
 enum {
   CELL_O_NONBLOCK = 04000,
@@ -70,7 +70,8 @@ struct socket_datagram {
   uint8_t data[CELL_DGRAM_RX_CAP];
 };
 
-bool dgram_push_from(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const char *name, const void *data, size_t len);
+bool dgram_push_from(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const char *name,
+                     const void *data, size_t len);
 bool dgram_push_rx(struct open_file *file, uint32_t ip, uint8_t ttl, uint16_t port, const void *data, size_t len);
 void dgram_clear_rx(struct open_file *file);
 void udp_release_file(struct open_file *file);

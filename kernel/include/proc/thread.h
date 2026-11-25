@@ -1,8 +1,8 @@
 #pragma once
 
 #include "arch/regs.h"
-#include "proc/limits.h"
 #include "proc/capabilities.h"
+#include "proc/limits.h"
 
 #include <stdbool.h>
 #include <stddef.h>

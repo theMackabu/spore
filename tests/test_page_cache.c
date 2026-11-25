@@ -35,7 +35,9 @@ int main(void) {
   pmm_init(base, &region, 1);
   size_t initial_free = pmm_free_pages();
   vfs_page_cache_configure();
-  for (size_t i = 0; i < sizeof(disk); ++i) { disk[i] = (unsigned char)(i / PAGE_SIZE + i); }
+  for (size_t i = 0; i < sizeof(disk); ++i) {
+    disk[i] = (unsigned char)(i / PAGE_SIZE + i);
+  }
   static unsigned char copy[sizeof(disk)];
 
   struct user_address_space as;
@@ -59,7 +61,9 @@ int main(void) {
   }
   assert(count > free_before && !memcmp(pmm_phys_to_virt(pinned), disk, PAGE_SIZE));
   assert(vfs_sync_mapped_range(&file, 0, file.size) && !memcmp(disk + dirty_off, "dirty", 5));
-  while (count) { pmm_free_page(held[--count]); }
+  while (count) {
+    pmm_free_page(held[--count]);
+  }
   pmm_free_page(pinned);
   assert(vfs_read_cached(&file, 0, copy, sizeof(copy)) == sizeof(copy) && !memcmp(copy, disk, sizeof(disk)));
   vfs_page_cache_forget(&file);
@@ -70,7 +74,9 @@ int main(void) {
   assert(vfs_retain_page_cached(&file, tail, true, &pa));
   const unsigned char *last = pmm_phys_to_virt(pa);
   assert(last[0] == disk[tail]);
-  for (size_t i = 1; i < PAGE_SIZE; ++i) { assert(last[i] == 0); }
+  for (size_t i = 1; i < PAGE_SIZE; ++i) {
+    assert(last[i] == 0);
+  }
   pmm_free_page(pa);
   vfs_page_cache_forget(&file);
   assert(pmm_free_pages() == initial_free);

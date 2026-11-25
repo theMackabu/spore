@@ -1,13 +1,12 @@
-#include "internal.h"
-#include "proc/domain.h"
 #include "fs/vfs.h"
+#include "internal.h"
 #include "mm/pmm.h"
+#include "proc/domain.h"
 
 enum { EIO = 5, ENOMEM = 12, EACCES = 13, EINVAL = 22 };
 
 static bool vma_is_shared_writable_file(const struct vma *vma) {
-  return vma != NULL && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) != 0 &&
-         (vma->prot & VMM_USER_WRITE) != 0;
+  return vma != NULL && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) != 0 && (vma->prot & VMM_USER_WRITE) != 0;
 }
 
 struct file_writeback {
@@ -67,7 +66,8 @@ bool cell_add_file_vma(uint64_t start, uint64_t end, uint32_t prot, uint32_t fla
                        uint64_t file_start, uint64_t file_offset, uint64_t file_size, bool shared_may_write) {
   struct domain *domain = cell_current_domain_internal();
   struct vma_list *vmas = cell_domain_vmas(domain);
-  return vmas != NULL && vma_insert_file(vmas, start, end, prot, flags, node, file_start, file_offset, file_size, shared_may_write);
+  return vmas != NULL &&
+         vma_insert_file(vmas, start, end, prot, flags, node, file_start, file_offset, file_size, shared_may_write);
 }
 
 bool cell_vma_overlaps(uint64_t start, uint64_t end) {
@@ -144,9 +144,12 @@ int cell_protect_vma(uint64_t start, uint64_t end, uint32_t prot) {
   for (size_t i = vma_first_ending_after(vmas, start); covered < end; ++i) {
     const struct vma *vma = vma_at(vmas, i);
     if (!vma || vma->start > covered) { return -ENOMEM; }
-    if ((prot & VMM_USER_EXEC) && vma->type == VMA_FILE && vfs_mount_flag(vma->file_node.access, MOUNT_NOEXEC)) { return -EACCES; }
-    if ((prot & VMM_USER_WRITE) && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) &&
-        !vma->shared_may_write) { return -EACCES; }
+    if ((prot & VMM_USER_EXEC) && vma->type == VMA_FILE && vfs_mount_flag(vma->file_node.access, MOUNT_NOEXEC)) {
+      return -EACCES;
+    }
+    if ((prot & VMM_USER_WRITE) && vma->type == VMA_FILE && (vma->flags & MAP_SHARED) && !vma->shared_may_write) {
+      return -EACCES;
+    }
     if (!(prot & VMM_USER_WRITE) && !flush_shared_file_vma_range(as, vma, start, end)) { return -EIO; }
     covered = vma->end;
   }

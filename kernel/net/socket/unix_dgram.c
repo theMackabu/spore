@@ -1,8 +1,8 @@
 #include "internal.h"
-#include "net/unix.h"
-#include "proc/domain.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
+#include "net/unix.h"
+#include "proc/domain.h"
 
 static struct open_file *sockets;
 static uint64_t next_id;
@@ -18,7 +18,9 @@ int unix_dgram_init(struct open_file *file) {
 void unix_dgram_close(struct open_file *file) {
   if (file->unix_dgram_id) {
     struct open_file **link = &sockets;
-    while (*link != file) { link = &(*link)->family_next; }
+    while (*link != file) {
+      link = &(*link)->family_next;
+    }
     *link = file->family_next;
   }
   if (file->node.ino) { vfs_release_node(&file->node); }
@@ -31,7 +33,10 @@ int unix_dgram_bind(struct open_file *file, const char *path, const char *name) 
   int rc = vfs_mkspecial(path, 0140000 | cell_creation_mode(0777), &node);
   if (rc) { return rc == -17 ? -EADDRINUSE : rc; }
   (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
-  if (!vfs_retain_node(&node)) { (void)vfs_remove(path); return -12; }
+  if (!vfs_retain_node(&node)) {
+    (void)vfs_remove(path);
+    return -12;
+  }
   file->node = node;
   copy_cstr(file->path, sizeof(file->path), name);
   return 0;

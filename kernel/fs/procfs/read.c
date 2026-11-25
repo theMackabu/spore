@@ -1,21 +1,21 @@
-#include "proc/pid_namespace.h"
 #include "fs/mount_namespace.h"
 #include "fs/procfs.h"
+#include "proc/pid_namespace.h"
 
+#include "arch/cpuinfo.h"
 #include "arch/smp.h"
-#include "proc/accounting.h"
+#include "fs/procfs_format.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "proc/accounting.h"
 #include "proc/domain.h"
-#include "proc/user_namespace.h"
-#include "proc/info.h"
-#include "arch/cpuinfo.h"
 #include "proc/fd.h"
+#include "proc/info.h"
 #include "proc/memory.h"
-#include "fs/procfs_format.h"
-#include "text.h"
 #include "proc/thread.h"
+#include "proc/user_namespace.h"
+#include "text.h"
 
 #include <stddef.h>
 
@@ -63,7 +63,8 @@ static const char *wait_reason_text(enum wait_reason reason) {
     return "inotify";
   case WAIT_PTY:
     return "pty";
-  case WAIT_SIGNALFD: return "signalfd";
+  case WAIT_SIGNALFD:
+    return "signalfd";
   case WAIT_EVENTFD:
     return "eventfd";
   case WAIT_FLOCK:
@@ -80,10 +81,14 @@ static const char *domain_state_text(const struct domain *domain) {
 
 static char proc_state_char(enum thread_state state) {
   switch (state) {
-  case THREAD_RUNNABLE: return 'R';
-  case THREAD_BLOCKED: return 'S';
-  case THREAD_ZOMBIE: return 'Z';
-  default: return '?';
+  case THREAD_RUNNABLE:
+    return 'R';
+  case THREAD_BLOCKED:
+    return 'S';
+  case THREAD_ZOMBIE:
+    return 'Z';
+  default:
+    return '?';
   }
 }
 
@@ -152,7 +157,6 @@ static size_t procinfo_text(char *dst, size_t cap) {
   }
   return len;
 }
-
 
 struct proc_task {
   struct pid_namespace *view;
@@ -368,7 +372,10 @@ static int64_t read_mounts(const struct proc_read *out, const struct domain *tar
   for (size_t i = 0; copied < out->len && (m = vfs_domain_mount_at(target, i)); ++i) {
     char line[8 * CELL_PATH_MAX + 160];
     size_t length = proc_mount_line(line, sizeof(line), m, info);
-    if (skip >= length) { skip -= length; continue; }
+    if (skip >= length) {
+      skip -= length;
+      continue;
+    }
     size_t n = length - skip;
     if (n > out->len - copied) { n = out->len - copied; }
     if (!vmm_copy_to_user(cell_domain_as(out->domain), out->buf + copied, line + skip, n)) {
@@ -475,7 +482,8 @@ static int64_t read_generated_pid_device(struct open_file *file, const struct pr
   return read_text_device(out, text, text_len);
 }
 
-int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len, uint64_t offset) {
+int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, uint64_t buf, uint64_t len,
+                                uint64_t offset) {
   if (file->node.backend == VFS_PROC && !pidns_self_view(file->node.proc.pid)) { return -2; }
   struct proc_read out = {domain, buf, len, offset};
   switch (file->node.device) {
@@ -528,7 +536,8 @@ int64_t cell_procfs_read_device(struct open_file *file, struct domain *domain, u
     size_t size = 0;
     proc_append_u64(text, sizeof(text), &size, map->inner);
     proc_append_char(text, sizeof(text), &size, ' ');
-    proc_append_u64(text, sizeof(text), &size, userns_visible(domain->user_ns == ns ? ns->parent : domain->user_ns, group, map->outer));
+    proc_append_u64(text, sizeof(text), &size,
+                    userns_visible(domain->user_ns == ns ? ns->parent : domain->user_ns, group, map->outer));
     proc_append_str(text, sizeof(text), &size, " 1\n");
     return read_text_device(&out, text, size);
   }

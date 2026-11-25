@@ -9,7 +9,9 @@ static int fill(void *source, uint8_t *dst, size_t len) {
 }
 
 static int verify(void *expected, const uint8_t *src, size_t len) {
-  for (size_t i = 0; i < len; ++i) { assert(src[i] == *(int *)expected); }
+  for (size_t i = 0; i < len; ++i) {
+    assert(src[i] == *(int *)expected);
+  }
   return 0;
 }
 
@@ -23,10 +25,14 @@ int main(void) {
   int first = 'A', next = 'B';
   assert(page_ring_write(&ring, PAGE_SIZE, fill, &first) == PAGE_SIZE);
   unsigned n = 0;
-  while (pmm_free_pages() > 1) { held[n++] = pmm_alloc_page(); }
+  while (pmm_free_pages() > 1) {
+    held[n++] = pmm_alloc_page();
+  }
   assert(page_ring_write(&ring, 2 * PAGE_SIZE, fill, &next) < 0);
   assert(pmm_free_pages() == 1);
-  while (n) { pmm_free_page(held[--n]); }
+  while (n) {
+    pmm_free_page(held[--n]);
+  }
   assert(page_ring_read(&ring, ring.capacity, true, verify, &first) == PAGE_SIZE);
   assert(page_ring_write(&ring, 3 * PAGE_SIZE, fill, &next) == 3 * PAGE_SIZE);
   assert(page_ring_read(&ring, PAGE_SIZE, false, verify, &first) == PAGE_SIZE);

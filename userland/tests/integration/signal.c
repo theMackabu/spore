@@ -9,9 +9,9 @@
 #include <string.h>
 #include <sys/auxv.h>
 #include <sys/epoll.h>
+#include <sys/prctl.h>
 #include <sys/select.h>
 #include <sys/signalfd.h>
-#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -156,20 +156,23 @@ static int temporary_mask_regression(void) {
   sigaddset(&original, SIGUSR1);
   sigemptyset(&temporary);
   sigaddset(&temporary, SIGUSR2);
-  if (sigaction(SIGUSR1, &action, &old_action) < 0) { close(ep); close(fds[0]); close(fds[1]); return 0; }
+  if (sigaction(SIGUSR1, &action, &old_action) < 0) {
+    close(ep);
+    close(fds[0]);
+    close(fds[1]);
+    return 0;
+  }
   int masked = sigprocmask(SIG_SETMASK, &original, &old_mask) == 0;
   int ok = masked && ep >= 0 && epoll_ctl(ep, EPOLL_CTL_ADD, fds[0], &event) == 0;
   for (int kind = 0; ok && kind < 3; ++kind) {
     char byte;
     temporary_mask_signals = 0;
     usr2_blocked_in_handler = 0;
-    ok = write(fds[1], "x", 1) == 1 && raise(SIGUSR1) == 0 &&
-         masked_wait(kind, fds[0], ep, &temporary) == 1 && temporary_mask_signals == 0 &&
-         read(fds[0], &byte, 1) == 1;
+    ok = write(fds[1], "x", 1) == 1 && raise(SIGUSR1) == 0 && masked_wait(kind, fds[0], ep, &temporary) == 1 &&
+         temporary_mask_signals == 0 && read(fds[0], &byte, 1) == 1;
     sigset_t after;
-    ok = ok && masked_wait(kind, fds[0], ep, &temporary) == -1 && errno == EINTR &&
-         temporary_mask_signals == SIGUSR1 && usr2_blocked_in_handler == 1 &&
-         sigprocmask(SIG_SETMASK, NULL, &after) == 0 &&
+    ok = ok && masked_wait(kind, fds[0], ep, &temporary) == -1 && errno == EINTR && temporary_mask_signals == SIGUSR1 &&
+         usr2_blocked_in_handler == 1 && sigprocmask(SIG_SETMASK, NULL, &after) == 0 &&
          sigismember(&after, SIGUSR1) == 1 && sigismember(&after, SIGUSR2) == 0;
   }
   if (masked) { sigprocmask(SIG_SETMASK, &old_mask, NULL); }
@@ -191,7 +194,10 @@ static int thread_signal_suspend(void) {
   sigaddset(&blocked, SIGPWR);
   struct sigaction action = {.sa_handler = temporary_mask_handler, .sa_flags = SA_RESTART}, old_power, old_alarm;
   if (sigaction(SIGPWR, &action, &old_power)) { return 0; }
-  if (sigaction(SIGALRM, &action, &old_alarm)) { sigaction(SIGPWR, &old_power, NULL); return 0; }
+  if (sigaction(SIGALRM, &action, &old_alarm)) {
+    sigaction(SIGPWR, &old_power, NULL);
+    return 0;
+  }
   int masked = pthread_sigmask(SIG_BLOCK, &blocked, &previous) == 0;
   int ok = 0;
   if (masked) {
@@ -332,12 +338,12 @@ static int signal_restart_futex_regression(const struct timespec *timeout) {
 
   pthread_t thread;
   int ok = sigaction(SIGINT, &sa, NULL) == 0 && pthread_create(&thread, NULL, futex_restart_thread, NULL) == 0;
-  long rc = ok ? integration_raw_syscall4(SYS_FUTEX, (long)&futex_restart_word, FUTEX_WAIT_PRIVATE, 0, (long)timeout) : -1;
+  long rc =
+    ok ? integration_raw_syscall4(SYS_FUTEX, (long)&futex_restart_word, FUTEX_WAIT_PRIVATE, 0, (long)timeout) : -1;
   if (ok) { ok = pthread_join(thread, NULL) == 0; }
   ok = ok && rc == (timeout ? -EINTR : 0) && futex_restart_word == 1 && interrupted_signals == SIGINT;
-  printf("[spore] signal %s futex wait: %s rc=%ld seen=%d\n",
-         timeout ? "interrupted timed" : "restarted", ok ? "PASS" : "FAIL", rc,
-         (int)interrupted_signals);
+  printf("[spore] signal %s futex wait: %s rc=%ld seen=%d\n", timeout ? "interrupted timed" : "restarted",
+         ok ? "PASS" : "FAIL", rc, (int)interrupted_signals);
   return ok;
 }
 
@@ -387,10 +393,12 @@ static int child_signal_notification(void) {
   pid_t child = fork();
   if (!child) { _exit(23); }
   uint64_t end = integration_usec_now() + 1000000;
-  while (child > 0 && !child_notice && integration_usec_now() < end) { usleep(1000); }
+  while (child > 0 && !child_notice && integration_usec_now() < end) {
+    usleep(1000);
+  }
   int status;
-  int ok = child > 0 && child_notice == SIGCHLD && waitpid(child, &status, 0) == child &&
-           WIFEXITED(status) && WEXITSTATUS(status) == 23;
+  int ok = child > 0 && child_notice == SIGCHLD && waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+           WEXITSTATUS(status) == 23;
   return !sigaction(SIGCHLD, &old, NULL) && ok;
 }
 
@@ -413,9 +421,13 @@ static void *fork_from_thread(void *arg) {
     pid_t parent = getppid();
     if (prctl(PR_GET_PDEATHSIG, &value) || value || sigaction(SIGUSR1, &action, NULL) ||
         prctl(PR_SET_PDEATHSIG, SIGUSR1) || prctl(PR_SET_PDEATHSIG, 65) != -1 || errno != EINVAL ||
-        prctl(PR_GET_PDEATHSIG, &value) || value != SIGUSR1 || write(ready[1], ".", 1) != 1) { _exit(1); }
+        prctl(PR_GET_PDEATHSIG, &value) || value != SIGUSR1 || write(ready[1], ".", 1) != 1) {
+      _exit(1);
+    }
     uint64_t end = integration_usec_now() + 1000000;
-    while (!death_sender && integration_usec_now() < end) { usleep(1000); }
+    while (!death_sender && integration_usec_now() < end) {
+      usleep(1000);
+    }
     if (death_sender != parent || getppid() != parent) { _exit(2); }
     execl("/bin/exec_child", "exec_child", "parent-death-signal", (char *)NULL);
     _exit(3);
@@ -444,9 +456,13 @@ static int orphan_notification(void) {
       sigaddset(&blocked, SIGUSR1);
       struct sigaction action = {.sa_sigaction = parent_died, .sa_flags = SA_SIGINFO};
       if (sigaction(SIGUSR1, &action, NULL) || sigprocmask(SIG_BLOCK, &blocked, NULL) ||
-          prctl(PR_SET_PDEATHSIG, SIGUSR1) || write(ready[1], ".", 1) != 1) { _exit(1); }
+          prctl(PR_SET_PDEATHSIG, SIGUSR1) || write(ready[1], ".", 1) != 1) {
+        _exit(1);
+      }
       uint64_t end = integration_usec_now() + 1000000;
-      while (getppid() == creator && integration_usec_now() < end) { usleep(1000); }
+      while (getppid() == creator && integration_usec_now() < end) {
+        usleep(1000);
+      }
       if (getppid() == 1 && !sigprocmask(SIG_UNBLOCK, &blocked, NULL) && death_sender == creator) {
         pid_t self = getpid();
         (void)write(report[1], &self, sizeof(self));
@@ -471,9 +487,8 @@ static int parent_death_notification(void) {
   pid_t child = -1;
   pthread_t creator;
   int status;
-  int ok = pthread_create(&creator, NULL, fork_from_thread, &child) == 0 &&
-           pthread_join(creator, NULL) == 0 && child > 0 && waitpid(child, &status, 0) == child &&
-           WIFEXITED(status) && !WEXITSTATUS(status);
+  int ok = pthread_create(&creator, NULL, fork_from_thread, &child) == 0 && pthread_join(creator, NULL) == 0 &&
+           child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && !WEXITSTATUS(status);
   ok = ok && orphan_notification();
   printf("[spore] parent death notification: %s\n", ok ? "PASS" : "FAIL");
   return ok;
@@ -491,9 +506,9 @@ static int signalfd_child_exit(void) {
   struct pollfd pfd = {.fd = fd, .events = POLLIN};
   int status;
   int ok = child > 0 && poll(&pfd, 1, 1500) == 1 && (pfd.revents & POLLIN) &&
-           read(fd, &info, sizeof(info)) == sizeof(info) && info.ssi_signo == SIGCHLD &&
-           info.ssi_code == CLD_EXITED && info.ssi_pid == (unsigned)child && info.ssi_status == 37 &&
-           read(fd, &info, sizeof(info)) == -1 && errno == EAGAIN;
+           read(fd, &info, sizeof(info)) == sizeof(info) && info.ssi_signo == SIGCHLD && info.ssi_code == CLD_EXITED &&
+           info.ssi_pid == (unsigned)child && info.ssi_status == 37 && read(fd, &info, sizeof(info)) == -1 &&
+           errno == EAGAIN;
   if (child > 0) { ok &= waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 37; }
   if (fd >= 0) { close(fd); }
   sigprocmask(SIG_SETMASK, &old, NULL);
@@ -503,9 +518,10 @@ static int signalfd_child_exit(void) {
 
 int integration_signal_suite(void) {
   struct timespec timeout = {.tv_sec = 1};
-  return signalfd_child_exit() && parent_death_notification() && child_signal_notification() && vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
-         signal_mask_regression() && temporary_mask_regression() && thread_signal_suspend() && signal_altstack_regression() &&
-         signal_interrupted_read_regression() && signal_restart_read_regression() &&
+  return signalfd_child_exit() && parent_death_notification() && child_signal_notification() &&
+         vector_probe_fallback() && absolute_sleep_regression() && interval_timer_regression() &&
+         signal_mask_regression() && temporary_mask_regression() && thread_signal_suspend() &&
+         signal_altstack_regression() && signal_interrupted_read_regression() && signal_restart_read_regression() &&
          signal_restart_futex_regression(&timeout) && signal_restart_futex_regression(NULL) &&
          signal_nested_regression();
 }

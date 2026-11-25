@@ -1,23 +1,23 @@
 #include "../fs/file_abi.h"
 #include "../usercopy.h"
-#include "init/app.h"
-#include "handlers.h"
 #include "exec/elf.h"
 #include "exec/stack.h"
+#include "fs/vfs.h"
+#include "handlers.h"
+#include "init/app.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "mm/vma.h"
 #include "mm/vmm.h"
 #include "proc/domain.h"
-#include "proc/limits.h"
 #include "proc/fd.h"
-#include "proc/user_namespace.h"
+#include "proc/limits.h"
 #include "proc/policy.h"
 #include "proc/process.h"
-#include "proc/thread.h"
 #include "proc/signal.h"
-#include "fs/vfs.h"
+#include "proc/thread.h"
+#include "proc/user_namespace.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -291,7 +291,8 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     ret = -ENOTDIR;
     goto out_scratch;
   }
-  if (vfs_mount_flag(exec_node.access, MOUNT_NOEXEC) || (exec_node.mode & S_IFMT) != S_IFREG || !(exec_node.mode & 0111) || !syscall_node_access_allowed(&exec_node, X_OK)) {
+  if (vfs_mount_flag(exec_node.access, MOUNT_NOEXEC) || (exec_node.mode & S_IFMT) != S_IFREG ||
+      !(exec_node.mode & 0111) || !syscall_node_access_allowed(&exec_node, X_OK)) {
     ret = -(int64_t)EACCES;
     goto out_scratch;
   }
@@ -355,7 +356,8 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     ret = -(int64_t)ENOMEM;
     goto out_scratch;
   }
-  enum elf_load_status status = elf_load_program(&new_as, &new_vmas, &exec_reader, &elf, interp_path, sizeof(interp_path));
+  enum elf_load_status status =
+    elf_load_program(&new_as, &new_vmas, &exec_reader, &elf, interp_path, sizeof(interp_path));
   if (status == ELF_LOADED && new_as.freebsd_abi && cell_current_domain_internal()->filter) {
     vmm_destroy(&new_as);
     vma_list_destroy(&new_vmas);
@@ -374,8 +376,8 @@ int64_t sys_execve(struct trap_frame *frame, uint64_t path_addr, uint64_t argv_a
     .gid = cell_current_gid(),
     .egid = cell_current_egid(),
   };
-  bool nosuid = vfs_mount_flag(exec_node.access, MOUNT_NOSUID) ||
-                (exec_node.backend == VFS_RAMFS && exec_node.ramfs.fs->nosuid);
+  bool nosuid =
+    vfs_mount_flag(exec_node.access, MOUNT_NOSUID) || (exec_node.backend == VFS_RAMFS && exec_node.ramfs.fs->nosuid);
   uint32_t mode = (nosuid || cell_current_thread_internal()->no_new_privs) ? exec_node.mode & ~06000u : exec_node.mode;
   if ((mode & 04000u) != 0) { creds.euid = exec_node.uid; }
   if ((mode & 02000u) != 0) { creds.egid = exec_node.gid; }

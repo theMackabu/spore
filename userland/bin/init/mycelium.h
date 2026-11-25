@@ -115,7 +115,11 @@ struct unit_config {
   bool persistent;
 };
 
-struct journal_stream { int fd; size_t used; char line[LOG_LINE]; };
+struct journal_stream {
+  int fd;
+  size_t used;
+  char line[LOG_LINE];
+};
 
 struct unit {
   struct unit_config config;

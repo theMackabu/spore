@@ -1,10 +1,15 @@
 #include "internal.h"
-#include "records.h"
 #include "mm/table.h"
+#include "records.h"
 
 enum {
-  CHILD_ENTRIES = 8192, NAME_BYTES = 256 * 1024, INODE_ENTRIES = 4096,
-  CACHE_PAGE = 4096, PARENT_SETS = 32, PARENT_WAYS = 4, INITIAL_BUCKETS = 128,
+  CHILD_ENTRIES = 8192,
+  NAME_BYTES = 256 * 1024,
+  INODE_ENTRIES = 4096,
+  CACHE_PAGE = 4096,
+  PARENT_SETS = 32,
+  PARENT_WAYS = 4,
+  INITIAL_BUCKETS = 128,
 };
 
 struct child_entry {
@@ -19,7 +24,10 @@ struct cached_parent {
   uint64_t age;
 };
 
-enum { CHILD_PER_PAGE = CACHE_PAGE / sizeof(struct child_entry), INODES_PER_PAGE = CACHE_PAGE / sizeof(struct ext2_node) };
+enum {
+  CHILD_PER_PAGE = CACHE_PAGE / sizeof(struct child_entry),
+  INODES_PER_PAGE = CACHE_PAGE / sizeof(struct ext2_node)
+};
 
 struct ext2_dir_cache {
   struct ext2_dir_cache *next;
@@ -41,7 +49,10 @@ static struct ext2_dir_cache *get_cache(struct ext2_fs *fs) {
   struct ext2_dir_cache *cache = table_alloc(1, sizeof(*cache));
   if (!cache) { return NULL; }
   cache->buckets = table_alloc(INITIAL_BUCKETS, sizeof(*cache->buckets));
-  if (!cache->buckets) { table_free(cache, 1, sizeof(*cache)); return NULL; }
+  if (!cache->buckets) {
+    table_free(cache, 1, sizeof(*cache));
+    return NULL;
+  }
   cache->bucket_count = INITIAL_BUCKETS;
   cache->fs = fs;
   cache->next = mounted;
@@ -51,7 +62,9 @@ static struct ext2_dir_cache *get_cache(struct ext2_fs *fs) {
 
 void ext2_dir_drop_cache(struct ext2_fs *fs) {
   struct ext2_dir_cache **link = &mounted;
-  while (*link && (*link)->fs != fs) { link = &(*link)->next; }
+  while (*link && (*link)->fs != fs) {
+    link = &(*link)->next;
+  }
   struct ext2_dir_cache *cache = *link;
   if (!cache) { return; }
   *link = cache->next;
@@ -62,14 +75,18 @@ void ext2_dir_drop_cache(struct ext2_fs *fs) {
   for (size_t i = 0; i < sizeof(cache->inodes) / sizeof(*cache->inodes); ++i) {
     table_free(cache->inodes[i], INODES_PER_PAGE, sizeof(struct ext2_node));
   }
-  for (size_t i = 0; i < NAME_BYTES / CACHE_PAGE; ++i) { table_free(cache->names[i], 1, CACHE_PAGE); }
+  for (size_t i = 0; i < NAME_BYTES / CACHE_PAGE; ++i) {
+    table_free(cache->names[i], 1, CACHE_PAGE);
+  }
   table_free(cache->buckets, cache->bucket_count, sizeof(*cache->buckets));
   table_free(cache, 1, sizeof(*cache));
 }
 
 static uint32_t name_hash(uint32_t parent, const char *name, size_t len) {
   uint32_t hash = parent;
-  for (size_t i = 0; i < len; ++i) { hash = (hash ^ (uint8_t)name[i]) * 16777619u; }
+  for (size_t i = 0; i < len; ++i) {
+    hash = (hash ^ (uint8_t)name[i]) * 16777619u;
+  }
   return hash;
 }
 
@@ -87,7 +104,9 @@ static struct child_entry *find_child(struct ext2_dir_cache *cache, uint32_t par
   for (uint16_t slot = cache->buckets[hash & (cache->bucket_count - 1)]; slot;) {
     struct child_entry *entry = child_at(cache, slot - 1);
     if (entry->hash == hash && entry->parent == parent && entry->len == len &&
-        kmemcmp(name_at(cache, entry->name_start), name, len) == 0) { return entry; }
+        kmemcmp(name_at(cache, entry->name_start), name, len) == 0) {
+      return entry;
+    }
     slot = entry->next;
   }
   return NULL;
@@ -106,7 +125,9 @@ static struct cached_parent *parent_for(struct ext2_dir_cache *cache, uint32_t i
 
 static void erase(struct ext2_dir_cache *cache, struct child_entry *entry) {
   uint16_t *slot = &cache->buckets[entry->hash & (cache->bucket_count - 1)];
-  while (*slot && child_at(cache, *slot - 1) != entry) { slot = &child_at(cache, *slot - 1)->next; }
+  while (*slot && child_at(cache, *slot - 1) != entry) {
+    slot = &child_at(cache, *slot - 1)->next;
+  }
   if (*slot) { *slot = entry->next; }
   entry->ino = 0;
 }
@@ -136,7 +157,8 @@ static void grow_buckets(struct ext2_dir_cache *cache) {
   cache->bucket_count = count;
 }
 
-void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent, const char *name, size_t len, uint32_t ino, uint32_t block) {
+void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent, const char *name, size_t len, uint32_t ino,
+                         uint32_t block) {
   struct ext2_dir_cache *cache = get_cache(fs);
   if (!cache) { return; }
   uint32_t hash = name_hash(parent, name, len);
@@ -157,15 +179,17 @@ void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent, const char *name, 
     cache->name_end = start + (uint32_t)len;
     while (cache->oldest != cache->next_slot &&
            (cache->next_slot - cache->oldest >= CHILD_ENTRIES ||
-            cache->name_end - child_at(cache, cache->oldest % CHILD_ENTRIES)->name_start > NAME_BYTES)) { evict(cache); }
+            cache->name_end - child_at(cache, cache->oldest % CHILD_ENTRIES)->name_start > NAME_BYTES)) {
+      evict(cache);
+    }
     if (cache->bucket_count < CHILD_ENTRIES && cache->next_slot - cache->oldest >= cache->bucket_count) {
       grow_buckets(cache);
     }
     ++cache->next_slot;
     entry = child_at(cache, slot);
     uint32_t bucket = hash & (cache->bucket_count - 1);
-    *entry = (struct child_entry){.parent = parent, .hash = hash, .len = (uint8_t)len, .name_start = start,
-                                  .next = cache->buckets[bucket]};
+    *entry = (struct child_entry){
+      .parent = parent, .hash = hash, .len = (uint8_t)len, .name_start = start, .next = cache->buckets[bucket]};
     cache->buckets[bucket] = (uint16_t)(slot + 1);
     kmemcpy(name_at(cache, start), name, len);
   }
@@ -196,7 +220,10 @@ bool ext2_read_inode(struct ext2_fs *fs, uint32_t ino, struct ext2_node *out) {
   if (!ino) { return false; }
   struct ext2_node *node = inode_slot(get_cache(fs), ino, true);
   if (!node) { return ext2_read_raw_inode(fs, ino, out); }
-  if (node->ino != ino && !ext2_read_raw_inode(fs, ino, node)) { node->ino = 0; return false; }
+  if (node->ino != ino && !ext2_read_raw_inode(fs, ino, node)) {
+    node->ino = 0;
+    return false;
+  }
   *out = *node;
   return true;
 }
@@ -226,12 +253,15 @@ static bool cache_dirent(void *ctx, uint32_t ino, uint8_t type, const char *name
   struct child_scan *scan = ctx;
   ++ext2_stat_counters.dir_iter_count;
   bool match = scan->len == len && kmemcmp(scan->name, name, len) == 0;
-  if (scan->fill || match) { ext2_cache_add_name(scan->fs, scan->parent, name, len, ino, scan->cursor / scan->fs->block_size); }
+  if (scan->fill || match) {
+    ext2_cache_add_name(scan->fs, scan->parent, name, len, ino, scan->cursor / scan->fs->block_size);
+  }
   if (match) { scan->match = ino; }
   return match && !scan->fill;
 }
 
-int ext2_find_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t len, struct ext2_node *out) {
+int ext2_find_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t len,
+                    struct ext2_node *out) {
   ++ext2_stat_counters.lookup_child_count;
   struct ext2_dir_cache *cache = get_cache(fs);
   struct child_entry *entry = find_child(cache, dir->ino, name, len, name_hash(dir->ino, name, len));
@@ -240,7 +270,10 @@ int ext2_find_child(struct ext2_fs *fs, const struct ext2_node *dir, const char 
   struct cached_parent *parent = NULL;
   if (cache) {
     parent = parent_for(cache, dir->ino, false);
-    if (!parent) { parent = parent_for(cache, dir->ino, true); scan.fill = true; }
+    if (!parent) {
+      parent = parent_for(cache, dir->ino, true);
+      scan.fill = true;
+    }
     parent->age = ++cache->age;
     if (parent->complete && !scan.fill) { return 0; }
   }

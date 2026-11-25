@@ -1,8 +1,8 @@
 #include "exec/stack.h"
 
 #include "lib/mem.h"
-#include "mm/pmm.h"
 #include "lib/random.h"
+#include "mm/pmm.h"
 
 enum {
   AT_NULL = 0,
@@ -67,8 +67,8 @@ static void free_pages(uint64_t pa, uint64_t pages) {
   }
 }
 
-bool build_initial_stack_args(struct user_address_space *as, const struct loaded_elf *elf, const char *exec_path, const char *const argv[],
-                              uint64_t argc, const char *const envp[], uint64_t envc,
+bool build_initial_stack_args(struct user_address_space *as, const struct loaded_elf *elf, const char *exec_path,
+                              const char *const argv[], uint64_t argc, const char *const envp[], uint64_t envc,
                               const struct exec_stack_credentials *creds, uint64_t *stack_pointer) {
   uint64_t cursor = USER_STACK_TOP;
   uint64_t local_ptrs[32];
@@ -161,8 +161,11 @@ bool build_initial_stack_args(struct user_address_space *as, const struct loaded
 
   enum { BSD_AT_EXECPATH = 15, BSD_AT_CANARY = 16, BSD_AT_CANARYLEN = 17, BSD_AT_HWCAP = 25 };
   const uint64_t bsd_aux[][2] = {
-    {AT_PHDR, elf->phdr}, {AT_PHENT, elf->phent}, {AT_PHNUM, elf->phnum}, {AT_PAGESZ, PAGE_SIZE},
-    {AT_ENTRY, elf->entry}, {BSD_AT_EXECPATH, execfn}, {BSD_AT_CANARY, random_va}, {BSD_AT_CANARYLEN, sizeof(random)}, {BSD_AT_HWCAP, hwcap}, {AT_NULL, 0},
+    {AT_PHDR, elf->phdr},       {AT_PHENT, elf->phent},
+    {AT_PHNUM, elf->phnum},     {AT_PAGESZ, PAGE_SIZE},
+    {AT_ENTRY, elf->entry},     {BSD_AT_EXECPATH, execfn},
+    {BSD_AT_CANARY, random_va}, {BSD_AT_CANARYLEN, sizeof(random)},
+    {BSD_AT_HWCAP, hwcap},      {AT_NULL, 0},
   };
   size_t aux_size = as->freebsd_abi ? sizeof(bsd_aux) : sizeof(aux);
   const uint64_t slots = 1 + argc + 1 + envc + 1 + aux_size / sizeof(uint64_t);

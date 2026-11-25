@@ -1,12 +1,12 @@
-#include "handlers.h"
-#include "abi/linux/shared/usercopy.h"
-#include "abi/linux/shared/fs/file_abi.h"
 #include "abi/linux/shared/file_layout.h"
+#include "abi/linux/shared/fs/file_abi.h"
+#include "abi/linux/shared/usercopy.h"
 #include "fs/vfs.h"
+#include "handlers.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
-#include "proc/fd.h"
 #include "proc/domain.h"
+#include "proc/fd.h"
 #include "proc/user_namespace.h"
 
 struct linux_statfs64 {
@@ -128,7 +128,9 @@ static void fill_statx(struct statx64 *st, const struct vfs_node *node) {
 }
 
 static int copy_result(uint64_t addr, const void *value, size_t size) {
-  if (!syscall_user_writable(addr, size) || !vmm_copy_to_user(syscall_active_as(), addr, value, size)) { return -EFAULT; }
+  if (!syscall_user_writable(addr, size) || !vmm_copy_to_user(syscall_active_as(), addr, value, size)) {
+    return -EFAULT;
+  }
   return 0;
 }
 

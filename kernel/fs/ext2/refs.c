@@ -20,7 +20,9 @@ static struct inode_ref *buckets[64];
 
 static struct inode_ref **find_ref(struct ext2_fs *fs, uint32_t ino) {
   struct inode_ref **slot = &buckets[(ino ^ (ino >> 6)) % 64];
-  while (*slot && ((*slot)->ino != ino || (*slot)->fs != fs)) { slot = &(*slot)->next; }
+  while (*slot && ((*slot)->ino != ino || (*slot)->fs != fs)) {
+    slot = &(*slot)->next;
+  }
   return slot;
 }
 
@@ -46,8 +48,10 @@ static bool reap(struct inode_ref **slot) {
   struct inode_ref *ref = *slot;
   if (ref->orphan) {
     struct ext2_node node;
-    if (!ext2_read_inode(ref->fs, ref->ino, &node) || node.links_count ||
-        !ext2_truncate(ref->fs, &node, 0) || !ext2_free_inode(ref->fs, ref->ino)) { return false; }
+    if (!ext2_read_inode(ref->fs, ref->ino, &node) || node.links_count || !ext2_truncate(ref->fs, &node, 0) ||
+        !ext2_free_inode(ref->fs, ref->ino)) {
+      return false;
+    }
   }
   *slot = ref->next;
 #if __STDC_HOSTED__

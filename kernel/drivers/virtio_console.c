@@ -1,8 +1,8 @@
 #include "drivers/virtio_console.h"
 
-#include "virtio_mmio.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "virtio_mmio.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -44,7 +44,9 @@ bool virtio_console_ready(void) {
 
 void virtio_console_write(const uint8_t *data, size_t len) {
   if (!console_ready || !len || len > 4096) { return; }
-  for (size_t i = 0; i < len; ++i) { tx_buf[i] = data[i]; }
+  for (size_t i = 0; i < len; ++i) {
+    tx_buf[i] = data[i];
+  }
   txq.desc[0].addr = tx_pa;
   txq.desc[0].len = len;
   txq.desc[0].flags = 0;

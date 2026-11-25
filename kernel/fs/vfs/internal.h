@@ -1,7 +1,7 @@
 #pragma once
 
-#include "fs/vfs.h"
 #include "fs/mount_namespace.h"
+#include "fs/vfs.h"
 
 extern struct vfs_stats vfs_stat_counters;
 extern struct ramfs *vfs_root_ramfs;

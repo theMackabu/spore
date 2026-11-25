@@ -1,8 +1,8 @@
 #pragma once
 
+#include "write.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include "write.h"
 
 struct trap_frame;
 

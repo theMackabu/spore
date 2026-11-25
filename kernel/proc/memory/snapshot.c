@@ -1,6 +1,6 @@
-#include "proc/pid_namespace.h"
-#include "init/app.h"
 #include "proc/snapshot.h"
+#include "init/app.h"
+#include "proc/pid_namespace.h"
 
 #include "arch/regs.h"
 #include "arch/smp.h"
@@ -103,14 +103,21 @@ int snapshot_spawn(int snap_id, uint64_t entry, uint64_t arg, struct trap_frame 
   }
   cell_copy_domain_metadata(child_domain, parent);
   int rc = pidns_allocate(child_domain->child_pid_ns, child_domain->id, &child_domain->pid_entry);
-  if (rc) { cell_destroy_domain(child_domain); return rc; }
-  if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
+  if (rc) {
+    cell_destroy_domain(child_domain);
+    return rc;
+  }
+  if (!cell_copy_fd_table(child_domain, parent)) {
+    cell_destroy_domain(child_domain);
+    return -12;
+  }
   child_domain->parent_id = parent->id;
   child_thread->state = THREAD_RUNNABLE;
   cell_save_current(frame);
   child_thread->tf = *frame;
   child_thread->context = cell_current_thread_internal()->context;
-  arch_set_snapshot_entry(&child_thread->tf, entry, arg, (uint64_t)pidns_local(pidns_active(child_domain), child_domain->id));
+  arch_set_snapshot_entry(&child_thread->tf, entry, arg,
+                          (uint64_t)pidns_local(pidns_active(child_domain), child_domain->id));
   smp_notify();
   return pidns_self_view(child_domain->id);
 }

@@ -1,6 +1,6 @@
-#include "mm/vmm.h"
-#include "mm/pmm.h"
 #include "mm/file_page.h"
+#include "mm/pmm.h"
+#include "mm/vmm.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -23,7 +23,9 @@ static size_t page_index(uint64_t pa) {
   return idx;
 }
 
-void *pmm_phys_to_virt(uint64_t pa) { return &phys[pa]; }
+void *pmm_phys_to_virt(uint64_t pa) {
+  return &phys[pa];
+}
 
 uint64_t pmm_alloc_page(void) {
   if (next_pa + TEST_PAGE_SIZE > sizeof(phys)) { return 0; }
@@ -97,7 +99,9 @@ static void test_mapped_file_writes(void) {
   vmm_destroy(&snapshot);
   vmm_file_page_unregister(&page);
   pmm_free_page(page.pa);
-  for (uint64_t pa = first_pa; pa < next_pa; pa += TEST_PAGE_SIZE) { assert(refs[page_index(pa)] == 0); }
+  for (uint64_t pa = first_pa; pa < next_pa; pa += TEST_PAGE_SIZE) {
+    assert(refs[page_index(pa)] == 0);
+  }
   next_pa = first_pa;
   dirty_file_page = NULL;
 }
@@ -123,23 +127,25 @@ static void test_empty_page_tables(void) {
 }
 
 static void test_private_pin_across_fork(void) {
-  uint64_t first=next_pa;
-  struct user_address_space parent,child;
-  assert(vmm_user_init(&parent,(uintptr_t)phys));
-  assert(vmm_alloc_page(&parent,0x1000,VMM_USER_READ|VMM_USER_WRITE));
-  uint64_t pa=vmm_pin_writable(&parent,0x1000);
-  assert(pa && vmm_clone(&child,&parent,VMM_FORK));
-  const uint8_t expected=7;
-  phys[pa]=expected;
-  uint8_t value=99;
-  assert(vmm_copy_from_user(&child,&value,0x1000,1) && !value);
-  assert(vmm_copy_from_user(&parent,&value,0x1000,1) && value==expected);
+  uint64_t first = next_pa;
+  struct user_address_space parent, child;
+  assert(vmm_user_init(&parent, (uintptr_t)phys));
+  assert(vmm_alloc_page(&parent, 0x1000, VMM_USER_READ | VMM_USER_WRITE));
+  uint64_t pa = vmm_pin_writable(&parent, 0x1000);
+  assert(pa && vmm_clone(&child, &parent, VMM_FORK));
+  const uint8_t expected = 7;
+  phys[pa] = expected;
+  uint8_t value = 99;
+  assert(vmm_copy_from_user(&child, &value, 0x1000, 1) && !value);
+  assert(vmm_copy_from_user(&parent, &value, 0x1000, 1) && value == expected);
   vmm_destroy(&parent);
-  assert(refs[pa/TEST_PAGE_SIZE]==1 && phys[pa]==expected);
+  assert(refs[pa / TEST_PAGE_SIZE] == 1 && phys[pa] == expected);
   pmm_unpin_page(pa);
   vmm_destroy(&child);
-  for (unsigned i=first/TEST_PAGE_SIZE;i<next_pa/TEST_PAGE_SIZE;++i) { assert(!refs[i]); }
-  next_pa=first;
+  for (unsigned i = first / TEST_PAGE_SIZE; i < next_pa / TEST_PAGE_SIZE; ++i) {
+    assert(!refs[i]);
+  }
+  next_pa = first;
 }
 
 int main(void) {

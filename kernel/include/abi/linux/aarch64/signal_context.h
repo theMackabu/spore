@@ -3,7 +3,9 @@
 #include "abi/linux/shared/signal.h"
 
 constexpr uint32_t AARCH64_FPSIMD_MAGIC = 0x46508001;
-struct aarch64_ctx_header { uint32_t magic, size; };
+struct aarch64_ctx_header {
+  uint32_t magic, size;
+};
 struct aarch64_fpsimd_ctx {
   struct aarch64_ctx_header head;
   uint32_t fpsr, fpcr;

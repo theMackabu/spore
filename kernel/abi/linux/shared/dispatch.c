@@ -1,15 +1,4 @@
-#include "proc/pid_namespace.h"
-#include "io_uring/syscalls.h"
-#include "proc/accounting.h"
-#include "proc/signalfd.h"
-#include "abi/linux/shared/usercopy.h"
 #include "abi/linux/shared/dispatch.h"
-#include "arch/platform.h"
-#include "arch/regs.h"
-#include "arch/signal_frame.h"
-#include "numbers.h"
-#include "init/app.h"
-#include "abi/linux/shared/usercopy.h"
 #include "abi/linux/shared/fd/handlers.h"
 #include "abi/linux/shared/fs/handlers.h"
 #include "abi/linux/shared/mm/handlers.h"
@@ -17,25 +6,35 @@
 #include "abi/linux/shared/proc/handlers.h"
 #include "abi/linux/shared/system/handlers.h"
 #include "abi/linux/shared/time/handlers.h"
+#include "abi/linux/shared/usercopy.h"
+#include "arch/platform.h"
+#include "arch/regs.h"
+#include "arch/signal_frame.h"
+#include "fs/vfs.h"
+#include "init/app.h"
+#include "io_uring/syscalls.h"
 #include "lib/kprintf.h"
 #include "mm/vmm.h"
-#include "proc/domain.h"
+#include "numbers.h"
+#include "proc/accounting.h"
 #include "proc/capabilities.h"
+#include "proc/domain.h"
 #include "proc/eventfd.h"
 #include "proc/fd.h"
 #include "proc/futex.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
+#include "proc/pid_namespace.h"
 #include "proc/policy.h"
 #include "proc/poll.h"
 #include "proc/process.h"
-#include "proc/signal.h"
 #include "proc/seccomp.h"
-#include "proc/uts.h"
-#include "proc/user_namespace.h"
+#include "proc/signal.h"
+#include "proc/signalfd.h"
 #include "proc/snapshot.h"
 #include "proc/thread.h"
-#include "fs/vfs.h"
+#include "proc/user_namespace.h"
+#include "proc/uts.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -236,9 +235,7 @@ int64_t linux_dispatch(struct trap_frame *f, uint64_t nr, const uint64_t args[6]
     return -(int64_t)EPERM;
   }
 
-  if (nr < sizeof(handlers) / sizeof(handlers[0]) && handlers[nr] != NULL) {
-    goto *handlers[nr];
-  }
+  if (nr < sizeof(handlers) / sizeof(handlers[0]) && handlers[nr] != NULL) { goto *handlers[nr]; }
   if (nr >= SYS_SPORE_SNAPSHOT) {
     uint64_t spore_index = nr - SYS_SPORE_SNAPSHOT;
     if (spore_index < sizeof(spore_dispatch) / sizeof(spore_dispatch[0]) && spore_dispatch[spore_index] != NULL) {
@@ -270,8 +267,9 @@ l_ppoll:
 l_signalfd4: {
   uint64_t mask;
   if (a2 != sizeof(mask)) { return -22; }
-  if (!syscall_user_readable(a1, sizeof(mask)) ||
-      !vmm_copy_from_user(syscall_active_as(), &mask, a1, sizeof(mask))) { return -14; }
+  if (!syscall_user_readable(a1, sizeof(mask)) || !vmm_copy_from_user(syscall_active_as(), &mask, a1, sizeof(mask))) {
+    return -14;
+  }
   return cell_signalfd((int)a0, mask, (unsigned)a3);
 }
 l_eventfd2:
@@ -351,7 +349,8 @@ l_tkill:
   }
   return cell_tkill((int)a0, (int)a1);
 l_tgkill:
-  if ((int)a0 == pidns_self_view(cell_current_pid()) && (int)a1 == pidns_self_view(cell_current_tid()) && signal_delivers_to_current((int)a2)) {
+  if ((int)a0 == pidns_self_view(cell_current_pid()) && (int)a1 == pidns_self_view(cell_current_tid()) &&
+      signal_delivers_to_current((int)a2)) {
     trap_set_result(f, 0);
     return cell_signal_current((int)a2, f) ? SYSCALL_SWITCHED : 0;
   }
@@ -380,9 +379,10 @@ l_spore_reap: {
 }
 l_spore_resident:
   return (int64_t)cell_resident_pages(a0, a0 + a1);
-l_spore_set_budget:
-  { int pid = pidns_global(pidns_current(), (int)a0);
-    return a0 && !pid ? -3 : cell_set_budget(pid, a1); }
+l_spore_set_budget: {
+  int pid = pidns_global(pidns_current(), (int)a0);
+  return a0 && !pid ? -3 : cell_set_budget(pid, a1);
+}
 l_spore_apply_policy: {
   char manifest[sizeof("fs:/tmp;exec:") + CELL_PATH_MAX];
   if (!syscall_copy_string_from_user(a0, manifest, sizeof(manifest))) { return -(int64_t)EFAULT; }
@@ -490,9 +490,7 @@ l_dup3:
   return cell_fd_dup3((int)a0, (int)a1, (int)a2);
 l_fcntl:
   return sys_fcntl(a0, a1, a2);
-l_flock: {
-  return cell_fd_flock((int)a0, (int)a1, f);
-}
+l_flock: { return cell_fd_flock((int)a0, (int)a1, f); }
 l_getcwd:
   return sys_getcwd(a0, a1);
 l_getrlimit:
@@ -551,7 +549,7 @@ l_sched_getscheduler:
 l_sched_getparam:
   return sys_sched_getparam((int)a0, a1);
 l_getcpu:
-  return sys_getcpu(a0,a1);
+  return sys_getcpu(a0, a1);
 l_sched_getaffinity:
   if ((int)a0 && !cell_find_thread(pidns_global(pidns_current(), (int)a0))) { return -3; }
   return sys_sched_getaffinity(a2, a1);

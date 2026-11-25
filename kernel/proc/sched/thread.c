@@ -1,16 +1,18 @@
-#include "proc/pid_namespace.h"
-#include "mm/table.h"
 #include "proc/thread.h"
+#include "mm/table.h"
+#include "proc/pid_namespace.h"
 
+#include "accounting_internal.h"
 #include "arch/platform.h"
 #include "arch/regs.h"
 #include "arch/smp.h"
-#include "accounting_internal.h"
-#include "proc/accounting.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "net/net.h"
+#include "net/socket.h"
+#include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
@@ -18,8 +20,6 @@
 #include "proc/poll.h"
 #include "proc/process.h"
 #include "proc/signal.h"
-#include "net/net.h"
-#include "net/socket.h"
 
 constexpr int EINVAL = 22;
 constexpr int ETIMEDOUT = 110;
@@ -160,15 +160,22 @@ static void wake_timer_waiters(uint64_t scheduler_ticks) {
     }
     switch (thread->wait.reason) {
     case WAIT_URING: {
-      bool ready=uring_poll(&thread->wait.held_file->ring,CELL_POLLIN)!=0;
-      int result=thread->wait.uring_submitted;
-      cell_finish_wait(thread,result || ready ? result : -62);
+      bool ready = uring_poll(&thread->wait.held_file->ring, CELL_POLLIN) != 0;
+      int result = thread->wait.uring_submitted;
+      cell_finish_wait(thread, result || ready ? result : -62);
       break;
     }
-    case WAIT_SLEEP: cell_finish_wait(thread, 0); break;
-    case WAIT_FUTEX: cell_finish_wait(thread, -ETIMEDOUT); break;
-    case WAIT_PIPE: cell_finish_wait(thread, -11); break;
-    default: break;
+    case WAIT_SLEEP:
+      cell_finish_wait(thread, 0);
+      break;
+    case WAIT_FUTEX:
+      cell_finish_wait(thread, -ETIMEDOUT);
+      break;
+    case WAIT_PIPE:
+      cell_finish_wait(thread, -11);
+      break;
+    default:
+      break;
     }
   }
 }

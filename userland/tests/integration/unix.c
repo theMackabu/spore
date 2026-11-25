@@ -24,9 +24,8 @@ static int unix_peer_close_poll_regression(void) {
   ok = ok && poll(&pfd, 1, 0) == 1 && pfd.revents == POLLHUP;
   pfd.events = POLLIN | POLLOUT;
   char byte;
-  ok = ok && poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) &&
-       read(pair[0], &byte, 1) == 1 && byte == 'x' &&
-       poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) && read(pair[0], &byte, 1) == 0;
+  ok = ok && poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) && read(pair[0], &byte, 1) == 1 &&
+       byte == 'x' && poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLHUP) && read(pair[0], &byte, 1) == 0;
   close(pair[0]);
   printf("[spore] unix peer close poll: %s\n", ok ? "PASS" : "FAIL");
   return ok;
@@ -51,7 +50,9 @@ static int unix_listener_names(void) {
        connect(client, (void *)&alias, sizeof(alias)) == 0 && (second = accept(listener, NULL, NULL)) >= 0;
   if (first >= 0) { close(first); }
   if (second >= 0) { close(second); }
-  close(client); close(replacement); close(listener);
+  close(client);
+  close(replacement);
+  close(listener);
   unlink(old.sun_path);
   unlink(moved.sun_path);
   unlink(alias.sun_path);
@@ -62,7 +63,10 @@ static int unix_listener_names(void) {
 }
 
 static ssize_t send_pair(int fd, const int files[2]) {
-  union { struct cmsghdr align; unsigned char data[CMSG_SPACE(2 * sizeof(int))]; } control = {0};
+  union {
+    struct cmsghdr align;
+    unsigned char data[CMSG_SPACE(2 * sizeof(int))];
+  } control = {0};
   struct iovec iov[] = {{"a", 1}, {"b", 1}};
   struct msghdr msg = {.msg_iov = iov, .msg_iovlen = 2, .msg_control = control.data, .msg_controllen = sizeof(control)};
   struct cmsghdr *header = CMSG_FIRSTHDR(&msg);
@@ -74,19 +78,25 @@ static ssize_t send_pair(int fd, const int files[2]) {
 }
 
 static int receive_pair(int fd, int flags) {
-  union { struct cmsghdr align; unsigned char data[CMSG_SPACE(2 * sizeof(int))]; } control = {0};
+  union {
+    struct cmsghdr align;
+    unsigned char data[CMSG_SPACE(2 * sizeof(int))];
+  } control = {0};
   char data[2];
   struct iovec iov[] = {{data, 1}, {data + 1, 1}};
   struct msghdr msg = {.msg_iov = iov, .msg_iovlen = 2, .msg_control = control.data, .msg_controllen = sizeof(control)};
   if (recvmsg(fd, &msg, flags | MSG_CMSG_CLOEXEC) != 2 || memcmp(data, "ab", 2)) { return 0; }
   struct cmsghdr *header = CMSG_FIRSTHDR(&msg);
   if (!header || header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS ||
-      header->cmsg_len != CMSG_LEN(2 * sizeof(int)) || (msg.msg_flags & MSG_CTRUNC)) { return 0; }
+      header->cmsg_len != CMSG_LEN(2 * sizeof(int)) || (msg.msg_flags & MSG_CTRUNC)) {
+    return 0;
+  }
   int files[2];
   memcpy(files, CMSG_DATA(header), sizeof(files));
   int ok = fcntl(files[0], F_GETFD) == FD_CLOEXEC && fcntl(files[1], F_GETFD) == FD_CLOEXEC &&
            write(files[1], "z", 1) == 1 && read(files[0], data, 1) == 1 && data[0] == 'z';
-  close(files[0]); close(files[1]);
+  close(files[0]);
+  close(files[1]);
   return ok;
 }
 
@@ -104,7 +114,9 @@ static int unix_rights_regression(void) {
     usleep(30000);
     _exit(send_pair(pair[1], files) == 2 ? 0 : 1);
   }
-  close(files[0]); close(files[1]); close(pair[1]);
+  close(files[0]);
+  close(files[1]);
+  close(pair[1]);
   int status;
   ok = child > 0 && receive_pair(pair[0], 0) && waitpid(child, &status, 0) == child && status == 0;
   close(pair[0]);
@@ -117,7 +129,10 @@ static int unix_rights_lifetime(void) {
   if (socketpair(AF_UNIX, SOCK_STREAM, 0, a) || socketpair(AF_UNIX, SOCK_STREAM, 0, b) || pipe(probe)) { return 0; }
   int to_a[] = {b[0], probe[1]}, to_b[] = {a[0], probe[1]};
   int ok = send_pair(a[1], to_a) == 2 && send_pair(b[1], to_b) == 2;
-  close(probe[1]); close(b[0]); close(b[1]); close(a[1]);
+  close(probe[1]);
+  close(b[0]);
+  close(b[1]);
+  close(a[1]);
   struct pollfd watch = {.fd = probe[0], .events = POLLIN};
   ok = ok && poll(&watch, 1, 30) == 0;
   close(a[0]);

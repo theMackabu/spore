@@ -1,10 +1,10 @@
 #include "abi/linux/shared/socket_options.h"
 #include "internal.h"
 
-#include "proc/accounting.h"
 #include "net/net.h"
 #include "net/route.h"
 #include "net/unix.h"
+#include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/epoll.h"
 #include "proc/memory.h"
@@ -86,7 +86,11 @@ int cell_fd_socket_create(uint8_t proto) {
 
 int cell_fd_unix_dgram_pair(int flags, uint64_t sv) {
   struct open_file *a = alloc_socket(UNIX_DGRAM_PROTOCOL), *b = alloc_socket(UNIX_DGRAM_PROTOCOL);
-  if (!a || !b) { cell_release_open_file(a); cell_release_open_file(b); return -12; }
+  if (!a || !b) {
+    cell_release_open_file(a);
+    cell_release_open_file(b);
+    return -12;
+  }
   a->unix_dgram_peer = b->unix_dgram_id;
   b->unix_dgram_peer = a->unix_dgram_id;
   a->flags = b->flags = flags & CELL_O_NONBLOCK;
@@ -103,7 +107,11 @@ bool cell_fd_socket_info(int fd, int32_t *type, int32_t *proto) {
     return true;
   }
   if (file->type != OPEN_SOCKET) { return false; }
-  if (type != NULL) { *type = file->socket_proto == ROUTE_PROTOCOL ? file->route_type : file->socket_proto == IPPROTO_TCP ? SOCK_STREAM : SOCK_DGRAM; }
+  if (type != NULL) {
+    *type = file->socket_proto == ROUTE_PROTOCOL ? file->route_type
+            : file->socket_proto == IPPROTO_TCP  ? SOCK_STREAM
+                                                 : SOCK_DGRAM;
+  }
   if (proto != NULL) { *proto = file->socket_proto == UNIX_DGRAM_PROTOCOL ? 0 : file->socket_proto; }
   return true;
 }
@@ -114,12 +122,18 @@ int cell_fd_socket_error(int fd, bool clear) {
   if (file == NULL) { return -9; }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP) {
     int err = file->tcp_error;
-    if (clear && err) { file->tcp_error = 0; cell_epoll_file_changed(file); }
+    if (clear && err) {
+      file->tcp_error = 0;
+      cell_epoll_file_changed(file);
+    }
     return err;
   }
   if (file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_UDP) {
     int err = file->udp_error;
-    if (clear && err) { file->udp_error = 0; cell_epoll_file_changed(file); }
+    if (clear && err) {
+      file->udp_error = 0;
+      cell_epoll_file_changed(file);
+    }
     return err;
   }
   if (file->type == OPEN_SOCKET || file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) { return 0; }
@@ -213,9 +227,7 @@ int cell_fd_socket_get_int_option(int fd, int level, int optname, int32_t *out) 
 
 bool cell_fd_socket_get_linger(int fd, bool *enabled, uint32_t *seconds) {
   struct domain *domain = cell_current_domain_internal();
-  if (domain == NULL || enabled == NULL || seconds == NULL || cell_file_at(domain, fd) == NULL) {
-    return false;
-  }
+  if (domain == NULL || enabled == NULL || seconds == NULL || cell_file_at(domain, fd) == NULL) { return false; }
   struct open_file *file = cell_file_at(domain, fd);
   if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM && file->type != OPEN_UNIX_LISTENER) { return false; }
   *enabled = file->so_linger_enabled;
@@ -417,8 +429,8 @@ int64_t cell_fd_socket_recv(int fd, uint64_t buf, uint64_t len, uint32_t flags, 
     if (!file->unix_connected) { return -ENOTCONN; }
     int64_t got = cell_pipe_recv_user(domain, file->unix_rx_pipe, buf, len, flags);
     if (got != -EAGAIN || dontwait || (file->flags & CELL_O_NONBLOCK) != 0 || frame == NULL) { return got; }
-    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_PIPE, .target = fd, .buf = buf, .len = len,
-                                                         .socket_flags = flags});
+    return cell_block_current(
+      frame, (struct thread_wait){.reason = WAIT_PIPE, .target = fd, .buf = buf, .len = len, .socket_flags = flags});
   }
   if (file->type != OPEN_SOCKET) { return -9; }
   net_poll();

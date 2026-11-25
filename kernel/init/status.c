@@ -1,7 +1,7 @@
+#include "arch/platform.h"
 #include "boot.h"
 #include "init/app.h"
 #include "init/event.h"
-#include "arch/platform.h"
 #ifdef SPORE_NATIVE_PORT
 #include "arch/bringup/user.h"
 #define write_status status_write

@@ -1,5 +1,5 @@
-#include "internal.h"
 #include "abi/linux/shared/message.h"
+#include "internal.h"
 #include "net/net.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
@@ -30,7 +30,7 @@ static int copy_received_payload(void *destination, const uint8_t *src, size_t l
 }
 
 int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
-                                            uint32_t flags) {
+                                             uint32_t flags) {
   struct socket_user_buffer dst = {cell_domain_as(domain), buf};
   return dst.as ? tcp_read_stream(file, len, flags, copy_received_payload, &dst) : -EFAULT;
 }
@@ -49,16 +49,19 @@ int64_t socket_recvmsg_to_iov(struct domain *domain, struct open_file *file, uin
   if (!msg_addr && !cursor.capacity) { return 0; }
   bool tcp = file->socket_proto == IPPROTO_TCP;
   if (tcp && (tcp_recv_waitall_pending(file, cursor.capacity, flags) ||
-              (cursor.capacity && !tcp_rx_available(file) && !file->tcp_fin && !file->tcp_error))) { return -EAGAIN; }
+              (cursor.capacity && !tcp_rx_available(file) && !file->tcp_fin && !file->tcp_error))) {
+    return -EAGAIN;
+  }
   int32_t msg_flags = 0;
   if (!tcp && !file->udp_error && !file->dgram_rx_count) { return -EAGAIN; }
   if (msg_addr && (tcp || !file->udp_error)) {
     const struct socket_datagram *packet = tcp ? NULL : file->dgram_rx_head;
     bool truncated = packet && packet->len > cursor.capacity;
     msg_flags = truncated ? MSG_TRUNC : 0;
-    if (linux_recv_ip_control(domain, msg_addr, !tcp && file->ip_recvttl,
-                                packet ? packet->ttl : 0, &msg_flags) < 0 ||
-        linux_write_msg_flags(domain, msg_addr, msg_flags) < 0) { return -EFAULT; }
+    if (linux_recv_ip_control(domain, msg_addr, !tcp && file->ip_recvttl, packet ? packet->ttl : 0, &msg_flags) < 0 ||
+        linux_write_msg_flags(domain, msg_addr, msg_flags) < 0) {
+      return -EFAULT;
+    }
   }
   if (tcp) { return tcp_read_stream(file, cursor.capacity, flags, linux_scatter_iov, &cursor); }
   return dgram_read(domain, file, cursor.capacity, addr, addrlen, flags, linux_scatter_iov, &cursor);
@@ -117,8 +120,9 @@ int64_t cell_fd_socket_recvmsg(int fd, uint64_t msg_addr, uint32_t flags, bool d
   net_poll();
   bool can_block = !dontwait && (file->flags & CELL_O_NONBLOCK) == 0 && frame != NULL;
   uint32_t recv_flags = can_block ? flags : (flags & ~((uint32_t)MSG_WAITALL));
-  int64_t got = socket_recvmsg_to_iov(domain, file, msg_addr, msg.iov, msg.iovlen, msg.name, msg.namelen_addr, recv_flags);
+  int64_t got =
+    socket_recvmsg_to_iov(domain, file, msg_addr, msg.iov, msg.iovlen, msg.name, msg.namelen_addr, recv_flags);
   if (got != -EAGAIN || !can_block) { return got; }
-  return cell_block_current_on_socket_msg_timeout(fd, msg_addr, msg.iov, (uint64_t)msg.iovlen, msg.name, msg.namelen_addr,
-                                                  flags, file->so_rcvtimeo_ticks, frame);
+  return cell_block_current_on_socket_msg_timeout(fd, msg_addr, msg.iov, (uint64_t)msg.iovlen, msg.name,
+                                                  msg.namelen_addr, flags, file->so_rcvtimeo_ticks, frame);
 }

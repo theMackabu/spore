@@ -260,6 +260,8 @@ int sh_source_file(const char *path, int last_status, bool complain) {
   status = execute_script_range(lines, 0, count, status);
 cleanup:
   if (file != NULL) { fclose(file); }
-  for (size_t i = 0; i < count; ++i) { free(lines[i]); }
+  for (size_t i = 0; i < count; ++i) {
+    free(lines[i]);
+  }
   return status;
 }

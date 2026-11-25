@@ -566,8 +566,11 @@ static void test_relative_symlink_with_dotdot(struct ext2_fs *fs) {
   assert(!ext2_lookup(fs, "/symlink-bin/tool/", &through_parent));
   for (int i = 0; i < 20; ++i) {
     char target[32], path[48];
-    if (i) { snprintf(target, sizeof(target), "step%d", i - 1); }
-    else { strcpy(target, "tool"); }
+    if (i) {
+      snprintf(target, sizeof(target), "step%d", i - 1);
+    } else {
+      strcpy(target, "tool");
+    }
     snprintf(path, sizeof(path), "/symlink-bin/step%d", i);
     assert(ext2_symlink(fs, target, path));
   }
@@ -749,7 +752,10 @@ int main(int argc, char **argv) {
   assert(ext2_lookup(&fs, "/bin/df", &df));
   assert(ext2_is_regular(&df));
   assert(ext2_read_file(&fs, &df, 0, buf, 4, &got));
-  assert(got == 4 && memcmp(buf, "\x7f" "ELF", 4) == 0);
+  assert(got == 4 && memcmp(buf,
+                            "\x7f"
+                            "ELF",
+                            4) == 0);
 
   struct ext2_node loader;
   assert(ext2_lookup(&fs, "/lib/ld-musl-aarch64.so.1", &loader));

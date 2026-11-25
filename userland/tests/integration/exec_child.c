@@ -1,14 +1,14 @@
-#include <stdint.h>
-#include <signal.h>
-#include <stdio.h>
-#include <fcntl.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/capability.h>
-#include <sys/prctl.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/auxv.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#include <string.h>
 
 static int exec_private_data = 0x12345678;
 
@@ -31,8 +31,10 @@ int main(int argc, char **argv) {
   const char *arg = argc > 1 ? argv[1] : "missing";
   if (strcmp(arg, "parent-death-signal") == 0) {
     int value;
-    return !prctl(PR_GET_PDEATHSIG, &value) && value == SIGUSR1 &&
-           !prctl(PR_SET_PDEATHSIG, 0) && !prctl(PR_GET_PDEATHSIG, &value) && value == 0 ? 0 : 43;
+    return !prctl(PR_GET_PDEATHSIG, &value) && value == SIGUSR1 && !prctl(PR_SET_PDEATHSIG, 0) &&
+               !prctl(PR_GET_PDEATHSIG, &value) && value == 0
+             ? 0
+             : 43;
   }
   if (strcmp(arg, "mapped-user") == 0) {
     return !getuid() && !getgid() && !getauxval(AT_EUID) && !getauxval(AT_EGID) ? 0 : 43;

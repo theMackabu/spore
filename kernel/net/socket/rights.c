@@ -1,5 +1,5 @@
-#include "net/unix.h"
 #include "mm/pool.h"
+#include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/pipe.h"
@@ -50,7 +50,9 @@ int unix_prepare_rights(struct domain *domain, const int32_t *fds, unsigned coun
     if (file->type == OPEN_URING) { return -22; }
   }
   unsigned index = 0;
-  while (count > capacities[index]) { ++index; }
+  while (count > capacities[index]) {
+    ++index;
+  }
   struct object_pool *pool = &pools[index];
   size_t size = sizeof(struct unix_rights) + capacities[index] * sizeof(struct open_file *);
   if (!pool->limit && !pool_init(pool, size, SIZE_MAX)) { return -12; }
@@ -68,7 +70,9 @@ int unix_prepare_rights(struct domain *domain, const int32_t *fds, unsigned coun
 
 void unix_release_rights(struct unix_rights *rights) {
   if (!rights) { return; }
-  for (unsigned i = 0; i < rights->count; ++i) { cell_release_open_file(rights->files[i]); }
+  for (unsigned i = 0; i < rights->count; ++i) {
+    cell_release_open_file(rights->files[i]);
+  }
   pool_free(&pools[rights->pool], rights);
 }
 
@@ -82,8 +86,11 @@ void unix_queue_rights(struct unix_rights_queue *queue, struct unix_rights *righ
   }
   rights->start = start;
   rights->end = end;
-  if (queue->tail) { queue->tail->next = rights; }
-  else { queue->head = rights; }
+  if (queue->tail) {
+    queue->tail->next = rights;
+  } else {
+    queue->head = rights;
+  }
   queue->tail = rights;
 }
 
@@ -101,11 +108,15 @@ static void drop_head(struct unix_rights_queue *queue) {
 }
 
 void unix_discard_rights(struct unix_rights_queue *queue, uint64_t consumed) {
-  while (queue->head && queue->head->start < consumed) { drop_head(queue); }
+  while (queue->head && queue->head->start < consumed) {
+    drop_head(queue);
+  }
 }
 
 void unix_clear_rights(struct unix_rights_queue *queue) {
-  while (queue->head) { drop_head(queue); }
+  while (queue->head) {
+    drop_head(queue);
+  }
 }
 
 const struct unix_rights *unix_next_rights(const struct unix_rights_queue *queue, uint64_t offset, uint64_t *bytes) {
@@ -155,7 +166,9 @@ bool unix_collect_cycles(void) {
     }
     if (!file->unix_connected) { continue; }
     for (struct unix_rights *r = cell_pipe_rights(file->unix_rx_pipe)->head; r; r = r->next) {
-      for (unsigned i = 0; i < r->count; ++i) { mark(r->files[i], &work); }
+      for (unsigned i = 0; i < r->count; ++i) {
+        mark(r->files[i], &work);
+      }
     }
   }
   for (struct open_file *file = sockets; file; file = file->unix_gc_next) {

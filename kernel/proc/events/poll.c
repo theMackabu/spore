@@ -1,21 +1,21 @@
-#include "abi/linux/shared/layout.h"
 #include "proc/poll.h"
-#include "poll_internal.h"
+#include "abi/linux/shared/layout.h"
 #include "fs/notify.h"
 #include "net/net.h"
+#include "poll_internal.h"
 #include "proc/signal.h"
 #include "proc/signalfd.h"
 
 #include "arch/regs.h"
+#include "net/socket.h"
 #include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/pipe.h"
-#include "tty/pty.h"
-#include "net/socket.h"
 #include "proc/thread.h"
+#include "tty/pty.h"
 #include "tty/tty.h"
 
 enum { EFAULT = 14, EINVAL = 22 };
@@ -111,8 +111,14 @@ static int64_t pselect_check(struct thread *thread, bool commit) {
       int events = (read & bit ? CELL_POLLIN : 0) | (write & bit ? CELL_POLLOUT : 0);
       int revents = cell_thread_poll_events(thread, cell_file_at(thread->domain, 64 * i + pos), events);
       if (revents & CELL_POLLNVAL) { return -9; }
-      if ((read & bit) && (revents & (CELL_POLLIN | CELL_POLLHUP | CELL_POLLERR))) { sets[0][i] |= bit; ++ready; }
-      if ((write & bit) && (revents & (CELL_POLLOUT | CELL_POLLERR))) { sets[1][i] |= bit; ++ready; }
+      if ((read & bit) && (revents & (CELL_POLLIN | CELL_POLLHUP | CELL_POLLERR))) {
+        sets[0][i] |= bit;
+        ++ready;
+      }
+      if ((write & bit) && (revents & (CELL_POLLOUT | CELL_POLLERR))) {
+        sets[1][i] |= bit;
+        ++ready;
+      }
       bits &= bits - 1;
     }
   }
@@ -153,8 +159,8 @@ void cell_wake_poll_waiters_internal(void) {
   wake_poll_waiters();
 }
 
-int cell_sleep_poll(struct thread *thread, struct trap_frame *frame, const uint64_t *mask,
-                      bool has_timeout, uint64_t timeout_ticks) {
+int cell_sleep_poll(struct thread *thread, struct trap_frame *frame, const uint64_t *mask, bool has_timeout,
+                    uint64_t timeout_ticks) {
   if (mask != NULL) {
     thread->wait.saved_signal_mask = thread->signal_mask;
     thread->wait.restore_signal_mask = true;
@@ -176,8 +182,8 @@ int cell_sleep_poll(struct thread *thread, struct trap_frame *frame, const uint6
   return CELL_SWITCHED;
 }
 
-int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks,
-                       const uint64_t *mask, struct trap_frame *frame) {
+int cell_ppoll_current(uint64_t fds, uint64_t nfds, bool has_timeout, uint64_t timeout_ticks, const uint64_t *mask,
+                       struct trap_frame *frame) {
   struct thread *thread = cell_current_thread_internal();
   if (thread == NULL || cell_current_domain_internal() == NULL || nfds > MAX_FDS) { return -EINVAL; }
   net_poll();

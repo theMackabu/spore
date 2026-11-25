@@ -1,9 +1,9 @@
-#include "abi/linux/shared/usercopy.h"
 #include "abi/linux/shared/signal.h"
-#include "proc/memory.h"
+#include "abi/linux/shared/usercopy.h"
 #include "arch/regs.h"
 #include "handlers.h"
 #include "proc/domain.h"
+#include "proc/memory.h"
 #include "proc/poll.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
@@ -41,7 +41,8 @@ static bool on_sigaltstack(const struct thread *thread, const struct trap_frame 
     return false;
   }
   uint64_t end = thread->sigaltstack_sp + thread->sigaltstack_size;
-  return end >= thread->sigaltstack_sp && trap_user_stack(frame) >= thread->sigaltstack_sp && trap_user_stack(frame) < end;
+  return end >= thread->sigaltstack_sp && trap_user_stack(frame) >= thread->sigaltstack_sp &&
+         trap_user_stack(frame) < end;
 }
 
 int64_t sys_sigaltstack(struct trap_frame *frame, uint64_t new_addr, uint64_t old_addr) {

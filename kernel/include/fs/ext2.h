@@ -83,7 +83,8 @@ constexpr uint32_t EXT2_ROOT_INO = 2;
 bool ext2_mount(struct ext2_fs *fs, ext2_read_fn read, void *ctx);
 bool ext2_mount_rw(struct ext2_fs *fs, ext2_read_fn read, ext2_write_fn write, void *ctx);
 void ext2_set_now(uint32_t epoch_sec);
-bool ext2_locate_entry_from(struct ext2_fs *fs, uint32_t root, const char *path, uint32_t ino, struct vfs_entry_name *name);
+bool ext2_locate_entry_from(struct ext2_fs *fs, uint32_t root, const char *path, uint32_t ino,
+                            struct vfs_entry_name *name);
 static inline bool ext2_locate_entry(struct ext2_fs *fs, const char *path, uint32_t ino, struct vfs_entry_name *name) {
   return ext2_locate_entry_from(fs, EXT2_ROOT_INO, path, ino, name);
 }
@@ -107,7 +108,8 @@ int ext2_mknod_from(struct ext2_fs *fs, uint32_t root, const char *path, uint16_
 static inline int ext2_mknod(struct ext2_fs *fs, const char *path, uint16_t mode, struct ext2_node *out) {
   return ext2_mknod_from(fs, EXT2_ROOT_INO, path, mode, out);
 }
-bool ext2_create_from(struct ext2_fs *fs, uint32_t root, const char *path, bool dir, uint16_t mode, struct ext2_node *out);
+bool ext2_create_from(struct ext2_fs *fs, uint32_t root, const char *path, bool dir, uint16_t mode,
+                      struct ext2_node *out);
 static inline bool ext2_create(struct ext2_fs *fs, const char *path, bool dir, uint16_t mode, struct ext2_node *out) {
   return ext2_create_from(fs, EXT2_ROOT_INO, path, dir, mode, out);
 }

@@ -23,18 +23,24 @@ static int namespace_init(pid_t outside, int ready, int inherited) {
     pid_t nested = fork();
     if (!nested) { _exit(getpid() == 1 && getppid() == 0 ? 19 : 5); }
     int status;
-    if (nested <= 2 || waitpid(nested, &status, 0) != nested || !WIFEXITED(status) || WEXITSTATUS(status) != 19) { _exit(6); }
+    if (nested <= 2 || waitpid(nested, &status, 0) != nested || !WIFEXITED(status) || WEXITSTATUS(status) != 19) {
+      _exit(6);
+    }
     _exit(fork() == -1 && errno == ENOMEM ? 23 : 7);
   }
   int status;
-  if (child != 2 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 23) { return 8; }
+  if (child != 2 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 23) {
+    return 8;
+  }
   int sync_pipe[2];
   if (pipe(sync_pipe)) { return 9; }
   child = fork();
   if (!child) {
     close(sync_pipe[0]);
     if (write(sync_pipe[1], "r", 1) != 1) { _exit(10); }
-    for (;;) { poll(NULL, 0, -1); }
+    for (;;) {
+      poll(NULL, 0, -1);
+    }
   }
   close(sync_pipe[1]);
   char c;
@@ -66,7 +72,6 @@ static int check_pid_namespace(void) {
   printf("[spore] PID namespace init, nested wait and teardown: %s status=%d\n", ok ? "PASS" : "FAIL", status);
   return ok;
 }
-
 
 int integration_pid_namespace(void) {
   pid_t driver = fork();

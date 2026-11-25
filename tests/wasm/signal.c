@@ -18,6 +18,6 @@ int main(void) {
   struct sigaction sa = {.sa_sigaction = handler, .sa_flags = SA_SIGINFO};
   if (sigaction(SIGTRAP, &sa, 0)) return 3;
   unsigned value;
-  __asm__ volatile("mov w9, #17\n fmov s0,w9\n brk #3\n fmov %w0,s0" : "=r"(value) :: "x9","v0","memory");
+  __asm__ volatile("mov w9, #17\n fmov s0,w9\n brk #3\n fmov %w0,s0" : "=r"(value)::"x9", "v0", "memory");
   return value;
 }

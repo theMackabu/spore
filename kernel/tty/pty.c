@@ -4,13 +4,13 @@
 #include "arch/regs.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
+#include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
-#include "mm/pmm.h"
 
 enum {
   EAGAIN = 11,
@@ -177,7 +177,10 @@ static int install_pty_fd(struct domain *domain, int id, bool master, uint32_t f
   struct open_file *file = cell_alloc_open_file();
   if (file == NULL) { return -12; }
   int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { cell_release_open_file(file); return fd; }
+  if (fd < 0) {
+    cell_release_open_file(file);
+    return fd;
+  }
   file->type = OPEN_PTY;
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   file->pty_id = (uint8_t)id;
@@ -205,7 +208,9 @@ static int open_master(struct ramfs *instance, uint32_t flags, const char *path)
     return -12;
   }
   unsigned number = 0;
-  while (pty_slot(instance, number) >= 0) { ++number; }
+  while (pty_slot(instance, number) >= 0) {
+    ++number;
+  }
   ptys[id].number = number;
   ptys[id].instance = instance;
   if (instance) {
@@ -213,10 +218,12 @@ static int open_master(struct ramfs *instance, uint32_t flags, const char *path)
     name[0] = '/';
     size_t pos = 1;
     append_dec(name, sizeof(ptys[id].slave_path), &pos, number);
-    int index = ramfs_device_node(instance, 0, name + 1, RAMFS_DEV_PTS, 0020000 | instance->pts_mode,
-                                  domain->euid, domain->egid);
+    int index =
+      ramfs_device_node(instance, 0, name + 1, RAMFS_DEV_PTS, 0020000 | instance->pts_mode, domain->euid, domain->egid);
     if (index < 0) {
-      ring_release(&ptys[id].to_master); ring_release(&ptys[id].to_slave); return -12;
+      ring_release(&ptys[id].to_master);
+      ring_release(&ptys[id].to_slave);
+      return -12;
     }
     struct ramfs_node node;
     ramfs_refresh_node(instance, index, &node);
@@ -236,7 +243,8 @@ static int open_master(struct ramfs *instance, uint32_t flags, const char *path)
   if (fd < 0) {
     if (instance) {
       ramfs_remove(instance, 0, ptys[id].slave_path);
-      --instance->pins; mountns_put_fs(instance);
+      --instance->pins;
+      mountns_put_fs(instance);
     }
     ring_release(&ptys[id].to_master);
     ring_release(&ptys[id].to_slave);
@@ -291,7 +299,10 @@ void cell_pty_release_file(struct open_file *file) {
     --pty->slave_refs;
   }
   if (pty->master_refs == 0 && pty->slave_refs == 0) {
-    if (pty->instance) { --pty->instance->pins; mountns_put_fs(pty->instance); }
+    if (pty->instance) {
+      --pty->instance->pins;
+      mountns_put_fs(pty->instance);
+    }
     ring_release(&pty->to_master);
     ring_release(&pty->to_slave);
     kmemset(pty, 0, sizeof(*pty));
@@ -509,8 +520,8 @@ static void wake_pty_waiters(void) {
 }
 
 int cell_block_current_on_pty(int fd, uint64_t buf, uint64_t len, bool write, struct trap_frame *frame) {
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_PTY, .target = fd, .buf = buf, .len = len,
-                                                        .write = write});
+  return cell_block_current(
+    frame, (struct thread_wait){.reason = WAIT_PTY, .target = fd, .buf = buf, .len = len, .write = write});
 }
 
 static void pty_notify(void) {

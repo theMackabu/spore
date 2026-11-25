@@ -73,8 +73,8 @@ static int udp_bind_conflict_regression(void) {
   if (alias >= 0) { close(alias); }
   int next = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   ok = ok && next >= 0 && bind(next, (struct sockaddr *)&sa, sizeof(sa)) == 0 &&
-       sendto(b, "b", 1, 0, (struct sockaddr *)&sa, sizeof(sa)) == 1 &&
-       recv(next, &byte, 1, MSG_DONTWAIT) == 1 && byte == 'b';
+       sendto(b, "b", 1, 0, (struct sockaddr *)&sa, sizeof(sa)) == 1 && recv(next, &byte, 1, MSG_DONTWAIT) == 1 &&
+       byte == 'b';
   if (next >= 0) { close(next); }
   close(b);
   printf("[spore] udp bind conflict and reuse: %s\n", ok ? "PASS" : "FAIL");
@@ -158,8 +158,8 @@ static int udp_msg_iov_regression(void) {
        read(fd, packet, sizeof(packet)) == 13 && memcmp(packet, "iov-send-recv", 13) == 0;
   memset(first, 0, sizeof(first));
   memset(second, 0, sizeof(second));
-  ok = ok && write(fd, "read-vectors", 12) == 12 && readv(fd, in_iov, 2) == 12 &&
-       strcmp(first, "read") == 0 && strcmp(second, "-vectors") == 0;
+  ok = ok && write(fd, "read-vectors", 12) == 12 && readv(fd, in_iov, 2) == 12 && strcmp(first, "read") == 0 &&
+       strcmp(second, "-vectors") == 0;
   close(fd);
   printf("[spore] udp msg iov: %s (%s%s)\n", ok ? "PASS" : "FAIL", first, second);
   return ok;
@@ -1032,12 +1032,14 @@ static int tcp_rx_ring_regression(void) {
   unsigned char *peek = malloc(PEEK_LEN);
   unsigned char *chunk = malloc(SHORT_READ);
   int ok = first != NULL && second != NULL && peek != NULL && chunk != NULL;
-  for (size_t i = 0; ok && i < FIRST_LEN; ++i) { first[i] = tcp_rx_pattern(i); }
-  for (size_t i = 0; ok && i < SECOND_LEN; ++i) { second[i] = tcp_rx_pattern(FIRST_LEN + i); }
-  if (ok) { ok = tcp_send_all(accepted, first, FIRST_LEN); }
-  if (ok) {
-    ok = recv(client, peek, PEEK_LEN, MSG_PEEK) == PEEK_LEN && memcmp(peek, first, PEEK_LEN) == 0;
+  for (size_t i = 0; ok && i < FIRST_LEN; ++i) {
+    first[i] = tcp_rx_pattern(i);
   }
+  for (size_t i = 0; ok && i < SECOND_LEN; ++i) {
+    second[i] = tcp_rx_pattern(FIRST_LEN + i);
+  }
+  if (ok) { ok = tcp_send_all(accepted, first, FIRST_LEN); }
+  if (ok) { ok = recv(client, peek, PEEK_LEN, MSG_PEEK) == PEEK_LEN && memcmp(peek, first, PEEK_LEN) == 0; }
   size_t consumed = 0;
   while (ok && consumed < FIRST_READ) {
     size_t want = FIRST_READ - consumed;
@@ -1334,14 +1336,12 @@ int integration_udp_connect_send(uint32_t connect_ip, uint16_t connect_port, uin
 
 int integration_socket_suite(void) {
   return integration_unix_suite() && udp_bind_conflict_regression() && udp_receive_queue_regression() &&
-         udp_msg_iov_regression() &&
-         udp_recvmsg_trunc_regression() && socket_msg_peek_regression() && socket_msg_waitall_regression() &&
-         getsockname_regression() && socket_options_regression() && tcp_rcvlowat_poll_regression() &&
-         tcp_abortive_linger_regression() && udp_broadcast_option_regression() && udp_loopback_refused_regression() &&
-         udp_disconnect_regression() && udp_external_refused_regression() && socket_timeout_regression() &&
-         socket_msg_dontwait_regression() && socket_shutdown_regression() && tcp_sigpipe_regression() &&
-         tcp_loopback_accept_regression() && tcp_bulk_send_regression() && tcp_rx_ring_regression() &&
-         tcp_fin_eof_regression() &&
-         tcp_refused_poll_error_regression() && tcp_send_timeout_regression() && tcp_sendmsg_timeout_regression() &&
-         getpeername_regression();
+         udp_msg_iov_regression() && udp_recvmsg_trunc_regression() && socket_msg_peek_regression() &&
+         socket_msg_waitall_regression() && getsockname_regression() && socket_options_regression() &&
+         tcp_rcvlowat_poll_regression() && tcp_abortive_linger_regression() && udp_broadcast_option_regression() &&
+         udp_loopback_refused_regression() && udp_disconnect_regression() && udp_external_refused_regression() &&
+         socket_timeout_regression() && socket_msg_dontwait_regression() && socket_shutdown_regression() &&
+         tcp_sigpipe_regression() && tcp_loopback_accept_regression() && tcp_bulk_send_regression() &&
+         tcp_rx_ring_regression() && tcp_fin_eof_regression() && tcp_refused_poll_error_regression() &&
+         tcp_send_timeout_regression() && tcp_sendmsg_timeout_regression() && getpeername_regression();
 }

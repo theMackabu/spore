@@ -68,7 +68,10 @@ int kmemcmp(const void *a, const void *b, size_t len) {
     word_t x, y;
     copy_fixed(&x, aa, sizeof(x));
     copy_fixed(&y, bb, sizeof(y));
-    if (x != y) { len = sizeof(word_t); break; }
+    if (x != y) {
+      len = sizeof(word_t);
+      break;
+    }
     aa += sizeof(word_t);
     bb += sizeof(word_t);
     len -= sizeof(word_t);

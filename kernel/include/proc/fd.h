@@ -1,9 +1,9 @@
 #pragma once
 
-#include "proc/limits.h"
-#include "io_uring/ring.h"
-#include "fs/vfs.h"
 #include "fs/notify.h"
+#include "fs/vfs.h"
+#include "io_uring/ring.h"
+#include "proc/limits.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -192,7 +192,8 @@ bool cell_init_stdio(struct domain *domain);
 bool cell_copy_fd_table(struct domain *dst, const struct domain *src);
 void cell_copy_open_path(struct open_file *file, const char *path);
 int64_t cell_fd_lseek(int fd, int64_t off, int whence);
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved, struct trap_frame *frame);
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved,
+                      struct trap_frame *frame);
 int cell_fd_pipe2(uint64_t pipefd_addr, int flags);
 int cell_fd_dup(int oldfd, int minfd);
 int cell_fd_dup3(int oldfd, int newfd, int flags);

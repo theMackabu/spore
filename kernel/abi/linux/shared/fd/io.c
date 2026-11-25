@@ -36,9 +36,7 @@ int64_t sys_pwrite64(uint64_t fd, uint64_t buf, uint64_t len, uint64_t off) {
 int64_t sys_vector_io(struct trap_frame *frame, uint64_t fd, uint64_t iov, uint64_t iovcnt, bool write) {
   if (iovcnt > MAX_IOVCNT) { return -(int64_t)EINVAL; }
   uint64_t iov_bytes = iovcnt * sizeof(struct iovec64);
-  if (!syscall_user_readable(iov, iov_bytes)) {
-    return -(int64_t)EFAULT;
-  }
+  if (!syscall_user_readable(iov, iov_bytes)) { return -(int64_t)EFAULT; }
 
   struct open_file *file = cell_fd_file(fd);
   if (file && file->type == OPEN_UNIX_STREAM && cell_pipe_is_packet(file->unix_rx_pipe)) {

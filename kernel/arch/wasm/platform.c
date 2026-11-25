@@ -1,6 +1,6 @@
 #include "arch/platform.h"
-#include "abi/linux/aarch64/syscall.h"
 #include "abi/freebsd/aarch64.h"
+#include "abi/linux/aarch64/syscall.h"
 #include "abi/linux/shared/numbers.h"
 #include "abi/linux/shared/usercopy.h"
 #include "arch/aarch64/mmu.h"
@@ -117,13 +117,27 @@ bool arch_rndr64(uint64_t *out) {
 void wasm_select_cpu(uint32_t cpu) {
   cpu_id = cpu;
 }
-uint32_t smp_present_cpu_count(void) { return cpu_count; }
-uint32_t smp_possible_cpu_count(void) { return cpu_count; }
-uint32_t smp_online_cpu_count(void) { return cpu_count; }
-uint32_t smp_current_cpu(void) { return cpu_id; }
-bool smp_cpu_present(uint32_t cpu) { return cpu < cpu_count; }
-bool smp_cpu_online(uint32_t cpu) { return cpu < cpu_count; }
-uint64_t smp_cpu_hardware_id(uint32_t cpu) { return cpu; }
+uint32_t smp_present_cpu_count(void) {
+  return cpu_count;
+}
+uint32_t smp_possible_cpu_count(void) {
+  return cpu_count;
+}
+uint32_t smp_online_cpu_count(void) {
+  return cpu_count;
+}
+uint32_t smp_current_cpu(void) {
+  return cpu_id;
+}
+bool smp_cpu_present(uint32_t cpu) {
+  return cpu < cpu_count;
+}
+bool smp_cpu_online(uint32_t cpu) {
+  return cpu < cpu_count;
+}
+uint64_t smp_cpu_hardware_id(uint32_t cpu) {
+  return cpu;
+}
 void *smp_current_thread_slot(uint32_t cpu) {
   return cpu < cpu_count ? cpus[cpu].thread : NULL;
 }
@@ -156,7 +170,9 @@ void aarch64_tlb_flush_pages(uint64_t va, uint64_t mask) {
   (void)va;
   (void)mask;
 }
-void aarch64_tlb_flush_all(void) { ++wasm_tlb_generation; }
+void aarch64_tlb_flush_all(void) {
+  ++wasm_tlb_generation;
+}
 void vmm_install_user(const struct user_address_space *as) {
   ++wasm_tlb_generation;
   (void)as;
@@ -170,7 +186,9 @@ void arch_restore_context(const struct arch_thread_context *in) {
 }
 
 static bool log_console;
-bool virtio_console_ready(void) { return log_console; }
+bool virtio_console_ready(void) {
+  return log_console;
+}
 void virtio_console_write(const uint8_t *p, size_t n) {
   if (!log_console) { return; }
   for (size_t i = 0; i < n; ++i) {
@@ -224,10 +242,15 @@ static bool disk_flush(void *ctx) {
   return host_disk_flush() != 0;
 }
 
-bool wasm_shutdown_storage(void) { return vfs_shutdown(); }
+bool wasm_shutdown_storage(void) {
+  return vfs_shutdown();
+}
 
 void app_finish(enum app_result kind, unsigned value) {
-  if (!wasm_shutdown_storage()) { kind = APP_BOOT_ERROR; value = BOOT_FLUSH_FAILED; }
+  if (!wasm_shutdown_storage()) {
+    kind = APP_BOOT_ERROR;
+    value = BOOT_FLUSH_FAILED;
+  }
   wasm_flush();
   host_finish(kind, value, fault_pc, fault_text, fault_len);
 }
@@ -258,9 +281,12 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   log_console = (devices & 64) != 0;
   dimensions = host_winsize();
   cpu_count = count;
-  for (unsigned i = 1; i < count; ++i) { cpus[i].idle = true; }
+  for (unsigned i = 1; i < count; ++i) {
+    cpus[i].idle = true;
+  }
   const uint64_t hhdm = (uintptr_t)ram;
-  struct spore_boot_module payload = {.phys_addr = (uint64_t)(uintptr_t)image - hhdm, .size = size, .path = "/spore.app"};
+  struct spore_boot_module payload = {
+    .phys_addr = (uint64_t)(uintptr_t)image - hhdm, .size = size, .path = "/spore.app"};
   struct spore_boot_info boot = {.hhdm_offset = hhdm, .modules = size ? &payload : NULL, .module_count = size ? 1 : 0};
   struct boot_profile profile = {0};
   boot_select_profile(&boot, &profile);
@@ -337,12 +363,17 @@ void *wasm_lookup_page(uint64_t page, enum vmm_access access) {
 static bool entered;
 void *wasm_translate(uint64_t page, enum vmm_access access) {
   struct user_address_space *as = cell_current_as();
-  if (page >= USER_VA_LIMIT || !cell_domain_ensure_user_range(cpus[cpu_id].thread->domain, page, 1, access)) { return NULL; }
+  if (page >= USER_VA_LIMIT || !cell_domain_ensure_user_range(cpus[cpu_id].thread->domain, page, 1, access)) {
+    return NULL;
+  }
   if (!vmm_user_range_accessible(as, page, 1, access)) {
     if (access != VMM_ACCESS_WRITE || !cell_handle_write_fault(page)) { return NULL; }
   }
   uint64_t pa = vmm_user_to_phys(as, page);
-  if (pa && access == VMM_ACCESS_EXEC && !entered) { entered = true; host_entry(); }
+  if (pa && access == VMM_ACCESS_EXEC && !entered) {
+    entered = true;
+    host_entry();
+  }
   return pa ? pmm_phys_to_virt(pa) : NULL;
 }
 
@@ -352,8 +383,11 @@ bool wasm_syscall(struct trap_frame *f, struct arch_thread_context *context) {
   bool bsd = cell_current_as()->freebsd_abi;
   bool write = bsd ? (nr == 4 || nr == 121) : (nr == SYS_WRITE || nr == SYS_WRITEV);
   channel = write && f->x[0] == 2 ? 2 : 1;
-  if (bsd) { freebsd_aarch64_syscall(f); }
-  else { linux_aarch64_syscall(f); }
+  if (bsd) {
+    freebsd_aarch64_syscall(f);
+  } else {
+    linux_aarch64_syscall(f);
+  }
   wasm_flush();
   active_context = NULL;
   return cpus[cpu_id].idle;
@@ -369,8 +403,8 @@ bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, i
   const struct vma *vma = signal == 11 ? vma_lookup(cell_domain_vmas(cpus[cpu_id].thread->domain), address) : NULL;
   if (vma && log_console) {
     struct vfs_stats stats = vfs_get_stats();
-    kprintf("[kernel] fault in mapped guest memory, free pages %u, cached pages %u/%u\n",
-            (unsigned)pmm_free_pages(), (unsigned)stats.page_cache_pages, (unsigned)stats.page_cache_capacity);
+    kprintf("[kernel] fault in mapped guest memory, free pages %u, cached pages %u/%u\n", (unsigned)pmm_free_pages(),
+            (unsigned)stats.page_cache_pages, (unsigned)stats.page_cache_capacity);
   }
   int code = vma ? 2 : 1;
   cell_signal_current_fault(signal, f, address, code);
@@ -413,7 +447,8 @@ size_t proc_cpuinfo_text(char *out, size_t cap) {
   for (uint32_t cpu = 0; cpu < cpu_count; ++cpu) {
     proc_append_str(out, cap, &len, "processor\t: ");
     proc_append_u64(out, cap, &len, cpu);
-    proc_append_str(out, cap, &len, "\nmodel name\t: Spore ARM64 virtual CPU\nCPU architecture: 8\n"
+    proc_append_str(out, cap, &len,
+                    "\nmodel name\t: Spore ARM64 virtual CPU\nCPU architecture: 8\n"
                     "Features\t: fp asimd aes pmull sha1 sha2 crc32 atomics\n\n");
   }
   return len;

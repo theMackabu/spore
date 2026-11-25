@@ -24,7 +24,7 @@ enum elf_load_status elf_load_program(struct user_address_space *as, struct vma_
   }
 #ifdef SPORE_NATIVE_PORT
   extern bool port_install_trampoline(struct user_address_space *, struct vma_list *);
-  if (!port_install_trampoline(as,vmas)) { return ELF_BAD_EXECUTABLE; }
+  if (!port_install_trampoline(as, vmas)) { return ELF_BAD_EXECUTABLE; }
 #endif
   as->brk_base = out->brk_base;
   as->brk_current = out->brk_base;

@@ -1,5 +1,5 @@
-#include "abi/linux/aarch64/signal_context.h"
 #include "arch/signal_frame.h"
+#include "abi/linux/aarch64/signal_context.h"
 
 #include "lib/kprintf.h"
 #include "lib/mem.h"
@@ -8,14 +8,7 @@
 #include "proc/signal.h"
 #include "proc/thread.h"
 
-enum {
-  EFAULT = 14,
-  SIGSEGV = 11,
-  SA_SIGINFO = 4,
-  SA_ONSTACK = 0x08000000,
-  SS_ONSTACK = 1,
-  SS_DISABLE = 2
-};
+enum { EFAULT = 14, SIGSEGV = 11, SA_SIGINFO = 4, SA_ONSTACK = 0x08000000, SS_ONSTACK = 1, SS_DISABLE = 2 };
 
 struct signal_frame64 {
   struct siginfo64 siginfo;
@@ -34,7 +27,8 @@ static bool thread_on_sigaltstack(const struct thread *thread) {
   return end >= thread->sigaltstack_sp && sp >= thread->sigaltstack_sp && sp < end;
 }
 
-static void fill_signal_context(struct signal_frame64 *frame, const struct thread *thread, const struct siginfo_fields64 *info) {
+static void fill_signal_context(struct signal_frame64 *frame, const struct thread *thread,
+                                const struct siginfo_fields64 *info) {
   frame->siginfo.fields = *info;
 
   frame->ucontext.uc_stack.ss_sp = thread->sigaltstack_sp;
@@ -50,7 +44,8 @@ static void fill_signal_context(struct signal_frame64 *frame, const struct threa
   frame->ucontext.uc_mcontext.pstate = thread->tf.spsr_el1;
 }
 
-bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action, const struct siginfo_fields64 *info) {
+bool arch_push_signal_frame(struct thread *thread, const struct signal_action *action,
+                            const struct siginfo_fields64 *info) {
   int signal = info->si_signo;
   if (!action->restorer) { return false; }
   struct domain *domain = thread->domain;
@@ -62,8 +57,7 @@ bool arch_push_signal_frame(struct thread *thread, const struct signal_action *a
   fill_signal_context(&frame, thread, info);
   if (thread == cell_current_thread_internal()) { arch_save_context(&thread->context); }
   struct aarch64_fpsimd_ctx fp = {
-    .head = {AARCH64_FPSIMD_MAGIC, sizeof(fp)}, .fpsr = thread->context.fp.fpsr, .fpcr = thread->context.fp.fpcr
-  };
+    .head = {AARCH64_FPSIMD_MAGIC, sizeof(fp)}, .fpsr = thread->context.fp.fpsr, .fpcr = thread->context.fp.fpcr};
   kmemcpy(fp.vregs, thread->context.fp.q, sizeof(fp.vregs));
   kmemcpy(frame.ucontext.uc_mcontext.reserved, &fp, sizeof(fp));
 

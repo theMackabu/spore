@@ -107,11 +107,11 @@ static bool populate_dev(struct ramfs *fs, int dev) {
   ramfs_inode_at(fs, shm)->mode = 0041777;
   int pts = ramfs_add_node(fs, dev, "pts", true, true);
   static const struct boot_node devices[] = {
-    {"null", RAMFS_DEV_NULL, CHAR_DEVICE}, {"zero", RAMFS_DEV_ZERO, CHAR_DEVICE},
-    {"full", RAMFS_DEV_FULL, CHAR_DEVICE}, {"random", RAMFS_DEV_RANDOM, CHAR_DEVICE},
+    {"null", RAMFS_DEV_NULL, CHAR_DEVICE},       {"zero", RAMFS_DEV_ZERO, CHAR_DEVICE},
+    {"full", RAMFS_DEV_FULL, CHAR_DEVICE},       {"random", RAMFS_DEV_RANDOM, CHAR_DEVICE},
     {"urandom", RAMFS_DEV_URANDOM, CHAR_DEVICE}, {"console", RAMFS_DEV_CONSOLE, CHAR_DEVICE},
-    {"tty", RAMFS_DEV_TTY, CHAR_DEVICE}, {"ttys0", RAMFS_DEV_TTY, CHAR_DEVICE},
-    {"ptmx", RAMFS_DEV_PTMX, CHAR_DEVICE}, {"procinfo", RAMFS_DEV_PROCINFO, READ_ONLY_FILE},
+    {"tty", RAMFS_DEV_TTY, CHAR_DEVICE},         {"ttys0", RAMFS_DEV_TTY, CHAR_DEVICE},
+    {"ptmx", RAMFS_DEV_PTMX, CHAR_DEVICE},       {"procinfo", RAMFS_DEV_PROCINFO, READ_ONLY_FILE},
   };
   for (size_t i = 0; i < sizeof(devices) / sizeof(*devices); ++i) {
     if (!add_device(fs, dev, devices[i].name, devices[i].device, devices[i].mode)) { return false; }
@@ -132,7 +132,9 @@ static bool populate_dev(struct ramfs *fs, int dev) {
 static bool populate_proc(struct ramfs *fs, int proc) {
   static const char overflow_id[] = "65534\n";
   if (!ramfs_add_boot_file(fs, "/proc/sys/kernel/overflowuid", overflow_id, sizeof(overflow_id) - 1, 0444) ||
-      !ramfs_add_boot_file(fs, "/proc/sys/kernel/overflowgid", overflow_id, sizeof(overflow_id) - 1, 0444)) { return false; }
+      !ramfs_add_boot_file(fs, "/proc/sys/kernel/overflowgid", overflow_id, sizeof(overflow_id) - 1, 0444)) {
+    return false;
+  }
   int net = ramfs_add_node(fs, proc, "net", true, true);
   if (!add_device(fs, net, "dev", RAMFS_DEV_NET_DEV, READ_ONLY_FILE)) { return false; }
   static const struct boot_node files[] = {
@@ -181,13 +183,14 @@ bool ramfs_populate(struct ramfs *fs, int root, const struct spore_boot_module *
   if (tmp < 0) { return false; }
   ramfs_inode_at(fs, tmp)->mode = 0041777;
   if (add_mount(fs, root, "run", RAMFS_MOUNT_RUN) < 0) { return false; }
-  if (!populate_dev(fs, dev) ||
-      !populate_proc(fs, proc) || !populate_cpu(fs, sys)) { return false; }
+  if (!populate_dev(fs, dev) || !populate_proc(fs, proc) || !populate_cpu(fs, sys)) { return false; }
   for (uint32_t i = 0; modules && i < count; ++i) {
     const struct spore_boot_module *m = &modules[i];
     struct ramfs_node existing;
     if (*m->path != '/' || ramfs_lookup_node(fs, 0, m->path, &existing)) { continue; }
-    if (!ramfs_add_boot_file(fs, m->path, (const void *)(uintptr_t)(fs->hhdm_offset + m->phys_addr), m->size, 0444)) { return false; }
+    if (!ramfs_add_boot_file(fs, m->path, (const void *)(uintptr_t)(fs->hhdm_offset + m->phys_addr), m->size, 0444)) {
+      return false;
+    }
   }
   return true;
 }

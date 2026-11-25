@@ -67,12 +67,13 @@ int cell_fd_unix_listen(int fd, int backlog);
 int cell_fd_unix_accept(int fd, int flags, struct trap_frame *frame);
 int cell_fd_unix_connect(int fd, const char *path);
 bool cell_fd_unix_peer_cred(int fd, struct cell_peer_cred *out);
-bool cell_net_deliver_udp(struct net_namespace *ns, uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len);
+bool cell_net_deliver_udp(struct net_namespace *ns, uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port,
+                          const void *payload, size_t len);
 bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
 bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error);
-void cell_net_deliver_tcp(struct net_namespace *ns, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
-                          size_t len);
+void cell_net_deliver_tcp(struct net_namespace *ns, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq,
+                          uint32_t ack, uint16_t window, uint8_t flags, const void *options, size_t options_len,
+                          const void *payload, size_t len);
 void cell_net_deliver_icmp(struct net_namespace *ns, uint32_t src_ip, uint8_t ttl, const void *payload, size_t len);
 
 int64_t cell_socket_tcp_read_to_domain_flags(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
@@ -85,4 +86,4 @@ int cell_socket_take_pending_tcp(struct domain *domain, struct open_file *listen
 
 int tcp_copy_peer_addr_to_domain(struct domain *domain, int accepted_fd, uint64_t addr, uint64_t addrlen);
 struct thread_wait;
-int64_t cell_resume_socket_io(struct open_file *file, struct domain *domain,const struct thread_wait *wait);
+int64_t cell_resume_socket_io(struct open_file *file, struct domain *domain, const struct thread_wait *wait);

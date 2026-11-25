@@ -1,22 +1,20 @@
 #include "internal.h"
 #include "net/unix.h"
 #include "proc/domain.h"
-#include "proc/poll.h"
 #include "proc/epoll.h"
+#include "proc/poll.h"
 #include "proc/thread.h"
 
 static void wake_socket_timeout_waiters(uint64_t now_ticks) {
   size_t cursor = 0;
   struct thread *thread;
   while ((thread = cell_next_waiter(WAIT_SOCKET, &cursor))) {
-    if (!thread->wait.has_deadline || now_ticks < thread->wait.deadline_tick) {
-      continue;
-    }
+    if (!thread->wait.has_deadline || now_ticks < thread->wait.deadline_tick) { continue; }
     cell_finish_wait(thread, -EAGAIN);
   }
 }
 
-int64_t cell_resume_socket_io(struct open_file *file, struct domain *domain,const struct thread_wait *wait) {
+int64_t cell_resume_socket_io(struct open_file *file, struct domain *domain, const struct thread_wait *wait) {
   if (file->type == OPEN_UNIX_LISTENER) { return take_pending_unix(domain, file, wait->socket_accept_flags); }
   if (wait->write) {
     return wait->socket_msg ? socket_sendmsg_tcp_from_domain(domain, file, wait->socket_msg_addr)
@@ -38,7 +36,10 @@ int64_t cell_resume_socket_io(struct open_file *file, struct domain *domain,cons
     int accepted = cell_socket_take_pending_tcp(domain, file, wait->socket_accept_flags);
     if (accepted < 0) { return accepted; }
     int rc = tcp_copy_peer_addr_to_domain(domain, accepted, wait->socket_addr, wait->socket_addrlen);
-    if (rc < 0) { cell_close_domain_fd(domain, accepted); return rc; }
+    if (rc < 0) {
+      cell_close_domain_fd(domain, accepted);
+      return rc;
+    }
     return accepted;
   }
   if (file->tcp_error) { return -(int)file->tcp_error; }
@@ -54,7 +55,7 @@ void cell_socket_wake_file(struct open_file *file) {
     while ((thread = cell_next_waiter(WAIT_SOCKET, &cursor))) {
       if (thread->wait.held_file != file || thread->wait.socket_servicing) { continue; }
       thread->wait.socket_servicing = true;
-      int64_t rc = cell_resume_socket_io(file,thread->domain,&thread->wait);
+      int64_t rc = cell_resume_socket_io(file, thread->domain, &thread->wait);
       thread->wait.socket_servicing = false;
       if (rc != -EAGAIN) { cell_finish_wait(thread, rc); }
     }

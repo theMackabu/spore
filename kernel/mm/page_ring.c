@@ -48,7 +48,10 @@ int page_ring_write(struct page_ring *ring, uint32_t len, ring_copy_in copy, voi
     uint32_t slot = pos / PAGE_SIZE;
     if (!ring->pages[slot]) {
       ring->pages[slot] = pmm_alloc_page();
-      if (!ring->pages[slot]) { error = -12; break; }
+      if (!ring->pages[slot]) {
+        error = -12;
+        break;
+      }
       ++ring->allocated;
       added |= UINT64_C(1) << slot;
     }

@@ -38,7 +38,9 @@ int cell_futex_requeue(uint64_t from, uint64_t to, int32_t wake_count, int32_t m
   struct domain *domain = cell_current_domain_internal();
   if (!domain || ((from | to) & 3u) || wake_count < 0 || move_count < 0) { return -EINVAL; }
   if (!cell_ensure_user_range(from, sizeof(uint32_t), VMM_ACCESS_READ) ||
-      !cell_ensure_user_range(to, sizeof(uint32_t), VMM_ACCESS_READ)) { return -EFAULT; }
+      !cell_ensure_user_range(to, sizeof(uint32_t), VMM_ACCESS_READ)) {
+    return -EFAULT;
+  }
   int woke = cell_futex_wake_domain(domain, from, wake_count, UINT32_MAX);
   int moved = 0;
   size_t cursor = 0;
@@ -90,8 +92,8 @@ int cell_set_robust_list_current(uint64_t robust_list) {
   return 0;
 }
 
-int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, uint32_t bitset, bool has_deadline, uint64_t deadline_tick,
-                            struct trap_frame *frame) {
+int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, uint32_t bitset, bool has_deadline,
+                            uint64_t deadline_tick, struct trap_frame *frame) {
   struct domain *domain = cell_current_domain_internal();
   struct thread *thread = cell_current_thread_internal();
   if (domain == NULL || thread == NULL || (uaddr & 3u) != 0) { return -EINVAL; }
@@ -101,13 +103,13 @@ int cell_futex_wait_current(uint64_t uaddr, uint32_t expected, uint32_t bitset, 
   if (actual != expected) { return -EAGAIN; }
   if (has_deadline && deadline_tick <= cell_uptime_ticks()) { return -ETIMEDOUT; }
   return cell_block_current(frame, (struct thread_wait){
-                                       .reason = WAIT_FUTEX,
-                                       .target = -1,
-                                       .has_deadline = has_deadline,
-                                       .deadline_tick = deadline_tick,
-                                       .futex_addr = uaddr,
-                                       .futex_bitset = bitset,
-                                     });
+                                     .reason = WAIT_FUTEX,
+                                     .target = -1,
+                                     .has_deadline = has_deadline,
+                                     .deadline_tick = deadline_tick,
+                                     .futex_addr = uaddr,
+                                     .futex_bitset = bitset,
+                                   });
 }
 
 int cell_futex_wake_current(uint64_t uaddr, uint32_t count, uint32_t bitset) {

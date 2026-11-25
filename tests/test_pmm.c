@@ -19,7 +19,9 @@ static void test_object_pool(void) {
     files[i][919] = (uint8_t)(i + 1);
   }
   assert(pool_alloc(&pool) == NULL);
-  for (size_t i = 0; i < 55; i += 3) { pool_free(&pool, files[i]); }
+  for (size_t i = 0; i < 55; i += 3) {
+    pool_free(&pool, files[i]);
+  }
   for (size_t i = 0; i < 55; ++i) {
     if (i % 3 == 0) {
       files[i] = pool_alloc(&pool);
@@ -28,7 +30,9 @@ static void test_object_pool(void) {
       assert(files[i][919] == i + 1);
     }
   }
-  for (size_t i = 55; i > 0; --i) { pool_free(&pool, files[i - 1]); }
+  for (size_t i = 55; i > 0; --i) {
+    pool_free(&pool, files[i - 1]);
+  }
   assert(pmm_free_pages() == free_pages);
 }
 
@@ -127,7 +131,9 @@ int main(void) {
   pmm_free_page(run + 63 * PAGE_SIZE);
   pmm_free_page(run + 64 * PAGE_SIZE);
   assert(pmm_alloc_contiguous_pages(2) == run + 63 * PAGE_SIZE);
-  for (size_t i = 0; i < 3; ++i) { pmm_free_page(fragments[0].base + i * PAGE_SIZE); }
+  for (size_t i = 0; i < 3; ++i) {
+    pmm_free_page(fragments[0].base + i * PAGE_SIZE);
+  }
   assert(pmm_alloc_contiguous_pages(3) == fragments[0].base);
 
   test_object_pool();

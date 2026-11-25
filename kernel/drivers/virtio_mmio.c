@@ -3,8 +3,8 @@
 #include "mm/pmm.h"
 
 bool virtio_matches(uintptr_t base, uint32_t device) {
-  return virtio_read(base, VIRTIO_MMIO_MAGIC) == VIRTIO_MAGIC &&
-         virtio_read(base, VIRTIO_MMIO_VERSION) == 2 && virtio_read(base, VIRTIO_MMIO_DEVICE_ID) == device;
+  return virtio_read(base, VIRTIO_MMIO_MAGIC) == VIRTIO_MAGIC && virtio_read(base, VIRTIO_MMIO_VERSION) == 2 &&
+         virtio_read(base, VIRTIO_MMIO_DEVICE_ID) == device;
 }
 
 uintptr_t virtio_find(uintptr_t base, unsigned slots, unsigned stride, uint32_t device) {
@@ -26,7 +26,8 @@ enum virtio_features virtio_negotiate(uintptr_t base) {
   virtio_write(base, VIRTIO_MMIO_DRIVER_FEATURES_SEL, 1);
   virtio_write(base, VIRTIO_MMIO_DRIVER_FEATURES, version);
   virtio_set_status(base, VIRTIO_STATUS_FEATURES_OK);
-  return (virtio_read(base, VIRTIO_MMIO_STATUS) & VIRTIO_STATUS_FEATURES_OK) ? VIRTIO_FEATURES_OK : VIRTIO_FEATURES_REJECTED;
+  return (virtio_read(base, VIRTIO_MMIO_STATUS) & VIRTIO_STATUS_FEATURES_OK) ? VIRTIO_FEATURES_OK
+                                                                             : VIRTIO_FEATURES_REJECTED;
 }
 
 uint64_t virtio_alloc_page(uint64_t hhdm, void **virt) {
@@ -67,11 +68,11 @@ bool virtq_setup(uintptr_t base, unsigned index, unsigned size, struct virtq *q)
 uintptr_t virtio_slot(uint64_t hhdm, unsigned index, uint32_t device) {
 #ifdef __riscv
   (void)hhdm;
-  if(index>=8)return 0;
-  uintptr_t base=0xffffffef00000000ull+(uint64_t)index*4096;
+  if (index >= 8) return 0;
+  uintptr_t base = 0xffffffef00000000ull + (uint64_t)index * 4096;
 #else
-  uintptr_t base=hhdm+VIRTIO_MMIO_BASE+(uint64_t)index*VIRTIO_MMIO_SLOT_SIZE;
+  uintptr_t base = hhdm + VIRTIO_MMIO_BASE + (uint64_t)index * VIRTIO_MMIO_SLOT_SIZE;
 #endif
-  return virtio_matches(base,device) ? base : 0;
+  return virtio_matches(base, device) ? base : 0;
 }
 #endif

@@ -283,8 +283,9 @@ static int check(struct uring_pending *p, struct uring *r) {
     return now_ns() >= p->deadline ? -62 : URING_PENDING;
   }
   if (p->sqe.opcode == OP_POLL_ADD) {
-    int rc = p->target->type == OPEN_SIGNALFD ? cell_thread_poll_events(cell_find_thread(p->tid), p->target, p->sqe.op_flags)
-                                              : cell_file_poll_events(p->target, p->sqe.op_flags);
+    int rc = p->target->type == OPEN_SIGNALFD
+               ? cell_thread_poll_events(cell_find_thread(p->tid), p->target, p->sqe.op_flags)
+               : cell_file_poll_events(p->target, p->sqe.op_flags);
     if ((p->sqe.len & 1) && !(p->sqe.len & 8)) {
       unsigned previous = p->last_ready;
       p->last_ready = rc;

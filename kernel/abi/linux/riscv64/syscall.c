@@ -1,8 +1,8 @@
 #include "abi/linux/shared/dispatch.h"
 #include "arch/regs.h"
 #include "proc/policy.h"
-#include "proc/signal.h"
 #include "proc/seccomp.h"
+#include "proc/signal.h"
 #include "proc/thread.h"
 
 int riscv_flush_icache(uint64_t flags);

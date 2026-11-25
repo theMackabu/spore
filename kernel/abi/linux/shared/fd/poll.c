@@ -1,9 +1,9 @@
-#include "abi/linux/shared/usercopy.h"
-#include "abi/linux/shared/layout.h"
-#include "handlers.h"
-#include "abi/linux/shared/time/ticks.h"
-#include "proc/domain.h"
 #include "proc/poll.h"
+#include "abi/linux/shared/layout.h"
+#include "abi/linux/shared/time/ticks.h"
+#include "abi/linux/shared/usercopy.h"
+#include "handlers.h"
+#include "proc/domain.h"
 #include "proc/thread.h"
 
 #include <stdbool.h>
@@ -22,8 +22,10 @@ struct pselect6_sigmask64 {
 static int read_wait_mask(uint64_t addr, uint64_t size, uint64_t *mask) {
   if (addr == 0) { return 0; }
   if (size != sizeof(*mask)) { return -EINVAL; }
-  return syscall_user_readable(addr, sizeof(*mask)) && vmm_copy_from_user(syscall_active_as(), mask, addr, sizeof(*mask))
-           ? 0 : -EFAULT;
+  return syscall_user_readable(addr, sizeof(*mask)) &&
+             vmm_copy_from_user(syscall_active_as(), mask, addr, sizeof(*mask))
+           ? 0
+           : -EFAULT;
 }
 
 static int read_timeout(uint64_t addr, uint64_t *ticks) {
@@ -31,7 +33,9 @@ static int read_timeout(uint64_t addr, uint64_t *ticks) {
   if (!addr) { return 0; }
   struct timespec64 timeout;
   if (!syscall_user_readable(addr, sizeof(timeout)) ||
-      !vmm_copy_from_user(syscall_active_as(), &timeout, addr, sizeof(timeout))) { return -EFAULT; }
+      !vmm_copy_from_user(syscall_active_as(), &timeout, addr, sizeof(timeout))) {
+    return -EFAULT;
+  }
   if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 || timeout.tv_nsec >= 1000000000) { return -EINVAL; }
   if (timeout.tv_sec || timeout.tv_nsec) { *ticks = timespec_to_scheduler_ticks(&timeout); }
   return 0;
@@ -90,5 +94,6 @@ int64_t sys_epoll_pwait(struct trap_frame *frame, uint64_t epfd, uint64_t events
   uint64_t mask;
   int rc = read_wait_mask(sigmask, sigsetsize, &mask);
   if (rc < 0) { return rc; }
-  return cell_epoll_wait_current((int)epfd, events_addr, (int)maxevents, (int)timeout_ms, sigmask ? &mask : NULL, frame);
+  return cell_epoll_wait_current((int)epfd, events_addr, (int)maxevents, (int)timeout_ms, sigmask ? &mask : NULL,
+                                 frame);
 }

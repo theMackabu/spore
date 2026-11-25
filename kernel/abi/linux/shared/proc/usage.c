@@ -1,10 +1,10 @@
-#include "proc/info.h"
-#include "abi/linux/shared/usercopy.h"
-#include "abi/linux/shared/layout.h"
 #include "abi/linux/shared/usage.h"
+#include "abi/linux/shared/layout.h"
+#include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
+#include "proc/info.h"
 #include "proc/memory.h"
 #include "proc/thread.h"
 
@@ -18,7 +18,9 @@ int linux_write_rusage(struct domain *domain, uint64_t addr, const struct resour
     .ru_majflt = (int64_t)usage->major_faults,
   };
   return cell_domain_ensure_user_range(domain, addr, sizeof(out), VMM_ACCESS_WRITE) &&
-         vmm_copy_to_user(cell_domain_as(domain), addr, &out, sizeof(out)) ? 0 : -EFAULT;
+             vmm_copy_to_user(cell_domain_as(domain), addr, &out, sizeof(out))
+           ? 0
+           : -EFAULT;
 }
 
 int64_t sys_getrusage(int who, uint64_t addr) {

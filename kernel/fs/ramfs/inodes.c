@@ -13,7 +13,9 @@ constexpr int INITIAL_SLOTS = 128;
 
 static struct ramfs_table **mount_slot(struct ramfs *fs) {
   struct ramfs_table **slot = &mounts;
-  while (*slot && (*slot)->owner != fs) { slot = &(*slot)->next; }
+  while (*slot && (*slot)->owner != fs) {
+    slot = &(*slot)->next;
+  }
   return slot;
 }
 
@@ -65,9 +67,7 @@ void ramfs_set_reclaim_callback(struct ramfs *fs, ramfs_reclaim_fn callback) {
 }
 
 static void destroy_inode(const struct ramfs_table *t, struct ramfs_mem_node *node) {
-  if (t->reclaim && node->link_target < 0) {
-    t->reclaim(t->owner, node->mount, node->ino);
-  }
+  if (t->reclaim && node->link_target < 0) { t->reclaim(t->owner, node->mount, node->ino); }
   if ((node->mode & 0170000) == 0120000 && node->link_target < 0) { --ramfs_symlink_count; }
   ramfs_free_node_pages(node);
 #if __STDC_HOSTED__
@@ -93,8 +93,13 @@ int ramfs_alloc_inode(struct ramfs *fs) {
   } else {
     i = t->next_unused++;
   }
-  *node = (struct ramfs_mem_node){.parent = -1, .link_target = -1, .links_count = 1, .first_page = -1,
-                                  .ino = fs->next_ino++, .atime = ramfs_now_sec, .ctime = ramfs_now_sec,
+  *node = (struct ramfs_mem_node){.parent = -1,
+                                  .link_target = -1,
+                                  .links_count = 1,
+                                  .first_page = -1,
+                                  .ino = fs->next_ino++,
+                                  .atime = ramfs_now_sec,
+                                  .ctime = ramfs_now_sec,
                                   .mtime = ramfs_now_sec};
   t->slots[i].node = node;
   ++t->live;
@@ -111,9 +116,13 @@ void ramfs_free_inode(struct ramfs *fs, int i) {
   if (t->capacity > INITIAL_SLOTS && t->live <= t->capacity / 4 &&
       (t->live == t->capacity / 4 || i == t->next_unused - 1)) {
     int high = t->next_unused;
-    while (high && !t->slots[high - 1].node) { --high; }
+    while (high && !t->slots[high - 1].node) {
+      --high;
+    }
     int capacity = t->capacity;
-    while (capacity > INITIAL_SLOTS && high <= capacity / 2) { capacity /= 2; }
+    while (capacity > INITIAL_SLOTS && high <= capacity / 2) {
+      capacity /= 2;
+    }
     if (capacity < t->capacity) { (void)resize_table(fs, capacity, high); }
   }
 }

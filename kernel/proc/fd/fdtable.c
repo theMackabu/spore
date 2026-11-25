@@ -83,8 +83,11 @@ void cell_assign_fd(struct domain *domain, int fd, struct open_file *file, bool 
     chunk->occupied &= ~bit;
     if (!chunk->occupied) { table->nonempty &= ~(UINT32_C(1) << index); }
   }
-  if (cloexec) { chunk->cloexec |= bit; }
-  else { chunk->cloexec &= ~bit; }
+  if (cloexec) {
+    chunk->cloexec |= bit;
+  } else {
+    chunk->cloexec &= ~bit;
+  }
   if (!file) { trim(table, index); }
   if (old) { cell_record_unlock_file(domain->id, old); }
   cell_release_open_file(old);
@@ -92,7 +95,10 @@ void cell_assign_fd(struct domain *domain, int fd, struct open_file *file, bool 
 
 int cell_install_fd(struct domain *domain, struct open_file *file, bool cloexec) {
   int fd = cell_find_free_fd(domain, 0);
-  if (fd < 0) { cell_release_open_file(file); return fd; }
+  if (fd < 0) {
+    cell_release_open_file(file);
+    return fd;
+  }
   cell_assign_fd(domain, fd, file, cloexec);
   return fd;
 }
@@ -113,7 +119,9 @@ int cell_install_fd_pair(struct domain *domain, struct open_file *a, struct open
   return 0;
 }
 
-struct open_file *cell_fd_file(uint64_t fd) { return cell_file_at(cell_current_domain_internal(), fd); }
+struct open_file *cell_fd_file(uint64_t fd) {
+  return cell_file_at(cell_current_domain_internal(), fd);
+}
 
 int cell_close_domain_fd(struct domain *domain, int fd) {
   if (!cell_file_at(domain, fd)) { return -EBADF; }
@@ -121,7 +129,9 @@ int cell_close_domain_fd(struct domain *domain, int fd) {
   return 0;
 }
 
-int cell_fd_close(int fd) { return cell_close_domain_fd(cell_current_domain_internal(), fd); }
+int cell_fd_close(int fd) {
+  return cell_close_domain_fd(cell_current_domain_internal(), fd);
+}
 
 enum fd_range_action { CLOSE_FDS, CLOSE_EXEC_FDS, MARK_CLOEXEC };
 
@@ -136,8 +146,9 @@ static void apply_fd_range(struct domain *domain, unsigned first, unsigned last,
     uint32_t bits = action == CLOSE_EXEC_FDS ? chunk->cloexec : chunk->occupied;
     if (index == low) { bits &= UINT32_MAX << (first % FDS_PER_CHUNK); }
     if (index == high) { bits &= UINT32_MAX >> (31 - last % FDS_PER_CHUNK); }
-    if (action == MARK_CLOEXEC) { chunk->cloexec |= bits; }
-    else {
+    if (action == MARK_CLOEXEC) {
+      chunk->cloexec |= bits;
+    } else {
       while (bits) {
         int fd = (int)(index * FDS_PER_CHUNK + (unsigned)__builtin_ctz(bits));
         cell_assign_fd(domain, fd, NULL, false);
@@ -152,16 +163,23 @@ void cell_close_fd_range(unsigned first, unsigned last, bool cloexec) {
   apply_fd_range(cell_current_domain_internal(), first, last, cloexec ? MARK_CLOEXEC : CLOSE_FDS);
 }
 
-void cell_close_all_fds(struct domain *domain) { apply_fd_range(domain, 0, MAX_FDS - 1, CLOSE_FDS); }
+void cell_close_all_fds(struct domain *domain) {
+  apply_fd_range(domain, 0, MAX_FDS - 1, CLOSE_FDS);
+}
 
-void cell_close_exec_fds(struct domain *domain) { apply_fd_range(domain, 0, MAX_FDS - 1, CLOSE_EXEC_FDS); }
+void cell_close_exec_fds(struct domain *domain) {
+  apply_fd_range(domain, 0, MAX_FDS - 1, CLOSE_EXEC_FDS);
+}
 
 bool cell_copy_fd_table(struct domain *dst, const struct domain *src) {
   uint32_t blocks = src->files.nonempty;
   while (blocks) {
     unsigned i = (unsigned)__builtin_ctz(blocks);
     struct fd_chunk *chunk = prepare(&dst->files, i);
-    if (!chunk) { cell_close_all_fds(dst); return false; }
+    if (!chunk) {
+      cell_close_all_fds(dst);
+      return false;
+    }
     *chunk = i ? *src->files.more[i - 1] : src->files.first;
     chunk->reserved = 0;
     dst->files.nonempty |= UINT32_C(1) << i;
@@ -209,7 +227,10 @@ int cell_fd_set_fd_flags(int fd, int flags) {
   if (!cell_file_at(domain, fd)) { return -EBADF; }
   struct fd_chunk *chunk = fd_chunk_at(&domain->files, (unsigned)fd / FDS_PER_CHUNK);
   uint32_t bit = UINT32_C(1) << (fd % FDS_PER_CHUNK);
-  if (flags & 1) { chunk->cloexec |= bit; }
-  else { chunk->cloexec &= ~bit; }
+  if (flags & 1) {
+    chunk->cloexec |= bit;
+  } else {
+    chunk->cloexec &= ~bit;
+  }
   return 0;
 }

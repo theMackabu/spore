@@ -7,8 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/reboot.h>
 #include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/statfs.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -32,15 +32,17 @@ int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   uint64_t start = now(), a = 1, b = 0, remaining = 1u << 22;
   __asm__ volatile("1: add %0,%0,#7\n eor %1,%1,%0\n subs %2,%2,#1\n b.ne 1b"
-                   : "+&r"(a), "+&r"(b), "+&r"(remaining) :: "cc");
+                   : "+&r"(a), "+&r"(b), "+&r"(remaining)::"cc");
   sample("integer", start, a ^ b);
 
   uint64_t check = 0;
   start = now();
-  for (int i = 0; i < 100000; ++i) check += syscall(SYS_getpid);
+  for (int i = 0; i < 100000; ++i)
+    check += syscall(SYS_getpid);
   sample("getpid", start, check);
 
-  check = 0; start = now();
+  check = 0;
+  start = now();
   for (int i = 0; i < 100000; ++i) {
     register long nr __asm__("x8") = SYS_getpid;
     register long result __asm__("x0");
@@ -57,7 +59,8 @@ int main(void) {
   uint8_t buf[64];
   memset(buf, 0x5a, sizeof(buf));
   if (fd < 0 || write(fd, buf, sizeof(buf)) != sizeof(buf)) return 3;
-  check = 0; start = now();
+  check = 0;
+  start = now();
   for (int i = 0; i < 100000; ++i) {
     if (pread(fd, buf, sizeof(buf), 0) != sizeof(buf)) return 4;
     check += buf[i & 63];
@@ -65,27 +68,30 @@ int main(void) {
   sample("pread64", start, check);
   close(fd);
 
-  for (size_t i = 0; i < sizeof(src); ++i) src[i] = (uint8_t)(i ^ (i >> 8));
+  for (size_t i = 0; i < sizeof(src); ++i)
+    src[i] = (uint8_t)(i ^ (i >> 8));
   memset(dst, 1, sizeof(dst));
-  check = 0; start = now();
+  check = 0;
+  start = now();
   for (unsigned i = 0; i < 128; ++i) {
     src[i * 4093] ^= (uint8_t)i;
     memcpy(dst, src, sizeof(src));
-    __asm__ volatile("" :: "r"(dst) : "memory");
+    __asm__ volatile("" ::"r"(dst) : "memory");
     check += dst[i * 4093];
   }
   sample("copy128m", start, check);
 
-  uint32x4_t x = {1,2,3,4}, y = {5,6,7,8}, k = {11,13,17,19};
+  uint32x4_t x = {1, 2, 3, 4}, y = {5, 6, 7, 8}, k = {11, 13, 17, 19};
   start = now();
   for (int i = 0; i < 200000; ++i) {
     uint32x4_t prev = x;
-    x = vsha256hq_u32(x,y,k);
-    y = vsha256h2q_u32(y,prev,k);
+    x = vsha256hq_u32(x, y, k);
+    y = vsha256h2q_u32(y, prev, k);
   }
   sample("sha256_rounds", start, x[0] ^ y[0]);
 
-  check = 0; start = now();
+  check = 0;
+  start = now();
   for (int i = 0; i < 200; ++i) {
     pid_t child = fork();
     if (child == 0) _exit(42);

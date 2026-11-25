@@ -6,7 +6,9 @@ enum { EFAULT = 14, EINVAL = 22 };
 
 int64_t sys_getrandom(uint64_t buf, uint64_t len, uint64_t flags) {
   enum { NONBLOCK = 1, RANDOM = 2, INSECURE = 4 };
-  if ((flags & ~(uint64_t)(NONBLOCK | RANDOM | INSECURE)) || (flags & (RANDOM | INSECURE)) == (RANDOM | INSECURE)) { return -EINVAL; }
+  if ((flags & ~(uint64_t)(NONBLOCK | RANDOM | INSECURE)) || (flags & (RANDOM | INSECURE)) == (RANDOM | INSECURE)) {
+    return -EINVAL;
+  }
   if (!syscall_user_writable(buf, len)) { return -EFAULT; }
   const struct user_address_space *as = syscall_active_as();
   uint64_t done = 0;

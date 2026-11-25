@@ -4,9 +4,9 @@
 #include "drivers/serial.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
+#include "proc/epoll.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
-#include "proc/epoll.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
 
@@ -223,7 +223,9 @@ void cell_tty_set_lflag(uint32_t lflag, bool flush_input) {
   if (flush_input) {
     cell_tty_flush_input();
   } else if (tty_canonical() && !(lflag & TTY_ICANON)) {
-    for (size_t i = 0; i < tty_line_len; ++i) { tty_ready_push(tty_line[i]); }
+    for (size_t i = 0; i < tty_line_len; ++i) {
+      tty_ready_push(tty_line[i]);
+    }
     tty_line_len = 0;
     tty_line_cursor = 0;
     tty_prompt_active = false;

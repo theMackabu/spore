@@ -41,8 +41,8 @@ static bool write_slot(struct ext2_fs *fs, uint32_t parent, uint32_t slot, uint3
   return ext2_write_bytes(fs, (uint64_t)parent * fs->block_size + slot * sizeof(block), &block, sizeof(block));
 }
 
-static bool walk(struct ext2_fs *fs, const struct ext2_node *node, const struct block_path *path,
-                 uint32_t *block, uint32_t *parent, uint32_t *level) {
+static bool walk(struct ext2_fs *fs, const struct ext2_node *node, const struct block_path *path, uint32_t *block,
+                 uint32_t *parent, uint32_t *level) {
   *block = node->blocks[path->root];
   *parent = 0;
   *level = 0;
@@ -124,12 +124,14 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
   return 0;
 
 rollback:
-  while (count) { (void)ext2_free_block(fs, branch[--count]); }
+  while (count) {
+    (void)ext2_free_block(fs, branch[--count]);
+  }
   return rc;
 }
 
-static bool trim_branch(struct ext2_fs *fs, struct ext2_node *node, uint32_t parent, uint32_t slot,
-                        uint32_t block, uint32_t span, uint32_t keep) {
+static bool trim_branch(struct ext2_fs *fs, struct ext2_node *node, uint32_t parent, uint32_t slot, uint32_t block,
+                        uint32_t span, uint32_t keep) {
   if (!block || keep >= span) { return true; }
   if (block >= fs->block_count) { return false; }
   if (span > 1) {
@@ -164,8 +166,11 @@ static bool trim_branch(struct ext2_fs *fs, struct ext2_node *node, uint32_t par
     }
   }
   if (!ext2_free_block(fs, block)) {
-    if (parent) { (void)write_slot(fs, parent, slot, block); }
-    else { node->blocks[slot] = block; }
+    if (parent) {
+      (void)write_slot(fs, parent, slot, block);
+    } else {
+      node->blocks[slot] = block;
+    }
     return false;
   }
   node->sectors_count -= fs->block_size / 512;

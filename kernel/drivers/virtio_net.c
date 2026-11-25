@@ -1,10 +1,10 @@
 #include "drivers/virtio_net.h"
 
-#include "virtio_mmio.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
 #include "net/net.h"
+#include "virtio_mmio.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -80,7 +80,9 @@ bool virtio_net_init(uint64_t hhdm_offset) {
   hhdm = hhdm_offset;
   net_ready = false;
   mmio_base = 0;
-  for (unsigned i=0; i<VIRTIO_MMIO_SLOTS && !mmio_base; ++i) { mmio_base = virtio_slot(hhdm, i, VIRTIO_DEVICE_NET); }
+  for (unsigned i = 0; i < VIRTIO_MMIO_SLOTS && !mmio_base; ++i) {
+    mmio_base = virtio_slot(hhdm, i, VIRTIO_DEVICE_NET);
+  }
   if (!mmio_base) { return false; }
 
   enum virtio_features features = virtio_negotiate(mmio_base);

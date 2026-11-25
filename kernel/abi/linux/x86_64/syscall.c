@@ -6,8 +6,8 @@
 #include "mm/vmm.h"
 #include "proc/domain.h"
 #include "proc/policy.h"
-#include "proc/signal.h"
 #include "proc/seccomp.h"
+#include "proc/signal.h"
 #include "proc/thread.h"
 
 static const uint16_t operations[] = {

@@ -1,9 +1,9 @@
 #include "lib/kprintf.h"
 
-#include "init/app.h"
-#include "drivers/serial.h"
 #include "drivers/pl011.h"
+#include "drivers/serial.h"
 #include "drivers/virtio_console.h"
+#include "init/app.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,7 +13,9 @@ static uint64_t kernel_log_head;
 static uint64_t kernel_log_len;
 static bool kernel_log_handoff;
 
-void klog_handoff(void) { kernel_log_handoff = true; }
+void klog_handoff(void) {
+  kernel_log_handoff = true;
+}
 
 static void klog_store(char c) {
   kernel_log[kernel_log_head] = c;

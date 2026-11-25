@@ -3,9 +3,9 @@
 #include "arch/aarch64/platform.h"
 #include "arch/aarch64/regs.h"
 #include "arch/smp.h"
-#include "proc/thread.h"
-#include "lib/kprintf.h"
 #include "drivers/pl011.h"
+#include "lib/kprintf.h"
+#include "proc/thread.h"
 #include "tty/tty.h"
 
 #include <stddef.h>

@@ -1,9 +1,9 @@
 #include "abi/linux/aarch64/syscall.h"
 #include "abi/linux/shared/dispatch.h"
 #include "arch/regs.h"
-#include "proc/thread.h"
-#include "proc/signal.h"
 #include "proc/seccomp.h"
+#include "proc/signal.h"
+#include "proc/thread.h"
 
 void linux_aarch64_syscall(struct trap_frame *frame) {
   uint64_t nr = trap_syscall_number(frame);

@@ -1,5 +1,5 @@
-#include "init/boot_info.h"
 #include "arch/aarch64/platform.h"
+#include "init/boot_info.h"
 #include <stddef.h>
 
 enum { RAM_BASE = 0x40000000, KERNEL_PA = 0x40200000, PAYLOAD_PA = 0x40400000 };
@@ -14,7 +14,9 @@ alignas(4096) uint64_t direct_low_root[512], direct_high_root[512], direct_empty
 alignas(4096) static uint64_t identity_l1[512], identity_l2[512];
 alignas(4096) static uint64_t kernel_l1[512], kernel_l2[512], kernel_l3[512];
 alignas(4096) static uint64_t ram_l1[512], ram_l2[512], image_alias[512];
-struct handoff { uint64_t ram_bytes, payload_bytes, epoch; };
+struct handoff {
+  uint64_t ram_bytes, payload_bytes, epoch;
+};
 constexpr uintptr_t HANDOFF_PA = PAYLOAD_PA - sizeof(struct handoff);
 extern char direct_start[], __rodata_start[], __data_start[], __bss_end[];
 
@@ -24,8 +26,9 @@ static uint64_t table(uint64_t *entries) {
 
 void direct_build_tables(void) {
   const struct handoff *args = (const void *)HANDOFF_PA;
-  if (args->ram_bytes < (32ull << 20) || args->ram_bytes > (1ull << 30) ||
-      (args->ram_bytes & ((2ull << 20) - 1))) { arch_poweroff(); }
+  if (args->ram_bytes < (32ull << 20) || args->ram_bytes > (1ull << 30) || (args->ram_bytes & ((2ull << 20) - 1))) {
+    arch_poweroff();
+  }
   direct_low_root[0] = table(identity_l1);
   identity_l1[1] = table(identity_l2);
   identity_l2[1] = KERNEL_PA | ACCESSED_NORMAL | READ_ONLY | NO_USER_EXEC | 1;
@@ -52,7 +55,8 @@ const struct spore_boot_info *direct_boot_info(void) {
   const struct handoff *args = (const void *)(uintptr_t)(DIRECT_MAP + HANDOFF_PA);
   static struct spore_memmap_entry free_ram[2];
   static struct spore_boot_module app = {.phys_addr = PAYLOAD_PA, .path = "/spore.app"};
-  static struct spore_boot_info boot = {.hhdm_offset = DIRECT_MAP, .modules = &app, .module_count = 1, .memmap = free_ram};
+  static struct spore_boot_info boot = {
+    .hhdm_offset = DIRECT_MAP, .modules = &app, .module_count = 1, .memmap = free_ram};
   if (!args->payload_bytes || args->payload_bytes > args->ram_bytes - (PAYLOAD_PA - RAM_BASE)) { arch_poweroff(); }
   uint64_t after_app = PAYLOAD_PA + args->payload_bytes;
   uint64_t kernel_end = KERNEL_PA + ((uintptr_t)__bss_end - (uintptr_t)direct_start);

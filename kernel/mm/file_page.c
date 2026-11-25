@@ -30,7 +30,9 @@ static struct vmm_file_page **bucket_for(uint64_t pa) {
 
 static struct vmm_file_page **page_slot(uint64_t pa) {
   struct vmm_file_page **slot = bucket_for(pa);
-  while (*slot && (*slot)->pa != pa) { slot = &(*slot)->next; }
+  while (*slot && (*slot)->pa != pa) {
+    slot = &(*slot)->next;
+  }
   return slot;
 }
 

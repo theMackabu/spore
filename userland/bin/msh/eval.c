@@ -900,7 +900,9 @@ static int execute_tokens(struct parser *parser, int last_status) {
       }
     }
 
-    for (size_t i = 0; i < stage_count; ++i) { unwrap_command(&stages[i]); }
+    for (size_t i = 0; i < stage_count; ++i) {
+      unwrap_command(&stages[i]);
+    }
     if ((stages[0].argc > 0 || stages[0].envc > 0) && should_run) {
       trace_command(&stages[0]);
       if (stage_count > 1) {
@@ -937,7 +939,9 @@ int sh_execute_line(const char *line, int last_status) {
   } else {
     eprintf("sh: parse buffer exhausted\n");
   }
-  for (size_t i = 0; i < parser.count; ++i) { free(parser.tokens[i].text); }
+  for (size_t i = 0; i < parser.count; ++i) {
+    free(parser.tokens[i].text);
+  }
   free(parser.tokens);
   return status;
 }

@@ -1,14 +1,14 @@
-#include "proc/pid_namespace.h"
+#include "abi/linux/shared/layout.h"
 #include "abi/linux/shared/socket_options.h"
 #include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
+#include "net/route.h"
+#include "net/socket.h"
 #include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/pid_namespace.h"
 #include "proc/user_namespace.h"
 #include "socket_abi.h"
-#include "abi/linux/shared/layout.h"
-#include "net/socket.h"
-#include "net/route.h"
-#include "proc/fd.h"
 
 constexpr int ENOPROTOOPT = 92;
 
@@ -119,8 +119,9 @@ int64_t sys_getsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t o
       int32_t proto = 0;
       if (!cell_fd_socket_info((int)fd, NULL, &proto)) { return -(int64_t)EBADF; }
       struct open_file *file = cell_fd_file((int)fd);
-      value = file && file->type == OPEN_SOCKET && file->socket_proto == ROUTE_PROTOCOL ? ROUTE_FAMILY :
-              proto == 0 ? AF_UNIX : AF_INET;
+      value = file && file->type == OPEN_SOCKET && file->socket_proto == ROUTE_PROTOCOL ? ROUTE_FAMILY
+              : proto == 0                                                              ? AF_UNIX
+                                                                                        : AF_INET;
       break;
     }
     default:

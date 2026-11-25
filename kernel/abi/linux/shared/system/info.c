@@ -1,12 +1,12 @@
+#include "proc/info.h"
 #include "../usercopy.h"
 #include "handlers.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
-#include "proc/domain.h"
-#include "proc/capabilities.h"
-#include "proc/uts.h"
-#include "proc/info.h"
 #include "proc/accounting.h"
+#include "proc/capabilities.h"
+#include "proc/domain.h"
+#include "proc/uts.h"
 
 enum { EPERM = 1, EFAULT = 14, EINVAL = 22 };
 
@@ -53,14 +53,19 @@ int64_t sys_uname(uint64_t buf, const char *machine) {
   uts_copy(u.version, "Spore Kernel Version " SPORE_VERSION " (" __DATE__ " " __TIME__ " UTC)");
   uts_copy(u.machine, machine);
   uts_copy(u.domainname, uts_name(cell_current_domain_internal(), false));
-  return syscall_user_writable(buf, sizeof(u)) && vmm_copy_to_user(syscall_active_as(), buf, &u, sizeof(u)) ? 0 : -(int64_t)EFAULT;
+  return syscall_user_writable(buf, sizeof(u)) && vmm_copy_to_user(syscall_active_as(), buf, &u, sizeof(u))
+           ? 0
+           : -(int64_t)EFAULT;
 }
 
 int64_t sys_set_uts_name(bool hostname, uint64_t name_addr, uint64_t len) {
   if (!uts_may_set(cell_current_domain_internal())) { return -(int64_t)EPERM; }
   char name[UTS_NAME_SIZE];
   if (len >= sizeof(name)) { return -EINVAL; }
-  if (len && (!syscall_user_readable(name_addr, len) || !vmm_copy_from_user(syscall_active_as(), name, name_addr, len))) { return -EFAULT; }
+  if (len &&
+      (!syscall_user_readable(name_addr, len) || !vmm_copy_from_user(syscall_active_as(), name, name_addr, len))) {
+    return -EFAULT;
+  }
   char *target = uts_name(cell_current_domain_internal(), hostname);
   kmemcpy(target, name, len);
   target[len] = '\0';

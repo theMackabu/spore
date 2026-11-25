@@ -1,4 +1,3 @@
-#include "proc/pid_namespace.h"
 #include "fs/procfs.h"
 #include "fs/procfs_format.h"
 #include "fs/vfs.h"
@@ -7,6 +6,7 @@
 #include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/pid_namespace.h"
 #include "proc/thread.h"
 
 static const struct proc_entry {
@@ -113,8 +113,12 @@ static bool namespace_entry(struct vfs_node *out, const struct domain *d, int ti
     }
     if (!may_inspect_namespace(d)) { return false; }
     struct namespace_ref ns = namespace_of(d, k);
-    *out = (struct vfs_node){.backend = VFS_NSFS, .dev_id = VFS_DEV_NSFS, .ino = namespace_ino(ns),
-                             .mode = 0100444, .links_count = 1, .ns = ns};
+    *out = (struct vfs_node){.backend = VFS_NSFS,
+                             .dev_id = VFS_DEV_NSFS,
+                             .ino = namespace_ino(ns),
+                             .mode = 0100444,
+                             .links_count = 1,
+                             .ns = ns};
     return true;
   }
   return false;

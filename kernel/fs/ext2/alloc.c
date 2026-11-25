@@ -193,7 +193,8 @@ static bool free_classic_inode(struct ext2_fs *fs, uint32_t ino) {
 
 bool ext2_free_inode(struct ext2_fs *fs, uint32_t ino) {
   ext2_dir_cache_invalidate_inode(fs, ino);
-  bool freed = fs->ext2plus && ino >= fs->ext2plus_base_ino ? ext2plus_free_inode(fs, ino) : free_classic_inode(fs, ino);
+  bool freed =
+    fs->ext2plus && ino >= fs->ext2plus_base_ino ? ext2plus_free_inode(fs, ino) : free_classic_inode(fs, ino);
   if (freed && fs->inode_freed) { fs->inode_freed(ino); }
   return freed;
 }

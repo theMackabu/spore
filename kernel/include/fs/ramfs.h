@@ -125,7 +125,8 @@ void ramfs_set_now(uint64_t epoch_sec);
 bool ramfs_lookup_node(const struct ramfs *fs, int root, const char *path, struct ramfs_node *out);
 bool ramfs_next_dirent(const struct ramfs *fs, int dir_index, uint64_t *cursor, struct vfs_dirent *out);
 bool ramfs_has_symlinks(void);
-int ramfs_device_node(struct ramfs *fs, int parent, const char *name, enum ramfs_device device, uint16_t mode, uint32_t uid, uint32_t gid);
+int ramfs_device_node(struct ramfs *fs, int parent, const char *name, enum ramfs_device device, uint16_t mode,
+                      uint32_t uid, uint32_t gid);
 bool ramfs_symlink(struct ramfs *fs, int root, const char *target, const char *path);
 bool ramfs_mkdir(struct ramfs *fs, int root, const char *path, uint16_t mode);
 bool ramfs_create(struct ramfs *fs, int root, const char *path, uint16_t mode, struct ramfs_node *out);

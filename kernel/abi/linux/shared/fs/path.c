@@ -1,11 +1,11 @@
 #include "../usercopy.h"
 #include "file_abi.h"
-#include "fs/vfs.h"
 #include "fs/mount_namespace.h"
+#include "fs/vfs.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
-#include "proc/domain.h"
 #include "proc/capabilities.h"
+#include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/policy.h"
 
@@ -13,7 +13,8 @@ size_t spore_normalize_path(const char *base, size_t base_len, const char *raw, 
 
 static int resolve_from(const char *base, size_t base_len, const char *raw, size_t len, char *visible, char *out,
                         size_t cap) {
-  if (mountns_current_routes() || ramfs_has_symlinks() || vfs_path_has_proc(raw, len) || vfs_path_has_proc(base, base_len)) {
+  if (mountns_current_routes() || ramfs_has_symlinks() || vfs_path_has_proc(raw, len) ||
+      vfs_path_has_proc(base, base_len)) {
     const char *root = cell_current_chroot();
     int rc = vfs_walk(root, base, base_len, raw, len, false, out, cap);
     if (rc) { return rc; }
@@ -45,10 +46,15 @@ int syscall_dirfd_path(int fd, char path[CELL_PATH_MAX]) {
   if (rc) { return rc; }
   if (mounted_fd || mountns_lookup(resolved).mount_id) {
     struct vfs_node named;
-    if (!vfs_lookup(resolved, &named) || (named.mount_id ? named.mount_id : named.dev_id) != (file->node.mount_id ? file->node.mount_id : file->node.dev_id) || named.dev_id != file->node.dev_id || named.ino != file->node.ino) {
+    if (!vfs_lookup(resolved, &named) ||
+        (named.mount_id ? named.mount_id : named.dev_id) !=
+          (file->node.mount_id ? file->node.mount_id : file->node.dev_id) ||
+        named.dev_id != file->node.dev_id || named.ino != file->node.ino) {
       if (cell_current_chroot()[1]) { return -116; }
       rc = mountns_relocate_dir(&file->node, file->path, path, CELL_PATH_MAX);
-      if (rc || !vfs_lookup(path, &named) || named.ino != file->node.ino || named.dev_id != file->node.dev_id) { return -116; }
+      if (rc || !vfs_lookup(path, &named) || named.ino != file->node.ino || named.dev_id != file->node.dev_id) {
+        return -116;
+      }
       return 0;
     }
   }
@@ -156,7 +162,6 @@ int syscall_lookup_at(uint64_t dirfd, uint64_t addr, uint64_t flags, uint8_t rig
   if (!found) { return -ENOENT; }
   return directory && !node->is_dir ? -ENOTDIR : 0;
 }
-
 
 int syscall_may_change_entry(char *path, bool replacing) {
   struct ramfs_route route = mountns_lookup(path);

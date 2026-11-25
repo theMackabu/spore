@@ -1,9 +1,9 @@
 #include "internal.h"
-#include "proc/epoll.h"
 #include "lib/mem.h"
 #include "mm/page_ring.h"
 #include "mm/pmm.h"
 #include "mm/pool.h"
+#include "proc/epoll.h"
 
 static_assert(CELL_TCP_RX_CAP % PAGE_SIZE == 0 && CELL_TCP_RX_CAP / PAGE_SIZE <= 64);
 

@@ -1,15 +1,15 @@
-#include "proc/accounting.h"
-#include "net/net.h"
-#include "proc/policy.h"
-#include "net/socket.h"
 #include "drivers/virtio_net.h"
+#include "net/net.h"
+#include "net/socket.h"
+#include "proc/accounting.h"
+#include "proc/policy.h"
 
 #include <assert.h>
-#include <string.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 enum {
   ETH_TYPE_ARP = 0x0806,
@@ -390,7 +390,8 @@ bool cell_egress_allowed(uint8_t proto, uint32_t ip, uint16_t port) {
   return true;
 }
 
-bool cell_net_deliver_udp(struct net_namespace *, uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
+bool cell_net_deliver_udp(struct net_namespace *, uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port,
+                          const void *payload, size_t len) {
   (void)ttl;
   (void)src_ip;
   (void)src_port;
@@ -418,9 +419,9 @@ bool cell_net_deliver_tcp_error(uint32_t remote_ip, uint16_t remote_port, uint16
   return true;
 }
 
-void cell_net_deliver_tcp(struct net_namespace *, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint16_t window, uint8_t flags, const void *options, size_t options_len, const void *payload,
-                          size_t len) {
+void cell_net_deliver_tcp(struct net_namespace *, uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint32_t seq,
+                          uint32_t ack, uint16_t window, uint8_t flags, const void *options, size_t options_len,
+                          const void *payload, size_t len) {
   (void)src_ip;
   (void)src_port;
   (void)dst_port;
@@ -749,7 +750,9 @@ static void test_zero_udp_destination_port_is_dropped(void) {
 
 static void test_udp_mtu(void) {
   uint8_t payload[1473];
-  for (size_t i = 0; i < sizeof(payload); ++i) { payload[i] = (uint8_t)i; }
+  for (size_t i = 0; i < sizeof(payload); ++i) {
+    payload[i] = (uint8_t)i;
+  }
   net_init();
   assert(net_udp_send(NULL, 49152, UINT32_MAX, 5555, payload, sizeof(payload) - 1));
   assert(sent_frame_len == 1514);

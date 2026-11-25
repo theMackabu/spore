@@ -71,9 +71,13 @@ struct virtq {
 };
 
 #if defined(__riscv)
-static inline void virtio_barrier(void) { __asm__ volatile("fence iorw, iorw" ::: "memory"); }
+static inline void virtio_barrier(void) {
+  __asm__ volatile("fence iorw, iorw" ::: "memory");
+}
 #elif defined(__x86_64__)
-static inline void virtio_barrier(void) { __asm__ volatile("mfence" ::: "memory"); }
+static inline void virtio_barrier(void) {
+  __asm__ volatile("mfence" ::: "memory");
+}
 #else
 #include "arch/aarch64/platform.h"
 #define virtio_barrier aarch64_io_barrier

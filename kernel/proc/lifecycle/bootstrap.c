@@ -1,21 +1,21 @@
 #include "proc/bootstrap.h"
-#include "init/app.h"
-#include "init/program.h"
-#include "lib/kstr.h"
-#include "proc/sched/accounting_internal.h"
 #include "arch/platform.h"
 #include "arch/regs.h"
 #include "exec/stack.h"
+#include "init/app.h"
+#include "init/program.h"
 #include "lib/kprintf.h"
+#include "lib/kstr.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
+#include "proc/sched/accounting_internal.h"
 #include "proc/snapshot.h"
 #include "proc/thread.h"
-#include "proc/uts.h"
 #include "proc/user_namespace.h"
+#include "proc/uts.h"
 #include "tty/tty.h"
 
 static size_t clamp_size(size_t value, size_t min, size_t max) {
@@ -48,7 +48,10 @@ void cell_system_init(void) {
   size_t mm_count = 0;
   size_t open_file_count = 0;
   derive_table_sizes(&domain_count, &thread_count, &mm_count, &open_file_count);
-  if (app_mode) { domain_count = 1; mm_count = 2; }
+  if (app_mode) {
+    domain_count = 1;
+    mm_count = 2;
+  }
   if (!userns_init(domain_count)) { halt_table_init_failure("user namespace"); }
   if (!uts_init(domain_count)) { halt_table_init_failure("UTS namespace"); }
   if (!cell_policy_init(domain_count)) { halt_table_init_failure("policy"); }

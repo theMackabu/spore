@@ -93,8 +93,9 @@ static uint16_t *counts_for(uint64_t page) {
 static __attribute__((cold)) uint16_t *allocate_counts(uint64_t page) {
   uint16_t *counts;
 #if __STDC_HOSTED__
-  if (!hhdm_base) { counts = calloc(1, PAGE_SIZE); }
-  else
+  if (!hhdm_base) {
+    counts = calloc(1, PAGE_SIZE);
+  } else
 #endif
   {
     uint64_t pa = take_page();
@@ -191,7 +192,9 @@ void pmm_init(uint64_t hhdm_offset, const struct spore_memmap_entry *memmap, uin
   }
 
   kmemset(bitmap, 0xff, bitmap_bytes);
-  for (size_t i = 0; i < refcount_bytes / sizeof(*refcounts); ++i) { refcounts[i] = empty_counts; }
+  for (size_t i = 0; i < refcount_bytes / sizeof(*refcounts); ++i) {
+    refcounts[i] = empty_counts;
+  }
 
   for (uint32_t i = 0; i < memmap_count; ++i) {
     const struct spore_memmap_entry *entry = &memmap[i];
@@ -249,7 +252,11 @@ uint64_t pmm_alloc_page(void) {
   }
   uint64_t page = pa / PAGE_SIZE;
   uint16_t *counts = prepare_counts(page);
-  if (!counts) { release_page(page); ++stats.alloc_failures; return 0; }
+  if (!counts) {
+    release_page(page);
+    ++stats.alloc_failures;
+    return 0;
+  }
   counts[page % REFS_PER_PAGE] = 1;
   ++stats.alloc_successes;
   return pa;
@@ -296,13 +303,17 @@ uint64_t pmm_alloc_contiguous_pages(uint64_t count) {
         for (uint64_t page = start; page < start + count;) {
           uint16_t *counts = prepare_counts(page);
           if (!counts) {
-            for (uint64_t i = 0; i < count; ++i) { release_page(start + i); }
+            for (uint64_t i = 0; i < count; ++i) {
+              release_page(start + i);
+            }
             ++stats.alloc_failures;
             return 0;
           }
           page = (page / REFS_PER_PAGE + 1) * REFS_PER_PAGE;
         }
-        for (uint64_t i = start; i < start + count; ++i) { counts_for(i)[i % REFS_PER_PAGE] = 1; }
+        for (uint64_t i = start; i < start + count; ++i) {
+          counts_for(i)[i % REFS_PER_PAGE] = 1;
+        }
         next_free_page = start + count;
         ++stats.alloc_successes;
         return start * PAGE_SIZE;
@@ -331,7 +342,10 @@ void pmm_free_page(uint64_t pa) {
 
 bool pmm_retain_boot_page(uint64_t pa) {
   uint64_t page = pa / PAGE_SIZE;
-  if (!pa || pa % PAGE_SIZE || !valid_page(page) || !(bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD)))) { return false; }
+  if (!pa || pa % PAGE_SIZE || !valid_page(page) ||
+      !(bitmap[page / BITS_PER_WORD] & (1ull << (page % BITS_PER_WORD)))) {
+    return false;
+  }
   uint16_t *counts = prepare_counts(page);
   if (!counts) { return false; }
   if (!counts[page % REFS_PER_PAGE]) { counts[page % REFS_PER_PAGE] = 1; }

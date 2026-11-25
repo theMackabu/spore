@@ -6,7 +6,10 @@
 
 struct domain;
 struct thread;
-struct id_map { uint32_t outer, inner; bool mapped; };
+struct id_map {
+  uint32_t outer, inner;
+  bool mapped;
+};
 struct user_namespace {
   unsigned refs, depth;
   struct user_namespace *parent;
@@ -24,5 +27,4 @@ void userns_release(struct user_namespace *ns);
 int cell_unshare_namespaces(struct thread *thread, uint64_t flags);
 uint32_t userns_visible(const struct user_namespace *ns, bool group, uint32_t outer);
 bool userns_translate(const struct user_namespace *ns, bool group, uint32_t inner, uint32_t *outer);
-int userns_write_map(struct domain *actor, struct user_namespace *target, bool group, bool setgroups,
-                     const char *text);
+int userns_write_map(struct domain *actor, struct user_namespace *target, bool group, bool setgroups, const char *text);

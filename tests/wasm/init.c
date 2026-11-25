@@ -1,6 +1,6 @@
 #include <fcntl.h>
-#include <sys/wait.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 int main(void) {

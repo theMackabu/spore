@@ -13,7 +13,8 @@ void cell_reap_namespace_orphan(struct domain *child);
 void cell_wake_parent_of(struct domain *child);
 void cell_exit_thread_current(int status, struct trap_frame *frame);
 void cell_exit_group_current(int status, struct trap_frame *frame);
-int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t child_tid);
+int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid,
+                      uint64_t child_tid);
 int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags, uint64_t parent_tid, uint64_t tls,
                        uint64_t child_tid);
 int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid,

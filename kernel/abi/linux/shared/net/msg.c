@@ -1,13 +1,13 @@
-#include "proc/fd.h"
-#include "handlers.h"
-#include "message_abi.h"
 #include "abi/linux/shared/net/handlers.h"
 #include "abi/linux/shared/usercopy.h"
-#include "net/socket.h"
+#include "handlers.h"
+#include "message_abi.h"
 #include "net/route.h"
+#include "net/socket.h"
 #include "net/unix.h"
-#include "proc/thread.h"
+#include "proc/fd.h"
 #include "proc/signal.h"
+#include "proc/thread.h"
 
 enum {
   EMSGSIZE = 90,
@@ -61,7 +61,9 @@ int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
     return rc == CELL_SWITCHED ? CELL_SWITCHED : rc;
   }
   struct open_file *file = cell_fd_file(fd);
-  if (is_socket && file->type != OPEN_SOCKET && proto == 0 && msg.name == 0) { return linux_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, true); }
+  if (is_socket && file->type != OPEN_SOCKET && proto == 0 && msg.name == 0) {
+    return linux_unix_message(frame, (int)fd, msg_addr, &msg, (uint32_t)flags, true);
+  }
   uint8_t tmp[SENDMSG_SCRATCH_CAP];
   uint64_t total_len = 0;
   size_t copied = 0;
@@ -69,7 +71,9 @@ int64_t sys_sendmsg(struct trap_frame *frame, uint64_t fd, uint64_t msg_addr, ui
   if (rc < 0) { return (int64_t)rc; }
 
   if (file && file->type == OPEN_SOCKET) {
-    if (msg.controllen && (file->socket_proto == UNIX_DGRAM_PROTOCOL || file->socket_proto == ROUTE_PROTOCOL)) { return -95; }
+    if (msg.controllen && (file->socket_proto == UNIX_DGRAM_PROTOCOL || file->socket_proto == ROUTE_PROTOCOL)) {
+      return -95;
+    }
     if (total_len > sizeof(tmp)) { return -EMSGSIZE; }
     return linux_send_datagram(fd, tmp, total_len, msg.name, msg.namelen);
   }

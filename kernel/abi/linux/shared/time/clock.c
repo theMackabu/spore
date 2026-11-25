@@ -1,8 +1,8 @@
-#include "abi/linux/shared/usercopy.h"
-#include "abi/linux/shared/layout.h"
 #include "arch/clock.h"
-#include "handlers.h"
+#include "abi/linux/shared/layout.h"
 #include "abi/linux/shared/time/handlers.h"
+#include "abi/linux/shared/usercopy.h"
+#include "handlers.h"
 #include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
@@ -85,7 +85,8 @@ static bool cpu_clock(uint64_t id) {
 
 static int write_timespec(uint64_t addr, struct timespec64 ts) {
   return syscall_user_writable(addr, sizeof(ts)) && vmm_copy_to_user(syscall_active_as(), addr, &ts, sizeof(ts))
-           ? 0 : -EFAULT;
+           ? 0
+           : -EFAULT;
 }
 
 struct timespec64 syscall_wall_time(bool realtime) {
@@ -110,9 +111,13 @@ int64_t sys_clock_gettime(uint64_t clk_id, uint64_t tp) {
 
 int64_t sys_clock_getres(uint64_t clk_id, uint64_t tp) {
   uint64_t freq;
-  if (cpu_clock(clk_id)) { freq = 100; }
-  else if (clk_id == CLOCK_REALTIME || clk_id == CLOCK_MONOTONIC) { freq = arch_counter_frequency(); }
-  else { return -EINVAL; }
+  if (cpu_clock(clk_id)) {
+    freq = 100;
+  } else if (clk_id == CLOCK_REALTIME || clk_id == CLOCK_MONOTONIC) {
+    freq = arch_counter_frequency();
+  } else {
+    return -EINVAL;
+  }
   if (!tp) { return 0; }
   return write_timespec(tp, (struct timespec64){.tv_nsec = (1000000000ULL + freq - 1) / freq});
 }

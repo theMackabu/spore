@@ -1,6 +1,6 @@
-#include "file_abi.h"
 #include "abi/linux/shared/open.h"
 #include "abi/linux/shared/usercopy.h"
+#include "file_abi.h"
 #include "fs/vfs.h"
 #include "lib/mem.h"
 #include "proc/domain.h"
@@ -22,7 +22,9 @@ int64_t sys_memfd_create(uint64_t name_addr, uint64_t flags) {
   int rc = vfs_tmpfile(&dir, 0777, cell_current_euid(), cell_current_egid(), false, &node);
   if (rc) { return rc; }
   uint32_t open_flags = LINUX_O_RDWR | ((flags & MFD_CLOEXEC) ? LINUX_O_CLOEXEC : 0);
-  int fd = vfs_set_sealable(&node, flags & MFD_ALLOW_SEALING) ? cell_fd_open_node(&node, open_flags, display, NULL, NULL) : -EINVAL;
+  int fd = vfs_set_sealable(&node, flags & MFD_ALLOW_SEALING)
+             ? cell_fd_open_node(&node, open_flags, display, NULL, NULL)
+             : -EINVAL;
   vfs_release_node(&node);
   return fd;
 }

@@ -1,12 +1,12 @@
 #include "../usercopy.h"
 #include "abi/linux/shared/open.h"
+#include "fs/ramfs.h"
 #include "handlers.h"
 #include "mm/pmm.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
 #include "proc/policy.h"
-#include "fs/ramfs.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -121,11 +121,14 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
     if (!linux_open_readable(file->flags)) { return -EACCES; }
     if (shared && (prot & PROT_WRITE) && !linux_open_writable(file->flags)) { return -EACCES; }
     if (file->type != OPEN_VFS || file->node.device != RAMFS_DEV_NONE || file->node.is_dir ||
-        (file->node.backend != VFS_EXT2 && file->node.backend != VFS_RAMFS)) { return -ENODEV; }
+        (file->node.backend != VFS_EXT2 && file->node.backend != VFS_RAMFS)) {
+      return -ENODEV;
+    }
     if (!vfs_refresh(&file->node, &node)) { return -ENODEV; }
     if ((prot & PROT_EXEC) && vfs_mount_flag(node.access, MOUNT_NOEXEC)) { return -EPERM; }
     if (off > UINT64_MAX - size) { return -EINVAL; }
-    shared_may_write = shared && linux_open_writable(file->flags) && !vfs_readonly_node(&node) && !vfs_write_sealed(&node);
+    shared_may_write =
+      shared && linux_open_writable(file->flags) && !vfs_readonly_node(&node) && !vfs_write_sealed(&node);
     if (shared && (prot & PROT_WRITE) && !shared_may_write) { return -EPERM; }
   }
   if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }
@@ -198,7 +201,8 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   uint64_t old_size = align_up(old_len, PAGE_SIZE);
   uint64_t new_size = align_up(new_len, PAGE_SIZE);
   uint64_t old_end;
-  if (old_len == 0 || old_size < old_len || new_size < new_len || !checked_add(old_addr, old_size, &old_end) || old_end > USER_VA_LIMIT) {
+  if (old_len == 0 || old_size < old_len || new_size < new_len || !checked_add(old_addr, old_size, &old_end) ||
+      old_end > USER_VA_LIMIT) {
     return -(int64_t)EINVAL;
   }
 
@@ -220,7 +224,8 @@ int64_t sys_mremap(uint64_t old_addr, uint64_t old_len, uint64_t new_len, uint64
   bool shared_anon = old_vma.type == VMA_ANON && (old_vma.flags & MAP_SHARED);
   if ((flags & MREMAP_FIXED) == 0) {
     uint64_t in_place_end;
-    if (checked_add(old_addr, new_size, &in_place_end) && in_place_end <= USER_VA_LIMIT && !cell_vma_overlaps(old_end, in_place_end)) {
+    if (checked_add(old_addr, new_size, &in_place_end) && in_place_end <= USER_VA_LIMIT &&
+        !cell_vma_overlaps(old_end, in_place_end)) {
       if (!cell_map_add_allowed(old_end, in_place_end, false)) { return -(int64_t)ENOMEM; }
       struct vma_list *vmas = cell_domain_vmas(cell_current_domain_internal());
       bool extend_file = (old_vma.flags & (MAP_PRIVATE | MAP_SHARED)) != 0;

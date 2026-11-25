@@ -1,9 +1,9 @@
 #include "drivers/virtio_blk.h"
 
-#include "virtio_mmio.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
 #include "mm/pmm.h"
+#include "virtio_mmio.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -57,9 +57,7 @@ static bool setup_device(uint64_t base) {
   if (req_pa == 0) { req_pa = virtio_alloc_page(hhdm, (void **)&req); }
   if (sector_pa == 0) { sector_pa = alloc_zero_contiguous(IO_BUFFER_PAGES, (void **)&sector_buf); }
   if (status_pa == 0) { status_pa = virtio_alloc_page(hhdm, (void **)&status_buf); }
-  if (req_pa == 0 || sector_pa == 0 || status_pa == 0) {
-    return false;
-  }
+  if (req_pa == 0 || sector_pa == 0 || status_pa == 0) { return false; }
   kmemset(req, 0, 4096);
   kmemset(sector_buf, 0, MAX_IO_SIZE);
   *(uint8_t *)status_buf = 0;

@@ -1,7 +1,7 @@
-#include "internal.h"
-#include "proc/domain.h"
 #include "fs/vfs.h"
+#include "internal.h"
 #include "mm/pmm.h"
+#include "proc/domain.h"
 #include "proc/thread.h"
 
 constexpr unsigned MAP_GROWSDOWN = 0x0100;
@@ -39,7 +39,7 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
     }
     if (!pa && !vfs_retain_page_cached(&current, read_off, (vma->prot & VMM_USER_EXEC) != 0, &pa)) { return false; }
     bool mapped = (vma->flags & MAP_SHARED) ? vmm_map_page(as, page, pa, mapping_flags(vma) | VMM_MAP_FILE_CACHE)
-                                             : vmm_map_page_cow(as, page, pa, vma->prot);
+                                            : vmm_map_page_cow(as, page, pa, vma->prot);
     if (!mapped) {
       pmm_free_page(pa);
       return false;
@@ -72,8 +72,11 @@ static void note_fault(struct domain *domain, bool major) {
   if (domain == NULL) { return; }
   struct thread *thread = cell_current_thread_internal();
   if (thread && thread->domain == domain) {
-    if (major) { ++thread->major_faults; }
-    else { ++thread->minor_faults; }
+    if (major) {
+      ++thread->major_faults;
+    } else {
+      ++thread->minor_faults;
+    }
   }
   if (major) {
     ++domain->major_faults;
@@ -97,7 +100,10 @@ bool cell_domain_ensure_user_range(struct domain *domain, uint64_t va, size_t le
       struct vma grown;
       const struct vma *vma = vma_lookup(vmas, page);
       if (vma == NULL && vma_grow_down(vmas, page, MAP_GROWSDOWN, &grown)) { vma = &grown; }
-      if (!vma || (vma->type != VMA_ANON && vma->type != VMA_STACK && vma->type != VMA_FILE) || !access_allowed(vma, access)) { return false; }
+      if (!vma || (vma->type != VMA_ANON && vma->type != VMA_STACK && vma->type != VMA_FILE) ||
+          !access_allowed(vma, access)) {
+        return false;
+      }
       if (vma->type == VMA_FILE) {
         if (!fault_file_page(domain, vma, page)) { return false; }
         note_fault(domain, true);

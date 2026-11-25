@@ -5,8 +5,8 @@ static uint16_t rec_len_for(uint8_t name_len) {
   return (uint16_t)((8u + name_len + 3u) & ~3u);
 }
 
-static void write_dir_record(const struct ext2_fs *fs, uint8_t *p, uint32_t ino, uint16_t rec_len, uint8_t name_len, uint8_t type,
-                             const char *name) {
+static void write_dir_record(const struct ext2_fs *fs, uint8_t *p, uint32_t ino, uint16_t rec_len, uint8_t name_len,
+                             uint8_t type, const char *name) {
   p[0] = (uint8_t)ino;
   p[1] = (uint8_t)(ino >> 8);
   p[2] = (uint8_t)(ino >> 16);
@@ -20,14 +20,22 @@ static void write_dir_record(const struct ext2_fs *fs, uint8_t *p, uint32_t ino,
 
 static uint8_t dirent_type_for_node(const struct ext2_node *node) {
   switch (node->mode & 0170000u) {
-  case 0010000: return 5;
-  case 0020000: return 3;
-  case EXT2_S_IFDIR: return EXT2_FT_DIR;
-  case 0060000: return 4;
-  case EXT2_S_IFREG: return EXT2_FT_REG_FILE;
-  case EXT2_S_IFLNK: return EXT2_FT_SYMLINK;
-  case 0140000: return 6;
-  default: return 0;
+  case 0010000:
+    return 5;
+  case 0020000:
+    return 3;
+  case EXT2_S_IFDIR:
+    return EXT2_FT_DIR;
+  case 0060000:
+    return 4;
+  case EXT2_S_IFREG:
+    return EXT2_FT_REG_FILE;
+  case EXT2_S_IFLNK:
+    return EXT2_FT_SYMLINK;
+  case 0140000:
+    return 6;
+  default:
+    return 0;
   }
 }
 
@@ -38,7 +46,7 @@ static bool ext2plus_hidden_name(struct ext2_fs *fs, const struct ext2_node *dir
 }
 
 int ext2_visit_dir(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cursor, ext2_record_visitor visit,
-                     void *ctx) {
+                   void *ctx) {
   if (!ext2_is_dir(dir)) { return -EXT2_EIO; }
   while (*cursor < dir->size) {
     uint32_t file_block_index = (uint32_t)(*cursor / fs->block_size);
@@ -51,8 +59,8 @@ int ext2_visit_dir(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cu
     size_t available = fs->block_size - within;
     if (available > dir->size - *cursor) { available = dir->size - *cursor; }
     size_t consumed = 0;
-    int rc = spore_ext2_visit_dir_block(block + within, available, fs->ext2plus && dir->ino == EXT2_ROOT_INO,
-                                        visit, ctx, &consumed);
+    int rc = spore_ext2_visit_dir_block(block + within, available, fs->ext2plus && dir->ino == EXT2_ROOT_INO, visit,
+                                        ctx, &consumed);
     *cursor += consumed;
     if (rc != 0) { return rc < 0 ? -EXT2_EIO : 1; }
   }
@@ -61,14 +69,22 @@ int ext2_visit_dir(struct ext2_fs *fs, const struct ext2_node *dir, uint64_t *cu
 
 static uint8_t ext2_dirent_type(uint8_t type) {
   switch (type) {
-    case 1: return VFS_DT_REG;
-    case 2: return VFS_DT_DIR;
-    case 3: return VFS_DT_CHR;
-    case 4: return VFS_DT_BLK;
-    case 5: return VFS_DT_FIFO;
-    case 6: return VFS_DT_SOCK;
-    case 7: return VFS_DT_LNK;
-    default: return VFS_DT_UNKNOWN;
+  case 1:
+    return VFS_DT_REG;
+  case 2:
+    return VFS_DT_DIR;
+  case 3:
+    return VFS_DT_CHR;
+  case 4:
+    return VFS_DT_BLK;
+  case 5:
+    return VFS_DT_FIFO;
+  case 6:
+    return VFS_DT_SOCK;
+  case 7:
+    return VFS_DT_LNK;
+  default:
+    return VFS_DT_UNKNOWN;
   }
 }
 
@@ -102,7 +118,9 @@ static bool split_parent_path(const char *path, char *parent, size_t parent_cap,
   }
   size_t name_len = len - slash;
   if (!name_len || name_len >= name_cap || (name_len == 1 && path[slash] == '.') ||
-      (name_len == 2 && path[slash] == '.' && path[slash + 1] == '.')) { return false; }
+      (name_len == 2 && path[slash] == '.' && path[slash + 1] == '.')) {
+    return false;
+  }
   kmemcpy(name, path + slash, name_len);
   name[name_len] = '\0';
   size_t parent_len = slash <= 1 ? 1 : slash - 1;
@@ -166,8 +184,9 @@ static bool add_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char *na
     if (!ext2_write_bytes(fs, off + slot.used, record, 8u + len)) { return false; }
     if (slot.used && !ext2_write_bytes(fs, off + 4, &slot.used, sizeof(slot.used))) { return false; }
     if (!update_dir(fs, dir)) {
-      if (slot.used) { (void)ext2_write_bytes(fs, off + 4, &slot.rec_len, sizeof(slot.rec_len)); }
-      else {
+      if (slot.used) {
+        (void)ext2_write_bytes(fs, off + 4, &slot.rec_len, sizeof(slot.rec_len));
+      } else {
         uint32_t empty = 0;
         (void)ext2_write_bytes(fs, off, &empty, sizeof(empty));
       }
@@ -214,7 +233,8 @@ static bool remove_dirent(struct ext2_fs *fs, struct ext2_node *dir, const char 
   return true;
 }
 
-static int create_node(struct ext2_fs *fs, uint32_t root_ino, const char *path, uint16_t mode, bool exclusive, struct ext2_node *out) {
+static int create_node(struct ext2_fs *fs, uint32_t root_ino, const char *path, uint16_t mode, bool exclusive,
+                       struct ext2_node *out) {
   if (!fs->write) { return -30; }
   char parent_path[256], name[EXT2_NAME_MAX + 1];
   if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name))) { return -EXT2_EINVAL; }
@@ -241,7 +261,10 @@ static int create_node(struct ext2_fs *fs, uint32_t root_ino, const char *path, 
     uint32_t block = 0;
     uint8_t buf[4096];
     int error = ext2_file_block_for_write(fs, &node, 0, &block, false);
-    if (error) { (void)ext2_free_inode(fs, ino); return error; }
+    if (error) {
+      (void)ext2_free_inode(fs, ino);
+      return error;
+    }
     node.size = fs->block_size;
     kmemset(buf, 0, fs->block_size);
     write_dir_record(fs, buf, ino, rec_len_for(1), 1, EXT2_FT_DIR, ".");
@@ -277,7 +300,8 @@ int ext2_mknod_from(struct ext2_fs *fs, uint32_t root_ino, const char *path, uin
   return create_node(fs, root_ino, path, mode, true, out);
 }
 
-bool ext2_create_from(struct ext2_fs *fs, uint32_t root_ino, const char *path, bool dir, uint16_t mode, struct ext2_node *out) {
+bool ext2_create_from(struct ext2_fs *fs, uint32_t root_ino, const char *path, bool dir, uint16_t mode,
+                      struct ext2_node *out) {
   return create_node(fs, root_ino, path, (dir ? EXT2_S_IFDIR : EXT2_S_IFREG) | (mode & 07777u), false, out) == 0;
 }
 
@@ -295,8 +319,9 @@ bool ext2_link_inode_from(struct ext2_fs *fs, uint32_t root_ino, uint32_t ino, c
   struct ext2_node node;
   struct ext2_node parent;
   struct ext2_node existing;
-  if (!ext2_read_inode(fs, ino, &node) || ext2_is_dir(&node) || !ext2_lookup_from(fs, root_ino, new_parent_path, &parent) ||
-      !ext2_is_dir(&parent) || ext2_find_child(fs, &parent, new_name, kstrlen(new_name), &existing) != 0) {
+  if (!ext2_read_inode(fs, ino, &node) || ext2_is_dir(&node) ||
+      !ext2_lookup_from(fs, root_ino, new_parent_path, &parent) || !ext2_is_dir(&parent) ||
+      ext2_find_child(fs, &parent, new_name, kstrlen(new_name), &existing) != 0) {
     return false;
   }
   if (node.links_count == UINT16_MAX || (node.links_count == 0 && !ext2_inode_linkable(fs, ino))) { return false; }
@@ -379,7 +404,9 @@ int ext2_remove_from(struct ext2_fs *fs, uint32_t root_ino, const char *path) {
   char parent_path[256], name[EXT2_NAME_MAX + 1];
   struct ext2_node parent, node;
   if (!split_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name)) ||
-      !ext2_lookup_from(fs, root_ino, parent_path, &parent)) { return -EXT2_ENOENT; }
+      !ext2_lookup_from(fs, root_ino, parent_path, &parent)) {
+    return -EXT2_ENOENT;
+  }
   int found = ext2_find_child(fs, &parent, name, kstrlen(name), &node);
   if (found <= 0) { return found ? found : -EXT2_ENOENT; }
   if (ext2_is_dir(&node)) {
@@ -431,15 +458,20 @@ static bool replace_dirent(struct ext2_fs *fs, struct ext2_node *parent, const s
   return true;
 }
 
-int ext2_renameat_from(struct ext2_fs *fs, uint32_t root_ino, const char *old_path, const char *new_path, bool noreplace) {
+int ext2_renameat_from(struct ext2_fs *fs, uint32_t root_ino, const char *old_path, const char *new_path,
+                       bool noreplace) {
   char parent_path[256], old_name[EXT2_NAME_MAX + 1], new_name[EXT2_NAME_MAX + 1];
   struct ext2_node from, to, node, existing;
   if (!split_parent_path(old_path, parent_path, sizeof(parent_path), old_name, sizeof(old_name)) ||
-      !ext2_lookup_from(fs, root_ino, parent_path, &from)) { return -EXT2_ENOENT; }
+      !ext2_lookup_from(fs, root_ino, parent_path, &from)) {
+    return -EXT2_ENOENT;
+  }
   int source = ext2_find_child(fs, &from, old_name, kstrlen(old_name), &node);
   if (source <= 0) { return source ? source : -EXT2_ENOENT; }
   if (!split_parent_path(new_path, parent_path, sizeof(parent_path), new_name, sizeof(new_name)) ||
-      !ext2_lookup_from(fs, root_ino, parent_path, &to)) { return -EXT2_ENOENT; }
+      !ext2_lookup_from(fs, root_ino, parent_path, &to)) {
+    return -EXT2_ENOENT;
+  }
   if (!ext2_is_dir(&to)) { return -EXT2_ENOTDIR; }
   if (ext2plus_hidden_name(fs, &to, new_name, kstrlen(new_name))) { return -EXT2_EEXIST; }
   struct ext2_node *dest = from.ino == to.ino ? &from : &to;
@@ -488,7 +520,10 @@ int ext2_renameat_from(struct ext2_fs *fs, uint32_t root_ino, const char *old_pa
   }
 undo_destination:
   dest->links_count -= delta;
-  if (found) { (void)replace_dirent(fs, dest, &target, new_name, &node, &existing); }
-  else { (void)remove_dirent(fs, dest, new_name); }
+  if (found) {
+    (void)replace_dirent(fs, dest, &target, new_name, &node, &existing);
+  } else {
+    (void)remove_dirent(fs, dest, new_name);
+  }
   return -EXT2_EIO;
 }

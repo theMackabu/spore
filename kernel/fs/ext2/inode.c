@@ -284,7 +284,8 @@ bool ext2_truncate(struct ext2_fs *fs, struct ext2_node *node, uint64_t size) {
       if (tail != 0) {
         uint32_t block;
         if (!ext2_file_block(fs, node, size / fs->block_size, &block)) { return false; }
-        if (block && !ext2_write_bytes(fs, (uint64_t)block * fs->block_size + tail, ext2_zero_block, fs->block_size - tail)) {
+        if (block &&
+            !ext2_write_bytes(fs, (uint64_t)block * fs->block_size + tail, ext2_zero_block, fs->block_size - tail)) {
           return false;
         }
       }
@@ -317,7 +318,6 @@ bool ext2_chown_node(struct ext2_fs *fs, const struct ext2_node *node, uint32_t 
   copy.ctime = ext2_now_sec();
   return ext2_write_inode(fs, &copy);
 }
-
 
 bool ext2_set_times(struct ext2_fs *fs, uint32_t ino, uint32_t atime, uint32_t mtime) {
   struct ext2_node node;

@@ -1,16 +1,16 @@
+#include "arch/smp.h"
+#include "fs/mount_namespace.h"
+#include "lib/kstr.h"
+#include "net/namespace.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/ipc_namespace.h"
+#include "proc/memory.h"
 #include "proc/pid_namespace.h"
 #include "proc/process.h"
-#include "proc/domain.h"
 #include "proc/thread.h"
-#include "proc/uts.h"
 #include "proc/user_namespace.h"
-#include "proc/ipc_namespace.h"
-#include "net/namespace.h"
-#include "fs/mount_namespace.h"
-#include "proc/memory.h"
-#include "proc/fd.h"
-#include "arch/smp.h"
-#include "lib/kstr.h"
+#include "proc/uts.h"
 
 enum {
   EAGAIN = 11,
@@ -34,7 +34,8 @@ static void inherit_fork_context(struct thread *child, const struct thread *pare
   trap_set_result(&child->tf, 0);
 }
 
-int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t child_tid) {
+int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, uint64_t parent_tid,
+                      uint64_t child_tid) {
   struct domain *parent = cell_current_domain_internal();
   if (parent == NULL || parent->mm == NULL) { return -ENOMEM; }
   struct thread *child_thread = cell_alloc_process();
@@ -48,11 +49,21 @@ int cell_fork_current(struct trap_frame *frame, uint64_t flags, uint64_t newsp, 
     return -ENOMEM;
   }
   cell_copy_domain_metadata(child_domain, parent);
-  int ns_rc = cell_unshare_namespaces(child_thread, flags & (CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID));
-  if (ns_rc) { cell_destroy_domain(child_domain); return ns_rc; }
+  int ns_rc = cell_unshare_namespaces(
+    child_thread, flags & (CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID));
+  if (ns_rc) {
+    cell_destroy_domain(child_domain);
+    return ns_rc;
+  }
   ns_rc = pidns_allocate(child_domain->child_pid_ns, child_domain->id, &child_domain->pid_entry);
-  if (ns_rc) { cell_destroy_domain(child_domain); return ns_rc; }
-  if (!cell_copy_fd_table(child_domain, parent)) { cell_destroy_domain(child_domain); return -12; }
+  if (ns_rc) {
+    cell_destroy_domain(child_domain);
+    return ns_rc;
+  }
+  if (!cell_copy_fd_table(child_domain, parent)) {
+    cell_destroy_domain(child_domain);
+    return -12;
+  }
   child_domain->parent_id = parent->id;
   child_domain->exit_signal = flags & 0xff;
   inherit_fork_context(child_thread, cell_current_thread_internal());
@@ -93,13 +104,20 @@ int cell_vfork_current(struct trap_frame *frame, uint64_t newsp, uint64_t flags,
   }
   cell_copy_domain_metadata(child, parent);
   int rc = pidns_allocate(child->child_pid_ns, child->id, &child->pid_entry);
-  if (rc) { cell_destroy_domain(child); return rc; }
-  if (!cell_copy_fd_table(child, parent)) { cell_destroy_domain(child); return -12; }
+  if (rc) {
+    cell_destroy_domain(child);
+    return rc;
+  }
+  if (!cell_copy_fd_table(child, parent)) {
+    cell_destroy_domain(child);
+    return -12;
+  }
   child->parent_id = parent->id;
   child->exit_signal = flags & 0xff;
   inherit_fork_context(child_thread, cell_current_thread_internal());
   if (newsp != 0) { trap_set_stack(&child_thread->tf, newsp); }
-  if ((flags & CLONE_SETTLS) != 0) { child_thread->context.thread_pointer = tls;
+  if ((flags & CLONE_SETTLS) != 0) {
+    child_thread->context.thread_pointer = tls;
 #ifdef __riscv
     child_thread->tf.tp = tls;
 #endif
@@ -150,7 +168,8 @@ int cell_clone_thread_current(struct trap_frame *frame, uint64_t flags, uint64_t
   thread->sigaltstack_flags = 2;
   trap_set_result(&thread->tf, 0);
   trap_set_stack(&thread->tf, newsp);
-  if ((flags & CLONE_SETTLS) != 0) { thread->context.thread_pointer = tls;
+  if ((flags & CLONE_SETTLS) != 0) {
+    thread->context.thread_pointer = tls;
 #ifdef __riscv
     thread->tf.tp = tls;
 #endif

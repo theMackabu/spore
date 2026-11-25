@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include "fs/vfs.h"
 #include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/epoll.h"
@@ -7,7 +8,6 @@
 #include "proc/pipe.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
-#include "fs/vfs.h"
 
 enum {
   EBADF = 9,
@@ -104,9 +104,7 @@ static struct open_file *unix_listener_for_node(const struct vfs_node *node) {
 }
 
 int unix_poll_events(const struct open_file *file, int events) {
-  if (file->type == OPEN_UNIX_LISTENER) {
-    return (events & CELL_POLLIN) && file->unix_pending_head ? CELL_POLLIN : 0;
-  }
+  if (file->type == OPEN_UNIX_LISTENER) { return (events & CELL_POLLIN) && file->unix_pending_head ? CELL_POLLIN : 0; }
   if (!file->unix_connected) { return 0; }
   int ready = cell_pipe_hup(file->unix_rx_pipe) ? CELL_POLLHUP : 0;
   if ((events & CELL_POLLIN) && cell_pipe_readable(file->unix_rx_pipe)) { ready |= CELL_POLLIN; }
@@ -130,7 +128,9 @@ void cell_unix_release_file(struct open_file *file) {
   netns_release(file->net_ns);
   if (file->type == OPEN_UNIX_LISTENER) {
     socket_index_remove(listener_bucket(&file->node), file);
-    while (file->unix_pending_head) { cell_release_open_file(take_head(file)); }
+    while (file->unix_pending_head) {
+      cell_release_open_file(take_head(file));
+    }
   }
   if (file->unix_connected) {
     cell_pipe_drop_reader(file->unix_rx_pipe);
@@ -148,7 +148,10 @@ int cell_fd_unix_bind(int fd, const char *path) {
   int rc = vfs_mkspecial(path, 0140000 | cell_creation_mode(0777), &node);
   if (rc) { return rc == -17 ? -EADDRINUSE : rc; }
   (void)vfs_chown_node(&node, cell_current_euid(), cell_current_egid());
-  if (!vfs_retain_node(&node)) { (void)vfs_remove(path); return -12; }
+  if (!vfs_retain_node(&node)) {
+    (void)vfs_remove(path);
+    return -12;
+  }
   file->unix_bound = true;
   file->node = node;
   return 0;
@@ -202,7 +205,8 @@ int cell_fd_unix_connect(int fd, const char *path) {
     cell_pipe_discard(s2c);
     return -23;
   }
-  struct open_file *server = unix_socket(listener->net_ns, listener->unix_owner_pid, listener->unix_owner_uid, listener->unix_owner_gid);
+  struct open_file *server =
+    unix_socket(listener->net_ns, listener->unix_owner_pid, listener->unix_owner_uid, listener->unix_owner_gid);
   if (server == NULL) {
     cell_pipe_discard(c2s);
     cell_pipe_discard(s2c);
@@ -226,8 +230,11 @@ int cell_fd_unix_connect(int fd, const char *path) {
   server->unix_peer_gid = domain->egid;
   server->node = listener->node;
   server->unix_pending_owned = true;
-  if (listener->unix_pending_tail) { listener->unix_pending_tail->unix_pending_next = server; }
-  else { listener->unix_pending_head = server; }
+  if (listener->unix_pending_tail) {
+    listener->unix_pending_tail->unix_pending_next = server;
+  } else {
+    listener->unix_pending_head = server;
+  }
   listener->unix_pending_tail = server;
   ++listener->unix_pending_count;
   cell_epoll_sources_changed(client);

@@ -40,8 +40,7 @@ static bool same_path(const char *a, const char *b) {
   return *a == *b;
 }
 
-static bool cache_path(const char *path, bool lstat, size_t *len_out,
-                       struct vfs_lookup_cache_entry **set_out) {
+static bool cache_path(const char *path, bool lstat, size_t *len_out, struct vfs_lookup_cache_entry **set_out) {
   uint32_t hash = lstat ? 2166136261u ^ 1u : 2166136261u;
   size_t len = 0;
   while (path[len] != '\0') {
@@ -53,8 +52,7 @@ static bool cache_path(const char *path, bool lstat, size_t *len_out,
   return true;
 }
 
-static struct vfs_lookup_cache_entry *find_entry(struct vfs_lookup_cache_entry *set,
-                                                  const char *path, bool lstat) {
+static struct vfs_lookup_cache_entry *find_entry(struct vfs_lookup_cache_entry *set, const char *path, bool lstat) {
   for (size_t i = 0; i < LOOKUP_CACHE_WAYS; ++i) {
     if (set[i].generation == generation && set[i].lstat == lstat && same_path(set[i].path, path)) { return &set[i]; }
   }

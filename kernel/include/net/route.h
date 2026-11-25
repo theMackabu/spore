@@ -1,8 +1,11 @@
 #pragma once
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 struct open_file;
-struct route_address { uint16_t family, pad; uint32_t port, groups; };
+struct route_address {
+  uint16_t family, pad;
+  uint32_t port, groups;
+};
 constexpr int ROUTE_FAMILY = 16;
 constexpr int ROUTE_PROTOCOL = 0;
 

@@ -21,12 +21,16 @@ static void drop_first(struct open_file *file) {
 }
 
 void tcp_free_ooo(struct open_file *file) {
-  while (file->tcp_ooo) { drop_first(file); }
+  while (file->tcp_ooo) {
+    drop_first(file);
+  }
 }
 
 static void store(struct open_file *file, uint32_t seq, const uint8_t *data, uint32_t len) {
   struct tcp_fragment **link = &file->tcp_ooo;
-  while (*link && (int32_t)((*link)->seq - seq) < 0) { link = &(*link)->next; }
+  while (*link && (int32_t)((*link)->seq - seq) < 0) {
+    link = &(*link)->next;
+  }
   struct tcp_fragment *fragment = *link;
   if (len > CELL_TCP_TX_CAP) { len = CELL_TCP_TX_CAP; }
   if (fragment && fragment->seq == seq) {

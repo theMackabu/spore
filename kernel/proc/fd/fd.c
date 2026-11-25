@@ -1,13 +1,15 @@
-#include "abi/linux/shared/open.h"
 #include "proc/fd.h"
-#include "proc/signalfd.h"
-#include "proc/epoll.h"
+#include "abi/linux/shared/open.h"
 #include "flock.h"
+#include "proc/epoll.h"
+#include "proc/signalfd.h"
 
+#include "fs/notify.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
-#include "fs/notify.h"
 #include "mm/pool.h"
+#include "net/socket.h"
+#include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
@@ -15,8 +17,6 @@
 #include "proc/poll.h"
 #include "proc/thread.h"
 #include "tty/pty.h"
-#include "net/socket.h"
-#include "net/unix.h"
 
 enum {
   CELL_O_NONBLOCK = 04000,
@@ -72,7 +72,9 @@ void cell_release_open_file(struct open_file *file) {
       if (file->node.backend) { vfs_release_node(&file->node); }
     }
     if (file->type == OPEN_VFS && file->node.access && (file->node.mode & 0170000) == 0100000 &&
-        linux_open_writable(file->flags)) { --file->node.access->writers; }
+        linux_open_writable(file->flags)) {
+      --file->node.access->writers;
+    }
     if (file->type == OPEN_VFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
     pool_free(&open_files, file);
   } else if (file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
@@ -115,11 +117,16 @@ void cell_copy_open_path(struct open_file *file, const char *path) {
 int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
   struct open_file *file = cell_fd_file(fd);
   if (!file || (file->flags & LINUX_O_PATH)) { return -9; }
-  if (file->type != OPEN_VFS || file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE) { return -29; }
+  if (file->type != OPEN_VFS || file->node.device == RAMFS_DEV_TTY || file->node.device == RAMFS_DEV_CONSOLE) {
+    return -29;
+  }
   int64_t base = 0;
   switch (whence) {
-  case 0: break;
-  case 1: base = (int64_t)file->offset; break;
+  case 0:
+    break;
+  case 1:
+    base = (int64_t)file->offset;
+    break;
   case 2: {
     struct vfs_node fresh;
     if (!vfs_refresh(&file->node, &fresh)) { return -5; }
@@ -132,21 +139,26 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
     off = vfs_seek_extent(&file->node, off, whence == 3);
     if (off < 0) { return off; }
     break;
-  default: return -EINVAL;
+  default:
+    return -EINVAL;
   }
   int64_t next;
   if (__builtin_add_overflow(base, off, &next) || next < 0) { return -EINVAL; }
   if (file->node.device == RAMFS_DEV_NULL || file->node.device == RAMFS_DEV_ZERO ||
-      file->node.device == RAMFS_DEV_FULL || file->node.device == RAMFS_DEV_URANDOM || file->node.device == RAMFS_DEV_RANDOM) {
+      file->node.device == RAMFS_DEV_FULL || file->node.device == RAMFS_DEV_URANDOM ||
+      file->node.device == RAMFS_DEV_RANDOM) {
     next = 0;
   }
   file->offset = (uint64_t)next;
   return next;
 }
 
-int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved, struct trap_frame *frame) {
+int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved,
+                      struct trap_frame *frame) {
   uint16_t type = node->mode & 0170000;
-  if (!(flags & LINUX_O_PATH) && (type == 0020000 || type == 0060000) && vfs_mount_flag(node->access, MOUNT_NODEV)) { return -13; }
+  if (!(flags & LINUX_O_PATH) && (type == 0020000 || type == 0060000) && vfs_mount_flag(node->access, MOUNT_NODEV)) {
+    return -13;
+  }
   if (linux_open_writable(flags) && vfs_mount_flag(node->access, MOUNT_RDONLY) && type == 0100000) { return -30; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
@@ -155,7 +167,10 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   if (!path_only && (node->device == RAMFS_DEV_PTMX || node->device == RAMFS_DEV_PTS)) {
     int fd = cell_pty_open_node(&node->ramfs, flags, path);
     if (fd < 0) { return fd; }
-    if (!vfs_retain_node(node)) { cell_close_domain_fd(domain, fd); return -12; }
+    if (!vfs_retain_node(node)) {
+      cell_close_domain_fd(domain, fd);
+      return -12;
+    }
     cell_file_at(domain, fd)->node = *node;
     return fd;
   }
@@ -169,7 +184,10 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
   file->node = *node;
   if (!path_only && (node->mode & CELL_S_IFMT) == CELL_S_IFIFO) {
     bool read = linux_open_readable(flags), write = linux_open_writable(flags);
-    if (!read && !write) { cell_release_open_file(file); return -EINVAL; }
+    if (!read && !write) {
+      cell_release_open_file(file);
+      return -EINVAL;
+    }
     bool needs_reader = write && !read && (flags & CELL_O_NONBLOCK) != 0;
     struct pipe_obj *pipe = cell_fifo_open(node, !needs_reader);
     if (needs_reader && (!pipe || !cell_pipe_has_readers(pipe))) {
@@ -185,17 +203,27 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
     if (read) { cell_pipe_add_reader(pipe); }
     if (write) { cell_pipe_add_writer(pipe); }
   }
-  if (file->type == OPEN_VFS && node->access && type == 0100000 && linux_open_writable(flags)) { ++node->access->writers; }
+  if (file->type == OPEN_VFS && node->access && type == 0100000 && linux_open_writable(flags)) {
+    ++node->access->writers;
+  }
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   cell_copy_open_path(file, path);
   bool pipe = file->type == OPEN_PIPE;
   fsnotify_track_open(file, resolved);
   if (pipe && !(flags & CELL_O_NONBLOCK) && !cell_fifo_has_peer(file)) {
-    if (!frame) { cell_release_open_file(file); return -EINVAL; }
+    if (!frame) {
+      cell_release_open_file(file);
+      return -EINVAL;
+    }
     int slot = cell_reserve_fd(domain);
-    if (slot < 0) { cell_release_open_file(file); return slot; }
-    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FIFO_OPEN, .target = slot, .held_file = file,
-                                                         .fifo_cloexec = (flags & CELL_O_CLOEXEC) != 0});
+    if (slot < 0) {
+      cell_release_open_file(file);
+      return slot;
+    }
+    return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FIFO_OPEN,
+                                                          .target = slot,
+                                                          .held_file = file,
+                                                          .fifo_cloexec = (flags & CELL_O_CLOEXEC) != 0});
   }
   int fd = cell_install_fd(domain, file, flags & CELL_O_CLOEXEC);
   if (fd >= 0) {
@@ -282,9 +310,7 @@ bool cell_fd_stat(int fd, struct vfs_node *out) {
   struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_file_at(domain, fd);
   if (file == NULL) { return false; }
-  if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN) {
-    return vfs_lookup("/dev/console", out);
-  }
+  if (file->type == OPEN_STDOUT || file->type == OPEN_STDIN) { return vfs_lookup("/dev/console", out); }
   if (file->type == OPEN_PIPE) {
     if (file->node.backend != VFS_NONE) { return vfs_refresh(&file->node, out); }
     *out = (struct vfs_node){

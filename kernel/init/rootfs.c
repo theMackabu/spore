@@ -1,9 +1,9 @@
 #include "boot.h"
-#include "init/app.h"
 #include "drivers/virtio_blk.h"
 #include "fs/ext2.h"
 #include "fs/ramfs.h"
 #include "fs/vfs.h"
+#include "init/app.h"
 #include "lib/kprintf.h"
 #include "net/net.h"
 

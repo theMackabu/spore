@@ -1,7 +1,7 @@
 #define _DEFAULT_SOURCE
 #include <errno.h>
-#include <poll.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <sys/ioctl.h>
@@ -44,7 +44,9 @@ void runner_terminal_open(bool interactive, int events) {
   sigemptyset(&sa.sa_mask);
   installed = sizeof(signals) / sizeof(signals[0]);
   if (events < 0) { --installed; }
-  for (size_t i = 0; i < installed; ++i) { sigaction(signals[i], &sa, &previous[i]); }
+  for (size_t i = 0; i < installed; ++i) {
+    sigaction(signals[i], &sa, &previous[i]);
+  }
   if (interactive && isatty(0) && tcgetattr(0, &saved) == 0) {
     struct termios settings = saved;
     cfmakeraw(&settings);
@@ -54,8 +56,14 @@ void runner_terminal_open(bool interactive, int events) {
 
 void runner_terminal_close(void) {
   event_fd = -1;
-  if (raw) { tcsetattr(0, TCSANOW, &saved); raw = false; }
-  while (installed > 0) { --installed; sigaction(signals[installed], &previous[installed], NULL); }
+  if (raw) {
+    tcsetattr(0, TCSANOW, &saved);
+    raw = false;
+  }
+  while (installed > 0) {
+    --installed;
+    sigaction(signals[installed], &previous[installed], NULL);
+  }
 }
 
 int runner_interrupted(void) {

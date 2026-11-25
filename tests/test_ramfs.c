@@ -25,7 +25,9 @@ static void many_names_and_mounts(void) {
   uint64_t cursor = 0;
   struct vfs_dirent ent;
   int count = 0;
-  while (ramfs_next_dirent(&first, dir, &cursor, &ent)) { ++count; }
+  while (ramfs_next_dirent(&first, dir, &cursor, &ent)) {
+    ++count;
+  }
   assert(count == 8192);
   for (int i = 8191; i >= 0; --i) {
     char path[40];

@@ -1,8 +1,8 @@
 #include "usercopy.h"
 #include "fd/write.h"
 #include "mm/pmm.h"
-#include "proc/memory.h"
 #include "proc/domain.h"
+#include "proc/memory.h"
 
 enum { EFAULT = 14, E2BIG = 7 };
 

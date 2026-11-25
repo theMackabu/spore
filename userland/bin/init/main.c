@@ -47,8 +47,8 @@ static nfds_t first_journal_event_index(void) {
 static void dispatch_journal_events(struct pollfd *fds, struct unit **journal_units, nfds_t start, nfds_t nfds) {
   for (nfds_t i = start; i < nfds; ++i) {
     if ((fds[i].revents & (POLLIN | POLLHUP)) == 0) { continue; }
-    struct unit *unit=journal_units[i];
-    if (unit->journal.fd==fds[i].fd) { journal_read(unit,&unit->journal); }
+    struct unit *unit = journal_units[i];
+    if (unit->journal.fd == fds[i].fd) { journal_read(unit, &unit->journal); }
   }
 }
 

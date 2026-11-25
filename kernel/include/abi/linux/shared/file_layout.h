@@ -7,7 +7,8 @@ struct linux_stat64 {
   uint64_t st_dev, st_ino, st_nlink;
   uint32_t st_mode, st_uid, st_gid, pad;
   uint64_t st_rdev;
-  int64_t st_size, st_blksize, st_blocks, st_atime_sec, st_atime_nsec, st_mtime_sec, st_mtime_nsec, st_ctime_sec, st_ctime_nsec;
+  int64_t st_size, st_blksize, st_blocks, st_atime_sec, st_atime_nsec, st_mtime_sec, st_mtime_nsec, st_ctime_sec,
+    st_ctime_nsec;
   int64_t unused[3];
 };
 static_assert(sizeof(struct linux_stat64) == 144);

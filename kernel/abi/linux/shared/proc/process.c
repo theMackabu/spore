@@ -1,20 +1,20 @@
-#include "proc/pid_namespace.h"
-#include "init/app.h"
-#include "abi/linux/shared/usercopy.h"
-#include "abi/linux/shared/layout.h"
-#include "handlers.h"
+#include "proc/process.h"
 #include "../time/handlers.h"
+#include "abi/linux/shared/layout.h"
+#include "abi/linux/shared/usercopy.h"
+#include "fs/mount_namespace.h"
+#include "handlers.h"
+#include "init/app.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
+#include "net/namespace.h"
 #include "proc/accounting.h"
 #include "proc/domain.h"
 #include "proc/futex.h"
-#include "proc/process.h"
-#include "proc/uts.h"
-#include "proc/user_namespace.h"
 #include "proc/ipc_namespace.h"
-#include "net/namespace.h"
-#include "fs/mount_namespace.h"
+#include "proc/pid_namespace.h"
+#include "proc/user_namespace.h"
+#include "proc/uts.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -75,7 +75,9 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
   if (app_mode && (!(flags & CLONE_THREAD) || !(flags & CLONE_VM) || (flags & CLONE_VFORK))) { return -1; }
   struct domain *d = cell_current_domain_internal();
   if (((flags & CLONE_THREAD) && ((flags & CLONE_NEWPID) || d->child_pid_ns != pidns_active(d))) ||
-      ((flags & CLONE_NEWPID) && d->child_pid_ns != pidns_active(d))) { return -EINVAL; }
+      ((flags & CLONE_NEWPID) && d->child_pid_ns != pidns_active(d))) {
+    return -EINVAL;
+  }
   if ((flags & CLONE_NEWIPC) && (flags & CLONE_SYSVSEM)) { return -EINVAL; }
   const uint64_t signal_mask = 0xff;
   uint64_t exit_signal = flags & signal_mask;
@@ -87,7 +89,10 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
     return cell_vfork_current(f, newsp, flags, parent_tid, tls, child_tid);
   }
   if ((flags & CLONE_VM) == 0) {
-    if (flags & ~(signal_mask | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_PARENT_SETTID | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) { return -ENOSYS; }
+    if (flags & ~(signal_mask | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWUSER |
+                  CLONE_NEWUTS | CLONE_PARENT_SETTID | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) {
+      return -ENOSYS;
+    }
     return cell_fork_current(f, flags, newsp, parent_tid, child_tid);
   }
 
@@ -98,7 +103,8 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
   return cell_clone_thread_current(f, flags, newsp, parent_tid, tls, child_tid);
 }
 
-int64_t sys_futex(struct trap_frame *f, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout, uint64_t uaddr2, uint32_t bitset) {
+int64_t sys_futex(struct trap_frame *f, uint64_t uaddr, uint64_t op, uint64_t val, uint64_t timeout, uint64_t uaddr2,
+                  uint32_t bitset) {
   uint64_t cmd = op & FUTEX_CMD_MASK;
   bool realtime = (op & FUTEX_CLOCK_REALTIME) != 0;
   if ((op & ~(uint64_t)(FUTEX_CMD_MASK | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME)) ||

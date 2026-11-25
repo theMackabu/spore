@@ -17,8 +17,8 @@ int main(void) {
     _exit(42);
   }
   int status;
-  if (pid > 0 && waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 42 &&
-      *private == 3 && *shared == 7) {
+  if (pid > 0 && waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 42 && *private == 3 &&
+      *shared == 7) {
     write(1, "child wait passed\n", 18);
   }
   syscall(0x4006, 0);

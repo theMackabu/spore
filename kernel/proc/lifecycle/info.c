@@ -1,8 +1,8 @@
-#include "proc/pid_namespace.h"
 #include "proc/info.h"
 #include "lib/kstr.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
+#include "proc/pid_namespace.h"
 
 enum thread_state cell_domain_state(const struct domain *domain) {
   if (domain == NULL) { return THREAD_UNUSED; }

@@ -18,8 +18,11 @@ struct tcp_segment {
 static struct object_pool segments;
 
 static void recycle(struct open_file *file, struct tcp_segment *seg) {
-  if (!file->tcp_tx_spare) { file->tcp_tx_spare = seg; }
-  else { pool_free(&segments, seg); }
+  if (!file->tcp_tx_spare) {
+    file->tcp_tx_spare = seg;
+  } else {
+    pool_free(&segments, seg);
+  }
 }
 
 static void drop_head(struct open_file *file) {
@@ -32,7 +35,9 @@ static void drop_head(struct open_file *file) {
 }
 
 void tcp_tx_clear(struct open_file *file) {
-  while (file->tcp_tx_head) { drop_head(file); }
+  while (file->tcp_tx_head) {
+    drop_head(file);
+  }
   if (file->tcp_tx_spare) { pool_free(&segments, file->tcp_tx_spare); }
   file->tcp_tx_spare = NULL;
 }
@@ -68,13 +73,13 @@ static uint32_t tcp_send_chunk_limit(const struct open_file *file) {
 }
 
 bool cell_tcp_socket_writable(const struct open_file *file) {
-  return file && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
-         file->tcp_state == TCP_ESTABLISHED && !file->tcp_error && !file->tcp_fin_sent && tcp_send_chunk_limit(file);
+  return file && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && file->tcp_state == TCP_ESTABLISHED &&
+         !file->tcp_error && !file->tcp_fin_sent && tcp_send_chunk_limit(file);
 }
 
 bool tcp_send_would_block(const struct open_file *file) {
-  return file && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP &&
-         file->tcp_state == TCP_ESTABLISHED && !file->tcp_error && !file->tcp_fin_sent && !tcp_send_chunk_limit(file);
+  return file && file->type == OPEN_SOCKET && file->socket_proto == IPPROTO_TCP && file->tcp_state == TCP_ESTABLISHED &&
+         !file->tcp_error && !file->tcp_fin_sent && !tcp_send_chunk_limit(file);
 }
 
 static bool send_segment(struct open_file *file, const struct tcp_segment *seg) {
@@ -93,8 +98,9 @@ static int64_t write_segment(struct open_file *file, uint64_t len, tcp_copy_payl
   if (!chunk) { return -EAGAIN; }
   if (chunk > len) { chunk = (uint32_t)len; }
   struct tcp_segment *seg = file->tcp_tx_spare;
-  if (seg) { file->tcp_tx_spare = NULL; }
-  else {
+  if (seg) {
+    file->tcp_tx_spare = NULL;
+  } else {
     if (!segments.limit && !pool_init(&segments, sizeof(*seg), SIZE_MAX)) { return -12; }
     seg = pool_alloc(&segments);
     if (!seg) { return -12; }
@@ -111,8 +117,11 @@ static int64_t write_segment(struct open_file *file, uint64_t len, tcp_copy_payl
   seg->len = chunk;
   seg->offset = seg->retries = 0;
   struct tcp_segment *prev = file->tcp_tx_tail;
-  if (prev) { prev->next = seg; }
-  else { file->tcp_tx_head = seg; }
+  if (prev) {
+    prev->next = seg;
+  } else {
+    file->tcp_tx_head = seg;
+  }
   file->tcp_tx_tail = seg;
   ++file->tcp_tx_count;
   file->tcp_tx_bytes += chunk;
@@ -122,8 +131,11 @@ static int64_t write_segment(struct open_file *file, uint64_t len, tcp_copy_payl
     file->tcp_tx_bytes -= chunk;
     --file->tcp_tx_count;
     file->tcp_tx_tail = prev;
-    if (prev) { prev->next = NULL; }
-    else { file->tcp_tx_head = NULL; }
+    if (prev) {
+      prev->next = NULL;
+    } else {
+      file->tcp_tx_head = NULL;
+    }
     recycle(file, seg);
     return -EIO;
   }

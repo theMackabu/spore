@@ -1,6 +1,6 @@
-#include "internal.h"
 #include "abi/linux/shared/open.h"
 #include "fs/vfs.h"
+#include "internal.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "proc/fd.h"
@@ -60,7 +60,9 @@ void fsnotify_opened(struct open_file *file) {
 
 void fsnotify_closed(struct open_file *file) {
   if (!file->node.ino || (file->flags & LINUX_O_PATH)) { return; }
-  if (file->open_notified) { fsnotify_file_event(file, linux_open_writable(file->flags) ? FS_CLOSE_WRITE : FS_CLOSE_NOWRITE); }
+  if (file->open_notified) {
+    fsnotify_file_event(file, linux_open_writable(file->flags) ? FS_CLOSE_WRITE : FS_CLOSE_NOWRITE);
+  }
   if (file->name_link) {
     *file->name_link = file->name_next;
     if (file->name_next) { file->name_next->name_link = file->name_link; }
@@ -117,7 +119,9 @@ void fsnotify_prepare_change(const struct fsnotify_entry *entry) {
   if (!entry->ino) { return; }
   if (entry->is_dir || entry->is_symlink) {
     for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
-      for (struct open_file *f = names[i]; f; f = f->name_next) { resolve_open_name(f); }
+      for (struct open_file *f = names[i]; f; f = f->name_next) {
+        resolve_open_name(f);
+      }
     }
   } else {
     for (struct open_file *f = *bucket(entry->dev, entry->ino); f; f = f->name_next) {
@@ -130,10 +134,15 @@ static void relabel(const struct fsnotify_entry *entry, const struct vfs_entry_n
   if (!entry->ino) { return; }
   for (struct open_file *f = *bucket(entry->dev, entry->ino); f; f = f->name_next) {
     if (f->node.ino != entry->ino || f->node.dev_id != entry->dev || f->name_unlinked ||
-        f->notify_name.parent_dev != entry->location.parent_dev || f->notify_name.parent_ino != entry->location.parent_ino ||
-        !str_eq(f->notify_name.name, entry->location.name)) { continue; }
-    if (to) { f->notify_name = *to; }
-    else { f->name_unlinked = true; }
+        f->notify_name.parent_dev != entry->location.parent_dev ||
+        f->notify_name.parent_ino != entry->location.parent_ino || !str_eq(f->notify_name.name, entry->location.name)) {
+      continue;
+    }
+    if (to) {
+      f->notify_name = *to;
+    } else {
+      f->name_unlinked = true;
+    }
   }
 }
 

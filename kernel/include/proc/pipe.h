@@ -37,7 +37,8 @@ struct unix_rights_queue;
 struct epoll_source *cell_pipe_poll_source(struct pipe_obj *pipe);
 uint64_t cell_pipe_read_offset(const struct pipe_obj *pipe);
 struct unix_rights_queue *cell_pipe_rights(struct pipe_obj *pipe);
-int64_t cell_pipe_write_data(struct pipe_obj *pipe, uint64_t len, ring_copy_in copy, void *source, struct unix_rights **rights);
+int64_t cell_pipe_write_data(struct pipe_obj *pipe, uint64_t len, ring_copy_in copy, void *source,
+                             struct unix_rights **rights);
 int64_t cell_pipe_peek_data(struct pipe_obj *pipe, uint64_t len, ring_copy_out copy, void *dst);
 void cell_pipe_consume(struct pipe_obj *pipe, uint32_t bytes);
 int64_t cell_pipe_recv_user(struct domain *domain, struct pipe_obj *pipe, uint64_t buf, uint64_t len, unsigned flags);

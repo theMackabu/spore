@@ -10,7 +10,9 @@ static volatile sig_atomic_t handled;
 static void recover(int signal, siginfo_t *info, void *context) {
   (void)context;
   if (signal != SIGSEGV || info->si_code != SEGV_ACCERR || info->si_addr != page + 31 ||
-      mprotect(page, 4096, PROT_READ | PROT_WRITE)) { _exit(1); }
+      mprotect(page, 4096, PROT_READ | PROT_WRITE)) {
+    _exit(1);
+  }
   ++handled;
 }
 

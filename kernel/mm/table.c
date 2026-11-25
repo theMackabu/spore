@@ -1,6 +1,6 @@
 #include "mm/table.h"
-#include "mm/pmm.h"
 #include "lib/mem.h"
+#include "mm/pmm.h"
 
 #if __STDC_HOSTED__
 #include <stdlib.h>

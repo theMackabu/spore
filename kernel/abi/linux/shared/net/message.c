@@ -98,7 +98,9 @@ int linux_scatter_iov(void *destination, const uint8_t *src, size_t len) {
     if (!n) { return -EFAULT; }
     if (!vmm_copy_to_user(cursor->as, addr, src, n) &&
         !(cell_domain_ensure_user_range(cursor->domain, addr, n, VMM_ACCESS_WRITE) &&
-          vmm_copy_to_user(cursor->as, addr, src, n))) { return -EFAULT; }
+          vmm_copy_to_user(cursor->as, addr, src, n))) {
+      return -EFAULT;
+    }
     src += n;
     len -= n;
   }

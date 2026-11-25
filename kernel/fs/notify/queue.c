@@ -9,7 +9,8 @@
 #include "proc/thread.h"
 
 enum { MAX_EVENTS = 16384, HEADER = 16, OVERFLOW = 0x4000, NONBLOCK = 04000 };
-static_assert(offsetof(struct inotify_event_record, event.name) - offsetof(struct inotify_event_record, event) == HEADER);
+static_assert(offsetof(struct inotify_event_record, event.name) - offsetof(struct inotify_event_record, event) ==
+              HEADER);
 
 static struct object_pool events;
 static struct inotify_state *pending;
@@ -18,7 +19,9 @@ static bool flushing;
 void inotify_enqueue(struct inotify_state *state, int wd, uint32_t mask, uint32_t cookie, const char *name) {
   struct inotify_event_record *tail = state->tail;
   if (tail && tail->event.wd == wd && tail->event.mask == mask && tail->event.cookie == cookie &&
-      str_eq(tail->event.name, name ? name : "")) { return; }
+      str_eq(tail->event.name, name ? name : "")) {
+    return;
+  }
   struct inotify_event_record *record = NULL;
   if (state->count < MAX_EVENTS && (events.limit || pool_init(&events, sizeof(*record), SIZE_MAX))) {
     record = pool_alloc(&events);
@@ -41,8 +44,11 @@ void inotify_enqueue(struct inotify_state *state, int wd, uint32_t mask, uint32_
     record->event.len = (uint32_t)((n + HEADER - 1) & ~(size_t)(HEADER - 1));
     kmemcpy(record->event.name, name, n);
   }
-  if (tail) { tail->next = record; }
-  else { state->head = record; }
+  if (tail) {
+    tail->next = record;
+  } else {
+    state->head = record;
+  }
   state->tail = record;
   ++state->count;
   state->bytes += HEADER + record->event.len;
@@ -60,15 +66,22 @@ static void drop_head(struct inotify_state *state) {
   if (!state->head) { state->tail = NULL; }
   --state->count;
   state->bytes -= HEADER + record->event.len;
-  if (record == &state->overflow) { state->overflow_queued = false; }
-  else { pool_free(&events, record); }
+  if (record == &state->overflow) {
+    state->overflow_queued = false;
+  } else {
+    pool_free(&events, record);
+  }
 }
 
 void inotify_clear_events(struct inotify_state *state) {
-  while (state->head) { drop_head(state); }
+  while (state->head) {
+    drop_head(state);
+  }
 }
 
-unsigned inotify_bytes(const struct open_file *file) { return file->inotify->bytes; }
+unsigned inotify_bytes(const struct open_file *file) {
+  return file->inotify->bytes;
+}
 
 static int64_t drain(struct domain *domain, struct inotify_state *state, uint64_t buf, uint64_t len) {
   if (!state->head) { return -11; }
@@ -88,11 +101,13 @@ static int64_t drain(struct domain *domain, struct inotify_state *state, uint64_
   return (int64_t)done;
 }
 
-int64_t inotify_read(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, struct trap_frame *frame) {
+int64_t inotify_read(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len,
+                     struct trap_frame *frame) {
   int64_t n = drain(domain, file->inotify, buf, len);
   if (n != -11 || !frame || (file->flags & NONBLOCK)) { return n; }
   cell_retain_open_file(file);
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_INOTIFY, .held_file = file, .buf = buf, .len = len});
+  return cell_block_current(frame,
+                            (struct thread_wait){.reason = WAIT_INOTIFY, .held_file = file, .buf = buf, .len = len});
 }
 
 void inotify_flush(void) {

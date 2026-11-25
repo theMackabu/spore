@@ -45,8 +45,8 @@ static int disk_fifo(void) {
            S_ISFIFO(named.st_mode) && named.st_ino == opened.st_ino && named.st_dev == opened.st_dev;
   int both = open(link_name, O_RDWR | O_NONBLOCK);
   ok = ok && both >= 0 && unlink(name) == 0 && unlink(link_name) == 0 && write(both, "ab", 2) == 2 &&
-       read(rd, &c, 1) == 1 && c == 'a' && read(both, &c, 1) == 1 && c == 'b' &&
-       fstat(rd, &opened) == 0 && opened.st_nlink == 0;
+       read(rd, &c, 1) == 1 && c == 'a' && read(both, &c, 1) == 1 && c == 'b' && fstat(rd, &opened) == 0 &&
+       opened.st_nlink == 0;
   if (both >= 0) { close(both); }
   struct pollfd p = {.fd = rd, .events = POLLIN};
   ok = ok && poll(&p, 1, 0) == 1 && (p.revents & POLLHUP) && read(rd, &c, 1) == 0;
@@ -76,8 +76,11 @@ static int fifo_rendezvous(const char *name, int child_mode) {
   int fd = child > 0 ? open(name, child_mode == O_RDONLY ? O_WRONLY : O_RDONLY) : -1;
   ok = ok && fd >= 0 && read(ready[0], &c, 1) == 1 && c == 'o';
   if (fd >= 0) {
-    if (child_mode == O_RDONLY) { ok = write(fd, "x", 1) == 1 && ok; }
-    else { ok = read(fd, &c, 1) == 1 && c == 'x' && ok; }
+    if (child_mode == O_RDONLY) {
+      ok = write(fd, "x", 1) == 1 && ok;
+    } else {
+      ok = read(fd, &c, 1) == 1 && c == 'x' && ok;
+    }
     close(fd);
   }
   close(ready[0]);
@@ -86,7 +89,9 @@ static int fifo_rendezvous(const char *name, int child_mode) {
   return unlink(name) == 0 && ok;
 }
 
-static void alarm_handler(int signo) { (void)signo; }
+static void alarm_handler(int signo) {
+  (void)signo;
+}
 
 static int interrupted_open(void) {
   const char *name = "/tmp/interrupted-fifo";
@@ -97,8 +102,9 @@ static int interrupted_open(void) {
     struct itimerval timer = {.it_value = {.tv_usec = 40000}};
     sigemptyset(&act.sa_mask);
     if (sigaction(SIGALRM, &act, NULL) || setitimer(ITIMER_REAL, &timer, NULL)) { _exit(1); }
-    _exit(open(name, O_RDONLY) == -1 && errno == EINTR &&
-          open(name, O_NONBLOCK | O_WRONLY) == -1 && errno == ENXIO ? 0 : 1);
+    _exit(open(name, O_RDONLY) == -1 && errno == EINTR && open(name, O_NONBLOCK | O_WRONLY) == -1 && errno == ENXIO
+            ? 0
+            : 1);
   }
   int status;
   int ok = child > 0 && waitpid(child, &status, 0) == child && status == 0;

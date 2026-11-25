@@ -8,9 +8,9 @@ static inline void native_publish_table(uint64_t *entry, uint64_t descriptor) {
 }
 static inline void invalidate_local(uint64_t va) {
 #ifdef __riscv
-  __asm__ volatile("sfence.vma %0" :: "r"(va) : "memory");
+  __asm__ volatile("sfence.vma %0" ::"r"(va) : "memory");
 #else
-  __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+  __asm__ volatile("invlpg (%0)" ::"r"(va) : "memory");
 #endif
 }
 static inline void native_flush_va(uint64_t va) {

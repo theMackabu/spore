@@ -1,10 +1,10 @@
-#include "lib/kprintf.h"
 #include "proc/accounting.h"
 #include "accounting_internal.h"
 #include "arch/smp.h"
+#include "lib/kprintf.h"
 #include "proc/domain.h"
-#include "proc/thread.h"
 #include "proc/memory.h"
+#include "proc/thread.h"
 
 static struct {
   uint64_t busy_ticks;
@@ -112,8 +112,10 @@ struct resource_usage cell_process_usage(const struct domain *domain) {
   const struct user_address_space *as = cell_domain_as_const(domain);
   uint64_t peak = domain->previous_peak_rss;
   if (as && as->peak_resident_pages > peak) { peak = as->peak_resident_pages; }
-  return (struct resource_usage){.user_ticks = domain->cpu_ticks, .peak_pages = peak,
-                                 .minor_faults = domain->minor_faults, .major_faults = domain->major_faults};
+  return (struct resource_usage){.user_ticks = domain->cpu_ticks,
+                                 .peak_pages = peak,
+                                 .minor_faults = domain->minor_faults,
+                                 .major_faults = domain->major_faults};
 }
 
 void cell_merge_usage(struct resource_usage *total, const struct resource_usage *usage) {

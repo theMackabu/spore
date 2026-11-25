@@ -155,13 +155,15 @@ int ext2_file_block_for_write(struct ext2_fs *fs, struct ext2_node *node, uint32
 bool ext2_trim_blocks(struct ext2_fs *fs, struct ext2_node *node, uint32_t keep);
 void ext2_dir_drop_cache(struct ext2_fs *fs);
 void ext2_dir_cache_invalidate_inode(struct ext2_fs *fs, uint32_t ino);
-int ext2_find_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t len, struct ext2_node *out);
+int ext2_find_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t len,
+                    struct ext2_node *out);
 static inline bool ext2_lookup_child(struct ext2_fs *fs, const struct ext2_node *dir, const char *name, size_t len,
                                      struct ext2_node *out) {
   return ext2_find_child(fs, dir, name, len, out) > 0;
 }
 uint32_t ext2_cache_name_block(struct ext2_fs *fs, uint32_t parent, const char *name, size_t len);
-void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t len, uint32_t ino, uint32_t block_index);
+void ext2_cache_add_name(struct ext2_fs *fs, uint32_t parent_ino, const char *name, size_t len, uint32_t ino,
+                         uint32_t block_index);
 void ext2_dir_cache_remove_name(struct ext2_fs *fs, uint32_t parent, const char *name);
 bool ext2_check_refs(struct ext2_fs *fs, bool remount);
 bool ext2_set_orphan(struct ext2_fs *fs, uint32_t ino, bool orphan, bool linkable);

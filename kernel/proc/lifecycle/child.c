@@ -1,11 +1,11 @@
-#include "proc/pid_namespace.h"
-#include "proc/process.h"
 #include "abi/linux/shared/usage.h"
 #include "arch/smp.h"
 #include "proc/domain.h"
 #include "proc/memory.h"
-#include "proc/user_namespace.h"
+#include "proc/pid_namespace.h"
+#include "proc/process.h"
 #include "proc/thread.h"
+#include "proc/user_namespace.h"
 
 enum { ECHILD = 10, EFAULT = 14, WNOHANG = 1 };
 
@@ -19,7 +19,9 @@ static bool domain_has_running_thread(const struct domain *domain) {
 
 void cell_reap_namespace_orphan(struct domain *child) {
   if (child->used && child->zombie && !child->parent_id && pidns_active(child) &&
-      child != cell_current_domain_internal() && !domain_has_running_thread(child)) { cell_destroy_domain(child); }
+      child != cell_current_domain_internal() && !domain_has_running_thread(child)) {
+    cell_destroy_domain(child);
+  }
 }
 
 static bool matches(const struct domain *child, const struct domain *parent, int pid) {
@@ -32,7 +34,9 @@ static bool matches(const struct domain *child, const struct domain *parent, int
 static int reap(struct domain *parent, struct domain *child, uint64_t status_addr, uint64_t usage_addr) {
   int status = child->term_signal ? child->term_signal : (child->exit_status & 255) << 8;
   if (status_addr && (!cell_domain_ensure_user_range(parent, status_addr, sizeof(status), VMM_ACCESS_WRITE) ||
-                      !vmm_copy_to_user(cell_domain_as(parent), status_addr, &status, sizeof(status)))) { return -EFAULT; }
+                      !vmm_copy_to_user(cell_domain_as(parent), status_addr, &status, sizeof(status)))) {
+    return -EFAULT;
+  }
   struct resource_usage usage = cell_process_usage(child);
   cell_merge_usage(&usage, &child->children_usage);
   if (usage_addr && linux_write_rusage(parent, usage_addr, &usage) < 0) { return -EFAULT; }
@@ -56,11 +60,15 @@ static int wait_result(struct domain *parent, int pid, uint64_t status_addr, uin
 
 void cell_wake_parent_of(struct domain *child) {
   cell_wake_vfork_parent_of(child->id);
-  if (!child->parent_id) { cell_reap_namespace_orphan(child); return; }
+  if (!child->parent_id) {
+    cell_reap_namespace_orphan(child);
+    return;
+  }
   int parent_id = child->parent_id;
   int signal = child->exit_signal;
   struct domain *parent = cell_find_domain(parent_id);
-  struct siginfo_fields64 info = {.si_signo = signal, .si_code = child->term_signal ? 2 : 1,
+  struct siginfo_fields64 info = {.si_signo = signal,
+                                  .si_code = child->term_signal ? 2 : 1,
                                   .sender = {pidns_local(pidns_active(parent), child->id), child->uid},
                                   .child_status = child->term_signal ? child->term_signal : child->exit_status & 255};
   size_t cursor = 0;
@@ -70,12 +78,18 @@ void cell_wake_parent_of(struct domain *child) {
     thread->wait.child_servicing = true;
     int result = wait_result(thread->domain, thread->wait.target, thread->wait.child_status, thread->wait.child_usage);
     thread->wait.child_servicing = false;
-    if (result) { cell_finish_wait(thread, result); smp_notify(); }
+    if (result) {
+      cell_finish_wait(thread, result);
+      smp_notify();
+    }
   }
   if (signal && parent && !parent->zombie) {
     info.sender.uid = userns_visible(parent->user_ns, false, info.sender.uid);
-    if (signal == 17) { cell_signal_child_exit(parent, info); }
-    else { cell_signal_domain(parent, signal, NULL); }
+    if (signal == 17) {
+      cell_signal_child_exit(parent, info);
+    } else {
+      cell_signal_domain(parent, signal, NULL);
+    }
   }
 }
 
@@ -84,6 +98,7 @@ int cell_wait4_options(int pid, uint64_t status_addr, int options, uint64_t usag
   if (!parent) { return -ECHILD; }
   int result = wait_result(parent, pid, status_addr, usage_addr);
   if (result || (options & WNOHANG)) { return result; }
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_CHILD, .target = pid,
-                                                        .child_status = status_addr, .child_usage = usage_addr});
+  return cell_block_current(
+    frame,
+    (struct thread_wait){.reason = WAIT_CHILD, .target = pid, .child_status = status_addr, .child_usage = usage_addr});
 }

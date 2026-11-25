@@ -1,14 +1,14 @@
-#include "proc/io.h"
 #include "../usercopy.h"
-#include "file_abi.h"
 #include "abi/linux/shared/layout.h"
 #include "abi/linux/shared/open.h"
+#include "file_abi.h"
 #include "fs/notify.h"
 #include "fs/vfs.h"
 #include "proc/accounting.h"
-#include "proc/domain.h"
 #include "proc/capabilities.h"
+#include "proc/domain.h"
 #include "proc/fd.h"
+#include "proc/io.h"
 #include "proc/policy.h"
 
 struct attr_target {
@@ -35,8 +35,11 @@ static int attr_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descript
 }
 
 static void notify_attr(const struct attr_target *target, uint32_t mask) {
-  if (target->file) { fsnotify_file_event(target->file, mask); }
-  else { fsnotify_node_event(&target->node, target->path, mask); }
+  if (target->file) {
+    fsnotify_file_event(target->file, mask);
+  } else {
+    fsnotify_node_event(&target->node, target->path, mask);
+  }
 }
 
 int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, uint64_t flags) {
@@ -44,7 +47,9 @@ int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, u
   constexpr int64_t OMIT = NOW - 1;
   struct timespec64 times[2] = {{.tv_nsec = NOW}, {.tv_nsec = NOW}};
   if (times_addr && (!syscall_user_readable(times_addr, sizeof(times)) ||
-      !vmm_copy_from_user(syscall_active_as(), times, times_addr, sizeof(times)))) { return -EFAULT; }
+                     !vmm_copy_from_user(syscall_active_as(), times, times_addr, sizeof(times)))) {
+    return -EFAULT;
+  }
   for (size_t i = 0; i < 2; ++i) {
     int64_t ns = times[i].tv_nsec;
     if (ns != NOW && ns != OMIT && (ns < 0 || ns >= 1000000000)) { return -EINVAL; }
@@ -58,10 +63,16 @@ int64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr, uint64_t times_addr, u
     if (!syscall_node_access_allowed(&target.node, W_OK)) { return -EACCES; }
   }
   int64_t now = (int64_t)cell_realtime_seconds();
-  int64_t atime = times[0].tv_nsec == OMIT ? (int64_t)target.node.atime : times[0].tv_nsec == NOW ? now : times[0].tv_sec;
-  int64_t mtime = times[1].tv_nsec == OMIT ? (int64_t)target.node.mtime : times[1].tv_nsec == NOW ? now : times[1].tv_sec;
+  int64_t atime = times[0].tv_nsec == OMIT  ? (int64_t)target.node.atime
+                  : times[0].tv_nsec == NOW ? now
+                                            : times[0].tv_sec;
+  int64_t mtime = times[1].tv_nsec == OMIT  ? (int64_t)target.node.mtime
+                  : times[1].tv_nsec == NOW ? now
+                                            : times[1].tv_sec;
   rc = vfs_set_times(&target.node, atime, mtime);
-  if (!rc) { notify_attr(&target, times[0].tv_nsec == OMIT ? FS_MODIFY : times[1].tv_nsec == OMIT ? FS_ACCESS : FS_ATTRIB); }
+  if (!rc) {
+    notify_attr(&target, times[0].tv_nsec == OMIT ? FS_MODIFY : times[1].tv_nsec == OMIT ? FS_ACCESS : FS_ATTRIB);
+  }
   return rc;
 }
 
@@ -91,7 +102,8 @@ static bool chown_ids(const struct vfs_node *node, uint64_t uid_arg, uint64_t gi
   return uid_arg <= 0xffffffffull && gid_arg <= 0xffffffffull;
 }
 
-static int chown_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descriptor, uint64_t uid_arg, uint64_t gid_arg) {
+static int chown_target(uint64_t fd, uint64_t addr, uint64_t flags, bool descriptor, uint64_t uid_arg,
+                        uint64_t gid_arg) {
   struct attr_target target;
   int rc = attr_target(fd, addr, flags, descriptor, &target);
   if (rc) { return rc; }
@@ -114,14 +126,19 @@ int64_t sys_fchown(uint64_t fd, uint64_t uid, uint64_t gid) {
 int64_t sys_ftruncate(uint64_t fd, uint64_t size) {
   struct open_file *file = cell_fd_file(fd);
   if (!file || (file->flags & LINUX_O_PATH)) { return -EBADF; }
-  if (file->type != OPEN_VFS || !linux_open_writable(file->flags) || (int64_t)size < 0 ||
-      file->node.is_dir || file->node.device != RAMFS_DEV_NONE) { return -EINVAL; }
+  if (file->type != OPEN_VFS || !linux_open_writable(file->flags) || (int64_t)size < 0 || file->node.is_dir ||
+      file->node.device != RAMFS_DEV_NONE) {
+    return -EINVAL;
+  }
   if (vfs_truncate_sealed(&file->node, size)) { return -EPERM; }
-  struct domain *d=cell_current_domain_internal();
-  if (size>d->fsize_soft) {
+  struct domain *d = cell_current_domain_internal();
+  if (size > d->fsize_soft) {
     struct vfs_node fresh;
-    if (!vfs_refresh(&file->node,&fresh)) {return -5;}
-    if (size>fresh.size) {size_t bytes=1;return cell_file_write_limit(d,size,&bytes);}
+    if (!vfs_refresh(&file->node, &fresh)) { return -5; }
+    if (size > fresh.size) {
+      size_t bytes = 1;
+      return cell_file_write_limit(d, size, &bytes);
+    }
   }
   if (!vfs_truncate(&file->node, size)) { return -EINVAL; }
   fsnotify_file_event(file, FS_MODIFY);

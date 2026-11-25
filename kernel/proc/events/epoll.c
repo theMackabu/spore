@@ -1,14 +1,14 @@
+#include "proc/epoll.h"
 #include "abi/linux/shared/file_layout.h"
 #include "mm/pool.h"
 #include "net/net.h"
+#include "poll_internal.h"
+#include "proc/accounting.h"
 #include "proc/domain.h"
-#include "proc/epoll.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
 #include "proc/pipe.h"
 #include "proc/poll.h"
-#include "proc/accounting.h"
-#include "poll_internal.h"
 
 enum { ADD = 1, DEL = 2, MOD = 3, MAX_DEPTH = 5, ONESHOT = 1U << 30, EDGE = 1U << 31, CLOEXEC = 02000000 };
 
@@ -38,8 +38,11 @@ static uint64_t scan_generation;
 static void enqueue(struct epoll_watch *w) {
   struct open_file *ep = w->ep;
   w->ready_prev = ep->epoll_ready_tail;
-  if (w->ready_prev) { w->ready_prev->ready_next = w; }
-  else { ep->epoll_ready_head = w; }
+  if (w->ready_prev) {
+    w->ready_prev->ready_next = w;
+  } else {
+    ep->epoll_ready_head = w;
+  }
   ep->epoll_ready_tail = w;
   ++ep->epoll_ready_count;
   w->queued = true;
@@ -47,10 +50,16 @@ static void enqueue(struct epoll_watch *w) {
 
 static void dequeue(struct epoll_watch *w) {
   struct open_file *ep = w->ep;
-  if (w->ready_prev) { w->ready_prev->ready_next = w->ready_next; }
-  else { ep->epoll_ready_head = w->ready_next; }
-  if (w->ready_next) { w->ready_next->ready_prev = w->ready_prev; }
-  else { ep->epoll_ready_tail = w->ready_prev; }
+  if (w->ready_prev) {
+    w->ready_prev->ready_next = w->ready_next;
+  } else {
+    ep->epoll_ready_head = w->ready_next;
+  }
+  if (w->ready_next) {
+    w->ready_next->ready_prev = w->ready_prev;
+  } else {
+    ep->epoll_ready_tail = w->ready_prev;
+  }
   --ep->epoll_ready_count;
   w->ready_next = w->ready_prev = NULL;
   w->queued = false;
@@ -64,19 +73,29 @@ static void refresh(struct epoll_watch *w, uint32_t activity) {
   w->pending = w->mask & EDGE ? (w->pending & ready) | arrivals : ready;
   w->last = ready;
   bool was_ready = w->ep->epoll_ready_head != NULL;
-  if (w->pending && !w->queued) { enqueue(w); }
-  else if (!w->pending && w->queued) { dequeue(w); }
+  if (w->pending && !w->queued) {
+    enqueue(w);
+  } else if (!w->pending && w->queued) {
+    dequeue(w);
+  }
   if (w->ep->epoll_observers) {
-    if (arrivals) { cell_epoll_file_activity(w->ep, CELL_POLLIN); }
-    else if (was_ready != (w->ep->epoll_ready_head != NULL)) { cell_epoll_file_changed(w->ep); }
+    if (arrivals) {
+      cell_epoll_file_activity(w->ep, CELL_POLLIN);
+    } else if (was_ready != (w->ep->epoll_ready_head != NULL)) {
+      cell_epoll_file_changed(w->ep);
+    }
   }
 }
 
 void cell_epoll_file_activity(struct open_file *file, unsigned events) {
-  for (struct epoll_watch *w = file->epoll_observers; w; w = w->observer_next) { refresh(w, events); }
+  for (struct epoll_watch *w = file->epoll_observers; w; w = w->observer_next) {
+    refresh(w, events);
+  }
 }
 
-void cell_epoll_file_changed(struct open_file *file) { cell_epoll_file_activity(file, 0); }
+void cell_epoll_file_changed(struct open_file *file) {
+  cell_epoll_file_activity(file, 0);
+}
 
 void cell_epoll_source_activity(struct epoll_source *source, unsigned events) {
   for (struct epoll_subscription *sub = source->first; sub; sub = sub->next) {
@@ -84,9 +103,13 @@ void cell_epoll_source_activity(struct epoll_source *source, unsigned events) {
   }
 }
 
-void cell_epoll_source_changed(struct epoll_source *source) { cell_epoll_source_activity(source, 0); }
+void cell_epoll_source_changed(struct epoll_source *source) {
+  cell_epoll_source_activity(source, 0);
+}
 
-void cell_epoll_console_activity(unsigned events) { cell_epoll_source_activity(&console_input, events); }
+void cell_epoll_console_activity(unsigned events) {
+  cell_epoll_source_activity(&console_input, events);
+}
 
 void cell_epoll_sample_terminals(void) {
   cell_epoll_console_activity(0);
@@ -155,9 +178,13 @@ static void remove_watch(struct epoll_watch *w) {
 }
 
 void cell_epoll_release_file(struct open_file *file) {
-  while (file->epoll_observers) { remove_watch(file->epoll_observers); }
+  while (file->epoll_observers) {
+    remove_watch(file->epoll_observers);
+  }
   if (file->type == OPEN_EPOLL) {
-    while (file->epoll_interests) { remove_watch(file->epoll_interests); }
+    while (file->epoll_interests) {
+      remove_watch(file->epoll_interests);
+    }
   }
 }
 
@@ -193,7 +220,9 @@ int cell_fd_epoll_ctl(int epfd, int op, int fd, uint32_t mask, uint64_t data) {
     return -1;
   }
   struct epoll_watch *w = target->epoll_observers;
-  while (w && (w->ep != ep || w->fd != fd)) { w = w->observer_next; }
+  while (w && (w->ep != ep || w->fd != fd)) {
+    w = w->observer_next;
+  }
   if (op == ADD) {
     if (w) { return -17; }
     if (target->type == OPEN_EPOLL) {
@@ -241,8 +270,11 @@ static int take_ready(struct domain *domain, struct open_file *ep, uint64_t addr
     }
     dequeue(w);
     if (w->mask & ONESHOT) { w->disabled = true; }
-    if (w->disabled || (w->mask & EDGE)) { w->pending = 0; }
-    else { enqueue(w); }
+    if (w->disabled || (w->mask & EDGE)) {
+      w->pending = 0;
+    } else {
+      enqueue(w);
+    }
   }
   if (count && !ep->epoll_ready_head) { cell_epoll_file_changed(ep); }
   return (int)count;
@@ -253,7 +285,9 @@ void cell_wake_epoll_waiters(void) {
   struct thread *thread;
   while ((thread = cell_next_waiter(WAIT_EPOLL, &cursor))) {
     int n = take_ready(thread->domain, thread->wait.held_file, thread->wait.epoll_events, thread->wait.epoll_maxevents);
-    if (n || (thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick)) { cell_finish_wait(thread, n); }
+    if (n || (thread->wait.has_deadline && cell_uptime_ticks() >= thread->wait.deadline_tick)) {
+      cell_finish_wait(thread, n);
+    }
   }
 }
 
@@ -261,9 +295,12 @@ int cell_epoll_wait_current(int epfd, uint64_t addr, int maxevents, int timeout,
                             struct trap_frame *frame) {
   struct open_file *ep = cell_fd_file(epfd);
   if (!ep) { return -9; }
-  if (ep->type != OPEN_EPOLL || maxevents <= 0 || maxevents > INT32_MAX / (int)sizeof(struct epoll_event64)) { return -22; }
+  if (ep->type != OPEN_EPOLL || maxevents <= 0 || maxevents > INT32_MAX / (int)sizeof(struct epoll_event64)) {
+    return -22;
+  }
   struct domain *domain = cell_current_domain_internal();
-  if (!cell_domain_ensure_user_range(domain, addr, (size_t)maxevents * sizeof(struct epoll_event64), VMM_ACCESS_WRITE)) {
+  if (!cell_domain_ensure_user_range(domain, addr, (size_t)maxevents * sizeof(struct epoll_event64),
+                                     VMM_ACCESS_WRITE)) {
     return -14;
   }
   if (network_watches) { net_poll(); }
@@ -272,7 +309,7 @@ int cell_epoll_wait_current(int epfd, uint64_t addr, int maxevents, int timeout,
   if (n || !timeout || !frame) { return n; }
   struct thread *thread = cell_current_thread_internal();
   cell_retain_open_file(ep);
-  thread->wait = (struct thread_wait){.reason = WAIT_EPOLL, .target = epfd, .epoll_events = addr,
-                                      .epoll_maxevents = maxevents, .held_file = ep};
+  thread->wait = (struct thread_wait){
+    .reason = WAIT_EPOLL, .target = epfd, .epoll_events = addr, .epoll_maxevents = maxevents, .held_file = ep};
   return cell_sleep_poll(thread, frame, mask, timeout > 0, timeout > 0 ? ((uint64_t)timeout + 9) / 10 : 0);
 }

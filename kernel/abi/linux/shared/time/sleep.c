@@ -1,8 +1,8 @@
 #include "../usercopy.h"
 #include "handlers.h"
-#include "ticks.h"
 #include "proc/accounting.h"
 #include "proc/thread.h"
+#include "ticks.h"
 
 enum { EFAULT = 14, EINVAL = 22, TIMER_ABSTIME = 1 };
 

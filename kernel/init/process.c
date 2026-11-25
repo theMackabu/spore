@@ -1,7 +1,7 @@
-#include "boot.h"
-#include "init/app.h"
 #include "init/process.h"
 #include "abi/linux/shared/usercopy.h"
+#include "boot.h"
+#include "init/app.h"
 #ifdef SPORE_NATIVE_PORT
 #include "arch/bringup/user.h"
 #else
@@ -9,7 +9,6 @@
 #include "arch/aarch64/mmu.h"
 #endif
 #include "arch/smp.h"
-#include "proc/thread.h"
 #include "exec/elf.h"
 #include "exec/stack.h"
 #include "fs/vfs.h"
@@ -17,6 +16,7 @@
 #include "proc/bootstrap.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
+#include "proc/thread.h"
 
 void boot_activate_process(struct first_process *first) {
   if (!cell_create_init(first->program, &first->as, &first->vmas, first->entry, first->sp)) {
@@ -59,7 +59,8 @@ void boot_load_process(struct first_process *first, const struct init_program *p
   if (!vmm_user_init(&first->as, hhdm_offset)) { boot_fail(BOOT_INIT_FAILED, "cannot prepare initial process"); }
   struct loaded_elf elf;
   char interp_path[CELL_PATH_MAX];
-  enum elf_load_status status = elf_load_program(&first->as, &first->vmas, &reader, &elf, interp_path, sizeof(interp_path));
+  enum elf_load_status status =
+    elf_load_program(&first->as, &first->vmas, &reader, &elf, interp_path, sizeof(interp_path));
   if (status != ELF_LOADED) {
     boot_fail(BOOT_INIT_FAILED, status == ELF_BAD_INTERPRETER ? "invalid ELF interpreter" : "invalid ELF executable");
   }

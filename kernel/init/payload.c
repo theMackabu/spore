@@ -2,9 +2,9 @@
 #include "fs/ramfs.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
-#include "proc/limits.h"
-#include "net/net.h"
 #include "mm/pmm.h"
+#include "net/net.h"
+#include "proc/limits.h"
 
 struct payload_reader {
   const uint8_t *next;
@@ -23,7 +23,9 @@ static const void *take(struct payload_reader *reader, size_t n) {
 
 static const char *take_string(struct payload_reader *reader) {
   size_t n = 0;
-  while (n < reader->remaining && reader->next[n]) { ++n; }
+  while (n < reader->remaining && reader->next[n]) {
+    ++n;
+  }
   return n == reader->remaining ? NULL : take(reader, n + 1);
 }
 
@@ -60,7 +62,8 @@ static bool unpack_entry(struct payload_reader *reader, struct ramfs *fs, const 
   return data && ramfs_add_boot_file(fs, path, data, n, str_eq(path, executable) ? 0555 : 0444);
 }
 
-bool app_unpack(const void *data, size_t size, struct ramfs *fs, struct init_program *program, struct net_config *network) {
+bool app_unpack(const void *data, size_t size, struct ramfs *fs, struct init_program *program,
+                struct net_config *network) {
   struct payload_reader reader = {.next = data, .remaining = size, .start = data};
   const char *magic = take(&reader, 8);
   struct {

@@ -1,12 +1,18 @@
-#include "internal.h"
 #include "fs/vfs.h"
+#include "internal.h"
 #include "mm/pool.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 
 enum {
-  NONBLOCK = 04000, CLOEXEC = 02000000, ALL_EVENTS = 0xfff, EXCL_UNLINK = 1U << 26,
-  MASK_CREATE = 1U << 28, MASK_ADD = 1U << 29, ONESHOT = 1U << 31, WATCH_BUCKETS = 128,
+  NONBLOCK = 04000,
+  CLOEXEC = 02000000,
+  ALL_EVENTS = 0xfff,
+  EXCL_UNLINK = 1U << 26,
+  MASK_CREATE = 1U << 28,
+  MASK_ADD = 1U << 29,
+  ONESHOT = 1U << 31,
+  WATCH_BUCKETS = 128,
 };
 
 struct inotify_watch {
@@ -22,7 +28,9 @@ static struct object_pool instances, watches;
 static struct inotify_watch *by_inode[WATCH_BUCKETS];
 static unsigned watch_count, directory_watches;
 
-static struct inotify_watch **bucket(uint64_t dev, uint64_t ino) { return &by_inode[(dev ^ ino) % WATCH_BUCKETS]; }
+static struct inotify_watch **bucket(uint64_t dev, uint64_t ino) {
+  return &by_inode[(dev ^ ino) % WATCH_BUCKETS];
+}
 
 int inotify_open(int flags) {
   if (flags & ~(NONBLOCK | CLOEXEC)) { return -22; }
@@ -30,7 +38,10 @@ int inotify_open(int flags) {
   struct inotify_state *state = pool_alloc(&instances);
   if (!state) { return -12; }
   struct open_file *file = cell_alloc_open_file();
-  if (!file) { pool_free(&instances, state); return -12; }
+  if (!file) {
+    pool_free(&instances, state);
+    return -12;
+  }
   state->file = file;
   file->type = OPEN_INOTIFY;
   file->flags = flags & NONBLOCK;
@@ -49,7 +60,9 @@ int inotify_add(int fd, const struct vfs_node *node, uint32_t mask) {
   struct open_file *file = cell_fd_file(fd);
   if (!file) { return -9; }
   if (file->type != OPEN_INOTIFY || !(mask & ALL_EVENTS) || ((mask & MASK_ADD) && (mask & MASK_CREATE)) ||
-      (mask & ~(ALL_EVENTS | FS_ONLYDIR | FS_DONT_FOLLOW | EXCL_UNLINK | MASK_CREATE | MASK_ADD | ONESHOT))) { return -22; }
+      (mask & ~(ALL_EVENTS | FS_ONLYDIR | FS_DONT_FOLLOW | EXCL_UNLINK | MASK_CREATE | MASK_ADD | ONESHOT))) {
+    return -22;
+  }
   if ((mask & FS_ONLYDIR) && !node->is_dir) { return -20; }
   struct inotify_state *state = file->inotify;
   struct inotify_watch **head = bucket(node->dev_id, node->ino);
@@ -63,7 +76,10 @@ int inotify_add(int fd, const struct vfs_node *node, uint32_t mask) {
   struct inotify_watch *w = pool_alloc(&watches);
   if (!w) { return -28; }
   do {
-    if (state->next_wd == INT32_MAX) { state->next_wd = 0; state->wd_wrapped = true; }
+    if (state->next_wd == INT32_MAX) {
+      state->next_wd = 0;
+      state->wd_wrapped = true;
+    }
     ++state->next_wd;
   } while (state->wd_wrapped && find_wd(state, (int)state->next_wd));
   w->wd = (int)state->next_wd;
@@ -109,14 +125,20 @@ int inotify_remove(int fd, int wd) {
 
 void inotify_close(struct open_file *file) {
   struct inotify_state *state = file->inotify;
-  while (state->watches) { remove_watch(state->watches, false); }
+  while (state->watches) {
+    remove_watch(state->watches, false);
+  }
   inotify_clear_events(state);
   pool_free(&instances, state);
 }
 
-bool fsnotify_directories(void) { return directory_watches != 0; }
+bool fsnotify_directories(void) {
+  return directory_watches != 0;
+}
 
-bool fsnotify_active(void) { return watch_count != 0; }
+bool fsnotify_active(void) {
+  return watch_count != 0;
+}
 
 void fsnotify_emit(uint64_t dev, uint64_t ino, uint32_t mask, uint32_t cookie, const char *name, bool unlinked) {
   struct inotify_watch *w = *bucket(dev, ino);
@@ -143,9 +165,7 @@ void fsnotify_reclaim(uint64_t dev, uint64_t ino) {
   while (w) {
     struct inotify_watch *next = w->inode_next;
     if (w->dev == dev && w->ino == ino) {
-      if (w->mask & FS_DELETE_SELF) {
-        inotify_enqueue(w->state, w->wd, FS_DELETE_SELF, 0, NULL);
-      }
+      if (w->mask & FS_DELETE_SELF) { inotify_enqueue(w->state, w->wd, FS_DELETE_SELF, 0, NULL); }
       remove_watch(w, true);
     }
     w = next;

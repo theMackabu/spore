@@ -1,10 +1,10 @@
+#include "lib/mem.h"
+#include "proc/domain.h"
+#include "proc/fd.h"
+#include "proc/memory.h"
 #include "proc/pid_namespace.h"
 #include "proc/process.h"
-#include "proc/domain.h"
 #include "proc/thread.h"
-#include "proc/memory.h"
-#include "proc/fd.h"
-#include "lib/mem.h"
 
 bool cell_exec_replace(struct user_address_space *as, struct vma_list *vmas, uint64_t entry, uint64_t sp,
                        struct trap_frame *frame, const char *path, const char *const argv[], uint64_t argc) {

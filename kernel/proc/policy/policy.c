@@ -1,6 +1,6 @@
 #include "proc/policy.h"
-#include "lib/kprintf.h"
 #include "fs/vfs.h"
+#include "lib/kprintf.h"
 #include "lib/kstr.h"
 #include "lib/mem.h"
 #include "mm/pool.h"
@@ -127,8 +127,8 @@ bool cell_fs_exec_fd_allowed(const char *path, const struct vfs_node *node) {
   const struct domain *domain = cell_current_domain_internal();
   if (!domain->caps || !domain->caps->restrict_fs) { return true; }
   struct vfs_node named;
-  return fs_allowed(domain->caps, path, CELL_FS_EXEC) && vfs_lookup(path, &named) &&
-         named.dev_id == node->dev_id && named.ino == node->ino;
+  return fs_allowed(domain->caps, path, CELL_FS_EXEC) && vfs_lookup(path, &named) && named.dev_id == node->dev_id &&
+         named.ino == node->ino;
 }
 
 bool cell_syscall_allowed(uint64_t nr) {

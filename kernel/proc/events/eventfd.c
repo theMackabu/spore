@@ -1,10 +1,10 @@
 #include "proc/eventfd.h"
 
 #include "proc/domain.h"
+#include "proc/epoll.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
-#include "proc/epoll.h"
 #include "proc/thread.h"
 
 enum { EAGAIN = 11, ENOMEM = 12, EFAULT = 14, EINVAL = 22, EMFILE = 24 };
@@ -58,7 +58,7 @@ static void wake_waiters(struct open_file *file, unsigned activity) {
 
 void cell_eventfd_signal(struct open_file *file) {
   if (file->eventfd_value != UINT64_MAX) { ++file->eventfd_value; }
-  wake_waiters(file,CELL_POLLIN);
+  wake_waiters(file, CELL_POLLIN);
 }
 
 int64_t cell_eventfd_io(struct domain *domain, struct open_file *file, uint64_t buf, uint64_t len, bool write,
@@ -74,6 +74,6 @@ int64_t cell_eventfd_io(struct domain *domain, struct open_file *file, uint64_t 
   if (rc != -EAGAIN || (file->flags & O_NONBLOCK) != 0 || frame == NULL) { return rc; }
   cell_retain_open_file(file);
   ++file->eventfd_waiters;
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_EVENTFD, .held_file = file,
-                                                       .event_write = write, .event_arg = arg});
+  return cell_block_current(
+    frame, (struct thread_wait){.reason = WAIT_EVENTFD, .held_file = file, .event_write = write, .event_arg = arg});
 }

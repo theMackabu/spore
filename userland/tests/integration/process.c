@@ -9,11 +9,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
-#include <sys/times.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/times.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
@@ -154,10 +154,20 @@ static int exec_unlinked_alias(void) {
   if (child == 0) {
     char alias[64], procfd[32];
     snprintf(alias, sizeof(alias), "/exec-alias-%d", getpid());
-    if (symlink("/bin/exec_child", alias) < 0) { perror("symlink exec alias"); _exit(98); }
+    if (symlink("/bin/exec_child", alias) < 0) {
+      perror("symlink exec alias");
+      _exit(98);
+    }
     int fd = open(alias, O_PATH | O_CLOEXEC);
-    if (fd < 0) { perror("open exec alias"); unlink(alias); _exit(98); }
-    if (unlink(alias) < 0) { perror("unlink exec alias"); _exit(98); }
+    if (fd < 0) {
+      perror("open exec alias");
+      unlink(alias);
+      _exit(98);
+    }
+    if (unlink(alias) < 0) {
+      perror("unlink exec alias");
+      _exit(98);
+    }
     snprintf(procfd, sizeof(procfd), "/proc/self/fd/%d", fd);
     execl(procfd, "exec_child", "ok", (char *)NULL);
     perror("exec procfd");
@@ -218,8 +228,8 @@ static void *check_proc_thread(void *unused) {
   int pid = getpid();
   char expected[64], target[64];
   int len = snprintf(expected, sizeof(expected), "%d/task/%d", pid, tid);
-  int ok = tid != pid && readlink("/proc/thread-self", target, sizeof(target)) == len &&
-           memcmp(target, expected, len) == 0;
+  int ok =
+    tid != pid && readlink("/proc/thread-self", target, sizeof(target)) == len && memcmp(target, expected, len) == 0;
   DIR *tasks = opendir("/proc/self/task");
   int seen = 0;
   if (tasks == NULL) { return NULL; }
@@ -247,7 +257,9 @@ static void *check_proc_thread(void *unused) {
 int integration_proc_self_links(void) {
   pthread_t worker;
   void *result = NULL;
-  if (pthread_create(&worker, NULL, check_proc_thread, NULL) != 0 || pthread_join(worker, &result) != 0 || !result) { return 0; }
+  if (pthread_create(&worker, NULL, check_proc_thread, NULL) != 0 || pthread_join(worker, &result) != 0 || !result) {
+    return 0;
+  }
   char exe[128];
   char cwd[128];
   ssize_t exe_len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
@@ -268,8 +280,8 @@ int integration_stdin_demo(void) {
     printf("[spore] stdin demo: child blocking on read(0)\n");
     ssize_t n = read(0, &c, 1);
     int pending;
-    if (n == 1 && c == 'z' && ioctl(0, FIONREAD, &pending) == 0 && pending == 1 &&
-        tcflush(0, TCIFLUSH) == 0 && ioctl(0, FIONREAD, &pending) == 0 && pending == 0) {
+    if (n == 1 && c == 'z' && ioctl(0, FIONREAD, &pending) == 0 && pending == 1 && tcflush(0, TCIFLUSH) == 0 &&
+        ioctl(0, FIONREAD, &pending) == 0 && pending == 0) {
       printf("[spore] stdin demo: read 'z'\n");
       integration_exit_group(0);
     }
@@ -425,8 +437,12 @@ int integration_pty_demo(void) {
   static char initial[PTY_BYTES];
   static char extra[PTY_BYTES / 2];
   static char received[PTY_BYTES];
-  for (size_t i = 0; i < sizeof(initial); ++i) { initial[i] = (char)(i * 17u + 3u); }
-  for (size_t i = 0; i < sizeof(extra); ++i) { extra[i] = (char)(i * 29u + 7u); }
+  for (size_t i = 0; i < sizeof(initial); ++i) {
+    initial[i] = (char)(i * 17u + 3u);
+  }
+  for (size_t i = 0; i < sizeof(extra); ++i) {
+    extra[i] = (char)(i * 29u + 7u);
+  }
 
   int master = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
   int ok = master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0;
@@ -467,7 +483,9 @@ static void *phase_c_pthread_worker(void *arg) {
   long slot = (long)arg;
   int policy = -1;
   struct sched_param param = {.sched_priority = -1};
-  if (pthread_getschedparam(pthread_self(), &policy, &param) || policy != SCHED_OTHER || param.sched_priority != 0) { return NULL; }
+  if (pthread_getschedparam(pthread_self(), &policy, &param) || policy != SCHED_OTHER || param.sched_priority != 0) {
+    return NULL;
+  }
   for (int i = 0; i < 1000; ++i) {
     pthread_mutex_lock(&pthread_demo_lock);
     ++pthread_demo_counter;
@@ -555,7 +573,9 @@ static void *wait_for_child(void *arg) {
   return NULL;
 }
 
-static int64_t usage_usec(struct timeval t) { return (int64_t)t.tv_sec * 1000000 + t.tv_usec; }
+static int64_t usage_usec(struct timeval t) {
+  return (int64_t)t.tv_sec * 1000000 + t.tv_usec;
+}
 
 static int child_usage_regression(void) {
   struct rusage before, after;
@@ -575,13 +595,16 @@ static int child_usage_regression(void) {
   if (pid < 0) { return 0; }
   struct waited_child child = {.pid = pid};
   pthread_t waiter;
-  if (pthread_create(&waiter, NULL, wait_for_child, &child)) { waitpid(pid, NULL, 0); return 0; }
+  if (pthread_create(&waiter, NULL, wait_for_child, &child)) {
+    waitpid(pid, NULL, 0);
+    return 0;
+  }
   pthread_join(waiter, NULL);
   int64_t used = usage_usec(child.usage.ru_utime);
-  int ok = child.result == pid && WIFEXITED(child.status) && WEXITSTATUS(child.status) == 17 &&
-           used >= 20000 && child.usage.ru_maxrss > 0 && getrusage(RUSAGE_CHILDREN, &after) == 0 &&
-           usage_usec(after.ru_utime) - usage_usec(before.ru_utime) == used &&
-           times(&clocks) >= 0 && clocks.tms_cutime == usage_usec(after.ru_utime) / 10000;
+  int ok = child.result == pid && WIFEXITED(child.status) && WEXITSTATUS(child.status) == 17 && used >= 20000 &&
+           child.usage.ru_maxrss > 0 && getrusage(RUSAGE_CHILDREN, &after) == 0 &&
+           usage_usec(after.ru_utime) - usage_usec(before.ru_utime) == used && times(&clocks) >= 0 &&
+           clocks.tms_cutime == usage_usec(after.ru_utime) / 10000;
   printf("[spore] child resource usage: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }

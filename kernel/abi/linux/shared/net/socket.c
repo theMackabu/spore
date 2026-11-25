@@ -4,14 +4,14 @@
 #include "socket_abi.h"
 
 #include "lib/mem.h"
+#include "net/net.h"
+#include "net/route.h"
+#include "net/socket.h"
+#include "net/unix.h"
 #include "proc/fd.h"
 #include "proc/io.h"
 #include "proc/policy.h"
 #include "proc/signal.h"
-#include "net/socket.h"
-#include "net/route.h"
-#include "net/unix.h"
-#include "net/net.h"
 #include "proc/thread.h"
 
 #include <stdbool.h>
@@ -49,8 +49,9 @@ static bool copy_sockaddr_family(uint64_t addr, uint64_t len, uint16_t *family) 
 static int unix_socket_path(uint64_t addr, uint64_t len, char path[CELL_PATH_MAX], char *bound_name) {
   struct sockaddr_un64 sa = {0};
   if (len < 3 || len > sizeof(sa)) { return -EINVAL; }
-  if (!addr || !syscall_user_readable(addr, len) ||
-      !vmm_copy_from_user(syscall_active_as(), &sa, addr, len)) { return -EFAULT; }
+  if (!addr || !syscall_user_readable(addr, len) || !vmm_copy_from_user(syscall_active_as(), &sa, addr, len)) {
+    return -EFAULT;
+  }
   if (sa.sun_family != AF_UNIX || !sa.sun_path[0]) { return -EINVAL; }
   char name[sizeof(sa.sun_path) + 1];
   kmemcpy(name, sa.sun_path, sizeof(sa.sun_path));
@@ -82,7 +83,9 @@ int64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
     return finish_socket_fd(fd, type);
   }
   if (domain == AF_UNIX) {
-    if (base_type == SOCK_DGRAM && !protocol) { return finish_socket_fd(cell_fd_socket_create(UNIX_DGRAM_PROTOCOL), type); }
+    if (base_type == SOCK_DGRAM && !protocol) {
+      return finish_socket_fd(cell_fd_socket_create(UNIX_DGRAM_PROTOCOL), type);
+    }
     if (base_type != SOCK_STREAM || protocol != 0) { return -(int64_t)EPROTONOSUPPORT; }
     return finish_socket_fd(cell_fd_socket_unix(), type);
   }
@@ -103,9 +106,12 @@ int64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64
   int flags = (int)(type & (O_NONBLOCK | O_CLOEXEC));
   if ((type & ~(uint64_t)(0xf | O_NONBLOCK | O_CLOEXEC)) != 0) { return -(int64_t)EINVAL; }
   if (domain != AF_UNIX) { return -(int64_t)EAFNOSUPPORT; }
-  if ((base_type != SOCK_STREAM && base_type != SOCK_SEQPACKET && base_type != SOCK_DGRAM) || protocol != 0) { return -(int64_t)EPROTONOSUPPORT; }
+  if ((base_type != SOCK_STREAM && base_type != SOCK_SEQPACKET && base_type != SOCK_DGRAM) || protocol != 0) {
+    return -(int64_t)EPROTONOSUPPORT;
+  }
   if (sv == 0 || !syscall_user_writable(sv, sizeof(int32_t) * 2)) { return -(int64_t)EFAULT; }
-  return base_type == SOCK_DGRAM ? cell_fd_unix_dgram_pair(flags, sv) : cell_fd_socketpair_unix(sv, flags, base_type == SOCK_SEQPACKET);
+  return base_type == SOCK_DGRAM ? cell_fd_unix_dgram_pair(flags, sv)
+                                 : cell_fd_socketpair_unix(sv, flags, base_type == SOCK_SEQPACKET);
 }
 
 int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
@@ -115,7 +121,9 @@ int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
   if (file && file->type == OPEN_SOCKET && file->socket_proto == ROUTE_PROTOCOL) {
     struct route_address sa;
     if (len < sizeof(sa) || !syscall_user_readable(addr, sizeof(sa)) ||
-        !vmm_copy_from_user(syscall_active_as(), &sa, addr, sizeof(sa))) { return -EINVAL; }
+        !vmm_copy_from_user(syscall_active_as(), &sa, addr, sizeof(sa))) {
+      return -EINVAL;
+    }
     return route_bind(file, sa);
   }
   if (family == AF_UNIX) {
@@ -130,7 +138,9 @@ int64_t sys_bind(uint64_t fd, uint64_t addr, uint64_t len) {
   struct sockaddr_in64 sa;
   if (!linux_copy_sockaddr_in(addr, len, &sa)) { return -(int64_t)EINVAL; }
   if (file && file->type == OPEN_SOCKET && file->net_ns && sa.sin_addr &&
-      (!file->net_ns->lo_address || !net_is_loopback_addr(sa.sin_addr))) { return -99; }
+      (!file->net_ns->lo_address || !net_is_loopback_addr(sa.sin_addr))) {
+    return -99;
+  }
   int rc = cell_fd_tcp_bind((int)fd, __builtin_bswap16(sa.sin_port));
   if (rc == -EBADF) { rc = cell_fd_udp_bind((int)fd, __builtin_bswap16(sa.sin_port)); }
   return rc < 0 ? (int64_t)rc : 0;
@@ -141,7 +151,10 @@ int64_t sys_connect(struct trap_frame *frame, uint64_t fd, uint64_t addr, uint64
   if (!copy_sockaddr_family(addr, len, &family)) { return -(int64_t)EINVAL; }
   if (family == AF_UNSPEC) {
     struct open_file *file = cell_fd_file(fd);
-    if (file && file->type == OPEN_SOCKET && file->socket_proto == UNIX_DGRAM_PROTOCOL) { file->unix_dgram_peer = 0; return 0; }
+    if (file && file->type == OPEN_SOCKET && file->socket_proto == UNIX_DGRAM_PROTOCOL) {
+      file->unix_dgram_peer = 0;
+      return 0;
+    }
     int rc = cell_fd_udp_disconnect((int)fd);
     return rc < 0 ? (int64_t)rc : 0;
   }
@@ -195,9 +208,13 @@ int64_t linux_send_datagram(int fd, const void *buf, size_t len, uint64_t addr, 
   if (addr && file->socket_proto == ROUTE_PROTOCOL) {
     struct route_address dest;
     if (addrlen < sizeof(dest) || !syscall_user_readable(addr, sizeof(dest)) ||
-        !vmm_copy_from_user(syscall_active_as(), &dest, addr, sizeof(dest))) { return -EINVAL; }
+        !vmm_copy_from_user(syscall_active_as(), &dest, addr, sizeof(dest))) {
+      return -EINVAL;
+    }
     if (dest.family != ROUTE_FAMILY || dest.port || dest.groups) { return -95; }
-  } else if (addr && !linux_copy_sockaddr_in(addr, addrlen, &sa)) { return -EINVAL; }
+  } else if (addr && !linux_copy_sockaddr_in(addr, addrlen, &sa)) {
+    return -EINVAL;
+  }
   return cell_fd_dgram_send_kernel(fd, sa.sin_addr, __builtin_bswap16(sa.sin_port), buf, len);
 }
 
@@ -206,7 +223,9 @@ int64_t sys_sendto(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64_t
   if (!syscall_user_readable(buf, len)) { return -EFAULT; }
   if (!addr) {
     int64_t tcp = cell_fd_tcp_send((int)fd, buf, len, (flags & MSG_DONTWAIT) != 0, frame);
-    if (tcp == -EPIPE && !(flags & MSG_NOSIGNAL) && frame && cell_signal_current(SIGPIPE, frame)) { return CELL_SWITCHED; }
+    if (tcp == -EPIPE && !(flags & MSG_NOSIGNAL) && frame && cell_signal_current(SIGPIPE, frame)) {
+      return CELL_SWITCHED;
+    }
     if (tcp != -EBADF) { return tcp; }
     return cell_fd_write(fd, buf, len, frame);
   }
@@ -227,9 +246,13 @@ int64_t sys_recvfrom(struct trap_frame *frame, uint64_t fd, uint64_t buf, uint64
 int64_t sys_socket_name(uint64_t fd, uint64_t addr, uint64_t addrlen, bool peer) {
   if (addr == 0 || addrlen == 0 || !syscall_user_writable(addrlen, sizeof(uint32_t))) { return -(int64_t)EFAULT; }
   struct open_file *file = cell_fd_file(fd);
-  if (file && file->type == OPEN_SOCKET && (file->socket_proto == ROUTE_PROTOCOL || file->socket_proto == UNIX_DGRAM_PROTOCOL)) {
+  if (file && file->type == OPEN_SOCKET &&
+      (file->socket_proto == ROUTE_PROTOCOL || file->socket_proto == UNIX_DGRAM_PROTOCOL)) {
     struct route_address nl = {.family = ROUTE_FAMILY, .port = peer ? 0 : file->route_pid};
-    struct { uint16_t family; char path[109]; } un = {.family = AF_UNIX};
+    struct {
+      uint16_t family;
+      char path[109];
+    } un = {.family = AF_UNIX};
     const void *result = &nl;
     uint32_t size, actual = sizeof(nl);
     if (file->socket_proto == UNIX_DGRAM_PROTOCOL) {
@@ -243,7 +266,9 @@ int64_t sys_socket_name(uint64_t fd, uint64_t addr, uint64_t addrlen, bool peer)
     if (!vmm_copy_from_user(syscall_active_as(), &size, addrlen, sizeof(size))) { return -EFAULT; }
     if (size > actual) { size = actual; }
     return syscall_user_writable(addr, size) && vmm_copy_to_user(syscall_active_as(), addr, result, size) &&
-           vmm_copy_to_user(syscall_active_as(), addrlen, &actual, sizeof(actual)) ? 0 : -EFAULT;
+               vmm_copy_to_user(syscall_active_as(), addrlen, &actual, sizeof(actual))
+             ? 0
+             : -EFAULT;
   }
   uint32_t len = sizeof(struct sockaddr_in64);
   (void)vmm_copy_to_user(syscall_active_as(), addrlen, &len, sizeof(len));
@@ -252,7 +277,9 @@ int64_t sys_socket_name(uint64_t fd, uint64_t addr, uint64_t addrlen, bool peer)
   uint16_t port = 0;
   if (peer) {
     if (!cell_fd_socket_peer_addr((int)fd, &ip, &port)) { return -ENOTCONN; }
-  } else if (!cell_fd_socket_local_addr((int)fd, &ip, &port)) { return -EBADF; }
+  } else if (!cell_fd_socket_local_addr((int)fd, &ip, &port)) {
+    return -EBADF;
+  }
   struct sockaddr_in64 sa = {
     .sin_family = AF_INET,
     .sin_port = __builtin_bswap16(port),

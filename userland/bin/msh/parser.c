@@ -114,7 +114,8 @@ int sh_parse_command(struct parser *p, struct command *cmd, bool execute) {
       if (sh_parser_peek(p) == TOK_BG && tok->type != TOK_LT) {
         (void)sh_parser_take(p);
         struct token *target = sh_parser_take(p);
-        if (target == NULL || target->type != TOK_WORD || (execute && (sh_expand_word(target, p->last_status) < 0 || !decimal_word(target->text)))) {
+        if (target == NULL || target->type != TOK_WORD ||
+            (execute && (sh_expand_word(target, p->last_status) < 0 || !decimal_word(target->text)))) {
           eprintf("sh: redirection missing fd\n");
           return -1;
         }

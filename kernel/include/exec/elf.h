@@ -1,8 +1,8 @@
 #pragma once
 
+#include "fs/vfs.h"
 #include "mm/vma.h"
 #include "mm/vmm.h"
-#include "fs/vfs.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -34,5 +34,5 @@ bool elf_map_image(struct vma_list *vmas, const struct elf_reader *reader, uint6
 
 enum elf_load_status { ELF_LOADED, ELF_BAD_EXECUTABLE, ELF_BAD_INTERPRETER };
 enum elf_load_status elf_load_program(struct user_address_space *as, struct vma_list *vmas,
-                                      const struct elf_reader *reader, struct loaded_elf *out,
-                                      char *interp_path, size_t path_cap);
+                                      const struct elf_reader *reader, struct loaded_elf *out, char *interp_path,
+                                      size_t path_cap);

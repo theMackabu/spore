@@ -116,8 +116,8 @@ int spawn_service(struct unit *unit) {
   if (unit->config.exec_start[0] == '\0') { return -1; }
   if (!rate_limit_ok(unit)) { return -1; }
 
-  pid_t pid=fork_unit(unit,&unit->journal);
-  if (pid<0) { return -1; }
+  pid_t pid = fork_unit(unit, &unit->journal);
+  if (pid < 0) { return -1; }
   if (!pid) {
     struct passwd *user = NULL;
     if (unit->config.user[0]) {
@@ -185,7 +185,7 @@ int start_unit_name(const char *name, char *err, size_t err_cap) {
     goto out;
   }
   if (unit->config.type == UNIT_TARGET) {
-    journal_append(unit,"reached target");
+    journal_append(unit, "reached target");
     unit->state = STATE_ACTIVE;
     unit->active_since = time(NULL);
     announce_unit_started(unit);
@@ -240,9 +240,12 @@ int run_oneshot_command(struct unit *unit, const char *cmdline) {
   copy_text(copy, sizeof(copy), cmdline);
   char *argv[ARG_CAP];
   split_args(copy, argv, ARG_CAP);
-  struct journal_stream stream={.fd=-1};
-  pid_t pid = fork_unit(unit,&stream);
-  if (pid < 0) { journal_append(unit,"fork: %s",strerror(errno)); return 1; }
+  struct journal_stream stream = {.fd = -1};
+  pid_t pid = fork_unit(unit, &stream);
+  if (pid < 0) {
+    journal_append(unit, "fork: %s", strerror(errno));
+    return 1;
+  }
   if (pid == 0) {
     if (unit->config.capability[0] != '\0') { (void)syscall(SYS_SPORE_APPLY_POLICY, unit->config.capability); }
     close_inherited_manager_fds();
@@ -253,14 +256,14 @@ int run_oneshot_command(struct unit *unit, const char *cmdline) {
   int status;
   pid_t got;
   for (;;) {
-    got=waitpid(pid,&status,stream.fd>=0 ? WNOHANG : 0);
-    if (got==pid || (got<0 && errno!=EINTR)) { break; }
-    if (got<0) { continue; }
-    struct pollfd watch={.fd=stream.fd,.events=POLLIN};
-    if (poll(&watch,1,50)>0) { journal_read(unit,&stream); }
+    got = waitpid(pid, &status, stream.fd >= 0 ? WNOHANG : 0);
+    if (got == pid || (got < 0 && errno != EINTR)) { break; }
+    if (got < 0) { continue; }
+    struct pollfd watch = {.fd = stream.fd, .events = POLLIN};
+    if (poll(&watch, 1, 50) > 0) { journal_read(unit, &stream); }
   }
-  journal_finish(unit,&stream);
-  int rc=got!=pid ? 1 : WIFEXITED(status) ? WEXITSTATUS(status) : 128+WTERMSIG(status);
+  journal_finish(unit, &stream);
+  int rc = got != pid ? 1 : WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
   journal_append(unit, "oneshot '%s' exit=%d", cmdline, rc);
   return rc;
 }
@@ -269,7 +272,9 @@ void stop_unit(struct unit *unit) {
   if (unit == NULL || unit->state == STATE_INACTIVE) { return; }
   for (size_t i = 0; i < UNIT_CAP; ++i) {
     if (!units[i].used || &units[i] == unit) { continue; }
-    if (list_has(&units[i].config.part_of, unit->name) || list_has(&units[i].config.binds_to, unit->name)) { stop_unit(&units[i]); }
+    if (list_has(&units[i].config.part_of, unit->name) || list_has(&units[i].config.binds_to, unit->name)) {
+      stop_unit(&units[i]);
+    }
   }
   unit->state = STATE_DEACTIVATING;
   if (unit->config.exec_stop[0] != '\0') { (void)run_oneshot_command(unit, unit->config.exec_stop); }
@@ -290,7 +295,7 @@ void stop_unit(struct unit *unit) {
       unit->pid = 0;
     }
   }
-  journal_finish(unit,&unit->journal);
+  journal_finish(unit, &unit->journal);
   unit->state = STATE_INACTIVE;
   unit->inactive_since = time(NULL);
   journal_append(unit, "stopped");
@@ -325,7 +330,7 @@ void reap_children(void) {
     if (unit == NULL) { continue; }
     unit->pid = 0;
     unit->status = status;
-    journal_finish(unit,&unit->journal);
+    journal_finish(unit, &unit->journal);
     if (WIFEXITED(status)) {
       journal_append(unit, "exited status=%d", WEXITSTATUS(status));
     } else if (WIFSIGNALED(status)) {
@@ -340,7 +345,9 @@ void reap_children(void) {
         continue;
       }
       unit->state = STATE_INACTIVE;
-      if (!unit->config.restart_immediately && unit->config.restart_sec > 0) { sleep((unsigned)unit->config.restart_sec); }
+      if (!unit->config.restart_immediately && unit->config.restart_sec > 0) {
+        sleep((unsigned)unit->config.restart_sec);
+      }
       char err[128] = {0};
       if (start_unit_name(unit->name, err, sizeof(err)) != 0) { unit->state = STATE_FAILED; }
     } else {
@@ -384,7 +391,9 @@ int next_poll_timeout_ms(void) {
   int best = 1000;
   for (size_t i = 0; i < UNIT_CAP; ++i) {
     struct unit *unit = &units[i];
-    if (!unit->used || unit->config.type != UNIT_TIMER || unit->state != STATE_ACTIVE || unit->next_fire == 0) { continue; }
+    if (!unit->used || unit->config.type != UNIT_TIMER || unit->state != STATE_ACTIVE || unit->next_fire == 0) {
+      continue;
+    }
     int ms = unit->next_fire <= now ? 0 : (int)((unit->next_fire - now) * 1000);
     if (ms < best) { best = ms; }
   }

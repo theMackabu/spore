@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include "lib/mem.h"
+#include "lib/random.h"
 #include "net/net.h"
 #include "net/route.h"
 #include "net/unix.h"
@@ -8,7 +9,6 @@
 #include "proc/epoll.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
-#include "lib/random.h"
 
 enum {
   EMSGSIZE = 90,
@@ -44,17 +44,14 @@ void udp_release_file(struct open_file *file) {
 }
 
 static struct open_file *udp_socket_for_fd(struct domain *domain, int fd) {
-  if (cell_file_at(domain, fd) == NULL || cell_file_at(domain, fd)->type != OPEN_SOCKET) {
-    return NULL;
-  }
+  if (cell_file_at(domain, fd) == NULL || cell_file_at(domain, fd)->type != OPEN_SOCKET) { return NULL; }
   struct open_file *file = cell_file_at(domain, fd);
   return file->socket_proto == IPPROTO_UDP || file->socket_proto == IPPROTO_ICMP ? file : NULL;
 }
 
 static bool udp_local_port_in_use(uint16_t port, const struct open_file *except) {
   if (port == 0) { return false; }
-  for (struct open_file *file = *udp_port_bucket(port); file != NULL;
-       file = file->socket_index_next) {
+  for (struct open_file *file = *udp_port_bucket(port); file != NULL; file = file->socket_index_next) {
     if (file != except && file->net_ns == except->net_ns && file->type == OPEN_SOCKET && file->udp_local_port == port) {
       return true;
     }
@@ -130,9 +127,7 @@ static int64_t udp_send_payload(struct open_file *file, uint32_t ip, uint16_t po
   if (file->socket_proto == IPPROTO_UDP && net_is_broadcast_addr(effective_ip) && !file->so_broadcast) {
     return -EACCES;
   }
-  if (!cell_egress_allowed(file->socket_proto, effective_ip, effective_port)) {
-    return -EPERM;
-  }
+  if (!cell_egress_allowed(file->socket_proto, effective_ip, effective_port)) { return -EPERM; }
   if (file->udp_local_port == 0) {
     uint16_t local_port = udp_ephemeral_port(file);
     if (local_port == 0) { return -EADDRINUSE; }
@@ -141,10 +136,11 @@ static int64_t udp_send_payload(struct open_file *file, uint32_t ip, uint16_t po
   if (len > CELL_DGRAM_RX_CAP) { return -EMSGSIZE; }
   bool sent = false;
   if (file->socket_proto == IPPROTO_UDP) {
-    sent = net_udp_send_ttl_tos(file->net_ns, file->udp_local_port, effective_ip, effective_port, socket_effective_ttl(file),
-                                (uint8_t)file->ip_tos, buf, (size_t)len);
+    sent = net_udp_send_ttl_tos(file->net_ns, file->udp_local_port, effective_ip, effective_port,
+                                socket_effective_ttl(file), (uint8_t)file->ip_tos, buf, (size_t)len);
   } else if (file->socket_proto == IPPROTO_ICMP) {
-    sent = net_icmp_send_echo(file->net_ns, effective_ip, file->udp_local_port, socket_effective_ttl(file), (uint8_t)file->ip_tos, buf, (size_t)len);
+    sent = net_icmp_send_echo(file->net_ns, effective_ip, file->udp_local_port, socket_effective_ttl(file),
+                              (uint8_t)file->ip_tos, buf, (size_t)len);
   }
   if (!sent) {
     if (file->socket_proto == IPPROTO_UDP && net_is_loopback_addr(effective_ip)) {
@@ -154,9 +150,7 @@ static int64_t udp_send_payload(struct open_file *file, uint32_t ip, uint16_t po
       }
       return (int64_t)len;
     }
-    if (!cell_egress_allowed(file->socket_proto, effective_ip, effective_port)) {
-      return -EPERM;
-    }
+    if (!cell_egress_allowed(file->socket_proto, effective_ip, effective_port)) { return -EPERM; }
     return -EIO;
   }
   return (int64_t)len;
@@ -183,9 +177,9 @@ static bool socket_matches_udp(struct open_file *file, uint32_t src_ip, uint16_t
          (!file->udp_connected || (file->udp_remote_ip == src_ip && file->udp_remote_port == src_port));
 }
 
-bool cell_net_deliver_udp(struct net_namespace *ns, uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port, const void *payload, size_t len) {
-  for (struct open_file *file = *udp_port_bucket(dst_port); file != NULL;
-       file = file->socket_index_next) {
+bool cell_net_deliver_udp(struct net_namespace *ns, uint32_t src_ip, uint8_t ttl, uint16_t src_port, uint16_t dst_port,
+                          const void *payload, size_t len) {
+  for (struct open_file *file = *udp_port_bucket(dst_port); file != NULL; file = file->socket_index_next) {
     if (file->net_ns != ns || !socket_matches_udp(file, src_ip, src_port, dst_port)) { continue; }
     if (dgram_push_rx(file, src_ip, ttl, src_port, payload, len)) { cell_socket_wake_file(file); }
     return true;
@@ -194,10 +188,10 @@ bool cell_net_deliver_udp(struct net_namespace *ns, uint32_t src_ip, uint8_t ttl
 }
 
 bool cell_net_deliver_udp_error(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port, int error) {
-  for (struct open_file *file = *udp_port_bucket(local_port); file != NULL;
-       file = file->socket_index_next) {
+  for (struct open_file *file = *udp_port_bucket(local_port); file != NULL; file = file->socket_index_next) {
     if (file->net_ns || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_UDP || !file->udp_connected ||
-        file->udp_local_port != local_port || file->udp_remote_ip != remote_ip || file->udp_remote_port != remote_port) {
+        file->udp_local_port != local_port || file->udp_remote_ip != remote_ip ||
+        file->udp_remote_port != remote_port) {
       continue;
     }
     file->udp_error = (uint32_t)error;
@@ -211,9 +205,11 @@ void cell_net_deliver_icmp(struct net_namespace *ns, uint32_t src_ip, uint8_t tt
   if (len < 8) { return; }
   const uint8_t *icmp = payload;
   uint16_t id = (uint16_t)((icmp[4] << 8) | icmp[5]);
-  for (struct open_file *file = *udp_port_bucket(id); file != NULL;
-       file = file->socket_index_next) {
-    if (file->net_ns != ns || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_ICMP || file->udp_local_port != id) { continue; }
+  for (struct open_file *file = *udp_port_bucket(id); file != NULL; file = file->socket_index_next) {
+    if (file->net_ns != ns || file->type != OPEN_SOCKET || file->socket_proto != IPPROTO_ICMP ||
+        file->udp_local_port != id) {
+      continue;
+    }
     if (dgram_push_rx(file, src_ip, ttl, 0, payload, len)) { cell_socket_wake_file(file); }
     return;
   }

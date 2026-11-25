@@ -23,27 +23,30 @@ uint32_t net_ipv4(uint8_t a, uint8_t b, uint8_t c, uint8_t d);
 void net_init(void);
 void net_poll(void);
 void net_receive_ethernet(const uint8_t *frame, size_t len);
-bool net_udp_send(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload, size_t len);
-bool net_udp_send_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, const void *payload,
-                      size_t len);
-bool net_udp_send_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
-                          const void *payload, size_t len);
+bool net_udp_send(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload,
+                  size_t len);
+bool net_udp_send_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos,
+                      const void *payload, size_t len);
+bool net_udp_send_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl,
+                          uint8_t tos, const void *payload, size_t len);
 bool net_is_loopback_addr(uint32_t ip);
 bool net_is_broadcast_addr(uint32_t ip);
-bool net_tcp_send_segment(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint16_t window, uint8_t flags, const void *payload, size_t len);
-bool net_tcp_send_segment_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
+bool net_tcp_send_segment(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq,
+                          uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len);
+bool net_tcp_send_segment_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
+                                  uint8_t ttl, uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
+                                  const void *payload, size_t len);
+bool net_tcp_send_segment_options(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
                                   uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags, const void *payload,
-                                  size_t len);
-bool net_tcp_send_segment_options(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                                  uint16_t window, uint8_t flags, const void *payload, size_t len, const void *options,
-                                  size_t options_len);
-bool net_tcp_send_segment_options_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, uint32_t seq,
-                                      uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len,
-                                      const void *options, size_t options_len);
-bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl,
-                                          uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
-                                          const void *payload, size_t len, const void *options, size_t options_len);
-bool net_icmp_send_echo(struct net_namespace *ns, uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, const void *payload, size_t len);
+                                  size_t len, const void *options, size_t options_len);
+bool net_tcp_send_segment_options_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
+                                      uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
+                                      const void *payload, size_t len, const void *options, size_t options_len);
+bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip,
+                                          uint16_t dst_port, uint8_t ttl, uint8_t tos, uint32_t seq, uint32_t ack,
+                                          uint16_t window, uint8_t flags, const void *payload, size_t len,
+                                          const void *options, size_t options_len);
+bool net_icmp_send_echo(struct net_namespace *ns, uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos,
+                        const void *payload, size_t len);
 void net_get_config(struct net_config *out);
 void net_set_config(const struct net_config *cfg);

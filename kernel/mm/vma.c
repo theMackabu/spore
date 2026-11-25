@@ -9,7 +9,9 @@
 constexpr size_t VMAS_PER_CHUNK = PAGE_SIZE / sizeof(struct vma);
 
 static bool compatible(const struct vma *a, const struct vma *b) {
-  if (a->prot != b->prot || a->flags != b->flags || a->type != b->type || a->shared_may_write != b->shared_may_write) { return false; }
+  if (a->prot != b->prot || a->flags != b->flags || a->type != b->type || a->shared_may_write != b->shared_may_write) {
+    return false;
+  }
   if (a->type != VMA_FILE) { return a->type != VMA_RING; }
   return a->file_node.backend == b->file_node.backend && a->file_node.ino == b->file_node.ino &&
          a->file_node.dev_id == b->file_node.dev_id && a->file_start == b->file_start &&
@@ -80,17 +82,13 @@ size_t vma_first_ending_after(const struct vma_list *list, uint64_t addr) {
 static bool retain_mapping(const struct vma *vma) {
   if (vma->type != VMA_FILE) { return true; }
   if (!vfs_retain_node(&vma->file_node)) { return false; }
-  if (vma->shared_may_write) {
-    vfs_note_shared_writable_mapping(&vma->file_node, true);
-  }
+  if (vma->shared_may_write) { vfs_note_shared_writable_mapping(&vma->file_node, true); }
   return true;
 }
 
 static void release_mapping(const struct vma *vma) {
   if (vma->type != VMA_FILE) { return; }
-  if (vma->shared_may_write) {
-    vfs_note_shared_writable_mapping(&vma->file_node, false);
-  }
+  if (vma->shared_may_write) { vfs_note_shared_writable_mapping(&vma->file_node, false); }
   vfs_release_node(&vma->file_node);
 }
 
@@ -169,8 +167,8 @@ bool vma_find_gap(const struct vma_list *list, uint64_t start, uint64_t limit, u
   return vma_find_aligned_gap(list, start, limit, len, PAGE_SIZE, out);
 }
 
-bool vma_find_aligned_gap(const struct vma_list *list, uint64_t start, uint64_t limit, uint64_t len,
-                          uint64_t alignment, uint64_t *out) {
+bool vma_find_aligned_gap(const struct vma_list *list, uint64_t start, uint64_t limit, uint64_t len, uint64_t alignment,
+                          uint64_t *out) {
   if (!list || !len || len > limit || alignment < PAGE_SIZE || (alignment & (alignment - 1))) { return false; }
   uint64_t mask = alignment - 1;
   uint64_t last = (limit - len) & ~mask;
@@ -201,7 +199,8 @@ bool vma_insert(struct vma_list *list, uint64_t start, uint64_t end, uint32_t pr
 }
 
 bool vma_insert_file(struct vma_list *list, uint64_t start, uint64_t end, uint32_t prot, uint32_t flags,
-                     const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size, bool shared_may_write) {
+                     const struct vfs_node *node, uint64_t file_start, uint64_t file_offset, uint64_t file_size,
+                     bool shared_may_write) {
   if (!node || node->is_dir || node->device != RAMFS_DEV_NONE) { return false; }
   struct vma vma = {.start = start,
                     .end = end,

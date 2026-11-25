@@ -4,18 +4,18 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/epoll.h>
-#include <sys/file.h>
 #include <sys/eventfd.h>
+#include <sys/file.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/resource.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 
 #include <sys/time.h>
 #include <sys/uio.h>
@@ -35,8 +35,7 @@ static int inotify_shared_watch(void) {
   if (child == 0) { _exit(inotify_rm_watch(alias, wd) == 0 ? 0 : 1); }
   int status;
   ok = child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 && ok;
-  ok = ok && inotify_rm_watch(alias, wd) == -1 && errno == EINVAL &&
-       inotify_add_watch(alias, "/tmp", IN_MODIFY) > 0;
+  ok = ok && inotify_rm_watch(alias, wd) == -1 && errno == EINVAL && inotify_add_watch(alias, "/tmp", IN_MODIFY) > 0;
   close(alias);
   return ok;
 }
@@ -118,11 +117,10 @@ static int eventfd_counter(void) {
   if (fd < 0) { return 0; }
   eventfd_t value;
   struct pollfd pfd = {.fd = fd, .events = POLLIN | POLLOUT};
-  int ok = eventfd_read(fd, &value) == -1 && errno == EAGAIN &&
-           eventfd_write(fd, UINT64_MAX) == -1 && errno == EINVAL &&
-           eventfd_write(fd, UINT64_MAX - 1) == 0 && poll(&pfd, 1, 0) == 1 && pfd.revents == POLLIN &&
-           eventfd_write(fd, 1) == -1 && errno == EAGAIN && eventfd_read(fd, &value) == 0 && value == 1 &&
-           poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLOUT);
+  int ok = eventfd_read(fd, &value) == -1 && errno == EAGAIN && eventfd_write(fd, UINT64_MAX) == -1 &&
+           errno == EINVAL && eventfd_write(fd, UINT64_MAX - 1) == 0 && poll(&pfd, 1, 0) == 1 &&
+           pfd.revents == POLLIN && eventfd_write(fd, 1) == -1 && errno == EAGAIN && eventfd_read(fd, &value) == 0 &&
+           value == 1 && poll(&pfd, 1, 0) == 1 && pfd.revents == (POLLIN | POLLOUT);
   close(fd);
 
   fd = eventfd(0, 0);
@@ -159,22 +157,26 @@ static int high_fd_limit(void) {
   limit.rlim_cur = 16;
   if (setrlimit(RLIMIT_NOFILE, &limit) != 0) { return 0; }
   fd_set reads, writes;
-  FD_ZERO(&reads); FD_SET(fd, &reads);
-  FD_ZERO(&writes); FD_SET(fd, &writes);
+  FD_ZERO(&reads);
+  FD_SET(fd, &reads);
+  FD_ZERO(&writes);
+  FD_SET(fd, &writes);
   struct timeval now = {0};
   if (select(fd + 1, &reads, &writes, NULL, &now) != 2 || !FD_ISSET(fd, &reads) || !FD_ISSET(fd, &writes) ||
-      fcntl(fd, F_GETFD) != FD_CLOEXEC || dup2(counter, fd + 1) != -1 || errno != EBADF) { return 0; }
+      fcntl(fd, F_GETFD) != FD_CLOEXEC || dup2(counter, fd + 1) != -1 || errno != EBADF) {
+    return 0;
+  }
   pid_t child = fork();
   if (!child) {
     struct rlimit inherited;
     eventfd_t value;
-    _exit(getrlimit(RLIMIT_NOFILE, &inherited) || inherited.rlim_cur != 16 ||
-          eventfd_read(fd, &value) || value != 1);
+    _exit(getrlimit(RLIMIT_NOFILE, &inherited) || inherited.rlim_cur != 16 || eventfd_read(fd, &value) || value != 1);
   }
   int status;
   if (child < 0 || waitpid(child, &status, 0) != child || status != 0) { return 0; }
   close(fd);
-  FD_ZERO(&reads); FD_SET(fd, &reads);
+  FD_ZERO(&reads);
+  FD_SET(fd, &reads);
   return select(fd + 1, &reads, NULL, NULL, &now) == -1 && errno == EBADF;
 }
 
@@ -191,15 +193,17 @@ static int epoll_watch_lifetime(void) {
   int ep = epoll_create1(0), counter = eventfd(0, EFD_NONBLOCK), alias = dup(counter);
   struct epoll_event watch = {.events = EPOLLIN, .data.u64 = 42}, event;
   int ok = ep >= 0 && alias >= 0 && epoll_ctl(ep, EPOLL_CTL_MOD, counter, &watch) == -1 && errno == ENOENT &&
-           epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == 0 &&
-           epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == -1 && errno == EEXIST;
+           epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == 0 && epoll_ctl(ep, EPOLL_CTL_ADD, counter, &watch) == -1 &&
+           errno == EEXIST;
   close(counter);
   int replacement = eventfd(0, EFD_NONBLOCK);
   ok = ok && replacement == counter && eventfd_write(replacement, 1) == 0 && epoll_wait(ep, &event, 1, 0) == 0 &&
        eventfd_write(alias, 1) == 0 && epoll_wait(ep, &event, 1, 0) == 1 && event.data.u64 == 42;
   close(alias);
-  ok = ok && epoll_wait(ep, &event, 1, 0) == 0 && epoll_ctl(ep, EPOLL_CTL_DEL, replacement, NULL) == -1 && errno == ENOENT;
-  close(replacement); close(ep);
+  ok =
+    ok && epoll_wait(ep, &event, 1, 0) == 0 && epoll_ctl(ep, EPOLL_CTL_DEL, replacement, NULL) == -1 && errno == ENOENT;
+  close(replacement);
+  close(ep);
   return ok;
 }
 
@@ -216,15 +220,17 @@ static int epoll_ready_queue(void) {
        write(p[1], "c", 1) == 1 && epoll_wait(ep, &e, 1, 0) == 1;
   w.events = EPOLLIN | EPOLLONESHOT;
   ok = ok && epoll_ctl(ep, EPOLL_CTL_MOD, p[0], &w) == 0 && epoll_wait(ep, &e, 1, 0) == 1 &&
-       epoll_wait(ep, &e, 1, 0) == 0 && epoll_ctl(ep, EPOLL_CTL_MOD, p[0], &w) == 0 &&
-       epoll_wait(ep, &e, 1, 0) == 1;
+       epoll_wait(ep, &e, 1, 0) == 0 && epoll_ctl(ep, EPOLL_CTL_MOD, p[0], &w) == 0 && epoll_wait(ep, &e, 1, 0) == 1;
   int counter = eventfd(0, EFD_NONBLOCK);
   w.events = EPOLLIN | EPOLLET;
-  ok = ok && counter >= 0 && epoll_ctl(ep, EPOLL_CTL_ADD, counter, &w) == 0 &&
-       eventfd_write(counter, 1) == 0 && epoll_wait(ep, &e, 1, 0) == 1 && epoll_wait(ep, &e, 1, 0) == 0 &&
-       eventfd_write(counter, 1) == 0 && epoll_wait(ep, &e, 1, 0) == 1;
+  ok = ok && counter >= 0 && epoll_ctl(ep, EPOLL_CTL_ADD, counter, &w) == 0 && eventfd_write(counter, 1) == 0 &&
+       epoll_wait(ep, &e, 1, 0) == 1 && epoll_wait(ep, &e, 1, 0) == 0 && eventfd_write(counter, 1) == 0 &&
+       epoll_wait(ep, &e, 1, 0) == 1;
   if (counter >= 0) { close(counter); }
-  close(p[0]); close(p[1]); close(outer); close(ep);
+  close(p[0]);
+  close(p[1]);
+  close(outer);
+  close(ep);
   printf("[spore] nested epoll, edge transitions and one-shot rearm: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
@@ -306,9 +312,9 @@ static int flock_regression(void) {
   }
 
   int alias = dup(a);
-  int ok = alias >= 0 && flock(a, LOCK_SH) == 0 && flock(b, LOCK_SH) == 0 &&
-           flock(alias, LOCK_EX | LOCK_NB) == -1 && errno == EWOULDBLOCK &&
-           flock(b, LOCK_EX | LOCK_NB) == 0 && flock(b, LOCK_UN) == 0 && flock(alias, LOCK_EX) == 0;
+  int ok = alias >= 0 && flock(a, LOCK_SH) == 0 && flock(b, LOCK_SH) == 0 && flock(alias, LOCK_EX | LOCK_NB) == -1 &&
+           errno == EWOULDBLOCK && flock(b, LOCK_EX | LOCK_NB) == 0 && flock(b, LOCK_UN) == 0 &&
+           flock(alias, LOCK_EX) == 0;
   close(a);
   pid_t child = ok ? fork() : -1;
   if (child == 0) {
@@ -341,18 +347,14 @@ static int removal_errors(const char *base, int test_symlink) {
   int dir = open(base, O_RDONLY | O_DIRECTORY);
   if (dir < 0) { return 0; }
   int fd = openat(dir, ".keep", O_CREAT | O_RDWR, 0600);
-  int ok = fd >= 0 && write(fd, "X", 1) == 1 &&
-           unlinkat(dir, ".keep", AT_REMOVEDIR) < 0 && errno == ENOTDIR &&
-           unlinkat(dir, ".keep", 1) < 0 && errno == EINVAL &&
-           unlinkat(dir, ".keep/", 0) < 0 && errno == ENOTDIR &&
-           unlinkat(dir, ".", AT_REMOVEDIR) < 0 && errno == EINVAL &&
-           unlinkat(dir, "..", AT_REMOVEDIR) < 0 && errno == ENOTEMPTY &&
-           unlinkat(dir, "", AT_REMOVEDIR) < 0 && errno == ENOENT &&
-           unlink(base) < 0 && errno == EISDIR && rmdir(base) < 0 && errno == ENOTEMPTY;
+  int ok = fd >= 0 && write(fd, "X", 1) == 1 && unlinkat(dir, ".keep", AT_REMOVEDIR) < 0 && errno == ENOTDIR &&
+           unlinkat(dir, ".keep", 1) < 0 && errno == EINVAL && unlinkat(dir, ".keep/", 0) < 0 && errno == ENOTDIR &&
+           unlinkat(dir, ".", AT_REMOVEDIR) < 0 && errno == EINVAL && unlinkat(dir, "..", AT_REMOVEDIR) < 0 &&
+           errno == ENOTEMPTY && unlinkat(dir, "", AT_REMOVEDIR) < 0 && errno == ENOENT && unlink(base) < 0 &&
+           errno == EISDIR && rmdir(base) < 0 && errno == ENOTEMPTY;
   if (fd >= 0) { close(fd); }
   if (test_symlink) {
-    ok = ok && symlinkat(".keep", dir, "link") == 0 &&
-         unlinkat(dir, "link", AT_REMOVEDIR) < 0 && errno == ENOTDIR &&
+    ok = ok && symlinkat(".keep", dir, "link") == 0 && unlinkat(dir, "link", AT_REMOVEDIR) < 0 && errno == ENOTDIR &&
          unlinkat(dir, "link/", 0) < 0 && errno == ENOTDIR && unlinkat(dir, "link", 0) == 0;
   }
   fd = openat(dir, ".keep", O_RDONLY);
@@ -379,8 +381,8 @@ static int rename_entries(const char *base) {
        fstat(target, &st) == 0 && st.st_nlink == 0;
   int moved = openat(dir, "target", O_RDONLY);
   ok = ok && moved >= 0 && read(moved, &byte, 1) == 1 && byte == 'A' && mkdirat(dir, "tree", 0700) == 0 &&
-       mkdirat(dir, "tree/child", 0700) == 0 && renameat(dir, "tree", dir, "tree/child/loop") == -1 && errno == EINVAL &&
-       renameat(dir, "target", dir, "tree") == -1 && errno == EISDIR &&
+       mkdirat(dir, "tree/child", 0700) == 0 && renameat(dir, "tree", dir, "tree/child/loop") == -1 &&
+       errno == EINVAL && renameat(dir, "target", dir, "tree") == -1 && errno == EISDIR &&
        renameat(dir, "tree", dir, "target") == -1 && errno == ENOTDIR &&
        syscall(SYS_renameat2, dir, "tree", dir, "renamed", 1) == 0;
   if (moved >= 0) { close(moved); }
@@ -414,10 +416,15 @@ static int open_unlinked_ext2(void) {
     char *target = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (target != MAP_FAILED) {
       char *moved = mremap(mapping, 4096, 4096, MREMAP_MAYMOVE | MREMAP_FIXED, target);
-      if (moved != MAP_FAILED) { mapping = moved; }
-      else { munmap(target, 4096); }
+      if (moved != MAP_FAILED) {
+        mapping = moved;
+      } else {
+        munmap(target, 4096);
+      }
       ok = ok && moved == target;
-    } else { ok = 0; }
+    } else {
+      ok = 0;
+    }
     ok = ok && mapping[0] == 'A';
     munmap(mapping, 4096);
   }

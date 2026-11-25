@@ -1,7 +1,7 @@
 #include "internal.h"
-#include "proc/domain.h"
 #include "lib/mem.h"
 #include "mm/pool.h"
+#include "proc/domain.h"
 #include "proc/limits.h"
 
 static struct object_pool process_mms;

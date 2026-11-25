@@ -1,14 +1,14 @@
-#include "proc/pid_namespace.h"
-#include "proc/namespace.h"
 #include "proc/user_namespace.h"
-#include "proc/ipc_namespace.h"
-#include "net/namespace.h"
 #include "fs/mount_namespace.h"
+#include "lib/kstr.h"
+#include "mm/pool.h"
+#include "net/namespace.h"
 #include "proc/domain.h"
+#include "proc/ipc_namespace.h"
+#include "proc/namespace.h"
+#include "proc/pid_namespace.h"
 #include "proc/thread.h"
 #include "proc/uts.h"
-#include "mm/pool.h"
-#include "lib/kstr.h"
 
 static struct object_pool namespaces;
 
@@ -30,7 +30,9 @@ void userns_release(struct user_namespace *ns) {
 }
 
 bool userns_contains(const struct user_namespace *ancestor, const struct user_namespace *child) {
-  while (child && child != ancestor) { child = child->parent; }
+  while (child && child != ancestor) {
+    child = child->parent;
+  }
   return child == ancestor;
 }
 
@@ -39,10 +41,14 @@ static int create_user_namespace(struct thread *leader) {
   if (d->refcount != 1) { return -95; }
   struct user_namespace *parent = d->user_ns;
   if (parent && parent->depth >= 32) { return -28; }
-  if (parent && (!parent->uid.mapped || parent->uid.outer != d->euid ||
-                 !parent->gid.mapped || parent->gid.outer != d->egid)) { return -1; }
+  if (parent &&
+      (!parent->uid.mapped || parent->uid.outer != d->euid || !parent->gid.mapped || parent->gid.outer != d->egid)) {
+    return -1;
+  }
   if (!leader->no_new_privs || !d->euid || !d->egid || d->uid != d->euid || d->saved_uid != d->euid ||
-      d->gid != d->egid || d->saved_gid != d->egid || !str_eq(d->chroot, "/")) { return -1; }
+      d->gid != d->egid || d->saved_gid != d->egid || !str_eq(d->chroot, "/")) {
+    return -1;
+  }
   struct user_namespace *ns = pool_alloc(&namespaces);
   if (!ns) { return -12; }
   ns->ino = namespace_new_ino();
@@ -64,7 +70,10 @@ uint32_t userns_visible(const struct user_namespace *ns, bool group, uint32_t ou
 }
 
 bool userns_translate(const struct user_namespace *ns, bool group, uint32_t inner, uint32_t *outer) {
-  if (!ns || inner == UINT32_MAX) { *outer = inner; return true; }
+  if (!ns || inner == UINT32_MAX) {
+    *outer = inner;
+    return true;
+  }
   const struct id_map *map = group ? &ns->gid : &ns->uid;
   if (!map->mapped || map->inner != inner) { return false; }
   *outer = map->outer;
@@ -73,7 +82,9 @@ bool userns_translate(const struct user_namespace *ns, bool group, uint32_t inne
 
 static bool number(const char **text, uint32_t *value) {
   const char *p = *text;
-  while (*p == ' ' || *p == '\t') { ++p; }
+  while (*p == ' ' || *p == '\t') {
+    ++p;
+  }
   if (*p < '0' || *p > '9') { return false; }
   uint32_t n = 0;
   do {
@@ -98,8 +109,10 @@ int userns_write_map(struct domain *actor, struct user_namespace *ns, bool group
   struct id_map *map = group ? &ns->gid : &ns->uid;
   if (map->mapped || (group && !ns->groups_denied)) { return -1; }
   uint32_t inner, outer, count;
-  if (!number(&text, &inner) || !number(&text, &outer) || !number(&text, &count) ||
-      inner == UINT32_MAX || count != 1 || (*text && !str_eq(text, "\n"))) { return -22; }
+  if (!number(&text, &inner) || !number(&text, &outer) || !number(&text, &count) || inner == UINT32_MAX || count != 1 ||
+      (*text && !str_eq(text, "\n"))) {
+    return -22;
+  }
   if (outer == UINT32_MAX || !userns_translate(ns->parent, group, outer, &outer)) { return -1; }
   if (outer != map->outer || (group && actor->egid != outer)) { return -1; }
   map->inner = inner;
@@ -108,14 +121,19 @@ int userns_write_map(struct domain *actor, struct user_namespace *ns, bool group
 }
 
 int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
-  if (flags & ~(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID)) { return -22; }
+  if (flags & ~(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWPID)) {
+    return -22;
+  }
   struct domain *d = thread->domain;
   struct linux_caps old_caps = thread->capabilities;
   struct uts_namespace *old_uts = uts_retain(d->uts);
   int rc = 0;
   if (flags & CLONE_NEWUSER) {
     rc = create_user_namespace(thread);
-    if (rc) { uts_release(old_uts); return rc; }
+    if (rc) {
+      uts_release(old_uts);
+      return rc;
+    }
   }
   struct pid_namespace *pid = NULL;
   struct net_namespace *net = NULL;
@@ -139,8 +157,14 @@ int cell_unshare_namespaces(struct thread *thread, uint64_t flags) {
     }
   } else {
     uts_release(old_uts);
-    if (pid) { pidns_release(d->child_pid_ns); d->child_pid_ns = pid; }
-    if (net) { netns_release(d->net_ns); d->net_ns = net; }
+    if (pid) {
+      pidns_release(d->child_pid_ns);
+      d->child_pid_ns = pid;
+    }
+    if (net) {
+      netns_release(d->net_ns);
+      d->net_ns = net;
+    }
     if (ipc) {
       ipcns_release(d->ipc_ns);
       d->ipc_ns = ipc;

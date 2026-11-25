@@ -1,12 +1,12 @@
 #include "net/net.h"
 #include "packet.h"
 
-#include "proc/accounting.h"
+#include "drivers/virtio_net.h"
 #include "lib/kprintf.h"
 #include "lib/mem.h"
-#include "proc/policy.h"
 #include "net/socket.h"
-#include "drivers/virtio_net.h"
+#include "proc/accounting.h"
+#include "proc/policy.h"
 
 enum {
   ETH_TYPE_ARP = 0x0806,
@@ -315,20 +315,24 @@ static void send_icmp_port_unreachable(uint32_t dst_ip, const uint8_t *original_
 }
 
 static void account_loopback(struct net_namespace *ns, size_t bytes) {
-  if (ns) { ++ns->lo_packets; ns->lo_bytes += bytes; }
+  if (ns) {
+    ++ns->lo_packets;
+    ns->lo_bytes += bytes;
+  }
 }
 
-bool net_udp_send(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload, size_t len) {
+bool net_udp_send(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void *payload,
+                  size_t len) {
   return net_udp_send_tos(ns, src_port, dst_ip, dst_port, 0, payload, len);
 }
 
-bool net_udp_send_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, const void *payload,
-                      size_t len) {
+bool net_udp_send_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos,
+                      const void *payload, size_t len) {
   return net_udp_send_ttl_tos(ns, src_port, dst_ip, dst_port, 64, tos, payload, len);
 }
 
-bool net_udp_send_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
-                          const void *payload, size_t len) {
+bool net_udp_send_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl,
+                          uint8_t tos, const void *payload, size_t len) {
   if (!netns_can_route(ns, dst_ip)) { return false; }
   if (is_loopback(dst_ip)) {
     account_loopback(ns, 20 + UDP_HEADER_LEN + len);
@@ -351,35 +355,36 @@ bool net_udp_send_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t 
   return send_ipv4_frame(&frame, NET_IP_UDP, ttl, tos, dst_ip, UDP_HEADER_LEN + len);
 }
 
-bool net_tcp_send_segment(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                          uint16_t window, uint8_t flags, const void *payload, size_t len) {
+bool net_tcp_send_segment(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq,
+                          uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len) {
   return net_tcp_send_segment_options(ns, src_port, dst_ip, dst_port, seq, ack, window, flags, payload, len, NULL, 0);
 }
 
-bool net_tcp_send_segment_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl, uint8_t tos,
+bool net_tcp_send_segment_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
+                                  uint8_t ttl, uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
+                                  const void *payload, size_t len) {
+  return net_tcp_send_segment_options_ttl_tos(ns, src_port, dst_ip, dst_port, ttl, tos, seq, ack, window, flags,
+                                              payload, len, NULL, 0);
+}
+
+bool net_tcp_send_segment_options(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
                                   uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags, const void *payload,
-                                  size_t len) {
-  return net_tcp_send_segment_options_ttl_tos(ns, src_port, dst_ip, dst_port, ttl, tos, seq, ack, window, flags, payload,
-                                              len, NULL, 0);
+                                  size_t len, const void *options, size_t options_len) {
+  return net_tcp_send_segment_options_tos(ns, src_port, dst_ip, dst_port, 0, seq, ack, window, flags, payload, len,
+                                          options, options_len);
 }
 
-bool net_tcp_send_segment_options(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint32_t seq, uint32_t ack,
-                                  uint16_t window, uint8_t flags, const void *payload, size_t len, const void *options,
-                                  size_t options_len) {
-  return net_tcp_send_segment_options_tos(ns, src_port, dst_ip, dst_port, 0, seq, ack, window, flags, payload, len, options,
-                                          options_len);
-}
-
-bool net_tcp_send_segment_options_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t tos, uint32_t seq,
-                                      uint32_t ack, uint16_t window, uint8_t flags, const void *payload, size_t len,
-                                      const void *options, size_t options_len) {
+bool net_tcp_send_segment_options_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port,
+                                      uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
+                                      const void *payload, size_t len, const void *options, size_t options_len) {
   return net_tcp_send_segment_options_ttl_tos(ns, src_port, dst_ip, dst_port, 64, tos, seq, ack, window, flags, payload,
                                               len, options, options_len);
 }
 
-bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, uint8_t ttl,
-                                          uint8_t tos, uint32_t seq, uint32_t ack, uint16_t window, uint8_t flags,
-                                          const void *payload, size_t len, const void *options, size_t options_len) {
+bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *ns, uint16_t src_port, uint32_t dst_ip,
+                                          uint16_t dst_port, uint8_t ttl, uint8_t tos, uint32_t seq, uint32_t ack,
+                                          uint16_t window, uint8_t flags, const void *payload, size_t len,
+                                          const void *options, size_t options_len) {
   if (!netns_can_route(ns, dst_ip)) { return false; }
   if (is_loopback(dst_ip)) {
     account_loopback(ns, 20 + 20 + options_len + len);
@@ -411,7 +416,8 @@ bool net_tcp_send_segment_options_ttl_tos(struct net_namespace *ns, uint16_t src
   return send_ipv4_frame(&frame, NET_IP_TCP, ttl, tos, dst_ip, header_len + len);
 }
 
-bool net_icmp_send_echo(struct net_namespace *ns, uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos, const void *payload, size_t len) {
+bool net_icmp_send_echo(struct net_namespace *ns, uint32_t dst_ip, uint16_t id, uint8_t ttl, uint8_t tos,
+                        const void *payload, size_t len) {
   if (!netns_can_route(ns, dst_ip)) { return false; }
   const uint8_t *data = payload;
   bool has_header = len >= ICMP_HEADER_LEN && data[0] == ICMP_ECHO_REQUEST && data[1] == 0;
@@ -490,7 +496,8 @@ void net_receive_ethernet(const uint8_t *frame, size_t len) {
   if (h.ip_protocol == NET_IP_UDP) {
     if (h.dst_ip != local_ip && h.dst_ip != 0xffffffffu && !is_broadcast(h.dst_ip)) { return; }
     if (!cell_net_deliver_udp(NULL, h.src_ip, h.ttl, h.src_port, h.dst_port, segment + UDP_HEADER_LEN,
-                              h.transport_len - UDP_HEADER_LEN) && h.dst_ip == local_ip) {
+                              h.transport_len - UDP_HEADER_LEN) &&
+        h.dst_ip == local_ip) {
       send_icmp_port_unreachable(h.src_ip, ip, h.ip_header_len, segment, h.transport_len);
     }
   } else if (h.dst_ip == local_ip && h.ip_protocol == NET_IP_ICMP) {
@@ -498,7 +505,8 @@ void net_receive_ethernet(const uint8_t *frame, size_t len) {
   } else if (h.dst_ip == local_ip && h.ip_protocol == NET_IP_TCP) {
     size_t header_len = TCP_HEADER_LEN + h.tcp_options_len;
     cell_net_deliver_tcp(NULL, h.src_ip, h.src_port, h.dst_port, h.sequence, h.acknowledgement, h.window, h.tcp_flags,
-                         segment + TCP_HEADER_LEN, h.tcp_options_len, segment + header_len, h.transport_len - header_len);
+                         segment + TCP_HEADER_LEN, h.tcp_options_len, segment + header_len,
+                         h.transport_len - header_len);
   }
 }
 

@@ -1,8 +1,8 @@
-#include "abi/linux/shared/usercopy.h"
-#include "message_abi.h"
 #include "abi/linux/shared/message.h"
 #include "abi/linux/shared/unix.h"
+#include "abi/linux/shared/usercopy.h"
 #include "handlers.h"
+#include "message_abi.h"
 #include "net/unix.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
@@ -18,7 +18,9 @@ struct cmsghdr64 {
   int32_t level, type;
 };
 
-static size_t cmsg_align(size_t len) { return (len + 7) & ~(size_t)7; }
+static size_t cmsg_align(size_t len) {
+  return (len + 7) & ~(size_t)7;
+}
 
 static int collect_rights(struct domain *domain, const struct msghdr64 *msg, struct unix_rights **out) {
   if (!msg->controllen) { return 0; }
@@ -64,13 +66,19 @@ static int write_control(struct domain *domain, const struct unix_rights *rights
       used = cmsg_align(control.header.len);
       if (used > msg->controllen) { used = msg->controllen; }
       if (!cell_domain_ensure_user_range(domain, msg->control, used, VMM_ACCESS_WRITE) ||
-          !vmm_copy_to_user(as, msg->control, &control, used)) { goto fault; }
+          !vmm_copy_to_user(as, msg->control, &control, used)) {
+        goto fault;
+      }
     }
   }
   if (vmm_copy_to_user(as, addr + offsetof(struct msghdr64, controllen), &used, sizeof(used)) &&
-      vmm_copy_to_user(as, addr + offsetof(struct msghdr64, flags), &result_flags, sizeof(result_flags))) { return 0; }
+      vmm_copy_to_user(as, addr + offsetof(struct msghdr64, flags), &result_flags, sizeof(result_flags))) {
+    return 0;
+  }
 fault:
-  while (count) { cell_close_domain_fd(domain, control.fds[--count]); }
+  while (count) {
+    cell_close_domain_fd(domain, control.fds[--count]);
+  }
   return -EFAULT;
 }
 
@@ -89,7 +97,7 @@ int64_t linux_unix_vector(struct domain *domain, struct open_file *file, uint64_
 }
 
 int64_t linux_unix_transfer(struct domain *domain, struct open_file *file, uint64_t msg_addr, uint32_t flags,
-                              bool write, struct unix_rights **pending) {
+                            bool write, struct unix_rights **pending) {
   struct msghdr64 msg;
   if (!vmm_copy_from_user(cell_domain_as(domain), &msg, msg_addr, sizeof(msg))) { return -EFAULT; }
   struct linux_iov_cursor cursor;
@@ -113,8 +121,8 @@ int64_t linux_unix_transfer(struct domain *domain, struct open_file *file, uint6
   return packet && (flags & 32) ? (int64_t)size : n;
 }
 
-int64_t linux_unix_message(struct trap_frame *frame, int fd, uint64_t addr, const struct msghdr64 *msg,
-                             uint32_t flags, bool write) {
+int64_t linux_unix_message(struct trap_frame *frame, int fd, uint64_t addr, const struct msghdr64 *msg, uint32_t flags,
+                           bool write) {
   struct domain *domain = cell_current_domain_internal();
   struct open_file *file = cell_fd_file(fd);
   if (!file || file->type != OPEN_UNIX_STREAM || !file->unix_connected) { return -ENOTCONN; }
@@ -125,10 +133,18 @@ int64_t linux_unix_message(struct trap_frame *frame, int fd, uint64_t addr, cons
   }
   int64_t rc = linux_unix_transfer(domain, file, addr, flags, write, &rights);
   if (rc == -EAGAIN && frame && !(flags & MSG_DONTWAIT) && !(file->flags & 04000)) {
-    struct thread_wait wait = {.reason = WAIT_PIPE, .target = fd, .socket_msg = true, .write = write,
-                               .socket_flags = flags, .socket_msg_addr = addr, .unix_rights = rights};
+    struct thread_wait wait = {.reason = WAIT_PIPE,
+                               .target = fd,
+                               .socket_msg = true,
+                               .write = write,
+                               .socket_flags = flags,
+                               .socket_msg_addr = addr,
+                               .unix_rights = rights};
     uint64_t timeout = write ? file->so_sndtimeo_ticks : file->so_rcvtimeo_ticks;
-    if (timeout) { wait.has_deadline = true; wait.deadline_tick = cell_uptime_ticks() + timeout; }
+    if (timeout) {
+      wait.has_deadline = true;
+      wait.deadline_tick = cell_uptime_ticks() + timeout;
+    }
     return cell_block_current(frame, wait);
   }
   unix_release_rights(rights);

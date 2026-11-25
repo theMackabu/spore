@@ -1,8 +1,8 @@
 #include "../usercopy.h"
 #include "handlers.h"
 #include "net/net.h"
-#include "proc/domain.h"
 #include "proc/capabilities.h"
+#include "proc/domain.h"
 
 enum { EPERM = 1, EFAULT = 14, EINVAL = 22 };
 
@@ -18,8 +18,11 @@ int64_t sys_spore_net_config(uint64_t op, uint64_t cfg_addr) {
   if (cfg_addr == 0) { return -(int64_t)EFAULT; }
   if (op == 0) {
     struct net_config cfg;
-    if (cell_current_domain_internal()->net_ns) { cfg = (struct net_config){0}; }
-    else { net_get_config(&cfg); }
+    if (cell_current_domain_internal()->net_ns) {
+      cfg = (struct net_config){0};
+    } else {
+      net_get_config(&cfg);
+    }
     struct net_config64 out = {
       .local_ip = cfg.local_ip,
       .gateway_ip = cfg.gateway_ip,

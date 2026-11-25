@@ -1,9 +1,9 @@
-#include "proc/namespace.h"
 #include "proc/ipc_namespace.h"
+#include "mm/pool.h"
 #include "proc/domain.h"
+#include "proc/namespace.h"
 #include "proc/thread.h"
 #include "proc/user_namespace.h"
-#include "mm/pool.h"
 
 static struct object_pool namespaces;
 

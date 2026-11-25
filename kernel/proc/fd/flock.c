@@ -67,7 +67,9 @@ static void wake_flock_waiters(void) {
 void cell_flock_release(struct open_file *file) {
   if (file->flock_mode == 0) { return; }
   struct open_file **link = &locked_files;
-  while (*link != file) { link = &(*link)->flock_next; }
+  while (*link != file) {
+    link = &(*link)->flock_next;
+  }
   *link = file->flock_next;
   file->flock_next = NULL;
   file->flock_mode = 0;
@@ -91,8 +93,6 @@ int cell_fd_flock(int fd, int operation, struct trap_frame *frame) {
   }
   if ((operation & LOCK_NB) != 0) { return -EWOULDBLOCK; }
   cell_retain_open_file(file);
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_FLOCK,
-                                                        .target = -1,
-                                                        .held_file = file,
-                                                        .flock_mode = (uint8_t)mode});
+  return cell_block_current(
+    frame, (struct thread_wait){.reason = WAIT_FLOCK, .target = -1, .held_file = file, .flock_mode = (uint8_t)mode});
 }

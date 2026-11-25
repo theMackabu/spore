@@ -1,6 +1,6 @@
-#include "arch/entropy.h"
-#include "arch/clock.h"
 #include "lib/random.h"
+#include "arch/clock.h"
+#include "arch/entropy.h"
 
 #include "lib/mem.h"
 

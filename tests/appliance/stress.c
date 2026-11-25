@@ -42,7 +42,9 @@ static void release(struct mapping *m) {
 static void io_roundtrip(uint32_t *seed) {
   unsigned char original[4096], copy[sizeof(original)];
   size_t n = 1 + random_word(seed) % sizeof(original);
-  for (size_t i = 0; i < n; ++i) { original[i] = (unsigned char)random_word(seed); }
+  for (size_t i = 0; i < n; ++i) {
+    original[i] = (unsigned char)random_word(seed);
+  }
   if (random_word(seed) & 1) {
     int ends[2];
     assert(socketpair(AF_UNIX, SOCK_STREAM, 0, ends) == 0);
@@ -79,7 +81,9 @@ static void batch(uint32_t *seed) {
     }
     if (random_word(seed) % 8 == 0) { io_roundtrip(seed); }
   }
-  for (unsigned i = 0; i < 24; ++i) { release(&slots[i]); }
+  for (unsigned i = 0; i < 24; ++i) {
+    release(&slots[i]);
+  }
 }
 
 int main(int argc, char **argv) {
@@ -88,7 +92,9 @@ int main(int argc, char **argv) {
   assert(seed);
   batch(&seed);
   long start = free_kib();
-  for (unsigned i = 0; i < 16; ++i) { batch(&seed); }
+  for (unsigned i = 0; i < 16; ++i) {
+    batch(&seed);
+  }
   long loss = start - free_kib();
   printf("seed=%s retained_kib=%ld\n", argv[1], loss);
   return loss > 256;

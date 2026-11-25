@@ -1,7 +1,7 @@
-#include "proc/pid_namespace.h"
-#include "init/app.h"
 #include "abi/linux/shared/signal.h"
+#include "init/app.h"
 #include "mm/pool.h"
+#include "proc/pid_namespace.h"
 #include "proc/signal.h"
 #include "proc/signalfd.h"
 
@@ -49,7 +49,8 @@ static const uint64_t SA_RESTART = 0x10000000ull;
 bool cell_user_signal_supported(int signal) {
   return signal == SIGHUP || signal == SIGINT || signal == SIGQUIT || signal == SIGABRT || signal == SIGKILL ||
          signal == SIGUSR1 || signal == SIGSEGV || signal == SIGUSR2 || signal == SIGPIPE || signal == SIGALRM ||
-         signal == SIGTERM || signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH || signal == SIGPWR;
+         signal == SIGTERM || signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH ||
+         signal == SIGPWR;
 }
 
 static bool signal_default_ignored(int signal) {
@@ -101,7 +102,8 @@ static bool wait_is_restartable(const struct thread_wait *wait) {
   enum wait_reason reason = wait->reason;
   if (reason == WAIT_FUTEX) { return !wait->has_deadline; }
   return reason == WAIT_CHILD || reason == WAIT_STDIN || reason == WAIT_SOCKET || reason == WAIT_PIPE ||
-         reason == WAIT_FIFO_OPEN || reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FLOCK || reason == WAIT_EVENTFD || reason == WAIT_SIGNALFD;
+         reason == WAIT_FIFO_OPEN || reason == WAIT_INOTIFY || reason == WAIT_PTY || reason == WAIT_FLOCK ||
+         reason == WAIT_EVENTFD || reason == WAIT_SIGNALFD;
 }
 
 static bool thread_requires_deferred_signal_frame(const struct thread *thread) {
@@ -141,8 +143,7 @@ static bool deliver_signal(struct thread *thread, struct siginfo_fields64 info) 
 
   uint64_t handler_mask = thread->signal_mask;
   if (thread->state == THREAD_BLOCKED) {
-    if ((action->flags & SA_RESTART) && wait_is_restartable(&thread->wait) &&
-        arch_restart_syscall(&thread->tf)) {
+    if ((action->flags & SA_RESTART) && wait_is_restartable(&thread->wait) && arch_restart_syscall(&thread->tf)) {
       cell_resume_wait(thread);
     } else {
       int64_t result = -EINTR;
@@ -155,13 +156,15 @@ static bool deliver_signal(struct thread *thread, struct siginfo_fields64 info) 
     terminate_domain_by_signal(domain, SIGSEGV);
     return true;
   }
-  thread->signal_mask = cell_sanitize_signal_mask(handler_mask | action->mask | ((action->flags & SA_NODEFER) ? 0 : signal_bit(signal)));
+  thread->signal_mask =
+    cell_sanitize_signal_mask(handler_mask | action->mask | ((action->flags & SA_NODEFER) ? 0 : signal_bit(signal)));
   if ((action->flags & SA_RESETHAND) != 0) { action->handler = 0; }
   return true;
 }
 
 bool cell_deliver_signal_to_thread_fault(struct thread *thread, int signal, uint64_t fault_addr, int sig_code) {
-  return deliver_signal(thread, (struct siginfo_fields64){.si_signo = signal, .si_code = sig_code, .si_addr = fault_addr});
+  return deliver_signal(thread,
+                        (struct siginfo_fields64){.si_signo = signal, .si_code = sig_code, .si_addr = fault_addr});
 }
 
 static struct thread *signal_target(struct domain *domain, int signal) {
@@ -293,11 +296,14 @@ void cell_reparent_children(struct domain *parent, int exiting_tid, int survivor
     for (size_t j = 0; j < cell_thread_slot_limit(); ++j) {
       struct thread *t = cell_thread_slot(j);
       if (!t || t->domain != child || t->state == THREAD_UNUSED || t->state == THREAD_ZOMBIE ||
-          !t->parent_death_signal) { continue; }
+          !t->parent_death_signal) {
+        continue;
+      }
       unsigned signal = t->parent_death_signal;
       uint64_t bit = signal_bit(signal);
       if ((child->pending_signals | child->parent_notifications->queued) & bit) { continue; }
-      child->parent_notifications->sender[signal - 1] = (struct signal_sender){pidns_local(pidns_active(child), parent->id), userns_visible(child->user_ns, false, parent->uid)};
+      child->parent_notifications->sender[signal - 1] = (struct signal_sender){
+        pidns_local(pidns_active(child), parent->id), userns_visible(child->user_ns, false, parent->uid)};
       child->parent_notifications->queued |= bit;
       queued = true;
     }
@@ -410,8 +416,7 @@ bool cell_signal_current_fault(int signal, struct trap_frame *frame, uint64_t fa
 
 static bool may_signal(const struct domain *target, int signal) {
   const struct domain *sender = cell_current_domain_internal();
-  return sender == target || cell_capable(CAP_KILL) ||
-         sender->uid == target->uid || sender->uid == target->saved_uid ||
+  return sender == target || cell_capable(CAP_KILL) || sender->uid == target->uid || sender->uid == target->saved_uid ||
          sender->euid == target->uid || sender->euid == target->saved_uid ||
          (signal == SIGCONT && sender->session_id == target->session_id);
 }
@@ -421,7 +426,9 @@ static int send_user_signal(struct thread *thread, int signal) {
   struct domain *victim = thread->domain;
   if (!may_signal(victim, signal)) { return -1; }
   if (signal && pidns_init_process(victim) && victim->signal_actions[signal].handler <= 1 &&
-      !(signal == SIGKILL && pidns_active(victim) != pidns_current())) { return 0; }
+      !(signal == SIGKILL && pidns_active(victim) != pidns_current())) {
+    return 0;
+  }
   if (cell_user_signal_supported(signal)) { (void)cell_deliver_signal_to_thread(thread, signal); }
   return 0;
 }
@@ -435,7 +442,10 @@ int cell_kill(int pid, int signal) {
     for (size_t i = 0, limit = cell_domain_slot_limit(); i < limit; ++i) {
       struct domain *domain = cell_domain_slot(i);
       if (!domain || !domain->used || domain->zombie || !pidns_self_view(domain->id)) { continue; }
-      if (pid == -1 ? (domain == cell_current_domain_internal() || pidns_self_view(domain->id) == 1) : domain->pgrp_id != pgrp) { continue; }
+      if (pid == -1 ? (domain == cell_current_domain_internal() || pidns_self_view(domain->id) == 1)
+                    : domain->pgrp_id != pgrp) {
+        continue;
+      }
       int rc = send_user_signal(cell_thread_for_domain(domain), signal);
       if (result != 0) { result = rc; }
     }

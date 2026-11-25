@@ -30,7 +30,9 @@ static const struct inotify_event *next_event(struct event_batch *batch, int wd,
   const struct inotify_event *e = (const void *)(batch->bytes + batch->offset);
   size_t size = sizeof(*e) + e->len;
   if (size > batch->size - batch->offset || e->wd != wd || e->mask != mask ||
-      (name ? !e->len || !memchr(e->name, 0, e->len) || strcmp(name, e->name) : e->len != 0)) { return NULL; }
+      (name ? !e->len || !memchr(e->name, 0, e->len) || strcmp(name, e->name) : e->len != 0)) {
+    return NULL;
+  }
   batch->offset += size;
   return e;
 }
@@ -55,8 +57,11 @@ static int directory_events(const char *path) {
   ok = to && from->cookie && from->cookie == to->cookie && next_event(&batch, wd, IN_MODIFY, "b") &&
        next_event(&batch, wd, IN_DELETE, "b") && next_event(&batch, wd, IN_MODIFY, "b") &&
        next_event(&batch, wd, IN_CLOSE_WRITE, "b") && batch.size == batch.offset && epoll_wait(ep, &ready, 1, 0) == 0;
-  close(ep); close(ifd);
-  fchdir(saved); close(saved); rmdir(path);
+  close(ep);
+  close(ifd);
+  fchdir(saved);
+  close(saved);
+  rmdir(path);
   printf("[spore] inotify directory %s: %s\n", path, ok ? "PASS" : "FAIL");
   return ok;
 }
@@ -67,12 +72,13 @@ static int inode_events(void) {
   int wd = inotify_add_watch(fd, path, IN_MODIFY);
   int ok = file >= 0 && wd > 0 && link(path, alias) == 0 &&
            inotify_add_watch(fd, alias, IN_MASK_CREATE | IN_OPEN) == -1 && errno == EEXIST &&
-           inotify_add_watch(fd, alias, IN_MASK_ADD | IN_DELETE_SELF) == wd && unlink(path) == 0 && unlink(alias) == 0 &&
-           write(file, "x", 1) == 1;
+           inotify_add_watch(fd, alias, IN_MASK_ADD | IN_DELETE_SELF) == wd && unlink(path) == 0 &&
+           unlink(alias) == 0 && write(file, "x", 1) == 1;
   if (file >= 0) { close(file); }
   struct event_batch batch;
   ok = ok && read_batch(fd, &batch) && next_event(&batch, wd, IN_MODIFY, NULL) &&
-       next_event(&batch, wd, IN_DELETE_SELF, NULL) && next_event(&batch, wd, IN_IGNORED, NULL) && batch.offset == batch.size;
+       next_event(&batch, wd, IN_DELETE_SELF, NULL) && next_event(&batch, wd, IN_IGNORED, NULL) &&
+       batch.offset == batch.size;
   close(fd);
   printf("[spore] inotify inode aliases and final unlink: %s\n", ok ? "PASS" : "FAIL");
   return ok;
@@ -92,7 +98,10 @@ static int symlink_parent_events(void) {
   struct event_batch batch;
   ok = ok && wd > 0 && write(file, "s", 1) == 1 && read_batch(fd, &batch) &&
        next_event(&batch, wd, IN_MODIFY, "file") && batch.size == batch.offset;
-  close(fd); close(file); unlink(path); rmdir(dir);
+  close(fd);
+  close(file);
+  unlink(path);
+  rmdir(dir);
   return ok;
 }
 
@@ -116,11 +125,13 @@ static int blocked_reader(void) {
     ok = next_event(&batch, wd, IN_CREATE, "notify-one") && next_event(&batch, wd, IN_IGNORED, NULL) &&
          batch.offset == batch.size;
   }
-  close(fd); unlink("/tmp/notify-one");
+  close(fd);
+  unlink("/tmp/notify-one");
   printf("[spore] inotify blocked one-shot: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
 int integration_notify_suite(void) {
-  return directory_events("/notify-check") && directory_events("/tmp/notify-check") && inode_events() && symlink_parent_events() && blocked_reader();
+  return directory_events("/notify-check") && directory_events("/tmp/notify-check") && inode_events() &&
+         symlink_parent_events() && blocked_reader();
 }

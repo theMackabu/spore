@@ -2,18 +2,18 @@
 #include "text.h"
 
 #include "arch/smp.h"
-#include "proc/accounting.h"
+#include "drivers/virtio_net.h"
 #include "fs/ext2.h"
-#include "lib/kprintf.h"
-#include "mm/pmm.h"
-#include "proc/domain.h"
+#include "fs/mount_namespace.h"
 #include "fs/procfs_format.h"
-#include "proc/thread.h"
 #include "fs/ramfs.h"
 #include "fs/vfs.h"
-#include "fs/mount_namespace.h"
-#include "drivers/virtio_net.h"
+#include "lib/kprintf.h"
+#include "mm/pmm.h"
 #include "net/namespace.h"
+#include "proc/accounting.h"
+#include "proc/domain.h"
+#include "proc/thread.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -123,11 +123,21 @@ size_t proc_loadavg_text(char *dst, size_t cap) {
 static void mount_path(char *dst, size_t cap, size_t *len, const char *path) {
   for (; *path; ++path) {
     switch (*path) {
-    case ' ': proc_append_str(dst, cap, len, "\\040"); break;
-    case '\t': proc_append_str(dst, cap, len, "\\011"); break;
-    case '\n': proc_append_str(dst, cap, len, "\\012"); break;
-    case '\\': proc_append_str(dst, cap, len, "\\134"); break;
-    default: proc_append_char(dst, cap, len, *path); break;
+    case ' ':
+      proc_append_str(dst, cap, len, "\\040");
+      break;
+    case '\t':
+      proc_append_str(dst, cap, len, "\\011");
+      break;
+    case '\n':
+      proc_append_str(dst, cap, len, "\\012");
+      break;
+    case '\\':
+      proc_append_str(dst, cap, len, "\\134");
+      break;
+    default:
+      proc_append_char(dst, cap, len, *path);
+      break;
     }
   }
 }
@@ -172,8 +182,10 @@ size_t proc_net_dev_text(char *dst, size_t cap) {
   size_t len = 0;
   const struct net_namespace *ns = cell_current_domain_internal()->net_ns;
   if (ns) {
-    proc_append_str(dst, cap, &len, "Inter-|   Receive                                                |  Transmit\n"
-                    " face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n"
+    proc_append_str(dst, cap, &len,
+                    "Inter-|   Receive                                                |  Transmit\n"
+                    " face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls "
+                    "carrier compressed\n"
                     "    lo:");
     for (unsigned direction = 0; direction < 2; ++direction) {
       proc_append_char(dst, cap, &len, ' ');

@@ -4,9 +4,9 @@
 #include "lib/mem.h"
 #include "mm/pool.h"
 #include "proc/domain.h"
+#include "proc/pid_namespace.h"
 #include "proc/thread.h"
 #include "proc/user_namespace.h"
-#include "proc/pid_namespace.h"
 
 struct mount_entry {
   struct mount_entry *next;
@@ -34,7 +34,9 @@ static bool join_path(char *dst, size_t cap, const char *base, const char *suffi
 
 static struct mount_namespace initial;
 static struct mount_namespace *namespaces = &initial;
-uint64_t mountns_ino(const struct mount_namespace *ns) { return ns->ino; }
+uint64_t mountns_ino(const struct mount_namespace *ns) {
+  return ns->ino;
+}
 
 static struct object_pool namespace_pool, mount_pool, fs_pool, access_pool;
 static size_t live_entries;
@@ -53,20 +55,38 @@ static struct mount_access *new_access(unsigned flags) {
 }
 
 void mountns_access_put(struct mount_access *access) {
-  if (access && !--access->refs) { pidns_release(access->proc_view); pool_free(&access_pool, access); }
+  if (access && !--access->refs) {
+    pidns_release(access->proc_view);
+    pool_free(&access_pool, access);
+  }
 }
 
 static struct mount_access *copy_access(const struct mount_access *from) {
   struct mount_access *a = new_access(from->flags);
-  if (a) { a->proc_mount = from->proc_mount; a->proc_view = pidns_retain(from->proc_view); }
+  if (a) {
+    a->proc_mount = from->proc_mount;
+    a->proc_view = pidns_retain(from->proc_view);
+  }
   return a;
 }
 
 static const char *options_for(unsigned flags) {
-  static const char *const options[] = {"rw", "ro", "rw,nosuid", "ro,nosuid", "rw,nodev", "ro,nodev",
-                                         "rw,nosuid,nodev", "ro,nosuid,nodev", "rw,noexec", "ro,noexec", "rw,nosuid,noexec",
-                                         "ro,nosuid,noexec", "rw,nodev,noexec", "ro,nodev,noexec",
-                                         "rw,nosuid,nodev,noexec", "ro,nosuid,nodev,noexec"};
+  static const char *const options[] = {"rw",
+                                        "ro",
+                                        "rw,nosuid",
+                                        "ro,nosuid",
+                                        "rw,nodev",
+                                        "ro,nodev",
+                                        "rw,nosuid,nodev",
+                                        "ro,nosuid,nodev",
+                                        "rw,noexec",
+                                        "ro,noexec",
+                                        "rw,nosuid,noexec",
+                                        "ro,nosuid,noexec",
+                                        "rw,nodev,noexec",
+                                        "ro,nodev,noexec",
+                                        "rw,nosuid,nodev,noexec",
+                                        "ro,nosuid,nodev,noexec"};
   return options[flags];
 }
 
@@ -107,7 +127,8 @@ static struct mount_entry *copy_entry(const struct mount_entry *source, bool sep
   *copy = *source;
   copy->next = NULL;
   copy->info.target = copy->target;
-  if (copy->root && !(copy->fs ? ramfs_retain_node(copy->fs, copy->root) : ext2_retain_inode(vfs_root_ext2, copy->root))) {
+  if (copy->root &&
+      !(copy->fs ? ramfs_retain_node(copy->fs, copy->root) : ext2_retain_inode(vfs_root_ext2, copy->root))) {
     pool_free(&mount_pool, copy);
     return NULL;
   }
@@ -119,7 +140,9 @@ static struct mount_entry *copy_entry(const struct mount_entry *source, bool sep
       pool_free(&mount_pool, copy);
       return NULL;
     }
-  } else { ++copy->access->refs; }
+  } else {
+    ++copy->access->refs;
+  }
   if (!copy->boot) { ++copy->fs->refs; }
   ++live_entries;
   return copy;
@@ -136,7 +159,9 @@ static void drop_entries(struct mount_entry *entry) {
 void mountns_release(struct mount_namespace *ns) {
   if (!ns || --ns->refs) { return; }
   struct mount_namespace **slot = &namespaces;
-  while (*slot != ns) { slot = &(*slot)->next; }
+  while (*slot != ns) {
+    slot = &(*slot)->next;
+  }
   *slot = ns->next;
   drop_entries(ns->mounts);
   drop_entries(ns->stacked);
@@ -161,7 +186,10 @@ int mountns_unshare(struct thread *thread) {
     struct mount_entry **slot = hidden ? &ns->stacked : &ns->mounts;
     for (struct mount_entry *m = hidden ? original->stacked : original->mounts; m; m = m->next) {
       struct mount_entry *copy = copy_entry(m, true);
-      if (!copy) { mountns_release(ns); return -12; }
+      if (!copy) {
+        mountns_release(ns);
+        return -12;
+      }
       if (ns->owner != original->owner) {
         copy->locked = true;
         copy->private_attach = false;
@@ -175,11 +203,17 @@ int mountns_unshare(struct thread *thread) {
   return 0;
 }
 
-bool mountns_explicit(const struct domain *d) { return view(d)->explicit_mounts; }
+bool mountns_explicit(const struct domain *d) {
+  return view(d)->explicit_mounts;
+}
 
-bool mountns_current_routes(void) { return live_entries && view(cell_current_domain_internal())->mounts; }
+bool mountns_current_routes(void) {
+  return live_entries && view(cell_current_domain_internal())->mounts;
+}
 
-bool mountns_has_mounts(void) { return live_entries != 0; }
+bool mountns_has_mounts(void) {
+  return live_entries != 0;
+}
 
 bool mountns_may_mount(void) {
   return cell_ns_capable(view(cell_current_domain_internal())->owner, CAP_SYS_ADMIN);
@@ -190,9 +224,13 @@ const struct vfs_mount *mountns_at(const struct domain *d, size_t index) {
   for (unsigned hidden = 0; hidden < 2; ++hidden) {
     struct mount_entry *m = hidden ? ns->stacked : ns->mounts;
     size_t count = 0;
-    for (struct mount_entry *it = m; it; it = it->next) { ++count; }
+    for (struct mount_entry *it = m; it; it = it->next) {
+      ++count;
+    }
     if (index < count) {
-      for (size_t skip = count - index - 1; skip; --skip) { m = m->next; }
+      for (size_t skip = count - index - 1; skip; --skip) {
+        m = m->next;
+      }
       return &m->info;
     }
     index -= count;
@@ -231,7 +269,10 @@ bool mountns_pinned_path(const char *path) {
   struct mount_namespace *current = view(cell_current_domain_internal());
   for (struct mount_namespace *ns = namespaces; ns; ns = ns->next) {
     for (struct mount_entry *m = ns->mounts; m; m = m->next) {
-      if ((ns == current || (node.mount_id ? node.mount_id : node.dev_id) == m->info.parent) && inside(m->target, path)) { return true; }
+      if ((ns == current || (node.mount_id ? node.mount_id : node.dev_id) == m->info.parent) &&
+          inside(m->target, path)) {
+        return true;
+      }
     }
   }
   return false;
@@ -262,7 +303,9 @@ int mountns_proc(const char *path, unsigned flags) {
   if (ns->owner) { flags |= MOUNT_NODEV | MOUNT_NOSUID | MOUNT_NOEXEC; }
   m->access = new_access(flags);
   if (!m->access || !ramfs_retain_node(proc.fs, proc.index)) {
-    mountns_access_put(m->access); pool_free(&mount_pool, m); return -12;
+    mountns_access_put(m->access);
+    pool_free(&mount_pool, m);
+    return -12;
   }
   m->access->proc_mount = true;
   m->access->proc_view = pidns_retain(pidns_active(d));
@@ -306,18 +349,31 @@ int mountns_memory(const char *path, unsigned mode, unsigned flags, const struct
     fs->devpts = true;
     fs->pts_mode = pts->mode;
     if (ramfs_device_node(fs, 0, "ptmx", RAMFS_DEV_PTMX, 0020000 | pts->ptmxmode, domain->euid, domain->egid) < 0) {
-      ramfs_destroy(fs); pool_free(&fs_pool, fs); pool_free(&mount_pool, m); return -12;
+      ramfs_destroy(fs);
+      pool_free(&fs_pool, fs);
+      pool_free(&mount_pool, m);
+      return -12;
     }
   }
   fs->device = next_device++;
   ramfs_set_reclaim_callback(fs, vfs_ramfs_inode_freed);
   m->access = new_access(flags);
-  if (!m->access) { mountns_put_fs(fs); pool_free(&mount_pool, m); return -12; }
+  if (!m->access) {
+    mountns_put_fs(fs);
+    pool_free(&mount_pool, m);
+    return -12;
+  }
   m->fs = fs;
   m->private_attach = true;
   copy_cstr(m->target, sizeof(m->target), path);
-  m->info = (struct vfs_mount){fs->device, covered.mount_id ? covered.mount_id : covered.dev_id, pts ? 0x1cd1u : 0x01021994u, pts ? "devpts" : "tmpfs", m->target, pts ? "devpts" : "tmpfs",
-    options_for(m->access->flags), next_mount++};
+  m->info = (struct vfs_mount){fs->device,
+                               covered.mount_id ? covered.mount_id : covered.dev_id,
+                               pts ? 0x1cd1u : 0x01021994u,
+                               pts ? "devpts" : "tmpfs",
+                               m->target,
+                               pts ? "devpts" : "tmpfs",
+                               options_for(m->access->flags),
+                               next_mount++};
   m->next = ns->mounts;
   ns->mounts = m;
   ++live_entries;
@@ -327,7 +383,9 @@ int mountns_memory(const char *path, unsigned mode, unsigned flags, const struct
 static bool mounted_below(const struct mount_entry *child, const struct mount_entry *ancestor) {
   while (child->info.mount_id != ancestor->info.mount_id) {
     uint64_t parent = child->info.parent;
-    do { child = child->next; } while (child && child->info.mount_id != parent);
+    do {
+      child = child->next;
+    } while (child && child->info.mount_id != parent);
     if (!child) { return false; }
   }
   return true;
@@ -343,9 +401,15 @@ static int attach_bind_tree(struct mount_namespace *ns, struct mount_entry *root
       if (!inside(m->target, source) || !mounted_below(m, origin)) { continue; }
       const char *suffix = m->target + src_len;
       size_t len = kstrlen(suffix);
-      if (dst_len + len >= CELL_PATH_MAX) { drop_entries(tree); return -36; }
+      if (dst_len + len >= CELL_PATH_MAX) {
+        drop_entries(tree);
+        return -36;
+      }
       struct mount_entry *copy = copy_entry(m, true);
-      if (!copy) { drop_entries(tree); return -12; }
+      if (!copy) {
+        drop_entries(tree);
+        return -12;
+      }
       kmemcpy(copy->target, root->target, dst_len);
       kmemcpy(copy->target + dst_len, suffix, len + 1);
       copy->private_attach = true;
@@ -377,25 +441,39 @@ int mountns_bind(const char *source, const char *target, bool recursive) {
   if (!may_cover(ns, d, &dst)) { return -1; }
   struct mount_entry *origin = NULL;
   for (struct mount_entry *m = ns->mounts; m; m = m->next) {
-    if (m->info.mount_id == src.mount_id) { origin = m; break; }
+    if (m->info.mount_id == src.mount_id) {
+      origin = m;
+      break;
+    }
   }
   if (!origin) { return -95; }
   struct ramfs_route source_route = mountns_lookup(source);
-  if (origin->boot && !str_eq(source_route.path, "/") && src.backend != VFS_EXT2 &&
-      src.backend != VFS_RAMFS) { return -95; }
+  if (origin->boot && !str_eq(source_route.path, "/") && src.backend != VFS_EXT2 && src.backend != VFS_RAMFS) {
+    return -95;
+  }
   struct mount_entry *m = allocate(&mount_pool, sizeof(*m));
   if (!m) { return -12; }
   m->access = copy_access(origin->access);
-  if (!m->access) { pool_free(&mount_pool, m); return -12; }
+  if (!m->access) {
+    pool_free(&mount_pool, m);
+    return -12;
+  }
   m->boot = origin->boot;
   m->root = src.backend == VFS_RAMFS ? src.ramfs.index : src.ext2.ino;
   m->private_attach = true;
   m->fs = origin->fs;
-  if (m->fs && m->root && !ramfs_retain_node(m->fs, m->root)) { mountns_access_put(m->access); pool_free(&mount_pool, m); return -2; }
+  if (m->fs && m->root && !ramfs_retain_node(m->fs, m->root)) {
+    mountns_access_put(m->access);
+    pool_free(&mount_pool, m);
+    return -2;
+  }
   if (!m->fs) {
-    if (!join_path(m->disk_path, sizeof(m->disk_path), *origin->disk_path ? origin->disk_path : "/", source_route.path) ||
+    if (!join_path(m->disk_path, sizeof(m->disk_path), *origin->disk_path ? origin->disk_path : "/",
+                   source_route.path) ||
         !ext2_retain_inode(vfs_root_ext2, m->root)) {
-      mountns_access_put(m->access); pool_free(&mount_pool, m); return -36;
+      mountns_access_put(m->access);
+      pool_free(&mount_pool, m);
+      return -36;
     }
   }
   if (!m->boot) { ++m->fs->refs; }
@@ -442,7 +520,9 @@ int mountns_unmount(const char *path, bool detach) {
       const struct domain *d = cell_domain_slot(i);
       if (!d->used || view(d) != ns || d->cwd_covered_mount) { continue; }
       char cwd[CELL_PATH_MAX];
-      if (join_path(cwd, sizeof(cwd), d->chroot, d->cwd) && mountns_lookup(cwd).mount_id == m->info.mount_id) { return -16; }
+      if (join_path(cwd, sizeof(cwd), d->chroot, d->cwd) && mountns_lookup(cwd).mount_id == m->info.mount_id) {
+        return -16;
+      }
     }
   }
   if (detach) {
@@ -452,7 +532,9 @@ int mountns_unmount(const char *path, bool detach) {
       if (inside(child->target, path)) {
         *slot = child->next;
         drop_entry(child);
-      } else { slot = &child->next; }
+      } else {
+        slot = &child->next;
+      }
     }
   }
   *slot = m->next;
@@ -476,7 +558,10 @@ static struct mount_entry *boot_tree(void) {
   const struct vfs_mount *boot;
   for (size_t i = 0; (boot = vfs_boot_mount_at(i)); ++i) {
     struct mount_entry *m = allocate(&mount_pool, sizeof(*m));
-    if (!m) { drop_entries(tree); return NULL; }
+    if (!m) {
+      drop_entries(tree);
+      return NULL;
+    }
     m->boot = boot;
     if (boot->device != VFS_DEV_EXT2_ROOT) {
       struct ramfs_node n;
@@ -493,13 +578,22 @@ static struct mount_entry *boot_tree(void) {
     m->info.mount_id = boot->device;
     m->info.target = m->target;
     m->access = new_access(str_eq(boot->options, "ro") ? MOUNT_RDONLY : 0);
-    if (!m->access) { pool_free(&mount_pool, m); drop_entries(tree); return NULL; }
+    if (!m->access) {
+      pool_free(&mount_pool, m);
+      drop_entries(tree);
+      return NULL;
+    }
     if (m->fs && m->root && !ramfs_retain_node(m->fs, m->root)) {
-      mountns_access_put(m->access); pool_free(&mount_pool, m); drop_entries(tree); return NULL;
+      mountns_access_put(m->access);
+      pool_free(&mount_pool, m);
+      drop_entries(tree);
+      return NULL;
     }
     m->locked = true;
     struct mount_entry **slot = &tree;
-    while (*slot && kstrlen((*slot)->target) >= kstrlen(m->target)) { slot = &(*slot)->next; }
+    while (*slot && kstrlen((*slot)->target) >= kstrlen(m->target)) {
+      slot = &(*slot)->next;
+    }
     m->next = *slot;
     *slot = m;
     ++live_entries;
@@ -517,7 +611,10 @@ static int pivot_tree(struct mount_namespace *ns, const struct mount_entry *root
   for (unsigned part = 0; part < 2 && !rc; ++part) {
     for (struct mount_entry *m = part ? base : ns->mounts; m; m = m->next) {
       struct mount_entry *copy = copy_entry(m, false);
-      if (!copy) { rc = -12; break; }
+      if (!copy) {
+        rc = -12;
+        break;
+      }
       if (!part && mounted_below(m, root)) {
         const char *suffix = m->target + kstrlen(root->target);
         copy_cstr(copy->target, sizeof(copy->target), *suffix ? suffix : "/");
@@ -527,7 +624,10 @@ static int pivot_tree(struct mount_namespace *ns, const struct mount_entry *root
       } else {
         *old_tail = copy;
         old_tail = &copy->next;
-        if (!join_path(copy->target, sizeof(copy->target), put_old, m->target)) { rc = -36; break; }
+        if (!join_path(copy->target, sizeof(copy->target), put_old, m->target)) {
+          rc = -36;
+          break;
+        }
         if (!m->target[1]) {
           copy->info.parent = root->info.mount_id;
           copy->locked = false;
@@ -536,7 +636,11 @@ static int pivot_tree(struct mount_namespace *ns, const struct mount_entry *root
     }
   }
   drop_entries(base);
-  if (rc) { drop_entries(old_tree); drop_entries(new_tree); return rc; }
+  if (rc) {
+    drop_entries(old_tree);
+    drop_entries(new_tree);
+    return rc;
+  }
   if (stacked) {
     *stacked = old_tree;
     *result = new_tree;
@@ -548,7 +652,10 @@ static int pivot_tree(struct mount_namespace *ns, const struct mount_entry *root
 }
 
 static bool pivot_cwd(const char *cwd, const char *root, const char *old, char path[CELL_PATH_MAX]) {
-  if (!cwd[1]) { copy_cstr(path, CELL_PATH_MAX, "/"); return true; }
+  if (!cwd[1]) {
+    copy_cstr(path, CELL_PATH_MAX, "/");
+    return true;
+  }
   if (!inside(cwd, root)) { return join_path(path, CELL_PATH_MAX, old, cwd); }
   const char *suffix = cwd + kstrlen(root);
   copy_cstr(path, CELL_PATH_MAX, *suffix ? suffix : "/");
@@ -568,7 +675,9 @@ int mountns_pivot(const char *root_path, const char *old_path) {
   if (!vfs_lstat(old_path, &dir)) { return -2; }
   if (!dir.is_dir) { return -20; }
   struct mount_entry *root = ns->mounts;
-  while (root && root->info.mount_id != new.mount_id) { root = root->next; }
+  while (root && root->info.mount_id != new.mount_id) {
+    root = root->next;
+  }
   if (!root || root->locked) { return -22; }
   const char *put_old = stack ? "/" : old_path + kstrlen(root_path);
   char cwd[CELL_PATH_MAX];
@@ -590,7 +699,10 @@ int mountns_pivot(const char *root_path, const char *old_path) {
     if (!d->used || view(d) != ns) { continue; }
     if (stack && d->cwd[1] && !inside(d->cwd, root_path)) {
       for (struct mount_entry *m = stacked; m; m = m->next) {
-        if (inside(d->cwd, m->target)) { d->cwd_covered_mount = m->info.mount_id; break; }
+        if (inside(d->cwd, m->target)) {
+          d->cwd_covered_mount = m->info.mount_id;
+          break;
+        }
       }
     }
     pivot_cwd(d->cwd, root_path, put_old, cwd);
@@ -609,7 +721,8 @@ int vfs_directory_path(const struct vfs_node *node, const char *root, char *out,
     char buf[CELL_PATH_MAX], base[CELL_PATH_MAX];
     const char *suffix = NULL;
     if (node->backend == VFS_EXT2) {
-      suffix = ext2_dir_path(vfs_root_ext2, route.root ? (uint32_t)route.root : EXT2_ROOT_INO, node->ino, buf, sizeof(buf));
+      suffix =
+        ext2_dir_path(vfs_root_ext2, route.root ? (uint32_t)route.root : EXT2_ROOT_INO, node->ino, buf, sizeof(buf));
     } else if (node->backend == VFS_RAMFS) {
       struct ramfs *fs = node->ramfs.fs;
       const char *path = ramfs_inode_path(fs, node->ramfs.index, buf, sizeof(buf));
@@ -624,7 +737,9 @@ int vfs_directory_path(const struct vfs_node *node, const char *root, char *out,
     if (!inside(out, root)) { return -2; }
     struct vfs_node named;
     if (vfs_lookup_component(out, true, &named) && named.is_dir && named.ino == node->ino &&
-        named.dev_id == node->dev_id && (named.mount_id ? named.mount_id : named.dev_id) == id) { return 0; }
+        named.dev_id == node->dev_id && (named.mount_id ? named.mount_id : named.dev_id) == id) {
+      return 0;
+    }
     return -116;
   }
   return -116;
@@ -645,24 +760,29 @@ int mountns_relocate_dir(const struct vfs_node *node, const char *opened, char *
       suffix = base[1] ? name + kstrlen(base) : name;
     } else if (m->boot && inside(opened, m->boot->target)) {
       suffix = m->boot->target[1] ? opened + kstrlen(m->boot->target) : opened;
-    } else { return -116; }
+    } else {
+      return -116;
+    }
     return join_path(path, cap, m->target, *suffix ? suffix : "/") ? 0 : -36;
   }
   if (node->dev_id == VFS_DEV_PROC) {
     unsigned required = node->access ? node->access->flags : 0;
     for (struct mount_entry *m = ns->mounts; m; m = m->next) {
       if (!m->boot || m->boot->device != VFS_DEV_PROC || (required & ~m->access->flags) ||
-          !inside(opened, m->boot->target)) { continue; }
+          !inside(opened, m->boot->target)) {
+        continue;
+      }
       const char *suffix = opened + kstrlen(m->boot->target);
       if (!join_path(path, cap, m->target, *suffix ? suffix : "/")) { continue; }
       struct vfs_node named;
       if (vfs_lookup(path, &named) && named.mount_id == m->info.mount_id && named.ino == node->ino &&
-          named.dev_id == node->dev_id) { return 0; }
+          named.dev_id == node->dev_id) {
+        return 0;
+      }
     }
   }
   return -116;
 }
-
 
 bool mountns_covered_root(const struct vfs_node *node) {
   const struct mount_namespace *ns = view(cell_current_domain_internal());
@@ -681,7 +801,9 @@ int mountns_unstack(bool detach) {
   if (!ns->stacked) { return -22; }
   if (!detach) { return -16; }
   struct mount_entry *root = ns->stacked;
-  while (root && root->target[1]) { root = root->next; }
+  while (root && root->target[1]) {
+    root = root->next;
+  }
   if (!root || root->locked) { return -1; }
   if (d->cwd[1] || (d->cwd_covered_mount && d->cwd_covered_mount != root->info.mount_id)) { return -22; }
   struct mount_entry *old = ns->stacked;

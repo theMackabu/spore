@@ -1,11 +1,11 @@
-#include "proc/pid_namespace.h"
 #include "abi/linux/shared/usercopy.h"
-#include "handlers.h"
-#include "fs/notify.h"
 #include "drivers/serial.h"
+#include "fs/notify.h"
+#include "handlers.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
+#include "proc/pid_namespace.h"
 #include "tty/pty.h"
 #include "tty/tty.h"
 
@@ -129,12 +129,20 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (!file) { return -9; }
     if (file->type != OPEN_SOCKET && file->type != OPEN_UNIX_STREAM) { return -ENOTTY; }
     char name[16];
-    if (!syscall_user_readable(arg, sizeof(name)) || !vmm_copy_from_user(syscall_active_as(), name, arg, sizeof(name))) { return -EFAULT; }
+    if (!syscall_user_readable(arg, sizeof(name)) ||
+        !vmm_copy_from_user(syscall_active_as(), name, arg, sizeof(name))) {
+      return -EFAULT;
+    }
     int32_t index = 1;
-    if (!__builtin_memcmp(name, "eth0", 5) && !file->net_ns) { index = 2; }
-    else if (__builtin_memcmp(name, "lo", 3)) { return -19; }
+    if (!__builtin_memcmp(name, "eth0", 5) && !file->net_ns) {
+      index = 2;
+    } else if (__builtin_memcmp(name, "lo", 3)) {
+      return -19;
+    }
     return syscall_user_writable(arg + 16, sizeof(index)) &&
-           vmm_copy_to_user(syscall_active_as(), arg + 16, &index, sizeof(index)) ? 0 : -EFAULT;
+               vmm_copy_to_user(syscall_active_as(), arg + 16, &index, sizeof(index))
+             ? 0
+             : -EFAULT;
   }
   if (req == TIOCGPTN) {
     struct open_file *file = fd_file(fd);
@@ -173,8 +181,10 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     struct open_file *instance = fd_file(fd);
     if (req == FIONREAD && instance && instance->type == OPEN_INOTIFY) {
       int bytes = (int)inotify_bytes(instance);
-      return syscall_user_writable(arg, sizeof(bytes)) && vmm_copy_to_user(syscall_active_as(), arg, &bytes, sizeof(bytes))
-               ? 0 : -EFAULT;
+      return syscall_user_writable(arg, sizeof(bytes)) &&
+                 vmm_copy_to_user(syscall_active_as(), arg, &bytes, sizeof(bytes))
+               ? 0
+               : -EFAULT;
     }
     int64_t tty = require_tty_fd(fd);
     if (tty != 0) { return tty; }
@@ -208,8 +218,11 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (arg > BOTH) { return -EINVAL; }
     struct open_file *file = fd_file(fd);
     if (!file) { return -9; }
-    if (file->type == OPEN_PTY) { cell_pty_flush(file, arg != OUTPUT, arg != INPUT); }
-    else if (arg != OUTPUT) { cell_tty_flush_input(); }
+    if (file->type == OPEN_PTY) {
+      cell_pty_flush(file, arg != OUTPUT, arg != INPUT);
+    } else if (arg != OUTPUT) {
+      cell_tty_flush_input();
+    }
     return 0;
   }
   if (req == TCSBRK || req == TCXONC) { return require_tty_fd(fd); }
@@ -320,7 +333,9 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (tty) { return tty; }
     struct termios2_64 tio;
     size_t size = extended ? sizeof(tio) : sizeof(tio.base);
-    if (!syscall_user_readable(arg, size) || !vmm_copy_from_user(syscall_active_as(), &tio, arg, size)) { return -EFAULT; }
+    if (!syscall_user_readable(arg, size) || !vmm_copy_from_user(syscall_active_as(), &tio, arg, size)) {
+      return -EFAULT;
+    }
     apply_termios(fd_file(fd), &tio.base, req == TCSETSF || req == TCSETSF2);
     return 0;
   }

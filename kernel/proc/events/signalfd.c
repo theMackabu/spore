@@ -1,12 +1,12 @@
 #include "proc/signalfd.h"
+#include "abi/linux/shared/open.h"
+#include "abi/linux/shared/signal.h"
+#include "arch/smp.h"
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
 #include "proc/thread.h"
-#include "arch/smp.h"
-#include "abi/linux/shared/open.h"
-#include "abi/linux/shared/signal.h"
 
 struct signalfd_info {
   uint32_t signo;
@@ -43,7 +43,9 @@ int cell_signalfd(int fd, uint64_t mask, unsigned flags) {
   return fd;
 }
 
-void cell_signalfd_close(void) { --open_count; }
+void cell_signalfd_close(void) {
+  --open_count;
+}
 
 int cell_signalfd_ready(const struct thread *thread, const struct open_file *file) {
   return thread && thread->domain &&
@@ -57,9 +59,13 @@ static int64_t read_pending(struct thread *t, struct open_file *file, uint64_t a
     if (!available) { break; }
     int signo = __builtin_ctzll(available) + 1;
     struct siginfo_fields64 info = cell_pending_signal_info(t, signo, false);
-    struct signalfd_info record = {.signo = signo, .code = info.si_code, .pid = info.sender.pid,
-                                   .uid = info.sender.uid, .status = info.child_status};
-    if (addr + copied < addr || !cell_domain_ensure_user_range(t->domain, addr + copied, sizeof(record), VMM_ACCESS_WRITE) ||
+    struct signalfd_info record = {.signo = signo,
+                                   .code = info.si_code,
+                                   .pid = info.sender.pid,
+                                   .uid = info.sender.uid,
+                                   .status = info.child_status};
+    if (addr + copied < addr ||
+        !cell_domain_ensure_user_range(t->domain, addr + copied, sizeof(record), VMM_ACCESS_WRITE) ||
         !vmm_copy_to_user(cell_domain_as(t->domain), addr + copied, &record, sizeof(record))) {
       return copied ? (int64_t)copied : -14;
     }
@@ -76,8 +82,8 @@ int64_t cell_signalfd_read(struct thread *thread, struct open_file *file, uint64
   if (rc >= 0) { cell_wake_poll_waiters_internal(); }
   if (rc != -11 || (file->flags & SFD_NONBLOCK) || !frame) { return rc; }
   cell_retain_open_file(file);
-  return cell_block_current(frame, (struct thread_wait){.reason = WAIT_SIGNALFD, .held_file = file,
-                                                        .buf = addr, .len = len});
+  return cell_block_current(frame,
+                            (struct thread_wait){.reason = WAIT_SIGNALFD, .held_file = file, .buf = addr, .len = len});
 }
 
 void cell_signalfd_notify(struct domain *domain) {
@@ -87,7 +93,10 @@ void cell_signalfd_notify(struct domain *domain) {
   while ((t = cell_next_waiter(WAIT_SIGNALFD, &cursor))) {
     if (domain && domain != t->domain) { continue; }
     int64_t rc = read_pending(t, t->wait.held_file, t->wait.buf, t->wait.len);
-    if (rc != -11) { cell_finish_wait(t, rc); smp_notify(); }
+    if (rc != -11) {
+      cell_finish_wait(t, rc);
+      smp_notify();
+    }
   }
   cell_wake_poll_waiters_internal();
 }

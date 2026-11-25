@@ -1,9 +1,9 @@
-#include "file_abi.h"
 #include "../usercopy.h"
-#include "fs/vfs.h"
-#include "lib/mem.h"
-#include "lib/kstr.h"
+#include "file_abi.h"
 #include "fs/mount_namespace.h"
+#include "fs/vfs.h"
+#include "lib/kstr.h"
+#include "lib/mem.h"
 #include "proc/domain.h"
 #include "proc/policy.h"
 
@@ -38,7 +38,9 @@ int64_t sys_spore_mountinfo(uint64_t addr, uint64_t bytes) {
       struct vfs_mount_info out;
       if (!vfs_mount_detail(count, &out)) { return -EIO; }
       if (!syscall_user_writable(addr, sizeof(out)) ||
-          !vmm_copy_to_user(syscall_active_as(), addr, &out, sizeof(out))) { return -EFAULT; }
+          !vmm_copy_to_user(syscall_active_as(), addr, &out, sizeof(out))) {
+        return -EFAULT;
+      }
       addr += sizeof(out);
     }
     ++count;
@@ -66,9 +68,7 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
   flags &= ~MS_SILENT;
   constexpr uint64_t MS_BIND = 4096;
   constexpr uint64_t MS_REMOUNT = 32;
-  if ((flags & ~mount_flags) == (MS_BIND | MS_REMOUNT)) {
-    return mountns_remount(path, flags & mount_flags);
-  }
+  if ((flags & ~mount_flags) == (MS_BIND | MS_REMOUNT)) { return mountns_remount(path, flags & mount_flags); }
   if ((flags & ~MS_REC) == MS_BIND) {
     char src[CELL_PATH_MAX];
     rc = syscall_copy_resolved_path_at(AT_FDCWD, source, src, sizeof(src));
@@ -96,13 +96,24 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
     char *p = options;
     while (*p) {
       char *start = p;
-      while (*p && *p != ',') { ++p; }
+      while (*p && *p != ',') {
+        ++p;
+      }
       if (*p) { *p++ = 0; }
-      if (pts && str_eq(start, "newinstance")) { fresh = true; continue; }
+      if (pts && str_eq(start, "newinstance")) {
+        fresh = true;
+        continue;
+      }
       unsigned *value;
-      if (starts_with(start, "mode=")) { value = pts ? &settings.mode : &mode; start += 5; }
-      else if (pts && starts_with(start, "ptmxmode=")) { value = &settings.ptmxmode; start += 9; }
-      else { return -EINVAL; }
+      if (starts_with(start, "mode=")) {
+        value = pts ? &settings.mode : &mode;
+        start += 5;
+      } else if (pts && starts_with(start, "ptmxmode=")) {
+        value = &settings.ptmxmode;
+        start += 9;
+      } else {
+        return -EINVAL;
+      }
       if (!*start) { return -EINVAL; }
       unsigned n = 0;
       for (; *start; ++start) {
@@ -120,8 +131,8 @@ int64_t sys_umount2(uint64_t target, uint64_t flags) {
   if (!mountns_may_mount()) { return -EPERM; }
   if (flags & ~2ull) { return -EINVAL; }
   char dot[2];
-  if (syscall_read_user_string(target, dot, sizeof(dot)) == 2 && dot[0] == '.' &&
-      !cell_current_cwd()[1] && !cell_current_chroot()[1]) {
+  if (syscall_read_user_string(target, dot, sizeof(dot)) == 2 && dot[0] == '.' && !cell_current_cwd()[1] &&
+      !cell_current_chroot()[1]) {
     if (!cell_fs_path_allowed("/", CELL_FS_WRITE)) { return -EPERM; }
     return mountns_unstack(flags & 2);
   }

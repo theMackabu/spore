@@ -1,18 +1,18 @@
 #include "proc/pipe.h"
 #include "abi/linux/shared/open.h"
 
+#include "abi/linux/shared/unix.h"
+#include "mm/page_ring.h"
 #include "mm/pmm.h"
 #include "mm/pool.h"
-#include "mm/page_ring.h"
 #include "mm/vmm.h"
+#include "net/unix.h"
 #include "proc/domain.h"
+#include "proc/epoll.h"
 #include "proc/fd.h"
 #include "proc/limits.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
-#include "proc/epoll.h"
-#include "net/unix.h"
-#include "abi/linux/shared/unix.h"
 #include "proc/thread.h"
 
 enum {
@@ -60,7 +60,9 @@ void cell_pipe_discard(struct pipe_obj *pipe) {
   if (!pipe) { return; }
   if (pipe->fifo_dev) {
     struct pipe_obj **link = &fifos;
-    while (*link != pipe) { link = &(*link)->fifo_next; }
+    while (*link != pipe) {
+      link = &(*link)->fifo_next;
+    }
     *link = pipe->fifo_next;
   }
   unix_clear_rights(&pipe->rights);
@@ -110,7 +112,9 @@ struct pipe_obj *cell_fifo_open(const struct vfs_node *node, bool create) {
   return pipe;
 }
 
-uint64_t cell_pipe_ino(const struct pipe_obj *pipe) { return pipe->ino; }
+uint64_t cell_pipe_ino(const struct pipe_obj *pipe) {
+  return pipe->ino;
+}
 
 bool cell_fifo_has_peer(const struct open_file *file) {
   return linux_open_readable(file->flags) ? file->pipe->writers != 0 : file->pipe->readers != 0;
@@ -121,7 +125,10 @@ bool cell_pipe_has_readers(struct pipe_obj *pipe) {
 }
 
 void cell_pipe_add_reader(struct pipe_obj *pipe) {
-  if (pipe) { ++pipe->readers; cell_epoll_source_changed(&pipe->poll_source); }
+  if (pipe) {
+    ++pipe->readers;
+    cell_epoll_source_changed(&pipe->poll_source);
+  }
 }
 
 void cell_pipe_add_writer(struct pipe_obj *pipe) {
@@ -179,9 +186,15 @@ bool cell_pipe_hup(struct pipe_obj *pipe) {
   return pipe != NULL && pipe->writers == 0;
 }
 
-struct epoll_source *cell_pipe_poll_source(struct pipe_obj *pipe) { return &pipe->poll_source; }
-uint64_t cell_pipe_read_offset(const struct pipe_obj *pipe) { return pipe->read_offset; }
-struct unix_rights_queue *cell_pipe_rights(struct pipe_obj *pipe) { return &pipe->rights; }
+struct epoll_source *cell_pipe_poll_source(struct pipe_obj *pipe) {
+  return &pipe->poll_source;
+}
+uint64_t cell_pipe_read_offset(const struct pipe_obj *pipe) {
+  return pipe->read_offset;
+}
+struct unix_rights_queue *cell_pipe_rights(struct pipe_obj *pipe) {
+  return &pipe->rights;
+}
 
 bool cell_pipe_release_file(struct open_file *file) {
   struct pipe_obj *pipe = pipe_for_file(file);
@@ -192,7 +205,10 @@ bool cell_pipe_release_file(struct open_file *file) {
 }
 
 static void wake_pipe_waiters(void) {
-  if (pipe_waking) { pipe_rescan = true; return; }
+  if (pipe_waking) {
+    pipe_rescan = true;
+    return;
+  }
   pipe_waking = true;
   do {
     pipe_rescan = false;
@@ -216,7 +232,7 @@ static void wake_pipe_waiters(void) {
                                thread->wait.write, NULL);
       } else if (thread->wait.socket_msg) {
         rc = linux_unix_transfer(thread->domain, file, thread->wait.socket_msg_addr, thread->wait.socket_flags,
-                                   thread->wait.write, &thread->wait.unix_rights);
+                                 thread->wait.write, &thread->wait.unix_rights);
       } else if (file->type == OPEN_UNIX_STREAM) {
         rc = thread->wait.write
                ? cell_pipe_write_user(thread->domain, file->unix_tx_pipe, thread->wait.buf, thread->wait.len)
@@ -247,7 +263,9 @@ static int read_user(void *source, uint8_t *dst, size_t len) {
   struct pipe_user_buffer *buf = source;
   if (!vmm_copy_from_user(cell_domain_as(buf->domain), dst, buf->addr, len) &&
       !(cell_domain_ensure_user_range(buf->domain, buf->addr, len, VMM_ACCESS_READ) &&
-        vmm_copy_from_user(cell_domain_as(buf->domain), dst, buf->addr, len))) { return -EFAULT; }
+        vmm_copy_from_user(cell_domain_as(buf->domain), dst, buf->addr, len))) {
+    return -EFAULT;
+  }
   buf->addr += len;
   return 0;
 }
@@ -256,7 +274,9 @@ static int write_user(void *destination, const uint8_t *src, size_t len) {
   struct pipe_user_buffer *buf = destination;
   if (!vmm_copy_to_user(cell_domain_as(buf->domain), buf->addr, src, len) &&
       !(cell_domain_ensure_user_range(buf->domain, buf->addr, len, VMM_ACCESS_WRITE) &&
-        vmm_copy_to_user(cell_domain_as(buf->domain), buf->addr, src, len))) { return -EFAULT; }
+        vmm_copy_to_user(cell_domain_as(buf->domain), buf->addr, src, len))) {
+    return -EFAULT;
+  }
   buf->addr += len;
   return 0;
 }
