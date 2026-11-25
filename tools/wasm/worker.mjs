@@ -10,7 +10,7 @@ async function connectNetwork() {
   ws.binaryType = "arraybuffer";
   const frames = [];
   await new Promise((resolve, reject) => {
-    ws.onmessage = e => {
+    ws.onmessage = (e) => {
       if (e.data === "ready") resolve();
       else if (e.data instanceof ArrayBuffer && e.data.byteLength <= 1518 && frames.length < 256) {
         frames.push(new Uint8Array(e.data));
@@ -18,7 +18,7 @@ async function connectNetwork() {
     };
     ws.onclose = () => reject(new Error("network relay disconnected"));
     ws.onerror = () => reject(new Error("network relay unavailable"));
-    controller.signal.addEventListener("abort", () => ws.close(), {once:true});
+    controller.signal.addEventListener("abort", () => ws.close(), { once: true });
   });
   ws.onclose = () => controller.abort(new Error("network relay disconnected"));
   return {
@@ -28,16 +28,27 @@ async function connectNetwork() {
       ws.send(frame);
       return true;
     },
-    close() { ws.onclose = null; ws.close(); },
+    close() {
+      ws.onclose = null;
+      ws.close();
+    },
   };
 }
 
 const serial = new SerialInput();
 const controller = new AbortController();
 let dimensions;
-onmessage = async ({ data: { elf, disk, args, input, online, persist, stop, initialSize, size, memoryMiB, cpuCount } }) => {
-  if (stop) { controller.abort(new Error("Stopped")); return; }
-  if (size) { dimensions = size; return; }
+onmessage = async ({
+  data: { elf, disk, args, input, online, persist, stop, initialSize, size, memoryMiB, cpuCount },
+}) => {
+  if (stop) {
+    controller.abort(new Error("Stopped"));
+    return;
+  }
+  if (size) {
+    dimensions = size;
+    return;
+  }
   if (input !== undefined) {
     serial.push(new TextEncoder().encode(input));
     return;
@@ -59,23 +70,31 @@ onmessage = async ({ data: { elf, disk, args, input, online, persist, stop, init
       media = persist ? await persistentDisk(disk, readDisk) : snapshotDisk(disk.size, readDisk);
     }
     if (online) network = await connectNetwork();
-    const status = await run(await response.arrayBuffer(), elf ? new Uint8Array(await elf.arrayBuffer()) : null, {
-      ...media,
-      network,
-      signal: controller.signal,
-      memoryMiB, cpuCount,
-      argv0: elf?.name,
-      args,
-      readByte: serial.readByte,
-      winsize: () => dimensions,
-      instructionLimit: elf ? undefined : Number.MAX_SAFE_INTEGER,
-      write(fd, bytes) {
-        postMessage({ fd, bytes }, [bytes.buffer]);
+    const status = await run(
+      await response.arrayBuffer(),
+      elf ? new Uint8Array(await elf.arrayBuffer()) : null,
+      {
+        ...media,
+        network,
+        signal: controller.signal,
+        memoryMiB,
+        cpuCount,
+        argv0: elf?.name,
+        args,
+        readByte: serial.readByte,
+        winsize: () => dimensions,
+        instructionLimit: elf ? undefined : Number.MAX_SAFE_INTEGER,
+        write(fd, bytes) {
+          postMessage({ fd, bytes }, [bytes.buffer]);
+        },
       },
-    });
+    );
     result = `Exited with ${status}`;
   } catch (error) {
     result = error.message || error.name || String(error);
-  } finally { network?.close(); media?.close?.(); }
+  } finally {
+    network?.close();
+    media?.close?.();
+  }
   postMessage({ status: result });
 };

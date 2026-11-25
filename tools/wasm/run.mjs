@@ -20,35 +20,59 @@ export async function run(kernel, elf, options = {}) {
     options.signal?.throwIfAborted();
     const result = await boot(module, elf, options);
     if (result !== reboot) return result;
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
 
 async function boot(
   module,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, readBoot, writeDisk, flushDisk, readStdin, readByte, winsize, network, write, kernelLog, onException, onEntry, memoryMiB = 64, cpuCount = 1, jit = true, stats, instructionLimit = 100_000_000, signal } = {},
+  {
+    args = [],
+    argv0 = "/app/server",
+    readDisk,
+    readBoot,
+    writeDisk,
+    flushDisk,
+    readStdin,
+    readByte,
+    winsize,
+    network,
+    write,
+    kernelLog,
+    onException,
+    onEntry,
+    memoryMiB = 64,
+    cpuCount = 1,
+    jit = true,
+    stats,
+    instructionLimit = 100_000_000,
+    signal,
+  } = {},
 ) {
   if (!Number.isInteger(memoryMiB) || memoryMiB < 16 || memoryMiB >= 2048) {
     throw new RangeError("Wasm guest RAM must be 16 through 2047 MiB");
   }
-  if (!Number.isInteger(cpuCount) || cpuCount < 1 || cpuCount > 64) throw new RangeError("expected 1 through 64 guest CPUs");
+  if (!Number.isInteger(cpuCount) || cpuCount < 1 || cpuCount > 64)
+    throw new RangeError("expected 1 through 64 guest CPUs");
   const system = elf === null;
   if (system && (!readDisk || args.length)) throw new Error("system boot requires a root disk");
-  if ((!system && !(elf instanceof Uint8Array)) || !Number.isSafeInteger(instructionLimit) || instructionLimit < 1) {
+  if (
+    (!system && !(elf instanceof Uint8Array)) ||
+    !Number.isSafeInteger(instructionLimit) ||
+    instructionLimit < 1
+  ) {
     throw new TypeError("expected ELF bytes and a positive instruction limit");
   }
-  if (
-    args.length >= 128 ||
-    [argv0, ...args].some((arg) => typeof arg !== "string" || arg.includes("\0"))
-  ) {
+  if (args.length >= 128 || [argv0, ...args].some((arg) => typeof arg !== "string" || arg.includes("\0"))) {
     throw new Error("expected at most 127 NUL-free guest arguments");
   }
   const bundled = !system && new TextDecoder().decode(elf.subarray(0, 8)) === "SPOREAP2";
   if (bundled && args.length) throw new Error("packaged applications already contain their arguments");
-  const argv = bundled || system
-    ? new Uint8Array()
-    : new TextEncoder().encode([argv0, ...args].map((arg) => arg + "\0").join(""));
+  const argv =
+    bundled || system
+      ? new Uint8Array()
+      : new TextEncoder().encode([argv0, ...args].map((arg) => arg + "\0").join(""));
   const decoder = new TextDecoder();
   let guest;
   let tableBase;
@@ -86,7 +110,7 @@ async function boot(
           onException?.(pc, decoder.decode(bytes(ptr, len)));
         },
         winsize() {
-          const {rows = 24, cols = 80} = winsize?.() ?? {};
+          const { rows = 24, cols = 80 } = winsize?.() ?? {};
           return ((rows & 0xffff) << 16) | (cols & 0xffff);
         },
         stdin_read(ptr, len) {
@@ -96,7 +120,12 @@ async function boot(
           return readByte?.() ?? -1;
         },
         disk_flush() {
-          try { flushDisk?.(); return 1; } catch { return 0; }
+          try {
+            flushDisk?.();
+            return 1;
+          } catch {
+            return 0;
+          }
         },
         disk_write(offset, ptr, len) {
           return writeDisk?.(offset, bytes(ptr, len)) === len ? 1 : 0;
@@ -104,11 +133,15 @@ async function boot(
         boot_read(offset, ptr, len) {
           return readBoot?.(offset, bytes(ptr, len)) === len ? 1 : 0;
         },
-        entry() { onEntry?.(); },
+        entry() {
+          onEntry?.();
+        },
         disk_read(offset, ptr, len) {
           return readDisk?.(offset, bytes(ptr, len)) === len ? 1 : 0;
         },
-        kernel_log(ptr,len) { kernelLog?.(bytes(ptr,len).slice()); },
+        kernel_log(ptr, len) {
+          kernelLog?.(bytes(ptr, len).slice());
+        },
         write(fd, ptr, len) {
           write?.(fd, bytes(ptr, len).slice());
         },
@@ -119,7 +152,10 @@ async function boot(
           crypto.getRandomValues(bytes(ptr, len));
         },
         finish(kind, code, pc, ptr, len) {
-          if (kind === 82 && system) { status = reboot; throw stop; }
+          if (kind === 82 && system) {
+            status = reboot;
+            throw stop;
+          }
           if (kind === 83) {
             const detail = len ? `${decoder.decode(bytes(ptr, len))} at PC 0x${pc.toString(16)}` : "";
             throw new GuestSignal(code, detail);
@@ -139,9 +175,18 @@ async function boot(
     bytes(ptr, elf.length).set(elf);
     bytes(ptr + elf.length, argv.length).set(argv);
   }
-  const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0) | (jit ? 16 : 0) | (readStdin ? 32 : 0) | (kernelLog ? 64 : 0);
+  const devices =
+    (readDisk ? 1 : 0) |
+    (writeDisk ? 2 : 0) |
+    (readByte ? 4 : 0) |
+    (network ? 8 : 0) |
+    (jit ? 16 : 0) |
+    (readStdin ? 32 : 0) |
+    (kernelLog ? 64 : 0);
   try {
-    if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)) {
+    if (
+      !guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)
+    ) {
       throw new Error("cannot initialize guest memory or executable");
     }
     let remaining = instructionLimit;

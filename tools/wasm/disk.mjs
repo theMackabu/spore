@@ -4,7 +4,7 @@ export function snapshotDisk(size, read, pages = new Map()) {
     if (offset < 0n || offset + BigInt(data.length) > BigInt(size)) return 0;
     for (let done = 0; done < data.length;) {
       const pos = Number(offset) + done;
-      const base = pos - pos % pageSize;
+      const base = pos - (pos % pageSize);
       const start = pos - base;
       const len = Math.min(pageSize - start, data.length - done);
       let page = pages.get(base);
@@ -24,5 +24,8 @@ export function snapshotDisk(size, read, pages = new Map()) {
     }
     return data.length;
   }
-  return { readDisk: (off, dest) => transfer(off, dest, false), writeDisk: (off, src) => transfer(off, src, true) };
+  return {
+    readDisk: (off, dest) => transfer(off, dest, false),
+    writeDisk: (off, src) => transfer(off, src, true),
+  };
 }

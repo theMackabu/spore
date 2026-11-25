@@ -13,7 +13,7 @@ export async function persistentDisk(file, read) {
   bytes.set(identity);
   bytes.set(header, identity.length);
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  const key = Array.from(hash, b => b.toString(16).padStart(2, "0")).join("");
+  const key = Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("");
   const root = await navigator.storage.getDirectory();
   const dir = await root.getDirectoryHandle("spore-" + key, { create: true });
   const index = await openFile(dir, "index");
@@ -22,12 +22,14 @@ export async function persistentDisk(file, read) {
     pages = await openFile(dir, "pages");
     const records = new Map();
     const entries = Math.floor(index.getSize() / 8);
-    if (entries > Math.ceil(file.size / PAGE) || pages.getSize() < entries * PAGE) throw new Error("Incomplete persistent disk data");
+    if (entries > Math.ceil(file.size / PAGE) || pages.getSize() < entries * PAGE)
+      throw new Error("Incomplete persistent disk data");
     const batch = new Uint8Array(8192);
     const view = new DataView(batch.buffer);
     for (let start = 0; start < entries;) {
       const n = Math.min(batch.length / 8, entries - start);
-      if (index.read(batch.subarray(0, n * 8), { at: start * 8 }) !== n * 8) throw new Error("Cannot read disk index");
+      if (index.read(batch.subarray(0, n * 8), { at: start * 8 }) !== n * 8)
+        throw new Error("Cannot read disk index");
       for (let i = 0; i < n; i++) {
         const base = Number(view.getBigUint64(i * 8, true));
         if (!Number.isSafeInteger(base) || base % PAGE || base >= file.size || records.has(base)) {
@@ -42,7 +44,8 @@ export async function persistentDisk(file, read) {
         const slot = records.get(base);
         if (slot === undefined) return undefined;
         const buf = new Uint8Array(Math.min(PAGE, file.size - base));
-        if (pages.read(buf, { at: slot * PAGE }) !== buf.length) throw new Error("Cannot read saved disk page");
+        if (pages.read(buf, { at: slot * PAGE }) !== buf.length)
+          throw new Error("Cannot read saved disk page");
         return buf;
       },
       set(base, buf) {
@@ -52,15 +55,25 @@ export async function persistentDisk(file, read) {
         if (!exists) {
           if (buf.length !== PAGE) pages.truncate((slot + 1) * PAGE);
           view.setBigUint64(0, BigInt(base), true);
-          if (index.write(batch.subarray(0, 8), { at: slot * 8 }) !== 8) throw new Error("Cannot save disk index");
+          if (index.write(batch.subarray(0, 8), { at: slot * 8 }) !== 8)
+            throw new Error("Cannot save disk index");
           records.set(base, slot);
         }
       },
     });
     return {
       ...overlay,
-      flushDisk() { pages.flush(); index.flush(); },
-      close() { try { pages.close(); } finally { index.close(); } },
+      flushDisk() {
+        pages.flush();
+        index.flush();
+      },
+      close() {
+        try {
+          pages.close();
+        } finally {
+          index.close();
+        }
+      },
     };
   } catch (e) {
     pages?.close();

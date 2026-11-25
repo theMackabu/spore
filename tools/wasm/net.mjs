@@ -3,32 +3,58 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 
 export async function userNetwork(qemu, settings, controller, deliver) {
-  const process = spawn(qemu, [
-    "-machine", "none", "-nodefaults", "-display", "none", "-serial", "none", "-qmp", "stdio",
-    "-netdev", settings, "-netdev", "socket,id=wire,fd=3",
-    "-netdev", "hubport,id=lan,hubid=0,netdev=sporenet",
-    "-netdev", "hubport,id=link,hubid=0,netdev=wire",
-  ], { stdio: ["pipe", "pipe", "pipe", "pipe"] });
+  const process = spawn(
+    qemu,
+    [
+      "-machine",
+      "none",
+      "-nodefaults",
+      "-display",
+      "none",
+      "-serial",
+      "none",
+      "-qmp",
+      "stdio",
+      "-netdev",
+      settings,
+      "-netdev",
+      "socket,id=wire,fd=3",
+      "-netdev",
+      "hubport,id=lan,hubid=0,netdev=sporenet",
+      "-netdev",
+      "hubport,id=link,hubid=0,netdev=wire",
+    ],
+    { stdio: ["pipe", "pipe", "pipe", "pipe"] },
+  );
   const wire = process.stdio[3];
   const incoming = [];
-  let tail = Buffer.alloc(0), errors = "", closed = false;
-  const fail = (e) => { if (!closed) controller.abort(e); };
+  let tail = Buffer.alloc(0),
+    errors = "",
+    closed = false;
+  const fail = (e) => {
+    if (!closed) controller.abort(e);
+  };
   const close = () => {
     closed = true;
     process.kill();
     wire.destroy();
   };
-  process.stderr.on("data", chunk => { errors = (errors + chunk.toString()).slice(-4096); });
+  process.stderr.on("data", (chunk) => {
+    errors = (errors + chunk.toString()).slice(-4096);
+  });
   process.on("error", fail);
   process.on("exit", () => fail(new Error(errors.trim() || "network helper stopped")));
   process.stdin.on("error", fail);
   wire.on("error", fail);
-  wire.on("data", chunk => {
+  wire.on("data", (chunk) => {
     const data = tail.length ? Buffer.concat([tail, chunk]) : chunk;
     let pos = 0;
     while (pos + 4 <= data.length) {
       const len = data.readUInt32BE(pos);
-      if (!len || len > 65536) { fail(new Error("invalid Ethernet frame from network helper")); return; }
+      if (!len || len > 65536) {
+        fail(new Error("invalid Ethernet frame from network helper"));
+        return;
+      }
       if (pos + 4 + len > data.length) break;
       if (len <= 1518) {
         const frame = data.subarray(pos + 4, pos + 4 + len);

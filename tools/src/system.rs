@@ -239,6 +239,7 @@ impl WasmOptions<'_> {
                 .ok_or_else(|| io::Error::other("missing base disk"))?;
             qemu::check_report(Some(persist), &[Some(base), self.boot_image])?;
             seed_disk(Path::new(base), Path::new(persist))?;
+            qemu::check_report(self.report, &[Some(persist)])?;
         }
         let writer = self
             .persist
@@ -332,6 +333,10 @@ fn seed_disk(base: &Path, disk: &Path) -> io::Result<()> {
     let tmp = Workspace::at(disk.parent().unwrap_or(Path::new(".")))?;
     let copy = tmp.0.join("root.ext2");
     copy_disk(base, &copy)?;
+    let mut perms = fs::metadata(&copy)?.permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(perms.mode() | 0o200);
+    fs::set_permissions(&copy, perms)?;
     if let Err(e) = fs::hard_link(copy, disk)
         && e.kind() != io::ErrorKind::AlreadyExists
     {
@@ -456,6 +461,20 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                 .map(OsStr::to_owned)
                 .collect::<Vec<_>>();
             return crate::runner::harness::run(&argv, mode, false, false);
+        }
+        (true, Some("kwemu")) => {
+            let code = build_wasm(build)?;
+            if code != 0 {
+                return Ok(code);
+            }
+            let mut cmd = Command::new("node");
+            cmd.arg("--experimental-wasm-jspi")
+                .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wasm/compare.mjs"))
+                .arg(wasm_module(build));
+            if let Some(package) = env::var_os("UNKERNEL_PACKAGE_DIR") {
+                cmd.arg(package);
+            }
+            return status(&mut cmd);
         }
         (false, Some("wasm-neon")) => {
             let code = build_wasm(build)?;
