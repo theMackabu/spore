@@ -11,6 +11,7 @@
 #include "proc/seccomp.h"
 #include "proc/uts.h"
 #include "proc/user_namespace.h"
+#include "proc/ipc_namespace.h"
 #include "fs/mount_namespace.h"
 #include "proc/thread.h"
 #include "tty/tty.h"
@@ -116,6 +117,7 @@ void cell_copy_domain_metadata(struct domain *dst, const struct domain *src) {
   dst->parent_tid = cell_current_tid();
   dst->user_ns = userns_retain(src->user_ns);
   dst->mount_ns = mountns_retain(src->mount_ns);
+  dst->ipc_ns = ipcns_retain(src->ipc_ns);
   dst->uts = uts_retain(src->uts);
   dst->filter = seccomp_inherit(src->filter);
   dst->caps = cell_policy_retain(src->caps);
@@ -157,6 +159,8 @@ void cell_destroy_domain(struct domain *domain) {
   domain->user_ns = NULL;
   mountns_release(domain->mount_ns);
   domain->mount_ns = NULL;
+  ipcns_release(domain->ipc_ns);
+  domain->ipc_ns = NULL;
   uts_release(domain->uts);
   domain->uts = NULL;
   seccomp_release(domain->filter);

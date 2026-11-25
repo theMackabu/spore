@@ -223,8 +223,18 @@ static int write_map(const char *path, const char *text) {
 int integration_user_namespace(void) {
   pid_t child = fork();
   if (!child) {
-    if (setgid(1000) || setuid(1000) || prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
-        unshare(CLONE_NEWUSER) || getuid() != 65534 || getgid() != 65534) { _exit(1); }
+    struct stat initial_ipc, private_ipc;
+    if (stat("/proc/self/ns/ipc", &initial_ipc) || setgid(1000) || setuid(1000) || prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+        unshare(CLONE_NEWIPC) != -1 || errno != EPERM || unshare(CLONE_NEWUSER | CLONE_NEWIPC) || getuid() != 65534 || getgid() != 65534) { _exit(1); }
+    if (stat("/proc/self/ns/ipc", &private_ipc) || initial_ipc.st_ino == private_ipc.st_ino) { _exit(7); }
+    pid_t peer = fork();
+    if (!peer) {
+      struct stat shared;
+      _exit(stat("/proc/self/ns/ipc", &shared) || shared.st_ino != private_ipc.st_ino ||
+            unshare(CLONE_NEWIPC) || stat("/proc/self/ns/ipc", &shared) || shared.st_ino == private_ipc.st_ino);
+    }
+    int ipc_status;
+    if (peer < 0 || waitpid(peer, &ipc_status, 0) != peer || ipc_status) { _exit(8); }
     if (write_map("/proc/self/uid_map", "0 1000 1\n") ||
         write_map("/proc/self/setgroups", "deny\n") || write_map("/proc/self/gid_map", "0 1000 1\n") ||
         getuid() != 0 || getgid() != 0) { _exit(2); }

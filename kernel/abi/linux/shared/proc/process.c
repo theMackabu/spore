@@ -11,6 +11,7 @@
 #include "proc/process.h"
 #include "proc/uts.h"
 #include "proc/user_namespace.h"
+#include "proc/ipc_namespace.h"
 #include "fs/mount_namespace.h"
 
 #include <stdbool.h>
@@ -70,6 +71,7 @@ static bool futex_deadline(struct timespec64 ts, bool absolute, bool realtime, u
 int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t parent_tid, uint64_t tls,
                   uint64_t child_tid) {
   if (app_mode && (!(flags & CLONE_THREAD) || !(flags & CLONE_VM) || (flags & CLONE_VFORK))) { return -1; }
+  if ((flags & CLONE_NEWIPC) && (flags & CLONE_SYSVSEM)) { return -EINVAL; }
   const uint64_t signal_mask = 0xff;
   uint64_t exit_signal = flags & signal_mask;
   if (exit_signal && exit_signal != 17) { return -EINVAL; }
@@ -80,7 +82,7 @@ int64_t sys_clone(struct trap_frame *f, uint64_t flags, uint64_t newsp, uint64_t
     return cell_vfork_current(f, newsp, flags, parent_tid, tls, child_tid);
   }
   if ((flags & CLONE_VM) == 0) {
-    if (flags & ~(signal_mask | CLONE_NEWNS | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) { return -ENOSYS; }
+    if (flags & ~(signal_mask | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) { return -ENOSYS; }
     return cell_fork_current(f, flags, newsp, child_tid);
   }
 
