@@ -30,7 +30,7 @@ struct epoll_watch {
 };
 
 static struct object_pool watches;
-static struct epoll_source sampled_terminals;
+static struct epoll_source console_input, sampled_ptys;
 static unsigned network_watches;
 static uint64_t scan_generation;
 
@@ -84,7 +84,12 @@ void cell_epoll_source_activity(struct epoll_source *source, unsigned events) {
 
 void cell_epoll_source_changed(struct epoll_source *source) { cell_epoll_source_activity(source, 0); }
 
-void cell_epoll_sample_terminals(void) { cell_epoll_source_changed(&sampled_terminals); }
+void cell_epoll_console_activity(unsigned events) { cell_epoll_source_activity(&console_input, events); }
+
+void cell_epoll_sample_terminals(void) {
+  cell_epoll_console_activity(0);
+  cell_epoll_source_changed(&sampled_ptys);
+}
 
 static void subscribe(struct epoll_watch *w, unsigned i, struct epoll_source *source, unsigned events) {
   struct epoll_subscription *sub = &w->sources[i];
@@ -114,8 +119,10 @@ static void attach_sources(struct epoll_watch *w) {
   } else if (target->type == OPEN_UNIX_STREAM && target->unix_connected) {
     subscribe(w, 0, cell_pipe_poll_source(target->unix_rx_pipe), CELL_POLLIN);
     subscribe(w, 1, cell_pipe_poll_source(target->unix_tx_pipe), CELL_POLLOUT);
-  } else if (target->type == OPEN_PTY || target->type == OPEN_STDIN || target->type == OPEN_VFS) {
-    subscribe(w, 0, &sampled_terminals, 0);
+  } else if (target->type == OPEN_PTY) {
+    subscribe(w, 0, &sampled_ptys, 0);
+  } else if (target->type == OPEN_STDIN || target->type == OPEN_VFS) {
+    subscribe(w, 0, &console_input, CELL_POLLIN);
   }
 }
 

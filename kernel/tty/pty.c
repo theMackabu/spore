@@ -290,6 +290,14 @@ uint64_t cell_pty_read_available(const struct open_file *file) {
   return ring->len;
 }
 
+void cell_pty_flush(struct open_file *file, bool input, bool output) {
+  struct pty *pty = pty_for_file(file);
+  if (!pty) { return; }
+  if (file->pty_master ? input : output) { pty->to_master.len = 0; }
+  if (file->pty_master ? output : input) { pty->to_slave.len = 0; }
+  pty_notify();
+}
+
 uint64_t cell_pty_write_pending(const struct open_file *file) {
   struct pty *pty = pty_for_file(file);
   if (pty == NULL) { return 0; }
@@ -332,9 +340,14 @@ uint32_t cell_pty_lflag(const struct open_file *file) {
   return pty == NULL ? 0 : pty->lflag;
 }
 
-void cell_pty_set_lflag(struct open_file *file, uint32_t lflag) {
+void cell_pty_set_lflag(struct open_file *file, uint32_t lflag, bool flush_input) {
   struct pty *pty = pty_for_file(file);
-  if (pty != NULL) { pty->lflag = lflag; }
+  if (!pty) { return; }
+  pty->lflag = lflag;
+  if (flush_input) {
+    pty->to_slave.len = 0;
+    pty_notify();
+  }
 }
 
 uint8_t cell_pty_erase_char(const struct open_file *file) {

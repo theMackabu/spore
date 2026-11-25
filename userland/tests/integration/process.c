@@ -10,10 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/times.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -265,7 +267,9 @@ int integration_stdin_demo(void) {
     char c = 0;
     printf("[spore] stdin demo: child blocking on read(0)\n");
     ssize_t n = read(0, &c, 1);
-    if (n == 1 && c == 'z') {
+    int pending;
+    if (n == 1 && c == 'z' && ioctl(0, FIONREAD, &pending) == 0 && pending == 1 &&
+        tcflush(0, TCIFLUSH) == 0 && ioctl(0, FIONREAD, &pending) == 0 && pending == 0) {
       printf("[spore] stdin demo: read 'z'\n");
       integration_exit_group(0);
     }
@@ -442,6 +446,9 @@ int integration_pty_demo(void) {
     ok = ok && write(slave, "\n", 1) == 1;
     char crlf[2] = {0};
     ok = ok && read(master, crlf, sizeof(crlf)) == (ssize_t)sizeof(crlf) && crlf[0] == '\r' && crlf[1] == '\n';
+    char byte;
+    ok = ok && write(master, "i", 1) == 1 && write(slave, "o", 1) == 1 && tcflush(slave, TCIFLUSH) == 0 &&
+         read(slave, &byte, 1) == -1 && errno == EAGAIN && read(master, &byte, 1) == 1 && byte == 'o';
   }
   if (slave >= 0) { close(slave); }
   if (master >= 0) { close(master); }

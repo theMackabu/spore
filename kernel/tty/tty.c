@@ -6,6 +6,7 @@
 #include "proc/domain.h"
 #include "proc/memory.h"
 #include "proc/poll.h"
+#include "proc/epoll.h"
 #include "proc/signal.h"
 #include "proc/thread.h"
 
@@ -207,11 +208,15 @@ static void tty_clear_pending_input(void) {
   tty_prompt_active = false;
 }
 
+void cell_tty_flush_input(void) {
+  tty_clear_pending_input();
+  serial_flush_input();
+  cell_epoll_console_activity(0);
+}
+
 void cell_tty_set_lflag(uint32_t lflag, bool flush_input) {
   if (flush_input) {
-    tty_clear_pending_input();
-    char discarded;
-    while (serial_getc(&discarded)) {}
+    cell_tty_flush_input();
   } else if (tty_canonical() && !(lflag & TTY_ICANON)) {
     for (size_t i = 0; i < tty_line_len; ++i) { tty_ready_push(tty_line[i]); }
     tty_line_len = 0;
@@ -255,9 +260,9 @@ static bool tty_try_escape(void) {
   return true;
 }
 
-void cell_tty_process_input(void) {
+static void buffer_input(bool read_ahead) {
   char c;
-  while (tty_ready_len == 0 && serial_getc(&c)) {
+  while ((read_ahead || tty_ready_len == 0) && tty_ready_len + tty_line_len < sizeof(tty_ready) && serial_getc(&c)) {
     if (tty_isig() && c == 3) {
       if (tty_echo()) {
         serial_putc('^');
@@ -271,7 +276,7 @@ void cell_tty_process_input(void) {
     if (!tty_canonical()) {
       if ((uint8_t)c == 0x08 || (uint8_t)c == 0x7f) { c = (char)tty_erase; }
       tty_ready_push(c);
-      break;
+      continue;
     }
     if (c == 0x1b) {
       (void)tty_try_escape();
@@ -281,7 +286,7 @@ void cell_tty_process_input(void) {
     if (c == '\n') {
       tty_echo_char('\n');
       tty_line_commit();
-      break;
+      continue;
     }
     if (c == 3) {
       if (tty_echo()) {
@@ -320,6 +325,11 @@ void cell_tty_process_input(void) {
   }
 }
 
+unsigned cell_tty_read_available(void) {
+  buffer_input(true);
+  return (unsigned)tty_ready_len;
+}
+
 int cell_tty_pending_signal(void) {
   return tty_pending_signal;
 }
@@ -337,7 +347,7 @@ int64_t cell_tty_read_to_user(struct domain *domain, uint64_t buf, uint64_t len)
   while (n < len) {
     char c;
     if (!tty_ready_pop(&c)) {
-      cell_tty_process_input();
+      buffer_input(false);
       if (tty_pending_signal != 0) { return -EINTR; }
       if (!tty_ready_pop(&c)) { break; }
     }
@@ -345,12 +355,13 @@ int64_t cell_tty_read_to_user(struct domain *domain, uint64_t buf, uint64_t len)
     ++n;
     if (tty_canonical() && c == '\n') { break; }
   }
+  if (n && !tty_ready_len) { cell_epoll_console_activity(0); }
   return (int64_t)n;
 }
 
 bool cell_tty_stdin_readable(void) {
   if (tty_ready_len != 0 || tty_pending_signal != 0) { return true; }
-  cell_tty_process_input();
+  buffer_input(false);
   return tty_ready_len != 0 || tty_pending_signal != 0;
 }
 
@@ -367,7 +378,9 @@ static void tty_deliver_pending_signal_to_foreground(struct trap_frame *frame) {
 }
 
 void cell_wake_stdin(struct trap_frame *frame) {
-  cell_tty_process_input();
+  size_t previous = tty_ready_len;
+  buffer_input(true);
+  if (tty_ready_len > previous) { cell_epoll_console_activity(CELL_POLLIN); }
   tty_deliver_pending_signal_to_foreground(frame);
   cell_wake_poll_waiters_internal();
   size_t cursor = 0;

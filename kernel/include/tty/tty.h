@@ -7,7 +7,8 @@ struct domain;
 struct trap_frame;
 
 void cell_tty_reset(void);
-void cell_tty_process_input(void);
+unsigned cell_tty_read_available(void);
+void cell_tty_flush_input(void);
 bool cell_tty_stdin_readable(void);
 int cell_tty_pending_signal(void);
 int cell_tty_take_pending_signal(void);

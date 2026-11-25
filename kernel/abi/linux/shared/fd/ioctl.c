@@ -112,7 +112,7 @@ static void fill_termios(struct open_file *file, struct termios64 *tio) {
 static void apply_termios(struct open_file *file, const struct termios64 *tio, bool flush_input) {
   if (file != NULL && file->type == OPEN_PTY) {
     cell_pty_set_oflag(file, tio->c_oflag);
-    cell_pty_set_lflag(file, tio->c_lflag);
+    cell_pty_set_lflag(file, tio->c_lflag, flush_input);
     cell_pty_set_erase_char(file, tio->c_cc[2]);
   } else {
     cell_tty_set_oflag(tio->c_oflag);
@@ -170,6 +170,8 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
     if (file != NULL && file->type == OPEN_PTY) {
       uint64_t value = req == FIONREAD ? cell_pty_read_available(file) : cell_pty_write_pending(file);
       queued = value > I32_MAX ? I32_MAX : (int)value;
+    } else if (req == FIONREAD) {
+      queued = (int)cell_tty_read_available();
     }
     return syscall_user_writable(arg, sizeof(queued)) &&
                vmm_copy_to_user(syscall_active_as(), arg, &queued, sizeof(queued))
@@ -186,7 +188,18 @@ int64_t sys_ioctl(uint64_t fd, uint64_t request, uint64_t arg) {
              : -(int64_t)EFAULT;
   }
   if (req == TIOCNOTTY || req == TIOCPKT) { return require_tty_fd(fd); }
-  if (req == TCSBRK || req == TCXONC || req == TCFLSH) { return require_tty_fd(fd); }
+  if (req == TCFLSH) {
+    int64_t rc = require_tty_fd(fd);
+    if (rc) { return rc; }
+    enum { INPUT = 0, OUTPUT = 1, BOTH = 2 };
+    if (arg > BOTH) { return -EINVAL; }
+    struct open_file *file = fd_file(fd);
+    if (!file) { return -9; }
+    if (file->type == OPEN_PTY) { cell_pty_flush(file, arg != OUTPUT, arg != INPUT); }
+    else if (arg != OUTPUT) { cell_tty_flush_input(); }
+    return 0;
+  }
+  if (req == TCSBRK || req == TCXONC) { return require_tty_fd(fd); }
   if (req == TIOCSTI) { return -(int64_t)EINVAL; }
   if (req == TIOCSCTTY) {
     int64_t tty = require_tty_fd(fd);

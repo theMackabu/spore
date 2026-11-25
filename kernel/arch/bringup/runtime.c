@@ -35,6 +35,10 @@ bool serial_getc(char *c) {
   *c = (char)value;
   return true;
 }
+void serial_flush_input(void) {
+  while (console_try_getc() >= 0) {}
+}
+
 void serial_get_winsize(uint16_t *rows, uint16_t *cols) {
   *rows = 24;
   *cols = 80;

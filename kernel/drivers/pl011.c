@@ -163,6 +163,12 @@ bool pl011_poll_rx(void) {
   return rx_tail != rx_head;
 }
 
+void serial_flush_input(void) {
+  (void)pl011_poll_rx();
+  rx_tail = rx_head;
+  ctl_reset();
+}
+
 void serial_get_winsize(uint16_t *rows, uint16_t *cols) {
   *rows = tty_rows;
   *cols = tty_cols;
