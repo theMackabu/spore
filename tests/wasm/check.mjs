@@ -61,6 +61,7 @@ try {
     const threads = path.join(dir, "threads");
     const probe = path.join(dir, "probe");
     const recovery = path.join(dir, "fault");
+    const jit = path.join(dir, "jit");
     const smp = path.join(dir, "smp");
     exec("aarch64-unknown-linux-musl-gcc", ["-static", "-O2", "-pthread", path.join(sources, "../ports/smp.c"), "-o", smp]);
     exec(spore, ["run", "--wasm", smp, "--smp", "4"]);
@@ -73,7 +74,7 @@ try {
       exec("aarch64-unknown-linux-musl-gcc", ["-static", "-nostdlib", path.join(sources, name + ".S"), "-o", out]);
       return out;
     });
-    for (const [src, out] of [["threads.c", threads], ["fault.c", recovery], ["../appliance/probe.c", probe]]) {
+    for (const [src, out] of [["threads.c", threads], ["fault.c", recovery], ["jit.c", jit], ["../appliance/probe.c", probe]]) {
       exec("aarch64-unknown-linux-musl-gcc", ["-static", "-pthread", "-O2", path.join(sources, src), "-o", out]);
     }
     for (const backend of [[], ["--wasm"]]) {
@@ -81,6 +82,7 @@ try {
       for (const exe of asm) exec(spore, ["run", ...backend, exe], 42);
       exec(spore, ["run", ...backend, threads], 42);
       exec(spore, ["run", ...backend, recovery], 42);
+      exec(spore, ["run", ...backend, jit], 42);
       exec(spore, ["run", ...backend, cpu, "--", "protect"], 139);
       exec(spore, ["run", ...backend, cpu, "--", "unknown"], 132);
       exec(spore, ["run", ...backend, probe, "--exec", "/app/server", "--argv0", "custom name",

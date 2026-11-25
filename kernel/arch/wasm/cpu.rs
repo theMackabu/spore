@@ -48,6 +48,8 @@ pub struct Cpu {
 }
 
 unsafe extern "C" {
+    fn arch_counter_value() -> u64;
+    fn arch_counter_frequency() -> u64;
     fn wasm_syscall(f: &mut Frame, context: &mut Context) -> bool;
     fn wasm_exception(
         f: &mut Frame,
@@ -203,33 +205,27 @@ impl Cpu {
                 self.idle = unsafe { wasm_syscall(&mut self.f, &mut self.context) };
                 return Ok(());
             }
-            ReadTls => {
-                self.set(rd, self.context.tls);
-            }
-            WriteTls => {
-                self.context.tls = self.reg(rd);
-            }
-            ReadDczid => {
-                self.set(rd, 16); // DCZID_EL0.DZP: DC ZVA unavailable.
-            }
-            Float => self.float(w)?,
-            FpControl => {
-                let status = w & 32 != 0;
-                if w & (1 << 21) != 0 {
-                    self.set(
-                        rd,
-                        if status {
-                            self.context.fpsr
-                        } else {
-                            self.context.fpcr
-                        },
-                    );
-                } else if status {
-                    self.context.fpsr = self.reg(rd) & 0xf800009f;
-                } else {
-                    self.context.fpcr = self.reg(rd) & 0x07c00000;
+            SystemRegister => {
+                match w & 0xffffffe0 {
+                    0xd53bd040 => self.set(rd, self.context.tls),
+                    0xd51bd040 => self.context.tls = self.reg(rd),
+                    0xd53b00e0 => self.set(rd, 16),
+                    0xd53b0020 => self.set(rd, 0x3444c004),
+                    0xd53be000 => self.set(rd, unsafe { arch_counter_frequency() }),
+                    0xd53be020 | 0xd53be040 => self.set(rd, unsafe { arch_counter_value() }),
+                    0xd53b4200 => self.set(rd, self.f.pstate & 0xf0000000),
+                    0xd51b4200 => self.f.pstate = (self.f.pstate & !0xf0000000) | (self.reg(rd) & 0xf0000000),
+                    0xd53b4400 => self.set(rd, self.context.fpcr),
+                    0xd53b4420 => self.set(rd, self.context.fpsr),
+                    0xd51b4400 => self.context.fpcr = self.reg(rd) & 0x07c00000,
+                    0xd51b4420 => self.context.fpsr = self.reg(rd) & 0xf800009f,
+                    _ => unreachable!(),
                 }
             }
+            CacheMaintenance => {
+                self.memory.load(self.reg(rd), 1)?;
+            }
+            Float => self.float(w)?,
             Vector => {
                 self.simd(w)?;
             }

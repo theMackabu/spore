@@ -28,11 +28,9 @@ pub enum Op {
     TestBranch,
     Address,
     Syscall,
-    ReadTls,
-    WriteTls,
-    ReadDczid,
+    SystemRegister,
+    CacheMaintenance,
     Float,
-    FpControl,
     Vector,
     ClearExclusive,
     Hint,
@@ -64,14 +62,13 @@ pub fn classify(w: u32) -> Op {
     if w & 0xffe0001f == 0xd4000001 {
         return Op::Syscall;
     }
-    if w & 0xffffffe0 == 0xd53bd040 {
-        return Op::ReadTls;
+    if matches!(w & 0xffffffe0, 0xd53bd040 | 0xd51bd040 | 0xd53b00e0 | 0xd53b0020 |
+        0xd53be000 | 0xd53be020 | 0xd53be040 | 0xd53b4200 | 0xd51b4200 |
+        0xd53b4400 | 0xd51b4400 | 0xd53b4420 | 0xd51b4420) {
+        return Op::SystemRegister;
     }
-    if w & 0xffffffe0 == 0xd51bd040 {
-        return Op::WriteTls;
-    }
-    if w & 0xffffffe0 == 0xd53b00e0 {
-        return Op::ReadDczid;
+    if matches!(w & 0xffffffe0, 0xd50b7b20 | 0xd50b7e20 | 0xd50b7a20 | 0xd50b7520) {
+        return Op::CacheMaintenance;
     }
     if w & 0x1e000000 == 0x0e000000
         || w & 0xdf000000 == 0x5e000000
@@ -82,13 +79,10 @@ pub fn classify(w: u32) -> Op {
     if w & 0x7f000000 == 0x1e000000 || w & 0xff000000 == 0x1f000000 {
         return Op::Float;
     }
-    if w & 0xffdfffc0 == 0xd51b4400 {
-        return Op::FpControl;
-    }
     if w & 0xfffff0ff == 0xd503305f {
         return Op::ClearExclusive;
     }
-    if w == 0xd503201f || w == 0xd503245f || w == 0xd50320ff || w & 0xfffff0ff == 0xd50330bf {
+    if w & 0xfffff01f == 0xd503201f || matches!(w & 0xfffff0ff, 0xd503309f | 0xd50330bf) || w == 0xd5033fdf {
         return Op::Hint;
     }
     if (w >> 25) & 5 == 4 {
