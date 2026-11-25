@@ -61,6 +61,7 @@
       <label
         >ELF arguments (one per line)<textarea id="args" rows="3" spellcheck="false"></textarea>
       </label>
+      <label>Guest CPUs<input id="cpus" type="number" min="1" max="64" value="1" required /></label>
       <label>Guest RAM (MiB)<input id="memory" type="number" min="16" max="2047" value="64" required /></label>
       <button id="run">Run</button> <button type="button" id="stop" disabled>Stop</button>
     </form>
@@ -108,7 +109,7 @@
       };
       const args = get("args").value;
       worker.postMessage({
-        elf, disk, memoryMiB: get("memory").valueAsNumber,
+        elf, disk, cpuCount: get("cpus").valueAsNumber, memoryMiB: get("memory").valueAsNumber,
         args: args ? args.split("\n") : [],
       });
     };

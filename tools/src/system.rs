@@ -97,6 +97,7 @@ fn wasm_command(
     disk: Option<&OsStr>,
     network: Option<&str>,
     memory: Option<&OsStr>,
+    cpus: Option<&OsStr>,
 ) -> io::Result<Command> {
     let module = wasm_module(build);
     if !module.is_file() {
@@ -114,6 +115,7 @@ fn wasm_command(
         .arg(if payload.is_some() { "run" } else { "boot" })
         .arg(input)
         .arg(memory.unwrap_or(OsStr::new("64M")))
+        .arg(cpus.unwrap_or(OsStr::new("1")))
         .arg(if payload.is_some() {
             disk.unwrap_or_default()
         } else {
@@ -132,8 +134,11 @@ pub fn run_wasm(
     disk: Option<&OsStr>,
     network: Option<&str>,
     memory: Option<&OsStr>,
+    cpus: Option<&OsStr>,
 ) -> io::Result<i32> {
-    status(&mut wasm_command(build, payload, disk, network, memory)?)
+    status(&mut wasm_command(
+        build, payload, disk, network, memory, cpus,
+    )?)
 }
 
 pub fn userland() -> io::Result<&'static Path> {
@@ -323,6 +328,7 @@ pub fn check(build: &Path, bench: bool, suite: Option<&OsStr>) -> io::Result<i32
                 None,
                 Some(disk.as_os_str()),
                 Some("user,id=sporenet"),
+                None,
                 None,
             )?;
             crate::runner::fixtures::start("integration")?;

@@ -280,6 +280,11 @@ fn execute() -> io::Result<i32> {
                 ));
                 continue;
             }
+            Some("--smp") if !build => {
+                positive::<u32>(&value, "CPU count")?;
+                cpus = Some(value);
+                continue;
+            }
             Some("--memory") if !build => {
                 memory = Some(value);
                 continue;
@@ -301,10 +306,6 @@ fn execute() -> io::Result<i32> {
             Some("--vars") if !build => vm.vars = Some(value),
             Some("--qemu") if !build => qemu = Some(value),
             Some("--arch") if boot => architecture = Some(value),
-            Some("--smp") if !build => {
-                positive::<u32>(&value, "CPU count")?;
-                cpus = Some(value);
-            }
             Some("--boot-timeout") if !build => vm.timeout = positive(&value, "boot timeout")?,
             Some("--result") if !build => vm.report = Some(value),
             _ => {
@@ -338,6 +339,7 @@ fn execute() -> io::Result<i32> {
                 Some(base.as_os_str()),
                 network.as_deref(),
                 memory.as_deref(),
+                cpus.as_deref(),
             );
         }
         if qemu_options || tests || userland {
@@ -401,6 +403,7 @@ fn execute() -> io::Result<i32> {
             vm.root.as_deref(),
             network.as_deref(),
             memory.as_deref(),
+            cpus.as_deref(),
         );
     }
     if net {

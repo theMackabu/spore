@@ -228,6 +228,8 @@ static void schedule(struct trap_frame *frame, bool saved) {
     }
     smp_set_scheduler_waiting(cpu, true);
 #ifdef __wasm__
+    if (current_thread && current_thread->running_cpu == (int)cpu) { current_thread->running_cpu = -1; }
+    smp_set_current_thread_slot(cpu, NULL);
     return;
 #else
     smp_kernel_unlock();

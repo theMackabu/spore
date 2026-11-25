@@ -42,11 +42,14 @@ HOST("disk_read") int host_disk_read(uint64_t, void *, size_t);
 HOST("write") void host_write(unsigned, const void *, size_t);
 HOST("finish") [[noreturn]] void host_finish(int, unsigned, uint64_t, const char *, size_t);
 
-static struct thread *current;
+static struct {
+  struct thread *thread;
+  bool idle;
+} cpus[SPORE_BOOT_CPU_MAX];
+static uint32_t cpu_id, cpu_count;
 static uint8_t output[4096];
 static unsigned channel = 1, buffered;
 static struct arch_thread_context *active_context;
-static bool idle;
 static uint64_t fault_pc;
 static const char *fault_text;
 static size_t fault_len;
@@ -90,43 +93,30 @@ bool arch_rndr64(uint64_t *out) {
   return true;
 }
 
-uint32_t smp_present_cpu_count(void) {
-  return 1;
+void wasm_select_cpu(uint32_t cpu) {
+  cpu_id = cpu;
 }
-uint32_t smp_possible_cpu_count(void) {
-  return 1;
-}
-uint32_t smp_online_cpu_count(void) {
-  return 1;
-}
-uint32_t smp_current_cpu(void) {
-  return 0;
-}
-bool smp_cpu_present(uint32_t cpu) {
-  return cpu == 0;
-}
-bool smp_cpu_online(uint32_t cpu) {
-  return cpu == 0;
-}
-uint64_t smp_cpu_hardware_id(uint32_t cpu) {
-  return cpu;
-}
+uint32_t smp_present_cpu_count(void) { return cpu_count; }
+uint32_t smp_possible_cpu_count(void) { return cpu_count; }
+uint32_t smp_online_cpu_count(void) { return cpu_count; }
+uint32_t smp_current_cpu(void) { return cpu_id; }
+bool smp_cpu_present(uint32_t cpu) { return cpu < cpu_count; }
+bool smp_cpu_online(uint32_t cpu) { return cpu < cpu_count; }
+uint64_t smp_cpu_hardware_id(uint32_t cpu) { return cpu; }
 void *smp_current_thread_slot(uint32_t cpu) {
-  return cpu == 0 ? current : NULL;
+  return cpu < cpu_count ? cpus[cpu].thread : NULL;
 }
 void smp_set_current_thread_slot(uint32_t cpu, void *t) {
-  if (!cpu) { current = t; }
+  if (cpu < cpu_count) { cpus[cpu].thread = t; }
 }
 void smp_clear_current_thread_if(uint32_t cpu, void *t) {
-  if (!cpu && current == t) { current = NULL; }
+  if (cpu < cpu_count && cpus[cpu].thread == t) { cpus[cpu].thread = NULL; }
 }
 bool smp_scheduler_waiting(uint32_t cpu) {
-  (void)cpu;
-  return idle;
+  return cpu < cpu_count && cpus[cpu].idle;
 }
 void smp_set_scheduler_waiting(uint32_t cpu, bool waiting) {
-  (void)cpu;
-  idle = waiting;
+  if (cpu < cpu_count) { cpus[cpu].idle = waiting; }
 }
 void smp_kernel_lock(void) {}
 void smp_kernel_unlock(void) {}
@@ -231,7 +221,9 @@ void arch_reboot(void) {
 }
 
 struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args, size_t bytes, unsigned devices,
-                             uint64_t epoch, void *ram, size_t ram_bytes) {
+                             uint64_t epoch, void *ram, size_t ram_bytes, unsigned count) {
+  cpu_count = count;
+  for (unsigned i = 1; i < count; ++i) { cpus[i].idle = true; }
   const uint64_t hhdm = (uintptr_t)ram;
   struct spore_boot_module payload = {.phys_addr = (uint64_t)(uintptr_t)image - hhdm, .size = size, .path = "/spore.app"};
   struct spore_boot_info boot = {.hhdm_offset = hhdm, .modules = size ? &payload : NULL, .module_count = size ? 1 : 0};
@@ -292,12 +284,12 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
     }
     cell_tty_set_oflag(0);
   }
-  return &current->tf;
+  return &cpus[0].thread->tf;
 }
 
 void *wasm_translate(uint64_t page, enum vmm_access access) {
   struct user_address_space *as = cell_current_as();
-  if (page >= USER_VA_LIMIT || !cell_domain_ensure_user_range(current->domain, page, 1, access)) { return NULL; }
+  if (page >= USER_VA_LIMIT || !cell_domain_ensure_user_range(cpus[cpu_id].thread->domain, page, 1, access)) { return NULL; }
   if (!vmm_user_range_accessible(as, page, 1, access)) {
     if (access != VMM_ACCESS_WRITE || !cell_handle_write_fault(page)) { return NULL; }
   }
@@ -315,7 +307,7 @@ bool wasm_syscall(struct trap_frame *f, struct arch_thread_context *context) {
   else { linux_aarch64_syscall(f); }
   wasm_flush();
   active_context = NULL;
-  return idle;
+  return cpus[cpu_id].idle;
 }
 
 bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, int signal, uint64_t address,
@@ -325,24 +317,27 @@ bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, i
   fault_text = message;
   fault_len = len;
   host_exception(fault_pc, message, len);
-  int code = signal == 11 && vma_lookup(cell_domain_vmas(current->domain), address) ? 2 : 1;
+  int code = signal == 11 && vma_lookup(cell_domain_vmas(cpus[cpu_id].thread->domain), address) ? 2 : 1;
   cell_signal_current_fault(signal, f, address, code);
   fault_len = 0;
   fault_text = NULL;
   active_context = NULL;
-  return idle;
+  return cpus[cpu_id].idle;
 }
 
 bool wasm_timer(struct trap_frame *f, struct arch_thread_context *context, unsigned ticks) {
   active_context = context;
-  while (ticks--) {
-    cell_wake_stdin(idle ? NULL : f);
-    cell_timer_tick(f, !idle);
-    if (idle) { cell_resume_scheduler(f); }
+  if (!cpus[cpu_id].idle && (!cpus[cpu_id].thread || cpus[cpu_id].thread->state != THREAD_RUNNABLE)) {
+    cell_schedule(f);
   }
+  while (ticks--) {
+    if (!cpu_id) { cell_wake_stdin(cpus[0].idle ? NULL : f); }
+    cell_timer_tick(f, !cpus[cpu_id].idle);
+  }
+  if (cpus[cpu_id].idle) { cell_resume_scheduler(f); }
   wasm_flush();
   active_context = NULL;
-  return idle;
+  return cpus[cpu_id].idle;
 }
 
 size_t proc_cpuinfo_text(char *out, size_t cap) {

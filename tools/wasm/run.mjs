@@ -8,11 +8,12 @@ export class GuestSignal extends Error {
 export async function run(
   kernel,
   elf,
-  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, network, write, onException, memoryMiB = 64, instructionLimit = 100_000_000, signal } = {},
+  { args = [], argv0 = "/app/server", readDisk, writeDisk, readByte, network, write, onException, memoryMiB = 64, cpuCount = 1, instructionLimit = 100_000_000, signal } = {},
 ) {
   if (!Number.isInteger(memoryMiB) || memoryMiB < 16 || memoryMiB >= 2048) {
     throw new RangeError("Wasm guest RAM must be 16 through 2047 MiB");
   }
+  if (!Number.isInteger(cpuCount) || cpuCount < 1 || cpuCount > 64) throw new RangeError("expected 1 through 64 guest CPUs");
   const system = elf === null;
   if (system && (!readDisk || args.length)) throw new Error("system boot requires a root disk");
   if ((!system && !(elf instanceof Uint8Array)) || !Number.isSafeInteger(instructionLimit) || instructionLimit < 1) {
@@ -90,7 +91,7 @@ export async function run(
   }
   const devices = (readDisk ? 1 : 0) | (writeDisk ? 2 : 0) | (readByte ? 4 : 0) | (network ? 8 : 0);
   try {
-    if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB)) {
+    if (!guest.start(elf?.length ?? 0, devices, BigInt(Math.floor(Date.now() / 1000)), memoryMiB, cpuCount)) {
       throw new Error("cannot initialize guest memory or executable");
     }
     let remaining = instructionLimit;

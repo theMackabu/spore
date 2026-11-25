@@ -3,6 +3,7 @@ use std::alloc::{Layout, alloc_zeroed};
 use std::cell::RefCell;
 
 unsafe extern "C" {
+    fn wasm_select_cpu(cpu: u32);
     fn wasm_boot(
         image: *const u8,
         n: usize,
@@ -12,11 +13,17 @@ unsafe extern "C" {
         epoch: u64,
         ram: *mut u8,
         ram_bytes: usize,
+        count: u32,
     ) -> *const Frame;
 }
+struct Machine {
+    cpus: Vec<Cpu>,
+    next: usize,
+}
+
 thread_local! {
     static INPUT:RefCell<Vec<u8>>=const{RefCell::new(Vec::new())};
-    static CPU:RefCell<Option<Cpu>>=const{RefCell::new(None)};
+    static CPU:RefCell<Option<Machine>>=const{RefCell::new(None)};
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn stage(size: usize) -> *mut u8 {
@@ -29,13 +36,14 @@ pub extern "C" fn stage(size: usize) -> *mut u8 {
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32) -> bool {
+pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32, count: u32) -> bool {
     CPU.with_borrow_mut(|cpu| {
         INPUT.with_borrow(|image| {
             if (size == 0 && (devices & 1 == 0 || !image.is_empty()))
                 || (size != 0 && size < 64)
                 || size > image.len()
                 || !(16..2048).contains(&ram_mib)
+                || !(1..=64).contains(&count)
                 || cpu.is_some()
             {
                 return false;
@@ -58,9 +66,18 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32) -> 
                     epoch,
                     ram,
                     ram_bytes,
+                    count,
                 )
             };
-            *cpu = Some(Cpu::new(unsafe { *first }));
+            let frame = unsafe { *first };
+            let cpus = (0..count)
+                .map(|id| {
+                    let mut cpu = Cpu::new(frame);
+                    cpu.idle = id != 0;
+                    cpu
+                })
+                .collect();
+            *cpu = Some(Machine { cpus, next: 0 });
             true
         })
     })
@@ -68,20 +85,47 @@ pub extern "C" fn start(size: usize, devices: u32, epoch: u64, ram_mib: u32) -> 
 #[unsafe(no_mangle)]
 pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
     CPU.with_borrow_mut(|state| {
-        let Some(cpu) = state else {
+        let Some(machine) = state else {
             return -1;
         };
+        let count = machine.cpus.len();
         if ticks != 0 {
-            cpu.tick(ticks);
+            for (id, cpu) in machine.cpus.iter_mut().enumerate() {
+                unsafe {
+                    wasm_select_cpu(id as u32);
+                }
+                cpu.tick(ticks);
+            }
         }
-        for retired in 0..budget {
+        let mut retired = 0;
+        let mut inactive = 0;
+        while retired < budget && inactive < count {
+            let id = machine.next;
+            let cpu = &mut machine.cpus[id];
+            if count > 1 {
+                unsafe {
+                    wasm_select_cpu(id as u32);
+                }
+                cpu.tick(0);
+                machine.next = (id + 1) % count;
+            }
             if cpu.idle {
-                return retired as i32;
+                inactive += 1;
+                continue;
             }
-            if let Err(error) = cpu.step() {
-                cpu.exception(error);
+            inactive = 0;
+            let end = if count == 1 {
+                budget
+            } else {
+                budget.min(retired + 4096)
+            };
+            while retired < end && !cpu.idle {
+                if let Err(error) = cpu.step() {
+                    cpu.exception(error);
+                }
+                retired += 1;
             }
         }
-        budget as i32
+        retired as i32
     })
 }

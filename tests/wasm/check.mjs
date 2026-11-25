@@ -61,6 +61,9 @@ try {
     const threads = path.join(dir, "threads");
     const probe = path.join(dir, "probe");
     const recovery = path.join(dir, "fault");
+    const smp = path.join(dir, "smp");
+    exec("aarch64-unknown-linux-musl-gcc", ["-static", "-O2", "-pthread", path.join(sources, "../ports/smp.c"), "-o", smp]);
+    exec(spore, ["run", "--wasm", smp, "--smp", "4"]);
     const bsd = path.join(dir, "freebsd");
     exec("clang", ["--target=aarch64-unknown-freebsd", "-nostdlib", "-static", "-fuse-ld=lld", "-Wl,-e,_start",
       "-ffreestanding", "-fno-stack-protector", ...["freebsd-aarch64.S", "freebsd-call.S", "freebsd-services.c"]

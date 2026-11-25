@@ -4,7 +4,7 @@ import { userNetwork } from "./net.mjs";
 import { SerialInput } from "./input.mjs";
 import { GuestSignal, run } from "./run.mjs";
 
-const [kernel, mode, path, ram, data, qemu, settings] = process.argv.slice(2);
+const [kernel, mode, path, ram, cpus, data, qemu, settings] = process.argv.slice(2);
 const system = mode === "boot";
 const diskPath = system ? path : data || undefined;
 const terminal = process.stdin.isTTY;
@@ -40,6 +40,7 @@ try {
   process.exitCode = await run(fs.readFileSync(kernel), system ? null : fs.readFileSync(path), {
     ...media,
     memoryMiB,
+    cpuCount: Number(cpus),
     network,
     onException: process.env.SPORE_WASM_TRACE ? (pc, msg) => console.error(`[wasm] ${msg} at PC 0x${pc.toString(16)}`) : undefined,
     readByte: terminal || system ? serial.readByte : undefined,
