@@ -65,6 +65,10 @@ int64_t sys_mount(uint64_t source, uint64_t target, uint64_t type, uint64_t flag
   if ((flags & 0xffff0000) == 0xc0ed0000) { flags &= 0xffff; }
   flags &= ~MS_SILENT;
   constexpr uint64_t MS_BIND = 4096;
+  constexpr uint64_t MS_REMOUNT = 32;
+  if ((flags & ~(uint64_t)(MOUNT_RDONLY | MOUNT_NOSUID | MOUNT_NODEV)) == (MS_BIND | MS_REMOUNT)) {
+    return mountns_remount(path, flags & (MOUNT_RDONLY | MOUNT_NOSUID | MOUNT_NODEV));
+  }
   if ((flags & ~MS_REC) == MS_BIND) {
     char src[CELL_PATH_MAX];
     rc = syscall_copy_resolved_path_at(AT_FDCWD, source, src, sizeof(src));

@@ -37,6 +37,15 @@ enum {
   VFS_F_SEAL_MASK = RAMFS_F_SEAL_MASK,
 };
 
+enum mount_flag { MOUNT_RDONLY = 1, MOUNT_NOSUID = 2, MOUNT_NODEV = 4 };
+struct mount_access {
+  unsigned refs, writers, flags;
+};
+
+static inline bool vfs_mount_flag(const struct mount_access *access, unsigned flag) {
+  return access && (access->flags & flag);
+}
+
 struct vfs_node {
   enum vfs_backend backend;
   uint64_t ino;
@@ -49,6 +58,7 @@ struct vfs_node {
   uint64_t dev_id;
   uint64_t rdev;
   uint64_t mount_id;
+  struct mount_access *access;
   uint64_t atime;
   uint64_t ctime;
   uint64_t mtime;
@@ -112,6 +122,8 @@ struct vfs_stats {
 };
 
 void vfs_init(struct ramfs *ramfs, struct ext2_fs *ext2);
+int vfs_walk(const char *root, const char *base, size_t base_len, const char *path, size_t length,
+             bool follow_final, char *out, size_t cap);
 bool vfs_lookup(const char *path, struct vfs_node *out);
 bool vfs_lstat(const char *path, struct vfs_node *out);
 bool vfs_mkdir(const char *path, uint32_t mode);

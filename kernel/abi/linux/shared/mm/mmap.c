@@ -124,7 +124,7 @@ int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uin
         (file->node.backend != VFS_EXT2 && file->node.backend != VFS_RAMFS)) { return -ENODEV; }
     if (!vfs_refresh(&file->node, &node)) { return -ENODEV; }
     if (off > UINT64_MAX - size) { return -EINVAL; }
-    shared_may_write = shared && linux_open_writable(file->flags) && !vfs_write_sealed(&node);
+    shared_may_write = shared && linux_open_writable(file->flags) && !vfs_readonly_node(&node) && !vfs_write_sealed(&node);
     if (shared && (prot & PROT_WRITE) && !shared_may_write) { return -EPERM; }
   }
   if (!cell_map_add_allowed(base, end, (flags & MAP_FIXED) != 0)) { return -(int64_t)ENOMEM; }

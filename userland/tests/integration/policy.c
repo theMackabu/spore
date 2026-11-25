@@ -310,6 +310,14 @@ static int pivot_child(void) {
   struct stat old, clone;
   if (stat("/previous/etc/motd", &old) || mount("/previous", "/copy", NULL, MS_BIND | MS_REC, NULL) ||
       stat("/copy/etc/motd", &clone) || clone.st_dev != old.st_dev || clone.st_ino != old.st_ino) { return 5; }
+  int writer = open("/copy/etc/motd", O_WRONLY);
+  unsigned long ro = MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV;
+  if (writer < 0 || mount("none", "/copy", NULL, ro, NULL) == 0 || errno != EBUSY) { return 7; }
+  close(writer);
+  if (mount("none", "/copy", NULL, ro, NULL) || open("/copy/etc/motd", O_WRONLY) >= 0 || errno != EROFS ||
+      mkdir("/copy/pivot-should-fail", 0700) == 0 || errno != EROFS) { return 8; }
+  if (symlink("/copy", "/previous/pivot-link") || stat("/previous/pivot-link/etc/motd", &clone) ||
+      clone.st_ino != old.st_ino || unlink("/previous/pivot-link")) { return 9; }
   if (umount2("/previous", MNT_DETACH) || !access("/previous/etc/motd", F_OK) ||
       access("/copy/etc/motd", F_OK)) { return 6; }
   return 0;

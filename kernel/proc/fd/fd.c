@@ -70,6 +70,8 @@ void cell_release_open_file(struct open_file *file) {
     } else if (file->type == OPEN_PTY) {
       cell_pty_release_file(file);
     }
+    if (file->type == OPEN_VFS && file->node.access && (file->node.mode & 0170000) == 0100000 &&
+        linux_open_writable(file->flags)) { --file->node.access->writers; }
     if (file->type == OPEN_VFS || file->type == OPEN_PIPE) { vfs_release_node(&file->node); }
     pool_free(&open_files, file);
   } else if (file->type == OPEN_UNIX_STREAM || file->type == OPEN_UNIX_LISTENER) {
@@ -142,6 +144,9 @@ int64_t cell_fd_lseek(int fd, int64_t off, int whence) {
 }
 
 int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *path, const char *resolved, struct trap_frame *frame) {
+  uint16_t type = node->mode & 0170000;
+  if (!(flags & LINUX_O_PATH) && (type == 0020000 || type == 0060000) && vfs_mount_flag(node->access, MOUNT_NODEV)) { return -13; }
+  if (linux_open_writable(flags) && vfs_mount_flag(node->access, MOUNT_RDONLY) && type == 0100000) { return -30; }
   struct domain *domain = cell_current_domain_internal();
   if (domain == NULL) { return -12; }
   bool path_only = (flags & LINUX_O_PATH) != 0;
@@ -178,6 +183,7 @@ int cell_fd_open_node(const struct vfs_node *node, uint32_t flags, const char *p
     if (read) { cell_pipe_add_reader(pipe); }
     if (write) { cell_pipe_add_writer(pipe); }
   }
+  if (file->type == OPEN_VFS && node->access && type == 0100000 && linux_open_writable(flags)) { ++node->access->writers; }
   file->flags = flags & ~(uint32_t)CELL_O_CLOEXEC;
   cell_copy_open_path(file, path);
   bool pipe = file->type == OPEN_PIPE;

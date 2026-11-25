@@ -11,6 +11,7 @@ struct mount_entry {
   struct mount_entry *next;
   struct ramfs *fs;
   int root;
+  struct mount_access *access;
   const struct vfs_mount *boot;
   bool locked;
   char target[CELL_PATH_MAX];
@@ -30,7 +31,7 @@ static struct mount_namespace initial;
 static struct mount_namespace *namespaces = &initial;
 uint64_t mountns_ino(const struct mount_namespace *ns) { return ns->ino; }
 
-static struct object_pool namespace_pool, mount_pool, fs_pool;
+static struct object_pool namespace_pool, mount_pool, fs_pool, access_pool;
 static size_t live_entries;
 static uint32_t next_device = 0x10000;
 static uint64_t next_mount = 0x10000;
@@ -38,6 +39,22 @@ static uint64_t next_mount = 0x10000;
 static void *allocate(struct object_pool *pool, size_t size) {
   if (!pool->limit && !pool_init(pool, size, SIZE_MAX)) { return NULL; }
   return pool_alloc(pool);
+}
+
+static struct mount_access *new_access(unsigned flags) {
+  struct mount_access *access = allocate(&access_pool, sizeof(*access));
+  if (access) { *access = (struct mount_access){.refs = 1, .flags = flags}; }
+  return access;
+}
+
+void mountns_access_put(struct mount_access *access) {
+  if (access && !--access->refs) { pool_free(&access_pool, access); }
+}
+
+static const char *options_for(unsigned flags) {
+  static const char *const options[] = {"rw", "ro", "rw,nosuid", "ro,nosuid", "rw,nodev", "ro,nodev",
+                                         "rw,nosuid,nodev", "ro,nosuid,nodev"};
+  return options[flags];
 }
 
 static struct mount_namespace *view(const struct domain *domain) {
@@ -64,12 +81,13 @@ void mountns_put_fs(struct ramfs *fs) {
 
 static void drop_entry(struct mount_entry *m) {
   if (m->root && !m->boot) { ramfs_release_node(m->fs, m->root); }
+  mountns_access_put(m->access);
   --live_entries;
   if (!m->boot) { mountns_put_fs(m->fs); }
   pool_free(&mount_pool, m);
 }
 
-static struct mount_entry *copy_entry(const struct mount_entry *source) {
+static struct mount_entry *copy_entry(const struct mount_entry *source, bool separate) {
   struct mount_entry *copy = allocate(&mount_pool, sizeof(*copy));
   if (!copy) { return NULL; }
   *copy = *source;
@@ -79,6 +97,14 @@ static struct mount_entry *copy_entry(const struct mount_entry *source) {
     pool_free(&mount_pool, copy);
     return NULL;
   }
+  if (separate) {
+    copy->access = new_access(source->access->flags);
+    if (!copy->access) {
+      if (!copy->boot && copy->root) { ramfs_release_node(copy->fs, copy->root); }
+      pool_free(&mount_pool, copy);
+      return NULL;
+    }
+  } else { ++copy->access->refs; }
   if (!copy->boot) { ++copy->fs->refs; }
   ++live_entries;
   return copy;
@@ -117,7 +143,7 @@ int mountns_unshare(struct thread *thread) {
   namespaces = ns;
   struct mount_entry **slot = &ns->mounts;
   for (struct mount_entry *m = original->mounts; m; m = m->next) {
-    struct mount_entry *copy = copy_entry(m);
+    struct mount_entry *copy = copy_entry(m, true);
     if (!copy) { mountns_release(ns); return -12; }
     copy->locked |= ns->owner != original->owner;
     *slot = copy;
@@ -129,6 +155,8 @@ int mountns_unshare(struct thread *thread) {
 }
 
 bool mountns_explicit(const struct domain *d) { return view(d)->explicit_mounts; }
+
+bool mountns_current_routes(void) { return live_entries && view(cell_current_domain_internal())->mounts; }
 
 bool mountns_has_mounts(void) { return live_entries != 0; }
 
@@ -150,7 +178,7 @@ struct ramfs_route mountns_lookup(const char *path) {
     for (struct mount_entry *m = view(cell_current_domain_internal())->mounts; m; m = m->next) {
       if (inside(path, m->target)) {
         const char *suffix = m->target[1] ? path + kstrlen(m->target) : path;
-        return (struct ramfs_route){m->fs, *suffix ? suffix : "/", m->info.mount_id, m->root, m->boot};
+        return (struct ramfs_route){m->fs, *suffix ? suffix : "/", m->info.mount_id, m->root, m->boot, m->access};
       }
     }
   }
@@ -199,10 +227,12 @@ int mountns_tmpfs(const char *path, unsigned mode, bool nosuid, bool nodev) {
   fs->nosuid = nosuid;
   fs->device = next_device++;
   ramfs_set_reclaim_callback(fs, vfs_ramfs_inode_freed);
+  m->access = new_access((nosuid ? MOUNT_NOSUID : 0) | (nodev ? MOUNT_NODEV : 0));
+  if (!m->access) { mountns_put_fs(fs); pool_free(&mount_pool, m); return -12; }
   m->fs = fs;
   copy_cstr(m->target, sizeof(m->target), path);
   m->info = (struct vfs_mount){fs->device, covered.mount_id ? covered.mount_id : covered.dev_id, 0x01021994, "tmpfs", m->target, "tmpfs",
-    nosuid ? (nodev ? "rw,nosuid,nodev" : "rw,nosuid") : (nodev ? "rw,nodev" : "rw"), next_mount++};
+    options_for(m->access->flags), next_mount++};
   m->next = ns->mounts;
   ns->mounts = m;
   ++live_entries;
@@ -229,7 +259,7 @@ static int attach_bind_tree(struct mount_namespace *ns, struct mount_entry *root
       const char *suffix = m->target + src_len;
       size_t len = kstrlen(suffix);
       if (dst_len + len >= CELL_PATH_MAX) { drop_entries(tree); return -36; }
-      struct mount_entry *copy = copy_entry(m);
+      struct mount_entry *copy = copy_entry(m, true);
       if (!copy) { drop_entries(tree); return -12; }
       kmemcpy(copy->target, root->target, dst_len);
       kmemcpy(copy->target + dst_len, suffix, len + 1);
@@ -267,10 +297,12 @@ int mountns_bind(const char *source, const char *target, bool recursive) {
   if (origin->boot && !str_eq(mountns_lookup(source).path, "/")) { return -95; }
   struct mount_entry *m = allocate(&mount_pool, sizeof(*m));
   if (!m) { return -12; }
+  m->access = new_access(origin->access->flags);
+  if (!m->access) { pool_free(&mount_pool, m); return -12; }
   m->boot = origin->boot;
   m->root = origin->boot ? origin->root : src.ramfs.index;
   m->fs = origin->fs;
-  if (!m->boot && m->root && !ramfs_retain_node(m->fs, m->root)) { pool_free(&mount_pool, m); return -2; }
+  if (!m->boot && m->root && !ramfs_retain_node(m->fs, m->root)) { mountns_access_put(m->access); pool_free(&mount_pool, m); return -2; }
   if (!m->boot) { ++m->fs->refs; }
   copy_cstr(m->target, sizeof(m->target), target);
   m->info = origin->info;
@@ -278,6 +310,22 @@ int mountns_bind(const char *source, const char *target, bool recursive) {
   m->info.target = m->target;
   ++live_entries;
   return attach_bind_tree(ns, m, origin, source, recursive);
+}
+
+int mountns_remount(const char *path, unsigned flags) {
+  struct ramfs_route route = mountns_lookup(path);
+  if (!route.mount_id || !str_eq(route.path, "/")) { return -22; }
+  struct mount_namespace *ns = view(cell_current_domain_internal());
+  for (struct mount_entry *m = ns->mounts; m; m = m->next) {
+    if (m->info.mount_id != route.mount_id) { continue; }
+    if (ns->owner && (m->access->flags & ~flags)) { return -1; }
+    if (m->boot && str_eq(m->boot->options, "ro") && !(flags & MOUNT_RDONLY)) { return -30; }
+    if ((flags & MOUNT_RDONLY) && m->access->writers) { return -16; }
+    m->access->flags = flags;
+    m->info.options = options_for(flags);
+    return 0;
+  }
+  return -22;
 }
 
 int mountns_unmount(const char *path, bool detach) {
@@ -341,6 +389,8 @@ static struct mount_entry *boot_tree(void) {
     m->info = *boot;
     m->info.mount_id = boot->device;
     m->info.target = m->target;
+    m->access = new_access(str_eq(boot->options, "ro") ? MOUNT_RDONLY : 0);
+    if (!m->access) { pool_free(&mount_pool, m); drop_entries(tree); return NULL; }
     m->locked = true;
     struct mount_entry **slot = &tree;
     while (*slot && kstrlen((*slot)->target) >= kstrlen(m->target)) { slot = &(*slot)->next; }
@@ -360,7 +410,7 @@ static int pivot_tree(struct mount_namespace *ns, const struct mount_entry *root
   int rc = 0;
   for (unsigned part = 0; part < 2 && !rc; ++part) {
     for (struct mount_entry *m = part ? base : ns->mounts; m; m = m->next) {
-      struct mount_entry *copy = copy_entry(m);
+      struct mount_entry *copy = copy_entry(m, false);
       if (!copy) { rc = -12; break; }
       if (!part && mounted_below(m, root)) {
         const char *suffix = m->target + kstrlen(root->target);

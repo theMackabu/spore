@@ -35,14 +35,14 @@ const char *vfs_disk_path(const char *path) {
 
 bool vfs_readonly_path(const char *path) {
   struct ramfs_route route = mountns_lookup(path);
-  if (route.boot) { return str_eq(route.boot->options, "ro"); }
+  if (route.access) { return vfs_mount_flag(route.access, MOUNT_RDONLY); }
   if (route.fs) { return false; }
   return app_mode && !data_path(path) && !path_is_mount(path, "/tmp") && !path_is_mount(path, "/run") &&
          !path_is_mount(path, "/dev/shm");
 }
 
 bool vfs_readonly_node(const struct vfs_node *node) {
-  if (node->backend == VFS_NSFS) { return true; }
+  if (node->backend == VFS_NSFS || vfs_mount_flag(node->access, MOUNT_RDONLY)) { return true; }
   return app_mode && node->backend == VFS_RAMFS && node->ramfs.mount == RAMFS_MOUNT_RAM0;
 }
 
@@ -167,18 +167,18 @@ static bool lookup_ramfs(struct ramfs *fs, int root, const char *path, struct vf
   return true;
 }
 
-static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
+bool vfs_lookup_component(const char *path, bool nofollow, struct vfs_node *out) {
   struct ramfs_route mounted = mountns_lookup(path);
   if (mounted.boot && mounted.boot->device == VFS_DEV_PROC && mounted.path[1]) {
     char proc[CELL_PATH_MAX + 6] = "/proc";
     size_t len = kstrlen(mounted.path);
     if (len >= CELL_PATH_MAX) { return false; }
     kmemcpy(proc + 5, mounted.path, len + 1);
-    if (vfs_proc_lookup(proc, !nofollow, out)) { out->mount_id = mounted.mount_id; return true; }
+    if (vfs_proc_lookup(proc, !nofollow, out)) { out->mount_id = mounted.mount_id; out->access = mounted.access; return true; }
   }
   if (mounted.fs) {
     if (!lookup_ramfs(mounted.fs, mounted.root, mounted.path, out)) { return false; }
-    out->mount_id = mounted.mount_id;
+    out->mount_id = mounted.mount_id; out->access = mounted.access;
     return true;
   }
   if (mounted.boot) {
@@ -186,7 +186,7 @@ static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
     if (!vfs_root_ext2 || mounted.boot->device != VFS_DEV_EXT2_ROOT ||
         !(nofollow ? ext2_lstat(vfs_root_ext2, mounted.path, &node) : ext2_lookup(vfs_root_ext2, mounted.path, &node))) { return false; }
     vfs_from_ext2(&node, out);
-    out->mount_id = mounted.mount_id;
+    out->mount_id = mounted.mount_id; out->access = mounted.access;
     return true;
   }
   if (vfs_lookup_cache_get(path, nofollow, out)) { return true; }
@@ -204,6 +204,17 @@ static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
   } else if (!lookup_ramfs(vfs_root_ramfs, 0, path, out)) { return false; }
   vfs_lookup_cache_put(path, nofollow, out);
   return true;
+}
+
+static bool lookup_path(const char *path, bool nofollow, struct vfs_node *out) {
+  if (!mountns_current_routes()) { return vfs_lookup_component(path, nofollow, out); }
+  char canonical[CELL_PATH_MAX];
+  if (!path || *path != '/') { return false; }
+  const char *root = cell_current_chroot();
+  size_t prefix = root[1] ? kstrlen(root) : 0;
+  if (prefix && (!starts_with(path, root) || (path[prefix] && path[prefix] != '/'))) { return false; }
+  return !vfs_walk(root, "/", 1, path + prefix, kstrlen(path + prefix), !nofollow, canonical, sizeof(canonical)) &&
+         vfs_lookup_component(canonical, nofollow, out);
 }
 
 bool vfs_lookup(const char *path, struct vfs_node *out) {

@@ -13,6 +13,14 @@ size_t spore_normalize_path(const char *base, size_t base_len, const char *raw, 
 
 static int resolve_from(const char *base, size_t base_len, const char *raw, size_t len, char *visible, char *out,
                         size_t cap) {
+  if (mountns_current_routes()) {
+    const char *root = cell_current_chroot();
+    int rc = vfs_walk(root, base, base_len, raw, len, false, out, cap);
+    if (rc) { return rc; }
+    const char *relative = root[1] ? out + kstrlen(root) : out;
+    copy_cstr(visible, CELL_PATH_MAX, *relative ? relative : "/");
+    return cell_fs_path_allowed(out, 0) ? 0 : -EPERM;
+  }
   size_t name_len = spore_normalize_path(base, base_len, raw, len, visible, CELL_PATH_MAX);
   if (!name_len) { return -ENAMETOOLONG; }
   const char *root = cell_current_chroot();

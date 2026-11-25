@@ -172,6 +172,10 @@ int64_t sys_linkat(uint64_t old_dirfd, uint64_t old_path_addr, uint64_t new_dirf
     rc = syscall_copy_resolved_path_at(old_dirfd, old_path_addr, old_path, sizeof(old_path));
     if (rc != 0) { return rc; }
     if (!(flags & AT_SYMLINK_FOLLOW) || !syscall_proc_fd_number(old_path, &fd)) {
+      if (flags & AT_SYMLINK_FOLLOW) {
+        rc = syscall_follow_final_links(old_path);
+        if (rc) { return rc; }
+      }
       return vfs_link(old_path, new_path) ? 0 : -ENOENT;
     }
   }
