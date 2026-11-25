@@ -11,10 +11,6 @@ unsafe extern "C" {
         epoch: u64,
     ) -> *const Frame;
 }
-#[link(wasm_import_module = "spore")]
-unsafe extern "C" {
-    fn fault(pc: u64, msg: *const u8, len: usize);
-}
 thread_local! {
     static INPUT:RefCell<Vec<u8>>=const{RefCell::new(Vec::new())};
     static CPU:RefCell<Option<Cpu>>=const{RefCell::new(None)};
@@ -65,9 +61,7 @@ pub extern "C" fn run_slice(budget: u32, ticks: u32) -> i32 {
                 return retired as i32;
             }
             if let Err(error) = cpu.step() {
-                let message = error.to_string();
-                unsafe { fault(cpu.f.pc, message.as_ptr(), message.len()) };
-                return -1;
+                cpu.exception(error);
             }
         }
         budget as i32

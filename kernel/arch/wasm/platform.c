@@ -25,6 +25,7 @@
 #include "proc/domain.h"
 #include "proc/fd.h"
 #include "proc/memory.h"
+#include "proc/signal.h"
 #include "proc/thread.h"
 #include "tty/tty.h"
 
@@ -33,7 +34,7 @@ HOST("clock") uint64_t host_clock(void);
 HOST("random") void host_random(void *, size_t);
 HOST("disk_read") int host_disk_read(uint64_t, void *, size_t);
 HOST("write") void host_write(unsigned, const void *, size_t);
-HOST("finish") [[noreturn]] void host_finish(int, unsigned);
+HOST("finish") [[noreturn]] void host_finish(int, unsigned, uint64_t, const char *, size_t);
 
 static alignas(4096) uint8_t ram[64 * 1024 * 1024];
 static struct thread *current;
@@ -42,6 +43,9 @@ static uint8_t output[4096];
 static unsigned channel = 1, buffered;
 static struct arch_thread_context *active_context;
 static bool idle;
+static uint64_t fault_pc;
+static const char *fault_text;
+static size_t fault_len;
 
 static void wasm_flush(void) {
   if (buffered) {
@@ -183,7 +187,7 @@ uint64_t app_payload_size(void) {
 }
 void app_finish(enum app_result kind, unsigned value) {
   wasm_flush();
-  host_finish(kind, value);
+  host_finish(kind, value, fault_pc, fault_text, fault_len);
 }
 void boot_fail(enum boot_error error, const char *why) {
   host_write(2, why, kstrlen(why));
@@ -270,6 +274,20 @@ bool wasm_syscall(struct trap_frame *f, struct arch_thread_context *context) {
   channel = (nr == SYS_WRITE || nr == SYS_WRITEV) && f->x[0] == 2 ? 2 : 1;
   linux_aarch64_syscall(f);
   wasm_flush();
+  active_context = NULL;
+  return idle;
+}
+
+bool wasm_exception(struct trap_frame *f, struct arch_thread_context *context, int signal, uint64_t address,
+                    const char *message, size_t len) {
+  active_context = context;
+  fault_pc = f->elr_el1;
+  fault_text = message;
+  fault_len = len;
+  int code = signal == 11 && vma_lookup(cell_domain_vmas(current->domain), address) ? 2 : 1;
+  cell_signal_current_fault(signal, f, address, code);
+  fault_len = 0;
+  fault_text = NULL;
   active_context = NULL;
   return idle;
 }

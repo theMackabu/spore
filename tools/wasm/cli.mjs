@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { run } from "./run.mjs";
+import { GuestSignal, run } from "./run.mjs";
 
 const [kernel, payload, diskPath] = process.argv.slice(2);
 let disk;
@@ -14,7 +14,7 @@ try {
   });
 } catch (e) {
   console.error("spore:", e.message);
-  process.exitCode = 125;
+  process.exitCode = e instanceof GuestSignal ? 128 + e.signal : 125;
 } finally {
   if (disk !== undefined) fs.closeSync(disk);
 }

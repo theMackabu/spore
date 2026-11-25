@@ -1,4 +1,11 @@
 // The host supplies byte streams and a read-only block device. The kernel owns paths and FDs.
+export class GuestSignal extends Error {
+  constructor(signal, detail) {
+    super(`guest signal ${signal}${detail ? " (" + detail + ")" : ""}`);
+    this.signal = signal;
+  }
+}
+
 export async function run(
   kernel,
   elf,
@@ -39,13 +46,14 @@ export async function run(
         random(ptr, len) {
           crypto.getRandomValues(bytes(ptr, len));
         },
-        finish(kind, code) {
-          if (kind !== 69) throw new Error(`guest ${kind === 83 ? "signal" : "boot error"} ${code}`);
+        finish(kind, code, pc, ptr, len) {
+          if (kind === 83) {
+            const detail = len ? `${decoder.decode(bytes(ptr, len))} at PC 0x${pc.toString(16)}` : "";
+            throw new GuestSignal(code, detail);
+          }
+          if (kind !== 69) throw new Error(`guest boot error ${code}`);
           status = code & 255;
           throw stop;
-        },
-        fault(pc, ptr, len) {
-          throw new Error(`${decoder.decode(bytes(ptr, len))} (PC 0x${pc.toString(16)})`);
         },
       },
     })

@@ -49,6 +49,14 @@ pub struct Cpu {
 
 unsafe extern "C" {
     fn wasm_syscall(f: &mut Frame, context: &mut Context) -> bool;
+    fn wasm_exception(
+        f: &mut Frame,
+        context: &mut Context,
+        signal: i32,
+        address: u64,
+        message: *const u8,
+        len: usize,
+    ) -> bool;
     fn wasm_timer(f: &mut Frame, context: &mut Context, ticks: u32) -> bool;
 }
 pub fn sx(value: u64, bits: u32) -> u64 {
@@ -104,6 +112,27 @@ impl Cpu {
             _ => return true,
         };
         yes ^ (c & 1 != 0)
+    }
+
+    pub fn exception(&mut self, fault: Fault) {
+        let message = fault.to_string();
+        let (signal, address) = match fault {
+            Fault::Instruction(_) => (4, self.f.pc),
+            Fault::Alignment(addr) => (7, addr),
+            Fault::Memory(_, addr) => (11, addr),
+        };
+        self.memory.invalidate();
+        self.reservation = None;
+        self.idle = unsafe {
+            wasm_exception(
+                &mut self.f,
+                &mut self.context,
+                signal,
+                address,
+                message.as_ptr(),
+                message.len(),
+            )
+        };
     }
 
     pub fn tick(&mut self, ticks: u32) {
