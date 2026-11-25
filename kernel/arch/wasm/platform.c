@@ -1,5 +1,6 @@
 #include "arch/platform.h"
 #include "abi/linux/aarch64/syscall.h"
+#include "abi/freebsd/aarch64.h"
 #include "abi/linux/shared/numbers.h"
 #include "abi/linux/shared/usercopy.h"
 #include "arch/aarch64/mmu.h"
@@ -282,7 +283,6 @@ struct trap_frame *wasm_boot(const uint8_t *image, size_t size, const char *args
   }
   struct first_process first;
   boot_load_process(&first, &profile.program, hhdm);
-  if (first.as.freebsd_abi) { boot_fail(BOOT_INVALID_PAYLOAD, "expected a Linux ELF"); }
   boot_activate_process(&first);
   syscall_set_address_space(cell_current_as());
   if (!(devices & 4)) {
@@ -309,8 +309,11 @@ void *wasm_translate(uint64_t page, enum vmm_access access) {
 bool wasm_syscall(struct trap_frame *f, struct arch_thread_context *context) {
   active_context = context;
   uint64_t nr = f->x[8];
-  channel = (nr == SYS_WRITE || nr == SYS_WRITEV) && f->x[0] == 2 ? 2 : 1;
-  linux_aarch64_syscall(f);
+  bool bsd = cell_current_as()->freebsd_abi;
+  bool write = bsd ? (nr == 4 || nr == 121) : (nr == SYS_WRITE || nr == SYS_WRITEV);
+  channel = write && f->x[0] == 2 ? 2 : 1;
+  if (bsd) { freebsd_aarch64_syscall(f); }
+  else { linux_aarch64_syscall(f); }
   wasm_flush();
   active_context = NULL;
   return idle;

@@ -1,6 +1,6 @@
 # Run ARM64 programs in WebAssembly
 
-Spore’s experimental Wasm backend runs ARM64 apps and boots the full Spore userland from an ext2 or ext2+ root disk.
+Spore’s experimental Wasm backend runs ARM64 Linux apps and static FreeBSD executables and boots the full Spore userland from an ext2 or ext2+ root disk.
 The kernel and Rust instruction interpreter share one WebAssembly module. Guest instruction
 fetches, loads and stores use Spore’s user page tables. Linux syscalls enter Spore’s shared
 dispatcher. The host provides console output, time, entropy and block I/O.

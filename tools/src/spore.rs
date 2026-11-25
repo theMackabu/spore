@@ -342,7 +342,7 @@ fn execute() -> io::Result<i32> {
         let input = program.ok_or_else(|| io::Error::other("missing AArch64 ELF"))?;
         let elf = system::program(&input)?;
         if arch::Arch::executable(&elf)? != arch::Arch::Aarch64 {
-            return Err(io::Error::other("Wasm requires an AArch64 Linux ELF"));
+            return Err(io::Error::other("Wasm requires an AArch64 ELF"));
         }
         let tmp = Workspace::new()?;
         let payload = if build {
