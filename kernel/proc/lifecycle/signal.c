@@ -446,16 +446,18 @@ static bool may_signal(const struct domain *target, int signal) {
          (signal == SIGCONT && sender->session_id == target->session_id);
 }
 
-static int send_user_signal(struct thread *thread, int signal) {
-  if (!thread || !thread->domain) { return -ESRCH; }
-  struct domain *victim = thread->domain;
+static int send_user_signal(struct domain *victim, struct thread *thread, int signal) {
+  if (!victim) { return -ESRCH; }
   if (!may_signal(victim, signal)) { return -1; }
   if (victim->zombie) { return 0; }
   if (signal && pidns_init_process(victim) && victim->signal_actions[signal].handler <= 1 &&
       !(signal == SIGKILL && pidns_active(victim) != pidns_current())) {
     return 0;
   }
-  if (cell_user_signal_supported(signal)) { (void)cell_deliver_signal_to_thread(thread, signal); }
+  if (cell_user_signal_supported(signal)) {
+    if (thread) { (void)cell_deliver_signal_to_thread(thread, signal); }
+    else { cell_signal_domain(victim, signal, NULL); }
+  }
   return 0;
 }
 
@@ -472,23 +474,24 @@ int cell_kill(int pid, int signal) {
                     : domain->pgrp_id != pgrp) {
         continue;
       }
-      int rc = send_user_signal(cell_thread_for_domain(domain), signal);
+      int rc = send_user_signal(domain, NULL, signal);
       if (result != 0) { result = rc; }
     }
     return result;
   }
   struct domain *domain = cell_find_domain(pidns_global(pidns_current(), pid));
-  return domain ? send_user_signal(cell_thread_for_domain(domain), signal) : -ESRCH;
+  return send_user_signal(domain, NULL, signal);
 }
 
 int cell_tkill(int tid, int signal) {
   if ((unsigned)signal >= NSIG) { return -22; }
-  return send_user_signal(cell_find_thread(pidns_global(pidns_current(), tid)), signal);
+  struct thread *thread = cell_find_thread(pidns_global(pidns_current(), tid));
+  return send_user_signal(thread ? thread->domain : NULL, thread, signal);
 }
 
 int cell_tgkill(int pid, int tid, int signal) {
   if ((unsigned)signal >= NSIG) { return -22; }
   struct thread *thread = cell_find_thread(pidns_global(pidns_current(), tid));
   if (!thread || !thread->domain || pidns_self_view(thread->domain->id) != pid) { return -ESRCH; }
-  return send_user_signal(thread, signal);
+  return send_user_signal(thread->domain, thread, signal);
 }

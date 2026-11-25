@@ -341,10 +341,6 @@ l_wait4: {
   return rc == CELL_SWITCHED ? SYSCALL_SWITCHED : rc;
 }
 l_kill:
-  if ((int)a0 == pidns_self_view(cell_current_pid()) && signal_delivers_to_current((int)a1)) {
-    trap_set_result(f, 0);
-    return cell_signal_current((int)a1, f) ? SYSCALL_SWITCHED : 0;
-  }
   return cell_kill((int)a0, (int)a1);
 l_tkill:
   if ((int)a0 == pidns_self_view(cell_current_tid()) && signal_delivers_to_current((int)a1)) {

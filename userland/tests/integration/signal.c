@@ -516,6 +516,13 @@ static int signalfd_child_exit(void) {
   return ok;
 }
 
+static void *wait_for_usr1(void *arg) {
+  siginfo_t info;
+  struct timespec timeout = {.tv_sec = 2};
+  int received = sigtimedwait(arg, &info, &timeout);
+  return (void *)(intptr_t)(received == SIGUSR1 && info.si_signo == SIGUSR1);
+}
+
 static int timed_wait_signal(void) {
   sigset_t set, old;
   sigemptyset(&set);
@@ -529,12 +536,14 @@ static int timed_wait_signal(void) {
     usleep(20000);
     _exit(kill(getppid(), SIGUSR1) != 0);
   }
-  timeout.tv_sec = 2;
   int status;
-  ok = ok && child > 0 && sigtimedwait(&set, &info, &timeout) == SIGUSR1 && info.si_signo == SIGUSR1;
+  pthread_t waiter;
+  void *received = NULL;
+  ok = ok && child > 0 && !pthread_create(&waiter, NULL, wait_for_usr1, &set) &&
+       !pthread_join(waiter, &received) && (intptr_t)received;
   if (child > 0) { ok &= waitpid(child, &status, 0) == child && !status; }
   sigprocmask(SIG_SETMASK, &old, NULL);
-  printf("[spore] signal wait timeout and delivery: %s\n", ok ? "PASS" : "FAIL");
+  printf("[spore] signal wait timeout and delivery to a worker thread: %s\n", ok ? "PASS" : "FAIL");
   return ok;
 }
 
