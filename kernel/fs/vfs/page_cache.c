@@ -7,7 +7,8 @@
 
 enum {
   MIN_CACHE_PAGES = 32768, MAX_CACHE_PAGES = 131072,
-  PAGE_BUCKETS = 4096, FILE_BUCKETS = 256, VFS_READAHEAD_PAGES = 2,
+  PAGE_BUCKETS = 4096, FILE_BUCKETS = 256,
+  VFS_READAHEAD_PAGES = 2, EXEC_READ_PAGES = 16,
 };
 
 struct vfs_page_cache_entry {
@@ -187,18 +188,6 @@ static void page_cache_readahead(const struct vfs_node *node, uint64_t off) {
   }
 }
 
-bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out) {
-  if (pa_out == NULL || !vfs_node_cacheable(node)) { return false; }
-  off &= ~(uint64_t)(PAGE_SIZE - 1);
-  struct vfs_page_cache_entry *entry = cached_page(node, off);
-  bool miss = !entry;
-  if (miss) { entry = load_page(node, off); }
-  if (entry == NULL || entry->mapped.pa == 0 || !pmm_share_page(entry->mapped.pa)) { return false; }
-  *pa_out = entry->mapped.pa;
-  if (miss) { page_cache_readahead(node, off); }
-  return true;
-}
-
 static size_t read_full_pages(const struct vfs_node *node, uint64_t off, uint8_t *dst, uint64_t len) {
   constexpr size_t MAX_PAGES = 32;
   size_t pages = 1;
@@ -218,7 +207,7 @@ static size_t read_full_pages(const struct vfs_node *node, uint64_t off, uint8_t
     size_t pos = done * PAGE_SIZE, bytes = (end - done) * PAGE_SIZE;
     uint8_t *data = pmm_phys_to_virt(batch[done]->mapped.pa);
     if (vfs_read_uncached(node, off + pos, data, bytes) != bytes) { break; }
-    kmemcpy(dst + pos, data, bytes);
+    if (dst) { kmemcpy(dst + pos, data, bytes); }
     while (done < end) {
       publish_entry(batch[done], node, off + done * PAGE_SIZE);
       ++done;
@@ -231,6 +220,26 @@ static size_t read_full_pages(const struct vfs_node *node, uint64_t off, uint8_t
   vfs_stat_counters.page_cache_loads += done;
   if (done) { vfs_stat_counters.page_cache_misses += done - 1; }
   return done * PAGE_SIZE;
+}
+
+bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, bool executable, uint64_t *pa_out) {
+  if (pa_out == NULL || !vfs_node_cacheable(node)) { return false; }
+  off &= ~(uint64_t)(PAGE_SIZE - 1);
+  struct vfs_page_cache_entry *entry = cached_page(node, off);
+  bool miss = !entry;
+  if (miss && node->backend == VFS_EXT2 && off < node->size) {
+    uint64_t bytes = node->size - off;
+    size_t pages = executable ? EXEC_READ_PAGES : 1 + VFS_READAHEAD_PAGES;
+    if (bytes > pages * PAGE_SIZE) { bytes = pages * PAGE_SIZE; }
+    if (bytes >= 2 * PAGE_SIZE && pmm_free_pages() >= pages && read_full_pages(node, off, NULL, bytes)) {
+      entry = page_cache_find(node, off);
+    }
+  }
+  if (!entry) { entry = load_page(node, off); }
+  if (entry == NULL || entry->mapped.pa == 0 || !pmm_share_page(entry->mapped.pa)) { return false; }
+  *pa_out = entry->mapped.pa;
+  if (miss && node->backend != VFS_EXT2) { page_cache_readahead(node, off); }
+  return true;
 }
 
 uint64_t vfs_read_cached(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len) {

@@ -139,7 +139,7 @@ int64_t vfs_seek_extent(const struct vfs_node *node, uint64_t off, bool data);
 uint64_t vfs_read(const struct vfs_node *node, uint64_t off, void *dst, uint64_t len);
 int64_t vfs_write(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
 int64_t vfs_writeback(const struct vfs_node *node, uint64_t off, const void *src, uint64_t len);
-bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, uint64_t *pa_out);
+bool vfs_retain_page_cached(const struct vfs_node *node, uint64_t off, bool executable, uint64_t *pa_out);
 bool vfs_refresh(const struct vfs_node *node, struct vfs_node *out);
 int vfs_next_dirent(const struct vfs_node *dir, uint64_t *cursor, struct vfs_dirent *out);
 bool vfs_fs_info(struct vfs_fs_info *out);

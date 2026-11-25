@@ -37,7 +37,7 @@ static bool fault_file_page(struct domain *domain, const struct vma *vma, uint64
       pa = ramfs_boot_page(&current.ramfs, read_off);
       if (pa && !pmm_retain_boot_page(pa)) { pa = 0; }
     }
-    if (!pa && !vfs_retain_page_cached(&current, read_off, &pa)) { return false; }
+    if (!pa && !vfs_retain_page_cached(&current, read_off, (vma->prot & VMM_USER_EXEC) != 0, &pa)) { return false; }
     bool mapped = (vma->flags & MAP_SHARED) ? vmm_map_page(as, page, pa, mapping_flags(vma) | VMM_MAP_FILE_CACHE)
                                              : vmm_map_page_cow(as, page, pa, vma->prot);
     if (!mapped) {
